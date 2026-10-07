@@ -121,6 +121,18 @@ const cafbConstName = "DEV_EDIT_SHA256"
 const cafbMarkField = "signed_not_in_person"
 const cafbEvent = "approve_signed"
 
+// cafbDevEditSHA256 —— B5 登记常量 `DEV_EDIT_SHA256` 的**内化真源**（G10 · 2026-10-07 · 退役批）。
+//
+// ★ 为什么内化：原真源件 `scripts/gates/check-approve-backfill.py`（py 半）正被退役（M2 判据件 Go 化）。
+//
+//	本件（Go 半）判 B5 时原先**现读**该 py 件取常量（`cafbGateRel` · `cafbReadRegisteredConst`）；
+//	该 py 件一退役即读不到 ⇒ 原先 fail-closed（rc=2）。⇒ 把该真源**内化进本件**：
+//	py 件在盘时仍现读（保持与 py 半同一真源 · 两态逐字同）；py 件**退役（不在盘）**时回落到本常量
+//	⇒ 删 py 不再 fail-closed（✗ 不因缺 py 判不出）。
+//	值 = 原 py 件 `DEV_EDIT_SHA256` 现读值（2026-09-28 Mr2109 重签 `approvals/dev_edit.json` 后）。
+//	★ 人签重签后该常量须跟新：py 件在盘时走 `--refresh-constant` 刷 py 件；py 件退役后改刷本行。
+const cafbDevEditSHA256 = "6131d5af3baa8583d623b3be264a451a2546f0ecbb3662e93a19ca1c1180ad03"
+
 // cafbVersion 等件级常量见下；★ B5 的登记常量**不再冻在件里**（缺口 `GAP-20261004-09`）：
 //
 //	两入口分叉的根因就是 Go 侧编译期 `const` 与 py 件内常量**各自硬编** —— 人签重签后
@@ -1109,8 +1121,13 @@ func cafbScan(stdout io.Writer, repo, state, gatePath string) int {
 		fmt.Fprintf(stdout, "⛔ 未取数：%s ⇒ **不出结论**（rc=2）\n", why)
 		return 2
 	}
-	// ★ B5 的登记值走**单一真源**（同一件现读）；取不到 ⇒ fail-closed（✗ 不回落编译期快照）。
+	// ★ B5 的登记值走**单一真源**（同一件现读）。
+	// ★ 退役态（G10 · 2026-10-07）：真源件（原 py）**已退役（不在盘）** ⇒ 回落到**内化进本件**的常量
+	//   `cafbDevEditSHA256`（✗ 不 fail-closed）；件仍在盘但常量行解不出（坏件）仍 fail-closed（rc=2）。
 	regConst, ok := cafbReadRegisteredConst(gatePath)
+	if !ok && !cafbExists(gatePath) {
+		regConst, ok = cafbDevEditSHA256, true
+	}
 	if !ok {
 		fmt.Fprintf(stdout, "⛔ 未取数：登记常量件（%s）读不到 / 常量行解不出 ⇒ **不出结论**（rc=2）\n", gatePath)
 		return 2

@@ -577,6 +577,12 @@ func cpfpLoadRegisteredExceptions(registrationPath, root string) ([]cpfpRegEntry
 		path = cpfpPyJoin(base, registrationPath)
 	}
 	if fi, err := os.Stat(path); err != nil || fi.IsDir() {
+		// 退役态（B轨 · 2026-10-07）：默认登记面件（原 py `check-public-face-anchor.py`）退役
+		// （缺席 · 其 Go 半在盘）⇒ 回落到**内化登记**（`cpfpRetiredExceptions` · ✗ 不 fail-closed）。
+		// 缺件且无 Go 半（真消失）⇒ 照旧 rc=2（缺件 ≠ 绿）。
+		if gh := cpfpGoHalfRel(registrationPath); gh != "" && cpfpFileIsFile(cpfpPyJoin(base, gh)) {
+			return cpfpRetiredExceptions(), nil
+		}
 		return nil, cpfpRefuse("缺件：例外登记面 %s 不在（`T-11b` 的登记面 · 单一真源）⇒ 判不了「哪几件是已登记的单语例外」"+
 			"（缺件 ≠ 绿；登记面缺席 ⇒ `design/` 两件会当场假红 ✗）", registrationPath)
 	}
@@ -613,6 +619,37 @@ func cpfpLoadRegisteredExceptions(registrationPath, root string) ([]cpfpRegEntry
 			registrationPath)
 	}
 	return out, nil
+}
+
+func cpfpGoHalfRel(pyPath string) string {
+	base := cpfpPyBasename(pyPath)
+	if !strings.HasSuffix(base, ".py") {
+		return ""
+	}
+	return "core/cmd/zerg/" + strings.ReplaceAll(strings.TrimSuffix(base, ".py"), "-", "_") + ".go"
+}
+
+func cpfpPyBasename(p string) string {
+	if i := strings.LastIndex(p, "/"); i >= 0 {
+		return p[i+1:]
+	}
+	return p
+}
+
+func cpfpFileIsFile(p string) bool {
+	fi, err := os.Stat(p)
+	return err == nil && !fi.IsDir()
+}
+
+// cpfpRetiredExceptions —— 默认例外登记面（原 py `check-public-face-anchor.py`）**退役后**的内化真源
+// （B轨 · 2026-10-07）：条目与其 Go 半 `cpfaExceptions` 同源（file / reason 逐条同）。
+// py 件在盘时仍现读其 `SINGLE_LANG_EXCEPTIONS`（单一真源不变）；py 件退役（不在盘）时回落到本表。
+func cpfpRetiredExceptions() []cpfpRegEntry {
+	out := make([]cpfpRegEntry, 0, len(cpfaExceptions))
+	for _, e := range cpfaExceptions {
+		out = append(out, cpfpRegEntry{File: e.File, Reason: e.Reason})
+	}
+	return out
 }
 
 func cpfpPyTruthy(v any) bool {

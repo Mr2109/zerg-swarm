@@ -262,3 +262,61 @@ func TestCheckPasswordArgvGatePort(t *testing.T) {
 		}
 	})
 }
+
+// TestCheckPasswordArgvSiblingRetiredPredicate —— 退役态牙（类① · 本件退件前置）：
+// 兄弟门 py 缺席 且 其 Go 半在盘 ⇒ 判「已退役」；py 在盘 ⇒ 否；py 缺席且 Go 半也不在盘（真消失）⇒ 否
+// （交叉档照旧判「断言不过」· fail-closed 保留）。
+// ★ 哑化负控：把 cpwSiblingRetired 恒置 false ⇒ ①段当场 FAIL 并给出本行号。
+func TestCheckPasswordArgvSiblingRetiredPredicate(t *testing.T) {
+	mk := func(t *testing.T, withPy, withGo bool) string {
+		root := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(root, "core", "cmd", "zerg"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		cpwTWrite(t, filepath.Join(root, "core", "cmd", "zerg", "main.go"), "package main\n")
+		if withGo {
+			cpwTWrite(t, filepath.Join(root, "core", "cmd", "zerg", "check_token_argv.go"), "package main\n")
+		}
+		if withPy {
+			if err := os.MkdirAll(filepath.Join(root, "scripts", "gates"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			cpwTWrite(t, filepath.Join(root, "scripts", "gates", "check-token-argv.py"), "# stub\n")
+		}
+		return root
+	}
+	within := func(t *testing.T, root string, fn func()) {
+		t.Helper()
+		old, err := os.Getwd()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chdir(root); err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = os.Chdir(old) }()
+		fn()
+	}
+
+	t.Run("①兄弟门py在盘_未退役", func(t *testing.T) {
+		within(t, mk(t, true, true), func() {
+			if cpwSiblingRetired() {
+				t.Fatalf("py 在盘不应判退役")
+			}
+		})
+	})
+	t.Run("②py缺席_Go半在盘_已退役", func(t *testing.T) {
+		within(t, mk(t, false, true), func() {
+			if !cpwSiblingRetired() {
+				t.Fatalf("py 缺席 + Go 半在盘应判退役（否则 fail-closed）")
+			}
+		})
+	})
+	t.Run("③py缺席_Go半也不在盘_未退役_真消失", func(t *testing.T) {
+		within(t, mk(t, false, false), func() {
+			if cpwSiblingRetired() {
+				t.Fatalf("双缺（真消失）不得判退役")
+			}
+		})
+	})
+}

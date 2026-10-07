@@ -306,3 +306,37 @@ func brTestSha(t *testing.T, path string) string {
 	}
 	return sum
 }
+
+// TestBrMeasureValueRetiredGoFallback —— G19（2026-10-07 退役批）：现测命令的 py 件退役
+// （不在盘）而条件带 Go 半 ⇒ brMeasureValue 回落**进程内跑同判据 Go 半**取同一读数
+// （✗ 不因缺 py 而「判不了 ⇒ 不给结论」fail-closed）。本用例以「指向一件不在盘的 py」逼出该支。
+// ★ 成对负控：Go 半也移开（goMain=nil）⇒ 仍真起 python3（件不在）⇒ 判不了（fail-closed 保留）。
+// ★ 哑化负控：抽掉 brMeasureValue 里 `if cond.goMain != nil …` 那段 ⇒ 本用例 FAIL（带行号）。
+func TestBrMeasureValueRetiredGoFallback(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Clean(filepath.Join(wd, "..", "..", ".."))
+	if _, err := os.Stat(filepath.Join(root, "core", "cmd", "zerg", "main.go")); err != nil {
+		t.Skip("仓根未定位到 core/cmd/zerg/main.go")
+	}
+	cond := brCond{
+		name:      "doc-cmds.devdocs_report_hits",
+		measure:   []string{"python3", brPyJoin("scripts", "gates", "__retired_probe__.py"), "--scope", "devdocs"},
+		measureRe: `命中\s*(\d+)\s*处`,
+		goMain:    checkDocCmdsGateMain,
+	}
+	v, src, merr := brMeasureValue(root, cond, nil, false)
+	if merr != nil {
+		t.Fatalf("退役态该回落 Go 半（✗ 不 fail-closed）：%v", *merr)
+	}
+	if v == nil || src == nil || !strings.Contains(*src, "退役态回落") {
+		t.Fatalf("未走退役态回落：v=%v src=%v", v, src)
+	}
+	// 成对负控：Go 半也移开 ⇒ 真起 python3（件不在）⇒ 判不了。
+	cond.goMain = nil
+	if _, _, e2 := brMeasureValue(root, cond, nil, false); e2 == nil {
+		t.Fatalf("负控：无 Go 半该判不了（fail-closed 保留）")
+	}
+}

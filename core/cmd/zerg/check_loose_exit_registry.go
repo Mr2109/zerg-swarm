@@ -101,6 +101,20 @@ var clerLooseExit = []clerEntry{
 	{"check-version-sources.py", []clerItem{{"--strict-docs", "（缺省即宽松）", "--strict-docs"}}},
 }
 
+// clerGoPorted —— 已有 **Go 真搬半** 的登记件（键 = 脚本基名 · 与 py 半 `GO_PORTED` 逐条同）。
+//
+// ★ 退役态安全（类② · 本件退件前置）：这些门的判据体已搬进 Go（键在 `gateCheckGoEntry`），
+// py 原件退役（不在盘）属**预期**，不再算「B 登记陈旧」。未 Go 化的登记件缺席**仍**判红
+// （牙未放宽 · 自检 ③ 的 `ghost.py` 仍回 rc=1）。py 在盘时 B 档旗标字面照验（逐字同旧）。
+var clerGoPorted = map[string]bool{
+	"check-doc-meta.py":        true,
+	"check-git-path-outlet.py": true,
+	"check-wired-scripts.py":   true,
+	"check-doc-freshness.py":   true,
+	"check-no-symlink-farm.py": true,
+	"check-version-sources.py": true,
+}
+
 // clerStrictTruePrefix = `--strict-` 形态（开着才严）—— 登记面必须含它。
 const clerStrictTruePrefix = "--strict-"
 
@@ -679,7 +693,11 @@ func clerStale(root string) []string {
 	for _, e := range entries {
 		p := clerPyJoin(root, "scripts", "gates", e.name)
 		if fi, err := os.Stat(p); err != nil || fi.IsDir() {
-			stale = append(stale, e.name+"（脚本不在盘）")
+			// ★ 退役态安全（类②）：已 Go 真搬（clerGoPorted）的登记件，py 退役（不在盘）属**预期**
+			// ⇒ 不判「登记陈旧」；未 Go 化件缺席**仍**判红（牙不放松）。
+			if !clerGoPorted[e.name] {
+				stale = append(stale, e.name+"（脚本不在盘）")
+			}
 			continue
 		}
 		src, _ := clerReadReplace(p)

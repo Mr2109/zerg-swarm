@@ -125,6 +125,16 @@ README_ZH, README_EN = "README.zh-CN.md", "README.md"
 WALK_PRUNE = {".git", "node_modules", "target"}
 REGISTRATION_REL = "scripts/gates/check-public-face-anchor.py"   # `T-11b` 登记面（单一真源）
 
+# 退役态（B轨 · 2026-10-07）：默认登记面件（`check-public-face-anchor.py`）退役后的**内化真源**
+#   （与其 Go 半 `cpfaExceptions` 逐条同源 · file/reason 逐条同）。py 件在盘时仍现读其
+#   `SINGLE_LANG_EXCEPTIONS`（单一真源不变）；退役（不在盘 · 其 Go 半在盘）时回落到本表。
+RETIRED_EXCEPTIONS = [
+    {"file": "design/格式反馈协议-FFP.md",
+     "reason": "中文单语「理念件」（`Q-128` ②③ · `T-11b` **正式登记**）：公开面映射 `A13` **只有 zh 一条**（`publish/mirror-public-lib.py:310–311`）⇒ 无派生件可比 ⇒ 本件不判成对；★ 「要不要补 en」= `Q-128` ④ 开放问题 · **本表不定**"},
+    {"file": "design/记忆体系.md",
+     "reason": "中文单语「理念件」（同 `Q-128` · `T-11b` **正式登记**）：公开面映射 `A14` **只有 zh 一条**（`publish/mirror-public-lib.py:310–311`）⇒ 无派生件可比 ⇒ 本件不判成对；★ 「要不要补 en」= 同上开放问题 · **本表不定**"},
+]
+
 REFUSE_FLAGS = ("--waive", "--allow-unpaired", "--skip-pairs", "--ignore-missing")
 
 # 机器人直推分支表（`T-12` 形态第二条 · 逐条带理由）。★ 本仓现读**没有** `chore/crowdin` 这条分支 ——
@@ -212,6 +222,13 @@ def load_registered_exceptions(registration_path=REGISTRATION_REL, root=None):
     base = os.path.abspath(root) if root else REPO_ROOT
     path = registration_path if os.path.isabs(registration_path) else os.path.join(base, registration_path)
     if not os.path.isfile(path):
+        # 退役态（B轨 · 2026-10-07）：登记面件退役（缺席 · 其 Go 半在盘）⇒ 回落到**内化登记**（✗ 不 fail-closed）。
+        # 缺件且无 Go 半（真消失）⇒ 照旧 rc=2（缺件 ≠ 绿）。
+        go_half = os.path.join(base, "core", "cmd", "zerg",
+                               os.path.basename(path)[:-3].replace("-", "_") + ".go") \
+            if registration_path.endswith(".py") else ""
+        if go_half and os.path.isfile(go_half):
+            return [dict(r) for r in RETIRED_EXCEPTIONS]
         raise Refused("缺件：例外登记面 %s 不在（`T-11b` 的登记面 · 单一真源）⇒ 判不了「哪几件是已登记的单语例外」"
                       "（缺件 ≠ 绿；登记面缺席 ⇒ `design/` 两件会当场假红 ✗）" % registration_path)
     try:

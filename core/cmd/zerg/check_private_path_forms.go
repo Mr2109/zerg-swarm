@@ -241,6 +241,7 @@ type pvResult struct {
 	Reason    string
 	Red       []pvRed
 	Debt      []pvDebt
+	Retired   []pvDebt
 	Instances []pvInst
 	Nonform   []pvNonform
 	Meta      pvMeta
@@ -257,6 +258,26 @@ func pvReadText(root, rel string) (string, bool) {
 		return "", false
 	}
 	return string(b), true
+}
+
+// pvGoHalfRel —— py 件名 → 其 Go 半的仓内相对路径（`core/cmd/zerg/<snake>.go`）。
+// 退役批口径（B轨波2-1 · 2026-10-07）：门禁侧 py 件退役后其 Go 半接管 ⇒ 用「Go 半在盘」当「已退役」的机检信号。
+func pvGoHalfRel(pyPath string) string {
+	base := pyPath
+	if i := strings.LastIndex(base, "/"); i >= 0 {
+		base = base[i+1:]
+	}
+	return "core/cmd/zerg/" + strings.ReplaceAll(strings.TrimSuffix(base, ".py"), "-", "_") + ".go"
+}
+
+// pvGateRetired —— 门禁侧点名件是否**已退役**：该 py 缺席，**且**其 Go 半（`core/cmd/zerg/<snake>.go`）在盘。
+// 退役态 ⇒ E3 覆盖判据改由 Go 半承载 · 本格**不过问**（✗ 不判「空指」）；py 缺席且无 Go 半（真消失）⇒ 未退役（照旧判红）。
+func pvGateRetired(root, gateFile string) bool {
+	if _, ok := pvReadText(root, gateFile); ok {
+		return false
+	}
+	_, ok := pvReadText(root, pvGoHalfRel(gateFile))
+	return ok
 }
 
 func pvClaimHit(claim, text string) bool {
@@ -465,6 +486,14 @@ func pvRun(root string) pvResult {
 	// ── E3 覆盖 or 登记 ──
 	for _, f := range pvForms {
 		if f.GateFile != "" {
+			// ★ 退役态安全（类① · 本件退件前置）：门禁侧点名件是**已退役**的 py（该 py 缺席
+			//   但其 Go 半在盘）⇒ 覆盖判据改由 Go 半承载 · 本格**不过问**（✗ 不判「空指」）。
+			//   py 在盘 ⇒ 逐字照旧；缺席且无 Go 半（真消失）⇒ 仍判「空指」（牙不放松）。
+			if pvGateRetired(root, f.GateFile) {
+				res.Retired = append(res.Retired, pvDebt{Form: f.ID, Name: f.Name,
+					Reason: "门禁侧点名件 `" + f.GateFile + "` **已退役**（py 缺席 · Go 半在盘）⇒ 覆盖改由 Go 半承载 · 本格不过问"})
+				continue
+			}
 			txt, ok := pvReadText(root, f.GateFile)
 			if !ok {
 				res.Red = append(res.Red, pvRed{Rule: "E3", Form: pvStrPtr(f.ID), File: pvStrPtr(f.GateFile),
@@ -1004,6 +1033,10 @@ func privatePathFormsGateMain(stdout, stderr io.Writer, argv []string) int {
 
 	fmt.Fprintf(stdout, "── 过滤 / 脱敏面：**形态枚举** + 成对负控（私有路径 / 地址不许只认一两个字面量）──\n")
 	fmt.Fprintf(stdout, "  形态格 %d 条 · 真源规则 %d 条\n", res.Meta.Forms, res.Meta.Rules)
+	for _, d := range res.Retired {
+		fmt.Fprintf(stdout, "  ⊘ [%s] %s —— **门禁侧件已退役（Go 半承载 · 本格不过问）**\n", d.Form, d.Name)
+		fmt.Fprintf(stdout, "      %s\n", d.Reason)
+	}
 	for _, d := range res.Debt {
 		fmt.Fprintf(stdout, "  ⊘ [%s] %s —— **门禁侧不覆盖（存量债 · 逐条登记 · 照实打印）**\n", d.Form, d.Name)
 		fmt.Fprintf(stdout, "      %s\n", d.Reason)

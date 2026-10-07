@@ -74,6 +74,13 @@ var mfJSONFields = []string{}
 // mfSelfRel —— 由 cwd 上溯定位仓根用的标记（同族 py 的仓内相对路径）。
 const mfSelfRel = "scripts/gates/check-manifest-freshness.py"
 
+// mfRootMarkerRel —— 仓根上溯的**退役稳态**标记（B轨 · 2026-10-07 · 退件阻塞批次）。
+// 原实现只认自指 py（mfSelfRel）当仓根标记；该件退役（不在盘）后上溯落空 ⇒ 从非仓根 cwd
+// 跑时真源找不到 ⇒ rc=2（fail-closed）。按「件退役后判据照常出结论」口径，标记补上
+// **不会被退役**的门禁自举件（precommit-gates.sh · 与 check-manifest-freshness-two-criteria
+// 的 cmfRootMarkerRel 同源选择）⇒ py 退役不改变根定位结论。自指 py 在盘时仍优先命中同一目录。
+const mfRootMarkerRel = "scripts/gates/precommit-gates.sh"
+
 // mfEmptyManifestMsg —— ★ 空清单（`{}` / 四键全缺）⇒ **没输入可判**：✗ 不许报「新鲜」。
 // ★ 口径（`GAP-20260927-108` · 2026-10-05 拍板）：**rc 契约一字不动**（本门是报告档：缺省退码恒 0、
 // 仅 `--strict` 拦）—— 只把文案从「✓ 清单新鲜（无告警）」改成**明说「没输入可判」**；`--strict` 下空清单照旧**拦**（升 rc=1）。
@@ -272,9 +279,19 @@ func mfDefaultRepo() string {
 	if err != nil {
 		return ""
 	}
-	cur := d
+	return mfRepoFrom(d)
+}
+
+// mfRepoFrom —— 由给定起点上溯找仓根（✗ 不读进程 cwd ⇒ 可单测；cwd 支见 mfDefaultRepo）。
+// 标记：自指 py（在盘时优先 · 逐字沿用原语义）**或**退役稳态标记 mfRootMarkerRel
+// （★ B轨 · 2026-10-07：自指 py 退役后仍能上溯 ⇒ 「件退役后判据照常出结论」）。
+func mfRepoFrom(start string) string {
+	cur := start
 	for i := 0; i < 32; i++ {
-		if _, err := os.Stat(filepath.Join(cur, mfSelfRel)); err == nil {
+		if _, e1 := os.Stat(filepath.Join(cur, mfSelfRel)); e1 == nil {
+			return cur
+		}
+		if _, e2 := os.Stat(filepath.Join(cur, mfRootMarkerRel)); e2 == nil {
 			return cur
 		}
 		p := filepath.Dir(cur)

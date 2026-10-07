@@ -15,17 +15,31 @@ func cpfpT_run(argv []string) (int, string, string) {
 	return rc, so.String(), se.String()
 }
 
-// cpfpT_repoRoot：从 cwd 上溯找含登记面真身的仓根（登记面单源用例需要）。
+// cpfpT_repoRoot：从 cwd 上溯找仓根（登记面真身 py **或** 其 Go 半任一在盘即认根）。
+// 退役态（py 缺席 · 其 Go 半在盘 ⇒ 与同族 `cpfpRetiredExceptions` / `cicgProfileRetired` 同口径）
+// 由 `cpfpLoadRegisteredExceptions` 回落内化登记；两半皆不在 ⇒ fail-closed（缺件 ≠ 绿）。
 func cpfpT_repoRoot(t *testing.T) string {
 	t.Helper()
 	wd, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
 	}
+	if d, ok := cpfpRepoRootFrom(wd); ok {
+		return d
+	}
+	t.Fatalf("上溯 8 层两半皆不在（登记面 %s 与其 Go 半）⇒ fail-closed（cwd=%s）", cpfpRegistrationRel, wd)
+	return ""
+}
+
+// cpfpRepoRootFrom —— 纯函数：从 wd 上溯认根（py 真身 或 其 Go 半任一在盘）。
+func cpfpRepoRootFrom(wd string) (string, bool) {
 	d := wd
 	for i := 0; i < 8; i++ {
 		if _, err := os.Stat(cpfpPyJoin(d, cpfpRegistrationRel)); err == nil {
-			return d
+			return d, true
+		}
+		if gh := cpfpGoHalfRel(cpfpRegistrationRel); gh != "" && cpfpFileIsFile(cpfpPyJoin(d, gh)) {
+			return d, true
 		}
 		nd := cpfpPyDirname(d)
 		if nd == d || nd == "" {
@@ -33,8 +47,7 @@ func cpfpT_repoRoot(t *testing.T) string {
 		}
 		d = nd
 	}
-	t.Fatalf("上溯 8 层没找到 %s（cwd=%s）", cpfpRegistrationRel, wd)
-	return ""
+	return "", false
 }
 
 func cpfpT_fixture(t *testing.T) (string, string) {
@@ -211,5 +224,60 @@ func TestCheckPublicFacePairing_PathSemantics(t *testing.T) {
 	}
 	if got := cpfpPyRelpath("/r/x/y", "/r/publish/docs"); got != "../../x/y" {
 		t.Errorf("relpath 的 .. 前缀：得 %q", got)
+	}
+}
+
+// ── 退役态（B轨 · 2026-10-07）：默认登记面件退役 ⇒ 回落内化登记（✗ 不 fail-closed）────────────
+// ★ 牙：哑化 `cpfpLoadRegisteredExceptions` 的退役回落支（无牙化 ⇒ 本用例必 FAIL 带行号）。
+func TestCheckPublicFacePairing_RetiredRegistrationFallback(t *testing.T) {
+	root := t.TempDir()
+	// 退役态：默认登记面（py）缺席 + 其 Go 半在盘 ⇒ 回落内化登记
+	gh := cpfpPyJoin(root, "core/cmd/zerg/check_public_face_anchor.go")
+	if err := os.MkdirAll(cpfpPyDirname(gh), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(gh, []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := cpfpLoadRegisteredExceptions(cpfpRegistrationRel, root)
+	if err != nil {
+		t.Fatalf("退役态不应 fail-closed：%v", err)
+	}
+	if len(got) != len(cpfaExceptions) {
+		t.Fatalf("退役态应回落 %d 条内化登记，得 %d", len(cpfaExceptions), len(got))
+	}
+	for i := range got {
+		if got[i].File != cpfaExceptions[i].File {
+			t.Fatalf("内化登记 file 不符：%q != %q", got[i].File, cpfaExceptions[i].File)
+		}
+	}
+	// 负控（真消失）：抽掉 Go 半 ⇒ 照旧 fail-closed（缺件 ≠ 绿）
+	if err := os.Remove(gh); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cpfpLoadRegisteredExceptions(cpfpRegistrationRel, root); err == nil {
+		t.Fatalf("无 Go 半应照旧 fail-closed（缺件 ≠ 绿）")
+	}
+}
+
+// ── 退役感知（B轨 · 2026-10-07）：仓根哨兵认 Go 半、两半皆不在 ⇒ fail-closed ─────────────────
+// ★ 牙：哑化 `cpfpRepoRootFrom`（只认 py 真身 · 抹掉 Go 半支）⇒ 真仓退役态下
+// `TestCheckPublicFacePairing_RegistrationSingleSourceRealRepo` 必 FAIL 带行号（哨兵行）。
+func TestCheckPublicFacePairing_RepoRootRetiredAware(t *testing.T) {
+	root := t.TempDir()
+	gh := cpfpPyJoin(root, cpfpGoHalfRel(cpfpRegistrationRel))
+	if err := os.MkdirAll(cpfpPyDirname(gh), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(gh, []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// 退役态：仅 Go 半在盘 ⇒ 认根（同 cpfpRetiredExceptions 口径）
+	if got, ok := cpfpRepoRootFrom(cpfpPyJoin(root, "sub")); !ok || got != root {
+		t.Fatalf("退役态（Go 半在盘）应认根 %q，得 (%q,%v)", root, got, ok)
+	}
+	// 真消失：两半皆不在 ⇒ fail-closed（✗ 认根）
+	if _, ok := cpfpRepoRootFrom(t.TempDir()); ok {
+		t.Fatalf("两半皆不在应 fail-closed（✗ 认根）")
 	}
 }

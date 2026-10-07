@@ -816,6 +816,28 @@ except Exception as e:
 
 // csfBridge ⇒ (result, "") 成功；否则 (nil, 失败正文) 作 py 异常的 str(e)。
 func csfBridge(root, op string, stderr io.Writer) (map[string]any, string) {
+	// ★ 退役态（G16 · 2026-10-07 退役批）：`affected_map` 这一路的兄弟件
+	//   `scripts/gates/check-affected-map.py` 退役（不在盘）⇒ 现载取数这条路断（原样 =
+	//   「重算失败 ⇒ 不给结论」= fail-closed）。⇒ 回落到**同判据的 Go 半** `afmBuildMap`
+	//   （本包内 · 与 py 半同一真源 · ✗ 非第二条实现）现算同一读数，✗ 不因缺 py 而 fail-closed。
+	//   py 件在盘时照旧走下面那条 importlib 桥（两态逐字同 · 单一真源不变）。
+	if op == "affected_map" {
+		sib := filepath.Join(root, "scripts", "gates", "check-affected-map.py")
+		if fi, err := os.Stat(sib); err != nil || fi.IsDir() {
+			mp, ok := afmBuildMap(root)
+			if !ok {
+				return nil, "兄弟件已退役，且 Go 半 afmBuildMap 也算不出（步表/声明面取不到）"
+			}
+			fp, head := "", ""
+			if v, ok := mp.get("input_fingerprint"); ok {
+				fp = v.pyStr()
+			}
+			if v, ok := mp.get("source_head"); ok {
+				head = v.pyStr()
+			}
+			return map[string]any{"ok": true, "fp": fp, "head": head}, ""
+		}
+	}
 	cmd := exec.Command("python3", "-c", csfBridgeSrc, root, op)
 	var ob, eb bytes.Buffer
 	cmd.Stdout = &ob

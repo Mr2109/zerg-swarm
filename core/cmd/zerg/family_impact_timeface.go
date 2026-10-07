@@ -43,6 +43,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -59,6 +60,24 @@ import (
 // 为什么用这一件当尺：设计 v1.6 §5.1/§5.5 逐字「虫族不需要新造一套度量，只要把表里的『期望』换成
 // 波纹的『预测』」—— 那一件的四格（期望红 / 期望绿 / 假绿 / 假红）就是波纹要的那三格。
 const impactCalibScriptRel = "scripts/gates/check-slice.py"
+
+// impactCalibGoHalfRel —— 尺件的 **Go 半**（`check_slice.go` · M2 真搬件）。退役容忍用：
+// py 尺件退役（不在盘）而 Go 半在盘 ⇒ 退役态，改由 Go 半**进程内现跑**取同一读数（✗ 不 fail-closed）。
+const impactCalibGoHalfRel = "core/cmd/zerg/check_slice.go"
+
+// impactCalibIsFile —— 存在且是普通文件（退役判定的两缀之一）。
+func impactCalibIsFile(p string) bool {
+	st, err := os.Stat(p)
+	return err == nil && st.Mode().IsRegular()
+}
+
+// impactCalibScriptRetired —— 退役态判据（缺口 `GAP-20261007-16`）：尺 py 不在盘 **且** 其 Go 半在盘
+// ⇒ 退役（不过问）。两者皆缺（真消失）⇒ false ⇒ 保留原 fail-closed 语义（「取不到」）。✗ 不猜。
+func impactCalibScriptRetired(root string) bool {
+	py := filepath.Join(root, filepath.FromSlash(impactCalibScriptRel))
+	goHalf := filepath.Join(root, filepath.FromSlash(impactCalibGoHalfRel))
+	return !impactCalibIsFile(py) && impactCalibIsFile(goHalf)
+}
 
 // impactCalibTierMaxMS —— 「尺的标定」这一块在**按需档**的自我交代口径（本机现跑：`--probe` 0.09s ·
 // `--selftest` 0.30s ⇒ 合计 ≈ 0.4s）。★ 这是**现跑量出来的**（见 `emitImpactTimefaceBlock` 打印的本跑耗时），
@@ -291,7 +310,18 @@ var (
 // 返回 (读数, 原文, 取不到的原因)；原因非空 ⇒ 这条不许当结论。
 func impactCalibProbeRun(root, flag string) (impactCalibRun, string, string) {
 	beg := time.Now()
-	out, errb, rc, err := impactRunIn(root, "python3", impactCalibScriptRel, flag)
+	var out, errb string
+	var rc int
+	var err error
+	if impactCalibScriptRetired(root) {
+		// 退役态（`GAP-20261007-16`）：尺 py 不在盘、Go 半在盘 ⇒ 进程内跑**同判据 Go 半**
+		// （`checkSliceGateMain` · `gateCheckRunInproc` 代管 cwd/env）取同一读数 ⇒ ✗ 不因缺 py 而「取不到」。
+		var so, se bytes.Buffer
+		rc = gateCheckRunInproc(checkSliceGateMain, root, &so, &se, []string{flag})
+		out, errb = so.String(), se.String()
+	} else {
+		out, errb, rc, err = impactRunIn(root, "python3", impactCalibScriptRel, flag)
+	}
 	r := impactCalibRun{Name: flag, RC: rc, Cost: time.Since(beg)}
 	if err != nil {
 		return r, "", fmt.Sprintf("起不来（%v）", err)
@@ -388,10 +418,14 @@ func impactCalibrationOf(root string, pull bool) (c impactCalib) {
 	beg := time.Now()
 	// 具名返回值 + defer ⇒ 每条 return 都带上本块的耗时（耗时属于口径三件套 §4.4：不许静默丢）。
 	defer func() { c.Cost = time.Since(beg) }()
-	if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(impactCalibScriptRel))); err != nil {
-		c.Status = "取不到"
-		c.Reason = fmt.Sprintf("尺的件不在盘上（%s · %v）⇒ 标定**取不到**（「取不到」**不许**读成「假绿 0」）", impactCalibScriptRel, err)
-		return c
+	// 退役态（`GAP-20261007-16`）：尺 py 退役（不在盘·Go 半在盘）⇒ 不落「尺的件不在盘上」这一格
+	// （那会变成永久「取不到」）；改由 Go 半现跑取数。两缺（真消失）⇒ 仍「取不到」（fail-closed 保留）。
+	if !impactCalibScriptRetired(root) {
+		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(impactCalibScriptRel))); err != nil {
+			c.Status = "取不到"
+			c.Reason = fmt.Sprintf("尺的件不在盘上（%s · %v）⇒ 标定**取不到**（「取不到」**不许**读成「假绿 0」）", impactCalibScriptRel, err)
+			return c
+		}
 	}
 	c.ScriptK = true
 	if !pull {

@@ -97,6 +97,34 @@ func TestCheckContractRegistryGatePort(t *testing.T) {
 		t.Fatalf("负控-R8 失败：得 rc=%d out=%q", rcGo, outGo)
 	}
 
+	// ── 退役态（G10 · 2026-10-07）：本 py 门件已退役 ⇒ R7 跳过（✗ 不判红）⇒ rc=0 ──
+	//   ① 表未点名本 py 门（登记表 note 点名字样已摘）· 门件仍在盘；
+	goodNoName := strings.Replace(good,
+		`"note":"真源见 `+ccrTestSelfRel+`（本门）"`,
+		`"note":"真源见 core/cmd/zerg/check_contract_registry.go（本门）"`, 1)
+	if goodNoName == good {
+		t.Fatal("退役态夹具没改到 note（点名字样替换未命中）")
+	}
+	rcRN, outRN, _ := ccrTestRun(t, "--root", ccrTestRoot(t, goodNoName, ccrTestSelfRel))
+	if rcRN != 0 || !strings.Contains(outRN, "门件已退役") {
+		t.Fatalf("退役态①（表未点名 · 门件在盘）失败：得 rc=%d out=%q", rcRN, outRN)
+	}
+	//   ② 表仍点名本 py 门、但门件已不在盘（真退役：S-a 的 gate 改走 go test 形态，
+	//      以免 R6 因门件缺失先红 ⇒ 本格专测 R7 退役态）。
+	goodGoneNote := strings.Replace(good, `"gate":"`+ccrTestSelfRel+`"`,
+		`"gate":"由 core/agent 的单测覆盖（go test）"`, 1)
+	if goodGoneNote == good {
+		t.Fatal("退役态夹具没改到 S-a 的 gate（替换未命中）")
+	}
+	rootGone := ccrTestRoot(t, goodGoneNote, ccrTestSelfRel)
+	if err := os.Remove(filepath.Join(rootGone, ccrTestSelfRel)); err != nil {
+		t.Fatal(err)
+	}
+	rcRG, outRG, _ := ccrTestRun(t, "--root", rootGone)
+	if rcRG != 0 || !strings.Contains(outRG, "门件已退役") {
+		t.Fatalf("退役态②（门件不在盘）失败：得 rc=%d out=%q", rcRG, outRG)
+	}
+
 	// ── 负控 · R2 缺字段 ─────────────────────────────────────────────────
 	rcMiss, outMiss, _ := ccrTestRun(t, "--root",
 		ccrTestRoot(t, strings.Replace(good, `,"change_note":"x"}`, "}", 1), ccrTestSelfRel))

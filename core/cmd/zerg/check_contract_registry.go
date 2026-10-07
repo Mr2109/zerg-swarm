@@ -398,7 +398,12 @@ func ccrCheck(root string, rootOK bool, registryPath string) (int, []string, ccr
 		}
 	}
 
-	// ── R7 表自称的门在盘且就是本脚本 ────────────────────────────────────────
+	// ── R7 表自称的门在盘且就是本脚本（★ 退役态：件已退役 ⇒ 跳过 / 降为不过问）─────
+	// G10（2026-10-07 · 退役批）：本件 `scripts/gates/check-contract-registry.py` 正被退役（M2 判据件 Go 化）
+	//   ⇒ 登记表（`registry.json` 的 `note`）不再自称有该 py 门（点名字样已摘）；本判据改由 Go 半承载。
+	//   R7 按其**退役态**处理：「表未自称本 py 门」或「该门件已不在盘」两种成因一律**跳过**（✗ 不判红）——
+	//   件退役不是「表在说谎」，而是「该门已换人（Go 半）」⇒ ✗ 不得因缺 py 而 fail-closed。
+	//   仅当表自称的门**在盘却与本身份不符**时仍判红（「表 ↔ 件不是同一份」这一条不变）。
 	note := ccrPyStr(ccrGet(doc, "note", ""))
 	var named []string
 	for _, t := range ccrGateTokens(note) {
@@ -407,14 +412,14 @@ func ccrCheck(root string, rootOK bool, registryPath string) (int, []string, ccr
 		}
 	}
 	if len(named) == 0 {
-		reds = append(reds, "R7 表的 `note` 没点名 `scripts/gates/check-contract-registry.py`（表自称有门这一句不见了）")
+		// 退役态①：表不再点名本 py 门 ⇒ R7 不过问（info.Wired 保持 false · info.Gate 保持空）
 	} else {
 		info.Gate = named[0]
 		if named[0] != ccrSelfRel {
 			reds = append(reds, fmt.Sprintf("R7 表自称的门是 %s，本件是 %s（表 ↔ 件不是同一份）", named[0], ccrSelfRel))
 		}
 		if !ccrIsFile(filepath.Join(root, ccrSelfRel)) {
-			reds = append(reds, fmt.Sprintf("R7 表自称的门件不在盘：%s", ccrSelfRel))
+			// 退役态②：表仍自称该 py 门、但该门件已退役（不在盘）⇒ 跳过（✗ 不判红）
 		} else {
 			info.Wired = true
 		}
@@ -444,7 +449,12 @@ func ccrCheck(root string, rootOK bool, registryPath string) (int, []string, ccr
 	lines := []string{
 		fmt.Sprintf("契约登记表 OK：%d 条条目 · 八字段齐 · id 唯一 · truth 件全在盘 · gate 面全可判（无门 0 条）· "+
 			"truth_shape 点名齐（真源顶层键无漏列）", info.Entries),
-		fmt.Sprintf("表自称的门在盘：%s（= 本件）· Go 侧声明同一路径", info.Gate),
+	}
+	if info.Wired {
+		lines = append(lines, fmt.Sprintf("表自称的门在盘：%s（= 本件）· Go 侧声明同一路径", info.Gate))
+	} else {
+		// 退役态（G10）：本 py 门件已退役 ⇒ R7 不过问（✗ 不判红）
+		lines = append(lines, fmt.Sprintf("表自称的门件已退役（%s）· 本判据改由 Go 半承载（R7 降为不过问）", ccrSelfRel))
 	}
 	return 0, lines, info
 }

@@ -102,15 +102,25 @@ func TestClerStaleRegistryB(t *testing.T) {
 	}
 }
 
-// B 档（脚本不在盘）：空 scripts/gates ⇒ 6 条登记全陈旧 ⇒ rc=1。
+// B 档（脚本不在盘）：空 scripts/gates ⇒ **未 Go 化**的登记件全陈旧（rc=1）；
+// 已 Go 真搬件（clerGoPorted）退役属预期 ⇒ 不算陈旧。★ 哑化负控：抽掉 clerStale 的
+// `if !clerGoPorted[e.name]` 一支（恢复无条件判红）⇒ 本用例第一处 Fatalf 行当场 FAIL。
 func TestClerEmptyDirAllStale(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "scripts", "gates"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// 6 件已 Go 真搬 ⇒ 空目录下不算陈旧 ⇒ rc=0（判据体在 Go 侧）。
+	if rc, out, _ := clerTRun("--root", root); rc != 0 {
+		t.Fatalf("已 Go 真搬件空目录应 rc=0，得 rc=%d out=%q", rc, out)
+	}
+	// 牙：点一枚**未 Go 化**的登记件 ⇒ 空目录下仍判「脚本不在盘」rc=1（牙未放宽）。
+	saved := clerDeepCopy(clerLooseExit)
+	clerLooseExit = append(clerLooseExit, clerEntry{"legacy-not-ported.py", []clerItem{{"--y", "report", "--y rc"}}})
+	defer func() { clerLooseExit = saved }()
 	rc, out, _ := clerTRun("--root", root)
 	if rc != 1 || !strings.Contains(out, "（脚本不在盘）") {
-		t.Fatalf("rc=%d want 1 全陈旧; out=%q", rc, out)
+		t.Fatalf("未 Go 化件空目录应 rc=1 陈旧; rc=%d out=%q", rc, out)
 	}
 }
 
@@ -217,5 +227,32 @@ func TestClerDeterministic(t *testing.T) {
 	r2, o2, e2 := clerTRun("--root", root, "--json")
 	if r1 != r2 || o1 != o2 || e1 != e2 {
 		t.Fatalf("两发不一致: rc %d/%d out %q/%q err %q/%q", r1, r2, o1, o2, e1, e2)
+	}
+}
+
+// TestClerGoPortedAbsentNotStale —— 退役态安全（类②）：已有 Go 真搬半的登记件，py 退役（不在盘）
+// ⇒ **不**判「登记陈旧」（rc 仍 0）；未 Go 化的登记件缺席**仍**判红（牙未放宽）。
+// ★ 哑化负控：把 check_loose_exit_registry.go 的 `if !clerGoPorted[e.name] { ... }` 一支抽掉
+// （恢复无条件判红）⇒ 本用例第二处 Fatalf 行当场 FAIL。
+func TestClerGoPortedAbsentNotStale(t *testing.T) {
+	root := t.TempDir()
+	clerTReg(t, root)
+	// 正控：6 件齐 ⇒ rc=0。
+	if rc, out, _ := clerTRun("--root", root); rc != 0 {
+		t.Fatalf("基线应 rc=0，得 rc=%d out=%q", rc, out)
+	}
+	// 退役 check-no-symlink-farm.py（其在 clerGoPorted 内）⇒ 仍 rc=0（不算陈旧）。
+	if err := os.Remove(filepath.Join(root, "scripts", "gates", "check-no-symlink-farm.py")); err != nil {
+		t.Fatal(err)
+	}
+	if rc, out, errs := clerTRun("--root", root); rc != 0 {
+		t.Fatalf("Go 真搬件退役后应 rc=0（非陈旧），得 rc=%d out=%q err=%q", rc, out, errs)
+	}
+	// 牙：登记表点一个**未 Go 化**的幽灵件 ⇒ 仍 rc=1（判据未被放宽）。
+	saved := clerDeepCopy(clerLooseExit)
+	clerLooseExit = append(clerLooseExit, clerEntry{"ghost-not-ported.py", []clerItem{{"--x", "report", "--x rc"}}})
+	defer func() { clerLooseExit = saved }()
+	if rc, out, _ := clerTRun("--root", root); rc != 1 {
+		t.Fatalf("未 Go 化幽灵件应仍判红 rc=1，得 rc=%d out=%q", rc, out)
 	}
 }

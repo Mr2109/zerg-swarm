@@ -627,14 +627,27 @@ func cptpDocsAllowlistWith(cwd, repo, publishShOverride string) cptpAllow {
 	}
 	historySecrets := mk("scripts/gates/check-history-secrets.py")
 	overlayDir := mk("publish/docs")
-	for _, p := range []string{mirrorLib, whitelist, publishSh, historySecrets} {
+	// 退役容忍（缺口 GAP-20261007-16）：历史扫描器 py 已 Go 化且其 Go 半在盘 ⇒ 退役态。
+	// 发布侧谓词（published_path/load_whitelist/load_excludes/excluded）由 Go 半承载 ⇒
+	// 不要求该 py 在盘、不读其正文、不校四谓词（✗ 不 fail-closed）；镜像器那一路仍照旧。
+	hsecGoHalf := mk("core/cmd/zerg/check_history_secrets.go")
+	hsecRetired := !cptpExists(historySecrets) && cptpExists(hsecGoHalf)
+	must := []string{mirrorLib, whitelist, publishSh, historySecrets}
+	if hsecRetired {
+		must = []string{mirrorLib, whitelist, publishSh}
+	}
+	for _, p := range must {
 		if !cptpExists(p) {
 			base.err = "缺件：" + cptpPyRelpath(cwd, p, repo)
 			return base
 		}
 	}
 	mlibB, err1 := os.ReadFile(mirrorLib)
-	hsecB, err2 := os.ReadFile(historySecrets)
+	var hsecB []byte
+	var err2 error
+	if !hsecRetired {
+		hsecB, err2 = os.ReadFile(historySecrets)
+	}
 	if err1 != nil || err2 != nil {
 		base.err = "加载失败：镜像器或历史扫描器读不进"
 		return base
@@ -644,10 +657,12 @@ func cptpDocsAllowlistWith(cwd, repo, publishShOverride string) cptpAllow {
 		base.err = "镜像器映射真身读不出（无 map_path）"
 		return base
 	}
-	for _, fn := range []string{"published_path", "load_whitelist", "load_excludes", "excluded"} {
-		if !cptpHasDef(hs, fn) {
-			base.err = "发布侧谓词读不出（无 " + fn + "）"
-			return base
+	if !hsecRetired {
+		for _, fn := range []string{"published_path", "load_whitelist", "load_excludes", "excluded"} {
+			if !cptpHasDef(hs, fn) {
+				base.err = "发布侧谓词读不出（无 " + fn + "）"
+				return base
+			}
 		}
 	}
 	entries := cptpLoadWhitelist(whitelist)

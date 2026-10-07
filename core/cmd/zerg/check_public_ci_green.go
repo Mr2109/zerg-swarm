@@ -263,6 +263,14 @@ func cicgGateMain(stdout, stderr io.Writer, argv []string) int {
 	fmt.Fprintf(stdout, "   单一口径：现调 %s 的两个 --profile（本件不另写一份新鲜度判据）\n",
 		cicgRelPath(root, cicgPyJoin(root, cicgProfileGateRel)))
 
+	// 退役态（B轨 · 2026-10-07）：分档真源件（原 py `check-manifest-freshness-profile.py`）退役
+	// （缺席 · 其 Go 半在盘）⇒ K1 分档两态**不过问**（✗ 不 fail-closed）；缺件且无 Go 半仍照旧 fail-closed。
+	profileRetired := cicgProfileRetired(root)
+	if profileRetired {
+		fmt.Fprintf(stdout, "   ⚠ 分档真源件已退役（%s 不在盘 · Go 半接管）⇒ K1 分档两态**不过问**（✗ 不 fail-closed）\n",
+			cicgRelPath(root, cicgPyJoin(root, cicgProfileGateRel)))
+	}
+
 	// 样张 A：合成清单（J1/J2 双命中）—— 分档的**机械证明**（写在仓外临时目录）。
 	tmp, err := os.MkdirTemp("", "zerg-ci-green-")
 	if err != nil {
@@ -278,10 +286,10 @@ func cicgGateMain(stdout, stderr io.Writer, argv []string) int {
 	fmt.Fprintf(stdout, "   样张 A（合成清单 · J1/J2 双命中）：开发机档 rc=%s（期望 0 · 只告警）· 公开制品档 rc=%s（期望 1 · 阻断）\n",
 		cicgRcStr(aDev, aDevOK), cicgRcStr(aPub, aPubOK))
 	// ★ py 的 `a_dev != 0` 在 `a_dev is None` 时也为真 ⇒ 逐字照搬（取不到照样落一条命中）。
-	if !(aDevOK && aDev == 0) {
+	if !profileRetired && !(aDevOK && aDev == 0) {
 		hits = append(hits, fmt.Sprintf("K1 开发机档**拦了**（rc=%s · 判据：开发机档只告警、rc 不拦）⇒ 红", cicgRcStr(aDev, aDevOK)))
 	}
-	if !(aPubOK && aPub == 1) {
+	if !profileRetired && !(aPubOK && aPub == 1) {
 		hits = append(hits, fmt.Sprintf("K1 公开制品档**没拦**（rc=%s · 判据：`source_sha != HEAD` 或 `dirty != false` ⇒ 红）⇒ 红", cicgRcStr(aPub, aPubOK)))
 	}
 
@@ -312,7 +320,7 @@ func cicgGateMain(stdout, stderr io.Writer, argv []string) int {
 		if devRcOK && devRc == 1 {
 			hits = append(hits, "K1 真清单在开发机档被拦（rc=1）⇒ 红（判据：只告警）")
 		}
-		if !devRcOK {
+		if !profileRetired && !devRcOK {
 			fmt.Fprintln(stdout, "     （分档真源跑不出来 ⇒ 交给 rc=2 那一路）")
 		}
 	} else {
@@ -365,7 +373,7 @@ func cicgGateMain(stdout, stderr io.Writer, argv []string) int {
 	if len(hits) > 0 {
 		rc = 1
 	}
-	if len(hits) > 0 && !devRcOK && !pubRcOK && !cicgFileExists(cicgPyJoin(root, cicgProfileGateRel)) {
+	if len(hits) > 0 && !devRcOK && !pubRcOK && !profileRetired && !cicgFileExists(cicgPyJoin(root, cicgProfileGateRel)) {
 		rc = 2
 	}
 	fmt.Fprintln(stdout, "")
@@ -829,7 +837,12 @@ func cicgPrintHelp(stdout io.Writer) {
 
 // ── 小工具（py 语义的 Go 侧对应物）──────────────────────────────────────────
 
-// cicgResolveRoot —— cwd 上溯找 `<根>/scripts/gates/check-public-ci-green.py`（见件头标准声明 (a)）。
+// cicgResolveRoot —— cwd 上溯找仓根（见件头标准声明 (a)）。
+//
+// ★ 退役态安全（本件退件前置 · 类①）：锚点从「本门自指 py」**放宽**为「`scripts/gates` **目录**」——
+// 自指 py 退役（不在盘）后旧锚 `cicgFileExists(<cur>/<cicgSelfRel>)` 恒假 ⇒ 仓根退化成 cwd
+// （inproc 档 wd==仓根时侥幸同，但测试件 / 他 cwd 直调档即落错根、静默跳过或读错件）。
+// 目录锚不随判据件存亡：py 在盘时两锚同根（逐字同旧）；py 退役时目录锚仍命中真仓根。
 func cicgResolveRoot() string {
 	d, err := os.Getwd()
 	if err != nil {
@@ -837,7 +850,7 @@ func cicgResolveRoot() string {
 	}
 	cur := d
 	for i := 0; i < 32; i++ {
-		if cicgFileExists(cicgPyJoin(cur, cicgSelfRel)) {
+		if cicgFileExists(cicgPyJoin(cur, cicgSelfRel)) || cicgStatIsDir(cicgPyJoin(cur, "scripts/gates")) {
 			return cur
 		}
 		parent := filepath.Dir(cur)
@@ -866,6 +879,24 @@ func cicgPyJoin(a, b string) string {
 	return a + "/" + b
 }
 
+// cicgGoHalfRel —— py 件名 → 其 Go 半的仓内相对路径（`core/cmd/zerg/<snake>.go`）。
+// 退役批口径（B轨 · 2026-10-07）：py 件退役后其 Go 半接管 ⇒ 用「Go 半在盘」当「已退役」的机检信号。
+func cicgGoHalfRel(pyPath string) string {
+	base := pyPath
+	if i := strings.LastIndex(base, "/"); i >= 0 {
+		base = base[i+1:]
+	}
+	return "core/cmd/zerg/" + strings.ReplaceAll(strings.TrimSuffix(base, ".py"), "-", "_") + ".go"
+}
+
+// cicgProfileRetired —— 分档真源件（原 py `check-manifest-freshness-profile.py`）是否**已退役**：
+// 该 py 缺席 **且** 其 Go 半（`core/cmd/zerg/check_manifest_freshness_profile.go`）在盘。
+// 退役态 ⇒ K1 分档两态不过问（✗ 不 fail-closed）；缺件且无 Go 半（真消失）⇒ 未退役（照旧 fail-closed）。
+func cicgProfileRetired(root string) bool {
+	return !cicgFileExists(cicgPyJoin(root, cicgProfileGateRel)) &&
+		cicgFileExists(cicgPyJoin(root, cicgGoHalfRel(cicgProfileGateRel)))
+}
+
 func cicgRelPath(root, p string) string {
 	r, err := filepath.Rel(root, p)
 	if err != nil {
@@ -877,6 +908,12 @@ func cicgRelPath(root, p string) string {
 func cicgFileExists(path string) bool {
 	fi, err := os.Stat(path)
 	return err == nil && !fi.IsDir()
+}
+
+// cicgStatIsDir —— 目录存在性（退役态仓根目录锚用；跟随链，与 py os.path.isdir 同语义）。
+func cicgStatIsDir(path string) bool {
+	fi, err := os.Stat(path)
+	return err == nil && fi.IsDir()
 }
 
 // cicgSplitLines —— py `str.splitlines()`（含 `\v \f \x1c-\x1e \x85 \u2028 \u2029`）。

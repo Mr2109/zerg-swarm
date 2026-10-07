@@ -1192,6 +1192,17 @@ func cpwSiblingRc(root string) (int, bool) {
 	return 0, false
 }
 
+// cpwSiblingRetired —— 兄弟门（`check-token-argv.py`）是否**已退役**：该 py 缺席，**且**其 Go 半
+// （`core/cmd/zerg/check_token_argv.go`）在盘 ⇒ 兄弟门改由 Go 半承载 ⇒ 自检交叉档**不过问**。
+// py 在盘 ⇒ 未退役（照旧起子进程对拍）；py 缺席且 Go 半也不在盘（真消失）⇒ 未退役（交叉档照旧判「断言不过」）。
+func cpwSiblingRetired() bool {
+	if fi, err := os.Stat(cpwPyJoin(cpwGatesDir(), "check-token-argv.py")); err == nil && !fi.IsDir() {
+		return false
+	}
+	fi, err := os.Stat(filepath.Join(cpwCwdRepoRoot(), "core", "cmd", "zerg", "check_token_argv.go"))
+	return err == nil && !fi.IsDir()
+}
+
 // cpwSelfTest —— py `self_test()`：逐档负控（四型 · 逐型一个用例 ⇒ 逐型 rc=1）＋ 正控（三正门 + 弃用带警告 ⇒ rc=0）
 // ＋ 真目标（现读仓内计数）＋ 退码 0-1-2 钳 ＋ 防空绿档（兄弟门同夹具 rc=0）。
 // 自带工作区隔离（只用临时目录）· **自回收**（`RemoveAll`）。
@@ -1303,6 +1314,8 @@ func cpwSelfTest(stdout, stderr io.Writer) int {
 	old := cpwWrite(d, "old-style", "deploy_x3.sh", cpwOldStyle)
 	resOwn, rcOwn := cpwRender(stdout, stderr, old)
 	rcSib, sibOK := cpwSiblingRc(old)
+	// ★ 退役态安全（类① · 本件退件前置）：兄弟门 py 已退役（缺席 · Go 半在盘）⇒ 交叉档**不过问**。
+	sibRetired := !sibOK && cpwSiblingRetired()
 	ownTag := "-"
 	ownN := -1
 	if resOwn != nil {
@@ -1311,12 +1324,14 @@ func cpwSelfTest(stdout, stderr io.Writer) int {
 			ownTag = resOwn.Judged[0].Tag
 		}
 	}
-	okSib := rcOwn == 1 && sibOK && rcSib == 0
+	okSib := rcOwn == 1 && (sibRetired || (sibOK && rcSib == 0))
 	if !okSib {
 		bad++
 	}
 	sibStr := "NA（缺件 ⇒ 不判）"
-	if sibOK {
+	if sibRetired {
+		sibStr = "NA（兄弟门已退役 ⇒ 不判）"
+	} else if sibOK {
 		sibStr = fmt.Sprintf("%d", rcSib)
 	}
 	markSib := "✓"

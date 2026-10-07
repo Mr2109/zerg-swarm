@@ -335,10 +335,41 @@ func gaaTestRepoRoot(t *testing.T) string {
 	return ""
 }
 
+func gaaTestIsFile(p string) bool {
+	st, err := os.Stat(p)
+	return err == nil && !st.IsDir()
+}
+
 func TestGapAxisRecPyParity(t *testing.T) {
 	root := gaaTestRepoRoot(t)
-	if root == "" {
-		t.Skip("py 原件不在盘 ⇒ 无对拍面（不假装对上了）")
+	pyPath := ""
+	if root != "" {
+		pyPath = filepath.Join(root, "scripts", "gates", "check-gap-axis-reconcile.py")
+	}
+	gaaPyParityOrRetired(t, root, pyPath)
+}
+
+// TestGapAxisRecRetiredNoPy —— 退役态（B轨 · 2026-10-07）：本件同族 py 原件**不在盘** ⇒ 判据照常出结论
+// （✗ 不得 fail-closed / rc=2）。本件（Go 半）现读正文零 `ReadFile`/`exec` 该 py ⇒ 退役不改 Go 侧结论；
+// 本用例把它钉成断言（✗ 不再静默 skip）。
+// ★ 哑化负控：把 `gaaPyParityOrRetired` 退役分支改成 `t.Fatalf("py 原件不在盘")` ⇒ 本用例红（带行号）。
+func TestGapAxisRecRetiredNoPy(t *testing.T) {
+	gaaPyParityOrRetired(t, "", filepath.Join(t.TempDir(), "check-gap-axis-reconcile.py"))
+}
+
+// gaaPyParityOrRetired —— 同族 py 原件在盘 ⇒ 两态逐字对拍；**退役（不在盘）** ⇒ 断言 Go 半不依赖该 py、
+// 照常出结论（rc=0，✗ 不得 rc=2）。退役态是件退役后的稳态，钉成断言而非 skip。
+func gaaPyParityOrRetired(t *testing.T, root, pyPath string) {
+	t.Helper()
+	if root == "" || !gaaTestIsFile(pyPath) {
+		// ── 退役态：Go 半不读同族 py ⇒ 仍出结论（与 py 在盘时同 rc）──
+		repo := gaaTestFakeRepo(t)
+		led := gaaTestLedger(t, gaaGoodYou, gaaGoodWu)
+		rc, out, errb := gaaTestCall("--repo", repo, "--ledger", led)
+		if rc != 0 {
+			t.Fatalf("退役态 Go 半该 rc=0（✗ 不得 fail-closed / rc=2），实 rc=%d\nstdout:\n%s\nstderr:\n%s", rc, out, errb)
+		}
+		return
 	}
 	if st, err := os.Stat(gaaTestPython); err != nil || st.IsDir() {
 		t.Skip("未钉到 " + gaaTestPython)
@@ -349,7 +380,7 @@ func TestGapAxisRecPyParity(t *testing.T) {
 		`{"id":"GAP-20260928-9107","state":"已解","unit":"core/a.go","module":"core"}`)
 	args := []string{"--repo", repo, "--ledger", led, "--json"}
 
-	cmd := exec.Command(gaaTestPython, append([]string{filepath.Join(root, "scripts", "gates", "check-gap-axis-reconcile.py")}, args...)...)
+	cmd := exec.Command(gaaTestPython, append([]string{pyPath}, args...)...)
 	cmd.Dir = root
 	cmd.Env = gaaTestEnvClean()
 	var pyOut, pyErr strings.Builder

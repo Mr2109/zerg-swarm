@@ -59,6 +59,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -74,9 +76,18 @@ import (
 // ctocProg —— argparse 的 prog（= basename(sys.argv[0]) · 现读 py 直接跑脚本 ⇒ 脚本名）。
 const ctocProg = "check-tty-output-contract.py"
 
-// ctocHelpSha256 —— py `-h` stdout（398 字节）的 sha256（`GAP-20261001-61` golden · 现读钉死）。
-// 现读来源：`/usr/bin/python3 <py原件> -h`（Python 3.9.6 ⇒ argparse 段标题 `optional arguments:`）。
+// ctocHelpSha256 —— `ctocHelp`（本件 Go 半真源）的 sha256（GAP-20261001-61 golden）。
+// ★ 内化（判据件退役前置 ② · GAP-20261007-16）：真源 = 下面的 `ctocHelp` 常量，不再以退役中的
+// check-tty-output-contract.py 的 `-h` 输出为源；此字面量是 Go 半的冻结回归值，由
+// ctocHelpNativeSha256() 在 Go 内自证（见 _test.go help_golden_internalized · 抽掉即红）。
 const ctocHelpSha256 = "38f41f105c170d1a59837a0ae2d64ab84829ba77b9b3f3eeb93cedf4a4e3b343"
+
+// ctocHelpNativeSha256 —— 从 Go 半真源 `ctocHelp` 现算 sha256（✗ 不读 py）：把「金标的真源」
+// 从退役的 py 收回到 Go 自身 ⇒ py 退役后仍可自证。
+func ctocHelpNativeSha256() string {
+	sum := sha256.Sum256([]byte(ctocHelp))
+	return hex.EncodeToString(sum[:])
+}
 
 // ctocUsageHead —— argparse 报错时的 `usage:` 两行（与 help 首两行逐字同）。
 const ctocUsageHead = "usage: " + ctocProg + " [-h] [--target-cmd TARGET_CMD]\n" +

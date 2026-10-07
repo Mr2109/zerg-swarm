@@ -67,6 +67,10 @@ type brCond struct {
 	unit      string
 	measure   []string
 	measureRe string
+	// goMain —— ★ 退役态（2026-10-07 退役批）回落面：measure 的 py 件退役（不在盘）时，
+	//   改用**同判据的 Go 半**（进程内跑 · 同一输出面 · 同一 measureRe 抽取）取同一读数
+	//   ⇒ 退役态照常出结论（✗ 不 fail-closed）。✗ 不读 py。空 = 无 Go 半（仍 fail-closed）。
+	goMain func(stdout, stderr io.Writer, argv []string) int
 }
 
 var brConditions = []brCond{
@@ -99,6 +103,7 @@ var brConditions = []brCond{
 		unit:      "开发文档面里手写命令示例的命中数",
 		measure:   []string{"python3", brPyJoin("scripts", "gates", "check-doc-cmds.py"), "--scope", "devdocs"},
 		measureRe: `命中\s*(\d+)\s*处`,
+		goMain:    checkDocCmdsGateMain,
 	},
 	{
 		name:      "i18n.allowed_count",
@@ -425,6 +430,19 @@ func brMeasureValue(root string, cond brCond, readings map[string]int, hasReadin
 			return &vv, &src, nil
 		}
 	}
+	// ★ 退役态（G19 · 2026-10-07 退役批）：现测命令 = ["python3", "<py>", args…]；该 py 件退役
+	//   （不在盘）且本条件带 Go 半 ⇒ 进程内跑**同判据 Go 半**（gateCheckRunInproc 代管 cwd/env）
+	//   取同一读数 ⇒ ✗ 不因缺 py 而「判不了 ⇒ 不给结论」（fail-closed）。
+	//   py 件在盘时照旧真起子进程（两态逐字同 · 单一真源不变）。
+	if cond.goMain != nil && len(cond.measure) >= 2 && cond.measure[0] == "python3" {
+		if pyPath := brPyJoin(root, cond.measure[1]); !brIsFile(pyPath) {
+			var so, se bytes.Buffer
+			_ = gateCheckRunInproc(cond.goMain, root, &so, &se, cond.measure[2:])
+			out := so.String() + "\n" + se.String()
+			src := fmt.Sprintf("退役态回落（py 不在盘）：进程内跑 Go 半 · 原现测 `%s`", strings.Join(cond.measure, " "))
+			return brMeasureExtract(out, cond, src)
+		}
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), brMeasureTimeout*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, cond.measure[0], cond.measure[1:]...)
@@ -454,8 +472,14 @@ func brMeasureValue(root string, cond brCond, readings map[string]int, hasReadin
 		}
 	}
 	out := so.String() + "\n" + se.String()
-	re, rerr := regexp.Compile(cond.measureRe)
 	src := fmt.Sprintf("现跑 `%s`（rc=%d）", joined, rc)
+	return brMeasureExtract(out, cond, src)
+}
+
+// brMeasureExtract —— 从现测输出里按 cond.measureRe 抽判据行（py 原 tail 逐字同）。
+// 抽不到 ⇒ 判不了（✗ 不猜）；供「真起子进程」与「退役态 Go 半回落」两路共用同一抽取面。
+func brMeasureExtract(out string, cond brCond, src string) (*int, *string, *string) {
+	re, rerr := regexp.Compile(cond.measureRe)
 	if rerr != nil {
 		e := fmt.Sprintf("现测命令输出里找不到判据行（%s）⇒ **判不了**（不许猜）\n", cond.measureRe)
 		return nil, &src, &e

@@ -180,18 +180,23 @@ def check(root, registry_path):
             reds.append("R9 %s 的 `truth_shape` 漏点名真源顶层键 %d 个：%s"
                         % (eid, len(miss), " / ".join("`%s`" % k for k in miss)))
 
-    # ── R7 表自称的门在盘且就是本脚本 ────────────────────────────────────────
+    # ── R7 表自称的门在盘且就是本脚本（★ 退役态：件已退役 ⇒ 跳过 / 降为不过问）─────
+    # G10（2026-10-07 · 退役批）：本件 `scripts/gates/check-contract-registry.py` 正被退役（M2 判据件 Go 化）
+    #   ⇒ 登记表（`registry.json` 的 `note`）不再自称有该 py 门（点名字样已摘）；本判据改由 Go 半承载。
+    #   R7 按其**退役态**处理：「表未自称本 py 门」或「该门件已不在盘」两种成因一律**跳过**（✗ 不判红）——
+    #   件退役不是「表在说谎」，而是「该门已换人（Go 半）」⇒ ✗ 不得因缺 py 而 fail-closed。
+    #   ★ 与 Go 半 `check_contract_registry.go` 的 R7 逐字同口径（两态对拍要求 stdout/stderr/rc 三面逐字同）。
     note = str(doc.get("note", ""))
     self_rel = "scripts/gates/check-contract-registry.py"
     named = [t for t in gate_tokens(note) if t.endswith("check-contract-registry.py")]
     if not named:
-        reds.append("R7 表的 `note` 没点名 `scripts/gates/check-contract-registry.py`（表自称有门这一句不见了）")
+        pass  # 退役态①：表不再点名本 py 门 ⇒ R7 不过问（info["wired"] 保持 False · info["gate"] 保持空）
     else:
         info["gate"] = named[0]
         if named[0] != self_rel:
             reds.append("R7 表自称的门是 %s，本件是 %s（表 ↔ 件不是同一份）" % (named[0], self_rel))
         if not os.path.isfile(os.path.join(root, self_rel)):
-            reds.append("R7 表自称的门件不在盘：%s" % self_rel)
+            pass  # 退役态②：表仍自称该 py 门、但该门件已退役（不在盘）⇒ 跳过（✗ 不判红）
         else:
             info["wired"] = True
 
@@ -212,8 +217,12 @@ def check(root, registry_path):
         lines = reds
         return 1, lines, info
     lines = ["契约登记表 OK：%d 条条目 · 八字段齐 · id 唯一 · truth 件全在盘 · gate 面全可判（无门 0 条）· "
-             "truth_shape 点名齐（真源顶层键无漏列）" % info["entries"],
-             "表自称的门在盘：%s（= 本件）· Go 侧声明同一路径" % info["gate"]]
+             "truth_shape 点名齐（真源顶层键无漏列）" % info["entries"]]
+    if info["wired"]:
+        lines.append("表自称的门在盘：%s（= 本件）· Go 侧声明同一路径" % info["gate"])
+    else:
+        # 退役态（G10）：本 py 门件已退役 ⇒ R7 不过问（✗ 不判红）
+        lines.append("表自称的门件已退役（%s）· 本判据改由 Go 半承载（R7 降为不过问）" % self_rel)
     return 0, lines, info
 
 

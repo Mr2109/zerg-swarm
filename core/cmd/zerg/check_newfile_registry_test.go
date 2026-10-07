@@ -802,7 +802,9 @@ func TestGnrDefaultRootIndependentOfCwd(t *testing.T) {
 	if !gnrIsRootDir(gnrDefaultRoot()) {
 		t.Fatalf("默认根 %q 非仓根", gnrDefaultRoot())
 	}
-	for _, rel := range []string{"core/cmd/zerg/check_newfile_registry.go", gnrSelfRel} {
+	// ★ 退役稳态（B轨 · 2026-10-07）：只硬要求 Go 半在盘；同族 py（gnrSelfRel）是退役候选 ⇒
+	//   在盘时顺带核一次、✗ 不在盘不 fail（退役态合法 · 件退役后本件照常出结论）。
+	for _, rel := range []string{"core/cmd/zerg/check_newfile_registry.go"} {
 		if _, err := os.Stat(filepath.Join(wantRoot, rel)); err != nil {
 			t.Fatalf("仓根 %s 下缺 %s：%v", wantRoot, rel, err)
 		}
@@ -854,6 +856,12 @@ func TestGnrDefaultRootIndependentOfCwd(t *testing.T) {
 		return
 	}
 	pyFile := filepath.Join(wantRoot, gnrSelfRel)
+	if _, err := os.Stat(pyFile); err != nil {
+		// ★ 退役态（B轨 · 2026-10-07）：同族 py 退役（不在盘）⇒ py 侧同格对照不适用；Go 侧三档已证 ⇒
+		//   ✗ 不 fail（件退役后本件照常出结论，✗ 不得 fail-closed）。
+		t.Logf("同族 py 退役（不在盘）⇒ py 侧同格对照跳过：%s", pyFile)
+		return
+	}
 	runPy := func(dir string) (int, string, string) {
 		t.Helper()
 		cmd := exec.Command(pyExe, pyFile, "--dump-baseline", dump)
@@ -978,8 +986,28 @@ func TestGnrHelpParityWithPy(t *testing.T) {
 		return
 	}
 	pyFile := filepath.Join(gnrRepoRootForTest(t), gnrSelfRel)
+	gnrHelpParityOrRetired(t, pyExe, pyFile)
+}
+
+// TestGnrHelpRetiredNoPy —— 退役态（B轨 · 2026-10-07）：同族 py 原件**不在盘** ⇒ 帮助面只走 Go 侧 +
+// 钉 sha256（✗ 不得 fail-closed / t.Fatalf）。本件（Go 半）不读该 py ⇒ 退役不改 Go 侧结论。
+// ★ 哑化负控：把 `gnrHelpParityOrRetired` 退役分支改成 `t.Fatalf("py 件不在盘")` ⇒ 本用例红（带行号）。
+func TestGnrHelpRetiredNoPy(t *testing.T) {
+	gnrHelpParityOrRetired(t, gnrTHelpPython(), filepath.Join(t.TempDir(), "no-such-check-newfile-registry.py"))
+}
+
+// gnrHelpParityOrRetired —— pyExe 空 ⇒ 只走钉 sha256；py 原件**不在盘（退役）** ⇒ 跳过 py 侧逐字对拍
+// （Go 侧 sha256/字节数已由调用方钉过）；在盘 ⇒ 三面逐字对拍。
+func gnrHelpParityOrRetired(t *testing.T, pyExe, pyFile string) {
+	t.Helper()
+	if pyExe == "" {
+		t.Log("无 /usr/bin/python3 ⇒ 只走钉 sha256 的退路（py 正文漂移需靠重生成正门刷 gnrHelpPySha256 才可见）")
+		return
+	}
 	if _, err := os.Stat(pyFile); err != nil {
-		t.Fatalf("py 件不在盘：%s（%v）", pyFile, err)
+		// ★ 退役态：同族 py 退役（不在盘）⇒ py 侧逐字对拍不适用；Go 侧 sha256/字节数已由调用方钉住 ⇒ ✗ 不 fail。
+		t.Logf("同族 py 退役（不在盘）⇒ py 侧帮助面逐字对拍跳过：%s", pyFile)
+		return
 	}
 	for _, flag := range []string{"-h", "--help"} {
 		prc, pout, perr := gnrTRunPyHelp(t, pyExe, pyFile, flag)

@@ -126,7 +126,7 @@ func TestCheckFlagRegistryParityGatePort(t *testing.T) {
 	}
 }
 
-// frpFindRepoRoot —— 从 cwd 上溯找仓根（判据：`scripts/gates/check-flag-registry-parity.py` 在盘）。
+// frpFindRepoRoot —— 从 cwd 上溯找含 py 半件的仓根；找不到返回 ""（✗ 不 Fatal —— 退役态合法）。
 func frpFindRepoRoot(t *testing.T) string {
 	t.Helper()
 	wd, err := os.Getwd()
@@ -144,8 +144,21 @@ func frpFindRepoRoot(t *testing.T) string {
 		}
 		d = parent
 	}
-	t.Fatalf("上溯找不到仓根（从 %s）", wd)
 	return ""
+}
+
+// frpHasPyHalf —— 给定根下 py 半件（对拍真源）在不在盘。★ 退役态（判据件退役前置 ③ ·
+// GAP-20261007-16）：件已退役 ⇒ ("", false)；调用方据此走「对拍不可用」档（skip），
+// ✗ 不得 Fatal、✗ 不得因缺 py 判 rc=2。
+func frpHasPyHalf(root string) (string, bool) {
+	if root == "" {
+		return "", false
+	}
+	p := filepath.Join(root, "scripts", "gates", "check-flag-registry-parity.py")
+	if st, err := os.Stat(p); err != nil || st.IsDir() {
+		return "", false
+	}
+	return p, true
 }
 
 // TestFlagRegistryParityGoPyDifferential —— **Go 半 ⟷ py 半 逐字节对拍**（缺口账 `GAP-20260927-325`
@@ -154,7 +167,10 @@ func frpFindRepoRoot(t *testing.T) string {
 // ★ 本测试**不需要真仓**（`--self-test` 走合成夹具；`--list-rules`/`-h` 是常量面）⇒ 两半搬同一份输入。
 func TestFlagRegistryParityGoPyDifferential(t *testing.T) {
 	root := frpFindRepoRoot(t)
-	py := filepath.Join(root, "scripts", "gates", "check-flag-registry-parity.py")
+	py, ok := frpHasPyHalf(root)
+	if !ok {
+		t.Skip("py 半已退役（scripts/gates/check-flag-registry-parity.py 不在盘）⇒ 对拍不可用（✗ 不 Fatal / ✗ 不 rc=2）；Go 面由 TestCheckFlagRegistryParityGatePort 自证")
+	}
 	python := "/usr/bin/python3"
 	if _, err := os.Stat(python); err != nil {
 		t.Fatalf("钉住的解释器不在盘：%s（对拍要有确定输入面，不许换解释器）", python)
@@ -186,5 +202,37 @@ func TestFlagRegistryParityGoPyDifferential(t *testing.T) {
 		if gErr.String() != pErr.String() {
 			t.Errorf("对拍 FAIL（stderr）argv=%v：\n--go--\n%s\n--py--\n%s", argv, gErr.String(), pErr.String())
 		}
+	}
+}
+
+// TestFlagRegistryParityRetired —— 退役态（判据件退役前置 ③ · GAP-20261007-16）：py 半不在盘时，
+// 对拍可用性判据必须判「不可用」（skip 档），✗ 不得 Fatal / 不得 rc=2。全在**仓外夹具**上做。
+func TestFlagRegistryParityRetired(t *testing.T) {
+	// ① 空树（连仓根都找不到）⇒ 不可用。
+	empty := t.TempDir()
+	if p, ok := frpHasPyHalf(empty); ok {
+		t.Fatalf("空树应判「无 py 半」，实得 ok=true path=%s", p)
+	}
+	if p, ok := frpHasPyHalf(frpFindRepoRoot(t)); ok && p == "" {
+		t.Fatalf("仓根存在却给空 py 路径：%q", p)
+	}
+	// ② 有 py 半（桩件）⇒ 可用；随后把桩件移开（= 退役）⇒ 立刻回到不可用（✗ 不 Fatal）。
+	withPy := t.TempDir()
+	dir := filepath.Join(withPy, "scripts", "gates")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stub := filepath.Join(dir, "check-flag-registry-parity.py")
+	if err := os.WriteFile(stub, []byte("#!/usr/bin/env python3\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if p, ok := frpHasPyHalf(withPy); !ok || p != stub {
+		t.Fatalf("有 py 半应判可用：ok=%v path=%q want %q", ok, p, stub)
+	}
+	if err := os.Remove(stub); err != nil {
+		t.Fatal(err)
+	}
+	if p, ok := frpHasPyHalf(withPy); ok {
+		t.Fatalf("退役态（桩件移开）应判不可用，实得 ok=true path=%s", p)
 	}
 }

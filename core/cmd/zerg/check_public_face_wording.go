@@ -49,6 +49,31 @@ var cpfwVolPrefix = "/Volumes/"
 
 var cpfwVolNames = []string{"AHZ", "BXC", "ZERG-ARCHIVE"}
 
+// cpfwSelfText —— 自豁免真源（**内化进 Go**）：py `check-public-face-wording.py` 退役（不在盘）时
+//
+//	`--self-test` ⑭ 的**离盘真源**（⑭ 的牙不依赖本 py）。
+//	★ 必须让 cpfwScanText 命中 A1/A2/A4/A5/A6b/A9 六枚 rid（与 py 在盘时的豁免覆盖同集）；
+//	★ 拆串写：私有卷名走 cpfwVolPrefix + cpfwVolNames、缺口号走 `Q-` + 数字 ——
+//	  ✗ 不落 `/Volumes/<卷名>` / `Q-<数字>` 的连续字面量（他门扫 core/）。
+var cpfwSelfText = strings.Join([]string{
+	"私有卷 " + cpfwVolPrefix + cpfwVolNames[0],
+	"任意卷 " + cpfwVolPrefix + "My Disk",
+	"文仓名 Zerg-内部文档",
+	"缺口号 " + "Q-" + "176",
+	"私有称谓 " + "Mr2109",
+	"仓主名 " + "Mr2109",
+}, " · ")
+
+// cpfwLoadSelfText —— ⑭ 的「本件自身」文本源：py 在盘 ⇒ 现读 py 真身（单一真源 · 两态逐字同）；
+//
+//	py 退役（不在盘 ⇒ os.ReadFile err）⇒ 回落**内化真源** cpfwSelfText ⇒ ⑭ 不依赖本 py（退役容忍）。
+func cpfwLoadSelfText(root string) string {
+	if raw, err := os.ReadFile(cpfwPyJoin(root, cpfwSelfRel)); err == nil {
+		return string(raw)
+	}
+	return cpfwSelfText
+}
+
 // cpfwRootFace：根面 8 件（设计 §2.3「根面 8 件对外件」· 与 `T-03`/`T-11` 同一批读数）。
 var cpfwRootFace = []string{
 	"publish/LICENSE",
@@ -1163,11 +1188,8 @@ func cpfwSelfTest(stdout io.Writer) int {
 	rc, _, _ = cpfwJudge(b, nil, false, true)
 	check(rc == 2, "\u246c \u4ef6\u8bfb\u4e0d\u4e86\uff08`gitleaks.toml` \u662f\u76ee\u5f55\uff09\u21d2 rc=2\uff08\u8bfb\u4e0d\u5168\u5c31\u5224\u4e0d\u51fa\u771f\u503c\uff09")
 
-	// ⑭ 自豁免 ①
-	own := ""
-	if raw, err := os.ReadFile(cpfwPyJoin(cpfwRepoRoot(), cpfwSelfRel)); err == nil {
-		own = string(raw)
-	}
+	// ⑭ 自豁免 ①（py 在盘 ⇒ 现读 py 真身 · 单一真源不变；py 退役 ⇒ 回落内化真源 cpfwSelfText）
+	own := cpfwLoadSelfText(cpfwRepoRoot())
 	ownHits := cpfwScanText(own)
 	var ridSet []string
 	seen := map[string]bool{}
@@ -1199,9 +1221,11 @@ func cpfwSelfTest(stdout io.Writer) int {
 	}
 	check(rc == 0 && hasSelf, "\u246e \u81ea\u8c41\u514d \u2461\uff1a`face=[\u672c\u4ef6]` \u21d2 rc=0 \u4e14**\u6253\u5370**\u300c\u81ea\u8c41\u514d\u300d\u884c\uff08\u4e0d\u8bb8\u9759\u9ed8\u8df3\u8fc7\uff09")
 
-	// ⑮b 成对对照：关掉豁免
+	// ⑮b 成对对照：关掉豁免（★ 退役容忍 2026-10-07：本件 py 退役 ⇒ 不在盘时关掉豁免这档无输入
+	//     ⇒ rc=2 亦算过；py 在盘时条件与原来逐字一致 ⇒ 两态输出不变）
 	rc, _, d = cpfwJudge(cpfwRepoRoot(), []string{cpfwSelfRel}, true, false)
-	check(rc == 1 && d.unexempt > 0,
+	check((rc == 1 && d.unexempt > 0) ||
+		(rc == 2 && !cpfwIsFile(cpfwPyJoin(cpfwRepoRoot(), cpfwSelfRel))),
 		"\u246eb \u81ea\u8c41\u514d\u7684\u7259\u9f7f\uff1a\u540c\u4e00\u4efd\u5939\u5177**\u5173\u6389**\u8c41\u514d \u21d2 rc=1\uff08\u5f00\u4e86 0 / \u5173\u6389 1 \u21d2 \u8fd9\u4e00\u683c\u6709\u533a\u5206\u5ea6\uff09")
 
 	// ⑯ 假红对照：裸 `§`

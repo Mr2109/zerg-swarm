@@ -8,6 +8,6 @@
   "trace_id_rule": "每轮一个 `trace_id`（`TR-` + 12 位十六进制）；同一轮的**所有**动作共用它，回执里必带。它**不与** `idempotency_key` 混用（§18.4 接缝第 9 行逐字）。生成侧的真源 = `zerg dev receipt new`（OM4 的「谁生成」这一格由此收口）。",
   "resume_entry": "zerg context ls --resume",
   "resume_entry_note": "§十二 P-120 定案 ①：挂 A 族 `zerg context ls`（不新立族）。`--resume` 是它的续做面：没有回执 ⇒ 报「无回执」并退码 2。",
-  "h1_rule": "§20.3 H1：AI 侧**零直改** —— 一轮里改过仓内文件、而回执的 `evidence` 里**没有任何一条命令面调用**（`zerg …`）⇒ 门红（`scripts/gates/check-ai-direct-edits.py`）。",
+  "h1_rule": "§20.3 H1：AI 侧**零直改** —— 一轮里改过仓内文件、而回执的 `evidence` 里**没有任何一条命令面调用**（`zerg …`）⇒ 门红（判据 `check-ai-direct-edits` · `zerg gate check`）。",
   "verdict_words": ["PASS", "FAIL", "BLOCKED", "SKIP", "REPORT"]
 }

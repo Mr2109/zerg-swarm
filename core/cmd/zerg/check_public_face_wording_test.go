@@ -44,7 +44,9 @@ func cpfwT_fixture(t *testing.T, docs map[string]string) string {
 	return base
 }
 
-// cpfwT_repoRoot：从 cwd 上溯找含判据原件的仓根（`--self-test` 的 ⑭/⑮ 需 cwd == 仓根）。
+// cpfwT_repoRoot：从 cwd 上溯找仓根（`--self-test` 的 ⑭/⑮ 需 cwd == 仓根）。
+//
+//	★ 锚用稳定件 `core/internal/version/version.go`（✗ 不用本件 py —— 它退役后仍在盘则跳过会丢覆盖）。
 func cpfwT_repoRoot(t *testing.T) string {
 	t.Helper()
 	wd, err := os.Getwd()
@@ -53,7 +55,7 @@ func cpfwT_repoRoot(t *testing.T) string {
 	}
 	d := wd
 	for i := 0; i < 8; i++ {
-		if _, err := os.Stat(cpfwPyJoin(d, cpfwSelfRel)); err == nil {
+		if _, err := os.Stat(cpfwPyJoin(d, "core", "internal", "version", "version.go")); err == nil {
 			return d
 		}
 		nd := cpfwDirname(d)
@@ -62,7 +64,7 @@ func cpfwT_repoRoot(t *testing.T) string {
 		}
 		d = nd
 	}
-	t.Skipf("上溯不到含 %s 的仓根（跳过需 cwd 的用例）", cpfwSelfRel)
+	t.Skipf("上溯不到仓根（跳过需 cwd 的用例）")
 	return ""
 }
 
@@ -204,8 +206,52 @@ func TestCpfwS_自豁免牙齿_关闭即红(t *testing.T) {
 		t.Fatalf("开着自豁免应 rc=0，得 %d", rcOpen)
 	}
 	rcClosed, _, d := cpfwJudge(root, []string{cpfwSelfRel}, true, false)
-	if rcClosed != 1 || d.unexempt == 0 {
-		t.Fatalf("关掉自豁免应 rc=1 且未豁免 >0（这一格有区分度），得 rc=%d unexempt=%d", rcClosed, d.unexempt)
+	if cpfwIsFile(cpfwPyJoin(root, cpfwSelfRel)) {
+		if rcClosed != 1 || d.unexempt == 0 {
+			t.Fatalf("关掉自豁免应 rc=1 且未豁免 >0（这一格有区分度），得 rc=%d unexempt=%d", rcClosed, d.unexempt)
+		}
+		return
+	}
+	// ★ 退役态（2026-10-07）：本件 py 退役（不在盘）⇒ 关掉豁免这档无输入 ⇒ rc=2（缺件 ≠ 绿 · ✗ 不当绿）。
+	if rcClosed != 2 {
+		t.Fatalf("退役态：本件 py 不在盘 ⇒ 关掉豁免应 rc=2（缺件 ≠ 绿），得 %d", rcClosed)
+	}
+}
+
+// 定向单测（退役两态 · 2026-10-07 · G15#75）：⑭ 的自豁免真源 `cpfwLoadSelfText` ——
+//
+//	py 在盘 ⇒ 现读 py 真身（单一真源不变）；py 退役（不在盘）⇒ 回落**内化真源** `cpfwSelfText`，
+//	且覆盖 A1/A2/A4/A5/A6b/A9（⑭ 的牙不灭 · 豁免非空转）。
+func TestCpfwS_自豁免真源内化_退役两态(t *testing.T) {
+	// ① py 在盘：仓外夹具里放一份「py 真身」，cpfwLoadSelfText 应逐字取到它
+	root := t.TempDir()
+	body := "假 py 真身：" + cpfwVolPrefix + cpfwVolNames[0] + " · Zerg-内部文档 · Mr2109\n"
+	pyPath := cpfwPyJoin(root, cpfwSelfRel)
+	if err := os.MkdirAll(cpfwDirname(pyPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(pyPath, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := cpfwLoadSelfText(root); got != body {
+		t.Fatalf("py 在盘 ⇒ 应现读 py 真身，得 %q", got)
+	}
+	// ② py 退役：空夹具（无该 py）⇒ 回落内化真源，且六枚 rid 全覆盖
+	fb := cpfwLoadSelfText(t.TempDir())
+	if fb != cpfwSelfText {
+		t.Fatalf("py 退役 ⇒ 应回落内化真源 cpfwSelfText，得 %q", fb)
+	}
+	got := map[string]bool{}
+	for _, h := range cpfwScanText(fb) {
+		got[h.rid] = true
+	}
+	for _, n := range []string{"A1", "A2", "A4", "A5", "A6b", "A9"} {
+		if !got[n] {
+			t.Fatalf("内化真源应覆盖 rid %s（⑭ 的牙不灭）；实得 %v", n, got)
+		}
+	}
+	if len(cpfwScanText(fb)) == 0 {
+		t.Fatalf("内化真源应命中 >0 处（豁免非空转）")
 	}
 }
 

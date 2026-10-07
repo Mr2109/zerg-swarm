@@ -1,6 +1,6 @@
 {
   "schema": "zerg-contract-registry/1",
-  "note": "契约登记表（§九 M16 · §十二 P-084/P-085）。**单一真源**：本文件是「仓内各处契约真源」的登记处；真源本体仍在各件里（本表**指向**它们，不复制它们的内容）。门禁 scripts/gates/check-contract-registry.py 读同一份做「表 ↔ 件」一致性检查；`zerg help registry` 也读同一份（引用面非 0 = 它真的被用）。",
+  "note": "契约登记表（§九 M16 · §十二 P-084/P-085）。**单一真源**：本文件是「仓内各处契约真源」的登记处；真源本体仍在各件里（本表**指向**它们，不复制它们的内容）。门禁读同一份做「表 ↔ 件」一致性检查；`zerg help registry` 也读同一份（引用面非 0 = 它真的被用）。",
   "authority": {
     "truth": "代码内 schema（本表 + 各件里的常量/结构）",
     "exported": "文档只是导出物（Zerg-内部文档 的成文、zerg help export 的 md、/api/capabilities）",

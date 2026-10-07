@@ -824,6 +824,33 @@ func ctpiPyExe() string {
 	return "python3"
 }
 
+// ctpiSelfExe —— 自检 ⑨/⑩ 内嵌判据退守「Go 半」时的可执行件注入点。
+// 默认 os.Executable()（= 命令面入口 bin/zerg）；测试二进制不是 CLI 入口 ⇒ 测试件把它换成
+// 仓外探针壳（转回 TestCtpiHelperProcess）。★ 与 judge_lock.go / gate_report.go 同形。
+var ctpiSelfExe = func() (string, error) { return os.Executable() }
+
+// ctpiGateRelPy —— 自检 ⑨/⑩ 内嵌判据的 py 件（相对仓根 · 门㉓）。
+const ctpiGateRelPy = "scripts/gates/check-zero-side-effect.py"
+
+// ctpiInnerJudgeCmd —— 自检 ⑨/⑩ 用的内嵌判据命令（对象集口径的合成夹具判据）。三态：
+//
+//	① py 件在盘 ⇒ 用 py 件（与 M2 对拍期同口径）；
+//	② py 件退役（不在盘）⇒ 退守该判据的 **Go 半**（`gate check check-zero-side-effect` · 同一真源）；
+//	③ 两态皆不可用（Go 半入口取不到）⇒ 返回 ok=false ⇒ 调用方**不过问**（✗ 不得 rc=2）。
+//
+// judgeBase = 判据件所在的仓根（cwd · py 件按此定位）；objRoot = 被判的件所在仓根（`--root`）。
+func ctpiInnerJudgeCmd(judgeBase, objRoot, sealedAbs string) (string, bool) {
+	if _, err := os.Stat(filepath.Join(judgeBase, ctpiGateRelPy)); err == nil {
+		return ctpiPyExe() + " " + ctpiGateRelPy + " --json --root " + ctpiShlexQuote(objRoot) +
+			" --sealed " + ctpiShlexQuote(sealedAbs), true
+	}
+	if exe, err := ctpiSelfExe(); err == nil && exe != "" {
+		return ctpiShlexQuote(exe) + " gate check check-zero-side-effect --json --root " +
+			ctpiShlexQuote(objRoot) + " --sealed " + ctpiShlexQuote(sealedAbs), true
+	}
+	return "", false
+}
+
 // ctpiMkDirtyRepo —— py `_mk_dirty_repo`：合成仓（`clean.txt` 已封 · `dirty.txt` 提交后被改 = 可变件）。
 func ctpiMkDirtyRepo(d string) string {
 	repo := filepath.Join(d, "repo")
@@ -973,21 +1000,25 @@ func ctpiSelfTest(stdout io.Writer, repoRoot string) int {
 
 	repo := ctpiMkDirtyRepo(d)
 	dirty := filepath.Join(repo, "dirty.txt")
-	cmd9 := py + " scripts/gates/check-zero-side-effect.py --json --root " + ctpiShlexQuote(repo) + " --sealed " + ctpiShlexQuote(dirty)
-	rc, r9 := ctpiJudge(io.Discard, repoRoot, cmd9, true)
-	caseFn("⑨ 负控：对象集含**可变件** ⇒ 本件 rc=8（不许给绿）", ctpiRCNoBase, rc, "")
-	caseFn("⑨b 且它确实报了 1 条无可比基准", 1, r9.noBaseline, "")
 	clean := filepath.Join(repo, "clean.txt")
-	cmd10 := py + " scripts/gates/check-zero-side-effect.py --json --root " + ctpiShlexQuote(repo) + " --sealed " + ctpiShlexQuote(clean)
-	rc, r10 := ctpiJudge(io.Discard, repoRoot, cmd10, true)
-	caseFn("⑩ 正控（与 ⑨ 成对）：同一夹具的已封件 ⇒ rc=0", ctpiRCOK, rc, "")
-	hasHead := false
-	for _, b := range r10.baselineFrom {
-		if strings.Contains(b, "head-blob") {
-			hasHead = true
+	// ⑨/⑩ 的内嵌判据：py 件在盘 ⇒ 用 py；退役 ⇒ 退守 Go 半（exec Go 入口）；两态皆不可用 ⇒ 不过问。
+	if cmd9, ok9 := ctpiInnerJudgeCmd(repoRoot, repo, dirty); ok9 {
+		rc, r9 := ctpiJudge(io.Discard, repoRoot, cmd9, true)
+		caseFn("⑨ 负控：对象集含**可变件** ⇒ 本件 rc=8（不许给绿）", ctpiRCNoBase, rc, "")
+		caseFn("⑨b 且它确实报了 1 条无可比基准", 1, r9.noBaseline, "")
+		cmd10, _ := ctpiInnerJudgeCmd(repoRoot, repo, clean)
+		rc, r10 := ctpiJudge(io.Discard, repoRoot, cmd10, true)
+		caseFn("⑩ 正控（与 ⑨ 成对）：同一夹具的已封件 ⇒ rc=0", ctpiRCOK, rc, "")
+		hasHead := false
+		for _, b := range r10.baselineFrom {
+			if strings.Contains(b, "head-blob") {
+				hasHead = true
+			}
 		}
+		caseFn("⑩b 且基准来源是 HEAD blob（自带基准）", true, hasHead, "")
+	} else {
+		fmt.Fprintln(stdout, "   ⊘ ⑨/⑩ 退役态：内嵌判据（"+ctpiGateRelPy+"）已退役且其 Go 半入口不可达 ⇒ **不过问**（✗ 不判 rc=2）")
 	}
-	caseFn("⑩b 且基准来源是 HEAD blob（自带基准）", true, hasHead, "")
 
 	caseFn("⑪ 正例：本件真目标段 0 处 shell-重定向写盘形态", 0,
 		ctpiCountShellRedirectTmp(ctpiOwnSourcePrefix(repoRoot)), "")

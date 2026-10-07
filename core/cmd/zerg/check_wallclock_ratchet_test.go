@@ -79,16 +79,19 @@ func cwrTestFixture(t *testing.T, baseline, audit string) string {
 	t.Helper()
 	root := cwrTestRepoRoot(t)
 	d := t.TempDir()
-	src, err := os.ReadFile(filepath.Join(root, "scripts", "gates", "check-wallclock-ratchet.py"))
-	if err != nil {
-		t.Fatalf("读不到 py 原件：%v", err)
-	}
 	must := func(rel, body string) {
 		if err := os.WriteFile(filepath.Join(d, rel), []byte(body), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
-	must("check-wallclock-ratchet.py", string(src))
+	// ★ 退役态安全（类③ · 本件退件前置）：py 原件退役（不在盘）⇒ 夹具**不落** py 副本（✗ 不再 Fatal）——
+	// 依赖 py 两态对拍的格由 cwrTestRunPy 统一 Skip（与 check-doc-name 的 t.Skipf 同口径）；
+	// 只跑 Go 的格（HelpGolden / DefaultHereNotCwd）退役后仍照跑 ⇒ 退件后本包仍绿。
+	if src, rerr := os.ReadFile(filepath.Join(root, "scripts", "gates", "check-wallclock-ratchet.py")); rerr == nil {
+		must("check-wallclock-ratchet.py", string(src))
+	} else {
+		t.Logf("py 原件不在盘（%v）⇒ 夹具不落 py 副本（两态对拍格将 Skip）", rerr)
+	}
 	if baseline != "" {
 		must("wallclock-baseline.json", baseline)
 	}
@@ -158,8 +161,17 @@ func cwrTestRunGo(dir string, argv []string) cwrTestRun {
 	return cwrTestRun{rc, out.String(), errb.String()}
 }
 
+// cwrPyPresent —— 夹具/仓侧 py 原件是否在盘（退役后 ⇒ false ⇒ 两态对拍格 Skip）。
+func cwrPyPresent(dir string) bool {
+	_, err := os.Stat(filepath.Join(dir, "check-wallclock-ratchet.py"))
+	return err == nil
+}
+
 func cwrTestRunPy(t *testing.T, dir string, argv []string) cwrTestRun {
 	t.Helper()
+	if !cwrPyPresent(dir) {
+		t.Skipf("py 副本不在夹具（原件退役）⇒ 两态对拍格不适用")
+	}
 	args := append([]string{filepath.Join(dir, "check-wallclock-ratchet.py")}, argv...)
 	cmd := exec.Command(cwrTestPyExe, args...)
 	cmd.Env = cwrTestEnv(dir)
@@ -437,5 +449,21 @@ func TestCheckWallclockRatchetDefaultHereNotCwd(t *testing.T) {
 	}
 	if rc != 0 && rc != 1 {
 		t.Fatalf("默认 HERE 应读真基线 ⇒ rc∈{0,1}，得到 %d err=%q", rc, errb.String())
+	}
+}
+
+// TestCheckWallclockRatchetPyOptional —— 退役态安全（类③）：cwrPyPresent 是「两态对拍格
+// 是否适用」的唯一判据；py 副本不在 ⇒ false ⇒ cwrTestRunPy 统一 Skip（✗ 不 Fatal）。
+// ★ 哑化负控：把 cwrPyPresent 改成恒 `return true` ⇒ 本用例第一处 Fatalf 行当场 FAIL。
+func TestCheckWallclockRatchetPyOptional(t *testing.T) {
+	d := t.TempDir()
+	if cwrPyPresent(d) {
+		t.Fatalf("空夹具不得报 py 在场（退役态必须落 false）")
+	}
+	if err := os.WriteFile(filepath.Join(d, "check-wallclock-ratchet.py"), []byte("# py\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !cwrPyPresent(d) {
+		t.Fatalf("落了 py 副本应报在场（true）")
 	}
 }

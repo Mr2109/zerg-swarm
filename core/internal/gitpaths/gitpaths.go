@@ -2,7 +2,7 @@
 //
 // ★ 本包是仓内**唯一**取件名的适配层（C-1）：凡需要「版本库里的件名」的地方，
 // 只许经本包的 List 拿，不许裸调 git 的取件名子命令（裸调由门
-// scripts/gates/check-git-path-outlet.py 拦，C-6）。
+// 门 check-git-path-outlet（Go 半 check_git_path_outlet.go · py 半已退役）拦，C-6）。
 //
 // 条文对照（《设计-件名统一出口与调用点判据-v0.1.md》§4.2 · 任务清单 A1）：
 //

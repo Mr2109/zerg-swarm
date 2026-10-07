@@ -108,30 +108,6 @@ var gpoTextAllow = []gpoTextAllowEntry{
 		Replacement: "无需改：真调用已合规。",
 	},
 	{
-		Path: "scripts/gates/check-links-lychee.py", Rule: "GPO-F3",
-		Anchor:      "① `-c " + gpoKeyLower + "=false`：**必须**",
-		Reason:      "文档字符串散文：这行讲清「为什么必须带 `-c " + gpoKeyLower + "=false`」（`D1` 已把本行统一成全小写，锚照现读正文对齐）—— 拼法键在此是**被引用的宾语**，不是被人使用的拼法。",
-		Replacement: "无需改：讲坑的文字面登记不算「误用拼法」。",
-	},
-	{
-		Path: "scripts/gates/check-links-lychee.py", Rule: "GPO-F3",
-		Anchor:      "同一个坑在账内 `W-31` 已记过一次（`" + gpoKeyUpper + "=true`",
-		Reason:      "文档字符串散文：引用账内旧坑的原文（同上）。",
-		Replacement: "无需改。",
-	},
-	{
-		Path: "scripts/gates/check-public-face-anchor.py", Rule: "GPO-F3",
-		Anchor:      "**只在 tracked 的 diff 面里判**",
-		Reason:      "文档字符串散文：本行把**正解写法**（`-c " + gpoKeyLower + "=false` · 全小写）抄进说明里当范例 —— 拼法键出现在**被演示的命令**里，是范例不是调用。",
-		Replacement: "无需改：范例文字面。",
-	},
-	{
-		Path: "scripts/gates/check-public-face-anchor.py", Rule: "GPO-F3",
-		Anchor:      "lines.append(\"diff 面：`" + gpoGitTok + " -c " + gpoKeyLower + "=false",
-		Reason:      "报告文字串：往人读的报告里印「本门用的是哪条命令」（自证面），非 argv。",
-		Replacement: "无需改：报告文字面。",
-	},
-	{
 		Path: "scripts/gates/check-gap-axis-reconcile.py", Rule: "GPO-F1",
 		Anchor:      "现读 " + gpoGitTok + " " + gpoNLsFiles + " 失败",
 		Reason:      "消息串：`ctx.get` 的第二实参 = **兜底文字**（戊 取数面拿不到时印给人看的报错文本），不是 argv —— 没有哪台机器会去跑它。同件真调用在 L143 且已带 `-z`（三锚点：`-C` + `" + gpoKeyLower + "=false` + `-z` · 同函数按 NUL 逐字切分 stdout = 证据）。",

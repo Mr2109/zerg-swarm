@@ -280,6 +280,30 @@ func TestCheckApproveBackfillEmitAndRefresh(t *testing.T) {
 	}
 }
 
+// TestCheckApproveBackfillRetired —— 退役态（G10 · 2026-10-07）：真源件（原 py）不在盘 ⇒ 回落到
+// **内化进本件**的常量 `cafbDevEditSHA256`（✗ 不 fail-closed）；件仍在盘但常量行解不出仍 fail-closed。
+// ★ 哑化负控：抽掉 `cafbScan` 的退役态分支（`if !ok && !cafbExists(gatePath)`）⇒ ② 格 rc=2 ⇒ 本用例必红。
+func TestCheckApproveBackfillRetired(t *testing.T) {
+	e := cafbSetup(t, cafbFixGo(false, false, false), []string{cafbRow("false")}, true, true, false)
+	base := []string{"--root", e.repo, "--state", e.state, "--no-self-test"}
+	run := func(gate string) (int, string) {
+		rc, out, _ := cafbRun(append(append([]string{}, base...), "--gate", gate)...)
+		return rc, out
+	}
+	// ① 真源件在盘（常量 = 全 0 ≠ 在册件 sha）⇒ 现读登记值 ⇒ B5 破 ⇒ rc=1
+	if rc, out := run(e.gate); rc != 1 || !strings.Contains(out, "B5 破") {
+		t.Fatalf("在盘态失败：rc=%d out=%q", rc, out)
+	}
+	// ② 真源件不在盘（退役态）⇒ 回落内化常量 ⇒ 仍到判据面（B5 破）· rc=1（✗ 不得 rc=2）
+	if rc, out := run(filepath.Join(e.repo, "no-such-gate-xyz.py")); rc != 1 || !strings.Contains(out, "B5 破") {
+		t.Fatalf("退役态失败（应回落内化常量 · ✗ 不 fail-closed）：rc=%d out=%q", rc, out)
+	}
+	// ③ 件在盘但常量行解不出（坏件）⇒ 仍 fail-closed rc=2（退役态分支不吃这条）
+	if rc, out := run(filepath.Join(e.repo, "core", "cmd", "zerg", "family_approve.go")); rc != 2 || !strings.Contains(out, "不出结论") {
+		t.Fatalf("坏件态失败（应 fail-closed rc=2）：rc=%d out=%q", rc, out)
+	}
+}
+
 // TestCheckApproveBackfillSelfTest —— 自检 16 格必须全过（哑化判据面 ⇒ 本格红）。
 func TestCheckApproveBackfillSelfTest(t *testing.T) {
 	rc, out, _ := cafbRun("--self-test")

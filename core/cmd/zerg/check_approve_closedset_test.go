@@ -320,6 +320,86 @@ func TestCacsScan_StaticOnlyGreen(t *testing.T) {
 	}
 }
 
+// ⑪ 退役容忍（GAP-20261007-16）：同步门 py 不在盘 且其 Go 半在盘 ⇒ S5 **不过问**（rc=0，与在盘一致）；
+// Go 半也移开 ⇒ 仍 fail-closed rc=2（牙未放宽）。
+func TestCacsScan_SyncGateRetiredTolerant(t *testing.T) {
+	build := func(withGoHalf bool) string {
+		root := t.TempDir()
+		reg := caciPyJoin(root, cacsRegistryRel)
+		if err := os.MkdirAll(filepath.Dir(reg), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		var b strings.Builder
+		b.WriteString(`{"schema":1,"note":2,"authority":3,"entries":[`)
+		for i := 0; i < cacsEntriesN; i++ {
+			if i > 0 {
+				b.WriteString(",")
+			}
+			b.WriteString(`{"id":"e` + string(rune('a'+i)) + `"`)
+			if i == 0 {
+				b.WriteString(`,"approve":1`)
+			}
+			b.WriteString(`}`)
+		}
+		b.WriteString(`],"change_flow":4}`)
+		if err := os.WriteFile(reg, []byte(b.String()), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		devdocs := caciPyJoin(root, "devdocs")
+		if err := os.MkdirAll(devdocs, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		led := cacsI4Verbatim + "\n状态：**未落地** · 预留旗标名**名字还没被占**\n"
+		if err := os.WriteFile(caciPyJoin(devdocs, cacsLedgerFile), []byte(led), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		state := caciPyJoin(root, ".zerg", "state")
+		if err := os.MkdirAll(state, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		zerg := caciPyJoin(root, "bin", "zerg")
+		if err := os.MkdirAll(filepath.Dir(zerg), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(zerg, []byte("#!/bin/sh\nexit 2\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if withGoHalf {
+			g := caciPyJoin(root, cacsSyncGoHalfRel)
+			if err := os.MkdirAll(filepath.Dir(g), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(g, []byte("package main\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return root
+	}
+
+	root := build(true)
+	var out bytes.Buffer
+	rc := cacsScan(&out, root, caciPyJoin(root, ".zerg", "state"), caciPyJoin(root, "devdocs"), "", false, 10)
+	if rc != 0 {
+		t.Fatalf("退役态期望 rc=0（✗ 非 rc=2 fail-closed），实得 %d：\n%s", rc, out.String())
+	}
+	if !strings.Contains(out.String(), "S5 不过问") {
+		t.Fatalf("退役态未打「S5 不过问」：\n%s", out.String())
+	}
+
+	root2 := build(false)
+	var out2 bytes.Buffer
+	rc2 := cacsScan(&out2, root2, caciPyJoin(root2, ".zerg", "state"), caciPyJoin(root2, "devdocs"), "", false, 10)
+	if rc2 != 2 {
+		t.Fatalf("负控（Go 半也缺）期望 rc=2 fail-closed，实得 %d：\n%s", rc2, out2.String())
+	}
+	if cacsSyncRetired(root2) {
+		t.Fatal("py 与 Go 半都不在盘 ⇒ cacsSyncRetired 应为假（不许把真·缺件当退役）")
+	}
+	if !cacsSyncRetired(root) {
+		t.Fatal("py 缺 + Go 半在盘 ⇒ cacsSyncRetired 应为真")
+	}
+}
+
 // ── 探针壳（测试二进制不是 CLI 入口 ⇒ 把 argv 转回 TestCacsHelperProcess 再直调本门入口）──
 
 func cacsShQuote(s string) string {
