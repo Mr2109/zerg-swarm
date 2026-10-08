@@ -125,6 +125,93 @@ var scriptRetireExcCols = []string{"category", "reason", "keep_cost", "review_da
 // scriptRetireExcReviewDateLayout —— 审查日期格式（真源现有条目逐字用 `2006-01-02`）。
 const scriptRetireExcReviewDateLayout = "2006-01-02"
 
+// ── 第④格：`reason` 首词闭集（2026-10-08）──────────────────────────────────────
+//
+// 口径（真源 = `core/internal/contract/adopt-retire.json` boundaries 末两条）：
+//
+//	`reason` 须写成 `<首词>：<为什么物理上不能 Go 化>`；首词 = **首个全角 `：`（U+FF1A）之前**
+//	那段（再 TrimSpace），首词须 ∈ 闭集（**5 档**）。★ 与「闭集内件（决-12）」是**两个面**，✗ 别混。
+//
+// ★ **判域 ≡ `reason` 首词 ∈ 闭集（乙案 · 2026-10-08 代拍）**：判域只认契约（`boundaries[7]`）已定义语汇的
+// `reason` 首词（5 档）；原「显式名单 ∪ `category∈{物理不可化,硬线,自举}`」双支已删（`category` 无契约语汇 ·
+// 腿净贡献 0）。下 17 件名单**降级为对照/校验**（✗ 非判域 · 仅断言「名单内件仍在判域」）。
+var scriptRetireExcReasonPrefixes = []string{"生态绑定", "OS胶水", "vendor", "硬线", "自举"}
+
+// scriptRetireExcReasonColon —— 首词分隔符 = **全角冒号**（U+FF1A）；✗ 半角 `:` 不算。
+const scriptRetireExcReasonColon = "\uFF1A"
+
+// scriptRetireExcReasonDomainObjects —— **对照/校验**名单（现读 17 件 · ✗ **非判域**）。
+//
+// ★ 名单不再当判域选择子：判域 ≡ `reason` 首词 ∈ 闭集（契约真源）⇒ 名册增删**自动随动**，消掉
+// 「添件忘补名单 ⇒ 漏判」这颗雷。此名单只作回归对照（仅校验「名单内件仍在判域」· ✗ 只许随名册瘦身下调）。
+var scriptRetireExcReasonDomainObjects = []string{
+	"deploy/scripts/deploy-launch.sh",
+	"docs/site/export-and-build.sh",
+	"mcp/bench_llmlingua2.py",
+	"mcp/bench_llmlingua2_v2.py",
+	"mcp/test_compress_models.py",
+	"mcp/test_selective_context.py",
+	"scripts/build/build-wall-mutate.py",
+	"scripts/build/negctl-build-wall.sh",
+	"scripts/gates/mutation-smoke.sh",
+	"scripts/gates/precommit-gates.sh",
+	"scripts/gates/two-states-gate-mutate.py",
+	"scripts/sandbox-probes/negctl-two-states.sh",
+	"scripts/svc/setup-zerg.sh",
+	"scripts/wall/wall-bridge-mutate.py",
+	"scripts/wall/wall-macos-mutate.py",
+	"tools/ocr/ocr_server.py",
+	"zerg-evals/backends/bfcl_scorer.py",
+}
+
+// scriptRetireExcReasonPrefixOf —— 取 `reason` 首词（首个全角 `：` 之前 · TrimSpace）；无全角冒号/首词空 ⇒ ok=false。
+func scriptRetireExcReasonPrefixOf(reason string) (string, bool) {
+	i := strings.Index(reason, scriptRetireExcReasonColon)
+	if i < 0 {
+		return "", false
+	}
+	w := strings.TrimSpace(reason[:i])
+	return w, w != ""
+}
+
+// scriptRetireExcReasonPrefixClosed —— 首词是否 ∈ 闭集（逐字相等 · ✗ 不前缀匹配）。
+func scriptRetireExcReasonPrefixClosed(w string) bool {
+	for _, p := range scriptRetireExcReasonPrefixes {
+		if w == p {
+			return true
+		}
+	}
+	return false
+}
+
+// scriptRetireExcInReasonDomain —— 判域 ≡ `reason` 首词 ∈ 闭集（契约 `boundaries[7]` 单点真源）。
+// ★ 乙案：判域只认 `reason` 首词（5 档）；✗ 不看 `category` 列（无契约语汇 · 净贡献 0）。
+func scriptRetireExcInReasonDomain(reason string) bool {
+	w, ok := scriptRetireExcReasonPrefixOf(strings.TrimSpace(reason))
+	return ok && scriptRetireExcReasonPrefixClosed(w)
+}
+
+// scriptRetireExcOnRatchetList —— ★ 对照/校验（✗ 非判域）：object 是否在对照名单内。
+func scriptRetireExcOnRatchetList(object string) bool {
+	o := strings.TrimSpace(object)
+	for _, x := range scriptRetireExcReasonDomainObjects {
+		if x == o {
+			return true
+		}
+	}
+	return false
+}
+
+// scriptRetireExcReasonHead —— 报话里回显 reason 的前 40 个字符（按 rune 截 · ✗ 不切坏多字节）。
+func scriptRetireExcReasonHead(reason string) string {
+	const n = 40
+	rs := []rune(reason)
+	if len(rs) <= n {
+		return reason
+	}
+	return string(rs[:n]) + "…"
+}
+
 // scriptRetireExcElem —— 名册里**一条顶层元素**的原文 ＋ 起行（1-based）。
 type scriptRetireExcElem struct {
 	Text string
@@ -230,7 +317,8 @@ func scriptRetireExcElements(raw, key string) ([]scriptRetireExcElem, error) {
 //
 //	① **四列齐**：`category` / `reason` / `keep_cost` / `review_date` 都非空（`object` 亦不许空·主键）；
 //	② `object` 在**决-12 闭集**里（自研面 py/sh：全仓 − `vendor/**` − `tools/ocr/venv/**`）；
-//	③ `review_date` **可解析**（`2006-01-02`）。
+//	③ `review_date` **可解析**（`2006-01-02`）；
+//	④ `reason` **首词 ∈ 闭集**（5 档）—— 判域 ≡ 首词合档（契约真源）；对照名单内件由本格**校验**。
 //
 // 返回的每条错都带 **`件:行`**；空返回 = 名册形态合。纯函数：只看传入的原文，✗ 不碰盘
 // ⇒ 负控可喂合成件。调用方（`cmdScriptRetire`）据此**不给结论**（退码 2）。
@@ -271,6 +359,17 @@ func scriptRetireExceptionErrors(truthRel, raw string) []string {
 		if rd := col["review_date"]; rd != "" {
 			if _, perr := time.Parse(scriptRetireExcReviewDateLayout, rd); perr != nil {
 				errs = append(errs, fail(el.Line, "review_date=%q 解不动（要 `2006-01-02`）：%v", rd, perr))
+			}
+		}
+		// ④ 判域 ≡ `reason` 首词 ∈ 闭集（真源 boundaries[7] · 5 档）——
+		//    ★ 对照名单仅作**校验**（✗ 非判域）：名单内件须仍在判域（首词合档）；名单外件判域随动。
+		if scriptRetireExcOnRatchetList(object) {
+			if reason := col["reason"]; reason != "" {
+				if w, ok := scriptRetireExcReasonPrefixOf(reason); !ok || !scriptRetireExcReasonPrefixClosed(w) {
+					errs = append(errs, fail(el.Line,
+						"reason 首词 ∉ 闭集（reason=%q）—— 须 `<%s>：<为什么物理上不能 Go 化>`（全角冒号 `：`）",
+						scriptRetireExcReasonHead(reason), strings.Join(scriptRetireExcReasonPrefixes, " / ")))
+				}
 			}
 		}
 	}

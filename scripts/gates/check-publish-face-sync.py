@@ -37,6 +37,12 @@
      ★ 2026-09-21 补（前一批的已知缺口 ①）：候选集必须**看得见非 ASCII 名件** —— `tracked_files` 给
        `git ls-files` 加 `-c core.quotepath=false`。不加时这类件被转义成 `"scripts/\345…"` ⇒ 白名单
        失配 ⇒ 它们在候选集里缺席 ⇒ 判据⑥ 对它们**静默无牙**（表说 no、链上照发，而门禁全绿）。
+  ⑦ **面内 vs 盘上 关系式 + 面外非空（且一入库即红）即降档 rc=2**（★ GAP-20260927-160）——
+     候选集只取 `git ls-files`（面内）⇒ 未入索引的白名单件（面外）今天**完全空判**：判据①/⑥
+     今天 rc=0、**一 `git add` 即红**（假绿）。本判据把「盘上白名单件 = 面内 + 面外」印成关系式，
+     并逐条预演面外件的判据①/②/⑥ 有效判定：凡「一入库即红」⇒ **降档 rc=2**（只降档不报红 ——
+     未入索引件不是硬违规，不能报红；但也绝不许冒充绿）。★ 面外全绿（如他路未跟踪新码：
+     非私有面 · 非表 no · 镜像器不丢）⇒ 关系式照印、退码不变（不误伤在途 WIP）。
 
 **单一真源（一律复用，绝不另抄一份解析器）**：
   · 白名单解析 / EXCLUDES 解析 —— `scripts/gates/check-history-secrets.py`
@@ -124,9 +130,35 @@ def tracked_files(repo):
     return [ln for ln in r.stdout.splitlines() if ln]
 
 
+def untracked_files(repo):
+    # ★ GAP-20260927-160（判据⑦ · 面内 vs 盘上 关系式）：候选集（面内）取的是 `git ls-files`
+    #   （**只已跟踪**）⇒ 「一 git add 即红」的未入索引件今天**完全空判**（假绿）。这里读**面外**
+    #   = 未入索引的白名单件（`git ls-files --others --exclude-standard`），供判据⑦ 预演
+    #   「入库那一刻会不会红」。口径与 `tracked_files` 逐字同（`-c core.quotepath=false`
+    #   ⇒ 非 ASCII 名件不许被转义掉）。
+    r = subprocess.run(["git", "-C", repo, "-c", "core.quotepath=false", "ls-files",
+                        "--others", "--exclude-standard"], capture_output=True, text=True)
+    if r.returncode != 0:
+        print("✗ git ls-files --others 失败：%s（rc=%d）" % (repo, r.returncode), file=sys.stderr)
+        raise SystemExit(2)
+    return [ln for ln in r.stdout.splitlines() if ln]
+
+
 def require_paths(paths):
     """返回缺件的键列表（缺件一律 rc=2，绝不静默跳过）。"""
     return [k for k, v in paths.items() if not os.path.exists(v)]
+
+
+def private_hit(rel, pdirs, pfiles, pallowed):
+    """命中私有面黑名单的判定（照原闭包逐字外提 —— 判据② 与判据⑦ 共用**一处**口径）。"""
+    if PRIV.is_allowed(rel, pallowed):
+        return None
+    for d in pdirs:
+        if rel.startswith(d):
+            return d
+    if rel in pfiles:
+        return rel
+    return None
 
 
 def classify(repo, paths):
@@ -141,16 +173,6 @@ def classify(repo, paths):
     mirror = load_module("face_sync_mirror", paths["mirror_lib"])
     marks = MARKS.load_table(paths["marks_table"])
 
-    def private_hit(rel):
-        if PRIV.is_allowed(rel, pallowed):
-            return None
-        for d in pdirs:
-            if rel.startswith(d):
-                return d
-        if rel in pfiles:
-            return rel
-        return None
-
     candidates, dropped, hits, wall = [], [], [], []
     for rel in tracked_files(repo):
         if not HSEC.published_path(rel, entries):
@@ -160,12 +182,20 @@ def classify(repo, paths):
         candidates.append(rel)
         if rel.startswith(WALL_ENTRY):
             wall.append(rel)
-        m = private_hit(rel)
+        m = private_hit(rel, pdirs, pfiles, pallowed)
         if m:
             hits.append((rel, m))
         if mirror.map_path(rel) is None:    # 镜像器自带清单丢弃
             dropped.append(rel)
-    return candidates, dropped, hits, wall, entries, excludes, marks, mirror
+    # 面外 = 未入索引的白名单件（判据⑦ 的被判对象）。口径与候选集逐条同构（published_path ∧ 非 publish/）。
+    others = []
+    for rel in untracked_files(repo):
+        if not HSEC.published_path(rel, entries):
+            continue
+        if rel.startswith("publish/"):
+            continue
+        others.append(rel)
+    return candidates, dropped, hits, wall, others, entries, excludes, marks, mirror
 
 
 # ── 判据⑤：清单自身语法（末行未闭合 / 条目格式不合格 ⇒ 不给结论）────────────────────────────
@@ -262,7 +292,7 @@ def evaluate(repo, paths):
     if missing:
         return 2, ["  ✗ 缺件（%s）⇒ 拒绝给结论（rc=2）" % "、".join(sorted(missing))]
     try:
-        cand, dropped, hits, wall, entries, excludes, marks, mirror = classify(repo, paths)
+        cand, dropped, hits, wall, others, entries, excludes, marks, mirror = classify(repo, paths)
     except MARKS.TableError as e:
         return 2, ["  ✗ 标记表不合规（%s）⇒ 拒绝给结论（rc=2）—— 用坏表判出的绿没有意义（A 档口径）" % e]
     pdirs, pfiles, pallowed = PRIV.load_rules(paths["private_paths"])
@@ -346,6 +376,33 @@ def evaluate(repo, paths):
     else:
         lines.append("  ✅ 判据⑥ 表说 no 的件两器都已排除：%d 条（表 `no` %d 行 · 候选集内 %d 条）"
                      % (len(marks_cand), len(no_marks), len(marks_cand)))
+
+    # ⑦ 面内 vs 盘上 关系式 + **面外非空（且一入库即红）即降档 rc=2**（只降档不报红 ·
+    #   ★ GAP-20260927-160 · 照 `check-gate-coverage.py` 的「计数自证」形状）：
+    #   面内 = 候选集（`git ls-files` ∩ 白名单）· 面外 = 盘上白名单件里**未入索引**那批
+    #   （`git ls-files --others` ∩ 白名单）· 关系式 = 面内 + 面外 == 盘上件数。
+    #   降档口径（★ 关键：不误伤他路未跟踪新码）：面外件逐条按判据①/②/⑥ 的**有效判定**预演，
+    #   凡「一 git add 即红」的 ⇒ 直接 rc=2 拒绝给结论（**不进 bad** ⇒ 只降档不报红）；
+    #   面外全绿（如他路未跟踪新码：非私有面 · 非表 no · 镜像器不丢）⇒ 关系式照印、退码不变。
+    outer_viol = []
+    for rel in others:
+        dropped_hit = mirror.map_path(rel) is None
+        excl = HSEC.excluded(rel, excludes)
+        priv = private_hit(rel, pdirs, pfiles, pallowed)
+        would_red = ((dropped_hit and not excl)
+                     or (priv is not None and not excl and not dropped_hit)
+                     or (rel in no_set and not excl))
+        if would_red:
+            outer_viol.append(rel)
+    lines.append("  面内 %d + 面外（未入索引）%d = 盘上 %d"
+                 % (len(cand), len(others), len(cand) + len(others)))
+    if outer_viol:
+        lines.append("  ✗ 判据⑦ 面外件一入库即红 %d 条 ⇒ 降档（只降档不报红 · rc=2）：" % len(outer_viol))
+        for p in outer_viol[:40]:
+            lines.append("      %s" % p)
+        lines.append("  ⇒ 面外非空且一入库即红 ⇒ 现刻判不了（拒绝给结论 rc=2）")
+        return 2, lines
+    lines.append("  ✅ 判据⑦ 面外件（未入索引）%d 条，无一入库即红" % len(others))
     return bad, lines
 
 
@@ -412,7 +469,24 @@ FIXTURES = [
                     "scripts/mech.py\tno\t夹具：B 类（合成 · 判据⑥ 的被判对象）\n"
                     "scripts/公开核对.tsv\tno\t夹具：非 ASCII 名 + 表说 no + 两器都发（缺口 ① 的那一格）\n"
                     "scripts/keep.py\tyes\t夹具：A 类（合成）\n"}),
+    # 判据⑦（面内 vs 盘上 · 面外降档 · ★ GAP-20260927-160）两格：
+    #   ① 面外件一入库即红（表说 no · EXCLUDES 未收）⇒ **降档 rc=2**（不是 rc=1 · 只降档不报红）
+    #   ② 面外件全绿（新码：非私有面 · 非表 no · 镜像器不丢）⇒ 退码不变（rc=0）—— 防误伤他路新码
+    ("outer-viol-downgrade", ["scripts/", "wall/"], ["scripts/mech.py"],
+     ["scripts/mech.py"], ["scripts/mech.py"], 2,
+     {"marks_text": "文件\tpublic\t理由\n"
+                    "scripts/mech.py\tno\t夹具：B 类（合成 · 判据⑥ 的被判对象）\n"
+                    "scripts/keep.py\tyes\t夹具：A 类（合成）\n"
+                    "scripts/outer_viol.py\tno\t夹具：面外件（未入索引）· 一 git add 即红（判据⑥）\n"}),
+    ("outer-clean-no-downgrade", ["scripts/", "wall/"], ["scripts/mech.py"],
+     ["scripts/mech.py"], ["scripts/mech.py"], 0),
 ]
+
+# 判据⑦ 的夹具面外件（键 = 夹具名；写完**不** `git add` ⇒ 落 `git ls-files --others`）。
+FIXTURE_UNTRACKED = {
+    "outer-viol-downgrade": ["scripts/outer_viol.py"],
+    "outer-clean-no-downgrade": ["scripts/outer_new.py"],
+}
 
 # 夹具里被跟踪的件（另可逐格用 opts["tracked_extra"] 加 —— 缺口 ① 那一格要一枚**非 ASCII 名**件）。
 FIXTURE_TRACKED = ["scripts/mech.py", "scripts/keep.py", "wall/src/lib.rs", "wall/Cargo.toml"]
@@ -482,6 +556,11 @@ def self_test():
         root = os.path.join(base, name)
         os.makedirs(root, exist_ok=True)
         make_fixture(root, wl, priv, excl, drop, opts)
+        # 判据⑦ 的夹具面外件：写完**不** `git add` ⇒ 落 `git ls-files --others`（未入索引）
+        for rel in FIXTURE_UNTRACKED.get(name, []):
+            p = os.path.join(root, rel)
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            open(p, "w", encoding="utf-8").write("x\n")
         try:
             rc, _lines = evaluate(root, paths_for(root))
         except SystemExit as exc:            # 缺件 ⇒ 2（与真跑同语义）

@@ -380,13 +380,26 @@ def check(root, mod, decl_path=None, ps_file=None, launchctl_file=None, home=Non
         return 2, [], [], notes, ["空转：ps 里一件自研件（%s…）都没扫到（不许当绿）" % mod.PROC_HINTS[0]]
 
     # ── 侧①「盘上有 / 声明无」：现值自研进程里，不被任何 kind=launchd 的进程特征覆盖的条 ──
+    # ★ GAP-20260927-62 治尾巴①(a) —— **PPID 深度1直系豁免**：`ps -eo pid,ppid,…` 的第 2 列 ppid
+    #   是「已声明服务派生 task-scoped 子进程」的现成证据。先取**所有被 launchd 声明覆盖的现值进程**
+    #   的 pid 作父集合；现值自研进程若**未被任何 launchd 声明覆盖**、**未被任何 ghost 行登记**，
+    #   而其 ppid ∈ 该父集合 ⇒ 它是某条已声明服务的**直接子**（深度 1）⇒ **不算未登记幽灵**。
+    #   ✗ 不追孙进程：深度 2+ 的子孙 ppid 落在子进程 pid 上、不在父集合内，照旧计入。
+    declared_pids = set()
+    for _ln in ps_lines:
+        if any(r["proc"] and r["proc"] != "-" and r["proc"] in _ln for r in launchd_rows):
+            _f = _ln.split()
+            if _f:
+                declared_pids.add(_f[0])
     side1 = []
     for ln in live:
         hit = [r for r in launchd_rows if r["proc"] and r["proc"] != "-" and r["proc"] in ln]
         if hit:
             continue
-        reg = [r for r in ghost_rows if r["proc"] and r["proc"] != "-" and r["proc"] in ln]
         fields = ln.split()
+        reg = [r for r in ghost_rows if r["proc"] and r["proc"] != "-" and r["proc"] in ln]
+        if not reg and len(fields) >= 2 and fields[1] in declared_pids:
+            continue
         side1.append({"pid": fields[0] if fields else "?", "cmdline": " ".join(fields[1:]).strip(),
                       "registered_as": reg[0]["name"] if reg else None,
                       "disposition": reg[0]["disposition"] if reg else None,
@@ -419,18 +432,23 @@ def check(root, mod, decl_path=None, ps_file=None, launchctl_file=None, home=Non
     notes.append("声明树：%d 条 launchd · %d 条 ghost（已登记幽灵）· 现值自研件 %d 条 · launchctl 里 zerg 行 %d"
                  % (len(launchd_rows), len(ghost_rows), len(live), len(lc_zerg)))
 
-    # ── S2 同源断言：侧①条数 == doctor「回收候选（幽灵服务）」条数 ──
+    # ── S2 同源断言（★ GAP-20260927-62 治尾巴①(b)）：**侧① 中 registered_as 非空的子集** ==
+    #   `zerg doctor`「回收候选（幽灵服务）」条数。真源核对：doctor ⑧ 与 `core daemon ls --declared`
+    #   同调 `ghostProcesses()`（`kind=ghost` 行 × 现值命中）⇒ doctor 数的**正是已登记幽灵**，未登记幽灵
+    #   它根本看不见 ⇒ 旧写法拿 `len(side1)`（含未登记）去比，会把「多一条未登记幽灵」误判成同源漂移红。
     if zerg is None:
         zerg = os.path.join(root, "bin", "zerg")
     dcount, ddetail, derr = read_doctor(zerg, doctor_file=doctor_file)
     if derr:
         return 2, side1, side2, notes, ["同源读数取不到：%s（`T2` 判据③ 的同一格 ⇒ 不许换一份口径）" % derr]
-    if dcount != len(side1):
-        problems.append("FAIL S2 同源漂移：本件侧① %d 条 vs `zerg doctor`「%s」%d 条 ⇒ 两处口径已分叉"
+    reg_side1 = [it for it in side1 if it["registered_as"] is not None]
+    if dcount != len(reg_side1):
+        problems.append("FAIL S2 同源漂移：本件侧① 已登记（`registered_as` 非空）%d 条 vs `zerg doctor`「%s」%d 条 ⇒ 两处口径已分叉"
                         "（`T2` 判据③ 要求逐字同值）· doctor 原读：%s"
-                        % (len(side1), DOCTOR_ITEM, dcount, ddetail))
-    notes.append("S2 同源：侧① %d 条 · doctor「%s」%d 条（%s）" % (len(side1), DOCTOR_ITEM, dcount,
-                                                              "逐字同值 ✓" if dcount == len(side1) else "不等 ✗"))
+                        % (len(reg_side1), DOCTOR_ITEM, dcount, ddetail))
+    notes.append("S2 同源：侧① 已登记 %d 条（侧① 共 %d 条）· doctor「%s」%d 条（%s）"
+                 % (len(reg_side1), len(side1), DOCTOR_ITEM, dcount,
+                    "逐字同值 ✓" if dcount == len(reg_side1) else "不等 ✗"))
     notes.append("取证：ps=%s · launchctl=%s · doctor=%s" % (psmode, lcmode, "fixture" if doctor_file else "live"))
 
     return (1 if problems else 0), side1, side2, notes, problems
@@ -698,16 +716,42 @@ def self_test():
                                 launchctl_file=os.path.join(d1, "没有-launchctl.txt"), home=home, doctor_file=df)
     case("⑧ launchctl 取不到 ⇒ rc=2（不当绿）", 2, rc8, note="  " + (p8[0][:40] if p8 else ""))
 
-    # ⑨ 未登记幽灵（ps 多一件、声明里没有）⇒ 侧① 变 2 条且其中一条标「未登记」
+    # ⑨ 未登记幽灵（ps 多一件、声明里没有）：侧① 变 2 条（一登记一未登记）；S2 只比**已登记子集**（1 条）
+    #   ⇒ 与 doctor 1 条同值 ⇒ rc=0（★ GAP-20260927-62(b)：未登记幽灵不参与 S2，旧口径 doctor 2 条此格必红）
     pp9 = os.path.join(d1, "ps-extra.txt")
     with open(pp9, "w", encoding="utf-8") as f:
         f.write(GOOD_PS + "  88888     1       10:00 /repo/bin/zerg-mystery --boot\n")
     df9 = os.path.join(d1, "doctor9.json")
     with open(df9, "w", encoding="utf-8") as f:
-        f.write(_doctor_json(2))
+        f.write(_doctor_json(1))
     rc9, s19, _b, _c, _p9 = check(d1, mod, decl_path=dp, ps_file=pp9, launchctl_file=lp, home=home, doctor_file=df9)
-    case("⑨ 未登记幽灵：侧① 2 条（一登记一未登记）且与 doctor 2 条同值 ⇒ rc=0", (0, 2, 1), (rc9, len(s19),
+    case("⑨ 未登记幽灵：侧① 2 条（一登记一未登记）· S2 比已登记子集 1 条 == doctor 1 条 ⇒ rc=0", (0, 2, 1), (rc9, len(s19),
          sum(1 for it in s19 if it["registered_as"] is None)))
+
+    # ⑪ PPID 深度1直系豁免（★ GAP-20260927-62(a)）：zerg-core(声明服务 · pid=68939) 的**直接子**
+    #   task 进程（ppid=68939）不算未登记幽灵 ⇒ 侧① 仍 1 条（只 cocoon）· 未登记 0 条 ⇒ rc=0
+    pp11 = os.path.join(d1, "ps-child.txt")
+    with open(pp11, "w", encoding="utf-8") as f:
+        f.write(GOOD_PS + "  77777     68939   00:05 /repo/bin/zerg-taskworker --scoped\n")
+    df11 = os.path.join(d1, "doctor-child.json")
+    with open(df11, "w", encoding="utf-8") as f:
+        f.write(_doctor_json(1))
+    rc11, s111, _b, _c, _p11 = check(d1, mod, decl_path=dp, ps_file=pp11, launchctl_file=lp, home=home, doctor_file=df11)
+    case("⑪ PPID 深度1直系豁免：声明服务直接子 task 进程不入侧① ⇒ (0,1,0)", (0, 1, 0),
+         (rc11, len(s111), sum(1 for it in s111 if it["registered_as"] is None)))
+
+    # ⑪b 负控：只豁免**深度 1** —— 孙进程（父=子进程 pid 77777 · 非声明）与父非声明的散件仍计未登记
+    pp11b = os.path.join(d1, "ps-stray.txt")
+    with open(pp11b, "w", encoding="utf-8") as f:
+        f.write(GOOD_PS + "  77777     68939   00:05 /repo/bin/zerg-taskworker --scoped\n"
+                          "  88888     77777   00:05 /repo/bin/zerg-grand --deep\n"
+                          "  66666       1     01:00 /repo/bin/zerg-stray --boot\n")
+    df11b = os.path.join(d1, "doctor-stray.json")
+    with open(df11b, "w", encoding="utf-8") as f:
+        f.write(_doctor_json(1))
+    rc11b, s111b, _b, _c, _p11b = check(d1, mod, decl_path=dp, ps_file=pp11b, launchctl_file=lp, home=home, doctor_file=df11b)
+    case("⑪b 负控：孙进程/父非声明 仍计未登记 ⇒ (0,3,2)", (0, 3, 2),
+         (rc11b, len(s111b), sum(1 for it in s111b if it["registered_as"] is None)))
 
     # ⑩ 只读自证（真目标路径的指纹函数）：夹具仓跑两次 ⇒ 差异 0 件
     then = readonly_fingerprint(d1, dp)

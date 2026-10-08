@@ -46,6 +46,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -356,9 +357,11 @@ func cpfsRequirePaths(p cpfsPaths) []string {
 
 type cpfsClass struct {
 	cand, dropped, wall   []string
+	others                []string // 判据⑦：面外 = 未入索引的白名单件
 	hits                  [][2]string
 	entries, excludes     []string
 	pdirs, pfiles         []string
+	privAllowed           []string // 判据⑦ 复用私有面豁免（判据②/⑦ 同口径）
 	marks                 []mkcpRow
 	dropExact, dropPrefix []string
 }
@@ -376,6 +379,46 @@ func cpfsMapPathNone(rel string, dropExact, dropPrefix []string) bool {
 	return false
 }
 
+// cpfsUntrackedFiles = py `untracked_files`：`git -C repo -c core.quotepath=false ls-files
+// --others --exclude-standard`（★ GAP-20260927-160：面外 = 未入索引的白名单件；供判据⑦ 预演）。
+func cpfsUntrackedFiles(repo string) ([]string, error) {
+	cmd := exec.Command("git", "-C", repo, "-c", "core.quotepath=false", "ls-files", "--others", "--exclude-standard")
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	if err := cmd.Run(); err != nil {
+		rc := 1
+		if ee, ok := err.(*exec.ExitError); ok {
+			rc = ee.ExitCode()
+		}
+		return nil, mkcpUnsupported{fmt.Sprintf(
+			"git ls-files --others 失败：%s（rc=%d ⇒ 面外面读不到 = 判不了，缺件 ≠ 绿）", repo, rc)}
+	}
+	var files []string
+	for _, ln := range strings.Split(out.String(), "\n") {
+		if ln != "" {
+			files = append(files, ln)
+		}
+	}
+	return files, nil
+}
+
+// cpfsPrivateHit = py `private_hit`（判据② 与判据⑦ 共用**一处**口径）。
+func cpfsPrivateHit(rel string, pdirs, pfiles, allowed []string) string {
+	if publishSetPrivateAllowed(rel, allowed) {
+		return ""
+	}
+	for _, d := range pdirs {
+		if strings.HasPrefix(rel, d) {
+			return d
+		}
+	}
+	if mkcpContains(pfiles, rel) {
+		return rel
+	}
+	return ""
+}
+
 // cpfsClassify → 分类结果；表不合规 ⇒ 返 `mkcpTableError`（调用方按 rc=2 处理）。
 func cpfsClassify(repo string, p cpfsPaths) (*cpfsClass, error) {
 	c := &cpfsClass{}
@@ -386,7 +429,7 @@ func cpfsClassify(repo string, p cpfsPaths) (*cpfsClass, error) {
 		return nil, mkcpUnsupported{"私有面黑名单读不到：" + p.privatePaths}
 	}
 	dirs, files, allowed := publishSetPrivateFaceRules(plines)
-	c.pdirs, c.pfiles = dirs, files
+	c.pdirs, c.pfiles, c.privAllowed = dirs, files, allowed
 
 	if de, ok := mkcpPyStringSet(p.mirrorLib, "DROP_EXACT"); ok {
 		c.dropExact = de
@@ -416,24 +459,26 @@ func cpfsClassify(repo string, p cpfsPaths) (*cpfsClass, error) {
 		if strings.HasPrefix(rel, cpfsWallEntry) {
 			c.wall = append(c.wall, rel)
 		}
-		var m string
-		if !publishSetPrivateAllowed(rel, allowed) {
-			for _, d := range c.pdirs {
-				if strings.HasPrefix(rel, d) {
-					m = d
-					break
-				}
-			}
-			if m == "" && mkcpContains(c.pfiles, rel) {
-				m = rel
-			}
-		}
+		m := cpfsPrivateHit(rel, c.pdirs, c.pfiles, c.privAllowed)
 		if m != "" {
 			c.hits = append(c.hits, [2]string{rel, m})
 		}
 		if cpfsMapPathNone(rel, c.dropExact, c.dropPrefix) {
 			c.dropped = append(c.dropped, rel)
 		}
+	}
+	untracked, err := cpfsUntrackedFiles(repo)
+	if err != nil {
+		return nil, err
+	}
+	for _, rel := range untracked {
+		if !mkcpPublishedPath(rel, c.entries) {
+			continue
+		}
+		if strings.HasPrefix(rel, "publish/") {
+			continue
+		}
+		c.others = append(c.others, rel)
 	}
 	return c, nil
 }
@@ -598,6 +643,35 @@ func cpfsEvaluate(repo string, paths cpfsPaths) (int, []string) {
 		lines = append(lines, fmt.Sprintf("  ✅ 判据⑥ 表说 no 的件两器都已排除：%d 条（表 `no` %d 行 · 候选集内 %d 条）",
 			len(marksCand), len(noMarks), len(marksCand)))
 	}
+
+	// ⑦ 面内 vs 盘上 关系式 + 面外非空（且一入库即红）即降档 rc=2（只降档不报红 · ★ GAP-20260927-160）：
+	//   面内 = 候选集 · 面外 = 未入索引的白名单件 · 关系式 = 面内 + 面外 == 盘上件数。
+	//   降档口径：面外件逐条按判据①/②/⑥ 的有效判定预演，凡「一 git add 即红」⇒ rc=2（不进 bad）；
+	//   面外全绿（如他路未跟踪新码）⇒ 关系式照印、退码不变（不误伤在途 WIP）。
+	var outerViol []string
+	for _, rel := range cl.others {
+		droppedHit := cpfsMapPathNone(rel, cl.dropExact, cl.dropPrefix)
+		excl := mkcpExcluded(rel, cl.excludes)
+		priv := cpfsPrivateHit(rel, cl.pdirs, cl.pfiles, cl.privAllowed)
+		wouldRed := (droppedHit && !excl) ||
+			(priv != "" && !excl && !droppedHit) ||
+			(noSet[rel] && !excl)
+		if wouldRed {
+			outerViol = append(outerViol, rel)
+		}
+	}
+	lines = append(lines, fmt.Sprintf("  面内 %d + 面外（未入索引）%d = 盘上 %d",
+		len(cl.cand), len(cl.others), len(cl.cand)+len(cl.others)))
+	if len(outerViol) > 0 {
+		lines = append(lines, fmt.Sprintf("  ✗ 判据⑦ 面外件一入库即红 %d 条 ⇒ 降档（只降档不报红 · rc=2）：", len(outerViol)))
+		lim := cpfsLim(len(outerViol))
+		for _, p := range outerViol[:lim] {
+			lines = append(lines, "      "+p)
+		}
+		lines = append(lines, "  ⇒ 面外非空且一入库即红 ⇒ 现刻判不了（拒绝给结论 rc=2）")
+		return 2, lines
+	}
+	lines = append(lines, fmt.Sprintf("  ✅ 判据⑦ 面外件（未入索引）%d 条，无一入库即红", len(cl.others)))
 	return bad, lines
 }
 
@@ -624,7 +698,7 @@ func cpfsPad(s string, w int) string {
 	return s + strings.Repeat(" ", w-n)
 }
 
-// ── 自检夹具（16 条 · 逐字照 py FIXTURES/self_test）──────────────────────────────────
+// ── 自检夹具（18 条 · 逐字照 py FIXTURES/self_test）──────────────────────────────────
 
 const cpfsFixtureLibTmpl = `# 夹具用的最小 mirror lib（只提供本门禁读的三个名字）
 DROP_PREFIX = ()
@@ -695,6 +769,21 @@ var cpfsFixtures = []cpfsFx{
 			"scripts/公开核对.tsv\tno\t夹具：非 ASCII 名 + 表说 no + 两器都发（缺口 ① 的那一格）\n" +
 			"scripts/keep.py\tyes\t夹具：A 类（合成）\n",
 		[]string{"scripts/公开核对.tsv"}},
+	// 判据⑦（面内 vs 盘上 · 面外降档 · ★ GAP-20260927-160）两格（面外件由 cpfsFxUntracked 供给）。
+	{"outer-viol-downgrade", []string{"scripts/", "wall/"}, []string{"scripts/mech.py"},
+		[]string{"scripts/mech.py"}, []string{"scripts/mech.py"}, 2, false, false, false, "",
+		"文件\tpublic\t理由\n" +
+			"scripts/mech.py\tno\t夹具：B 类（合成 · 判据⑥ 的被判对象）\n" +
+			"scripts/keep.py\tyes\t夹具：A 类（合成）\n" +
+			"scripts/outer_viol.py\tno\t夹具：面外件（未入索引）· 一 git add 即红（判据⑥）\n", nil},
+	{"outer-clean-no-downgrade", []string{"scripts/", "wall/"}, []string{"scripts/mech.py"},
+		[]string{"scripts/mech.py"}, []string{"scripts/mech.py"}, 0, false, false, false, "", "", nil},
+}
+
+// cpfsFxUntracked —— 判据⑦ 的夹具面外件（键 = 夹具名；写完**不** add ⇒ 落 `git ls-files --others`）。
+var cpfsFxUntracked = map[string][]string{
+	"outer-viol-downgrade":     {"scripts/outer_viol.py"},
+	"outer-clean-no-downgrade": {"scripts/outer_new.py"},
 }
 
 func cpfsMkdirAll(p string) { _ = os.MkdirAll(p, 0o755) }
@@ -765,6 +854,9 @@ func cpfsMakeFixture(root string, fx cpfsFx) {
 	addCmd.Stdout = io.Discard
 	addCmd.Stderr = io.Discard
 	_ = addCmd.Run()
+	for _, rel := range cpfsFxUntracked[fx.name] { // 判据⑦：面外件（写完**不** add ⇒ 未入索引）
+		cpfsWrite(cpfsPyJoin(root, rel), "x\n")
+	}
 	if fx.deleteWhitelist {
 		_ = os.Remove(cpfsPyJoin(root, "publish", "whitelist.txt"))
 	}

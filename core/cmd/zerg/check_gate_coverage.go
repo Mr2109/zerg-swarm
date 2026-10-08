@@ -77,7 +77,7 @@ var cgcOORDecl = "不进门禁" + "步骤表"
 
 const cgcDeclScanLines = 80
 
-// ④ 格两条指路文案（唯一一处定义）；受判块口径见真源件注释。
+// ④ 格两条指路文案（唯一一处定义）；受判块口径：判据件（门76 面⑥）按「处置」块机检「**白名单** + **reason**」两词是否都指到 ⇒ 本串字面只许出现一次。
 const cgcHintAddStep = "        ⇒ 处置：**真修** —— 该件与本批代码**同批挂门**" +
 	"（`scripts/gates/precommit-gates.sh` 的 `add_step` 按名调用它）；" +
 	"新件**不许**蹭基线棘轮（棘轮只装存量债）。"

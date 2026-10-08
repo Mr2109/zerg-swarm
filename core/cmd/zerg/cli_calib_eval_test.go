@@ -2,13 +2,13 @@
 //
 // 八格（前七格全在**合成仓根**里跑，真仓一个字节不动；第八格读真仓盘上现况但只读）：
 //
-//	① 声明面：`calib ls` 3 件（全 ①）· `eval ls` 22 件，逐件带归属（①5 / ②4 / ④13 —— 现算不手写）；
+//	① 声明面：`calib ls` 3 件（全 ①）· `eval ls` 22 件，逐件带归属（①18 / ②4 / ④0 —— 现算不手写）；
 //	② 台账不腐：两族点名的件在**真仓盘上**逐件存在（矩阵 `eval ls` ⟷ `scripts/evals/` 现读两面一致）；
 //	③ 未知名 ⇒ 退 2 + 「最像的合法输入」+ 候选（§4.1 K14 第三件）；
 //	④ 缺 `--yes` ⇒ 退 2 且**脚本一次都没跑**（fail-closed 那一格 —— 判据是「夹具的哨兵件没出现」）；
 //	⑤ `--dry-run` ⇒ 退 0 且脚本一次都没跑（零副作用 · 门⑩ `dryrun.v1`）；
 //	⑥ 真跑 ⇒ **退码原样转出**（夹具退 7 / 9，命令面就返 7 / 9 · 不翻译、不映射）；
-//	⑦ 归属是闸：②/④ 的件 `run` ⇒ 退 2 并逐字给出归属与理由（且脚本没跑）；
+//	⑦ 归属是闸：② 的件 `run` ⇒ 退 2 并逐字给出归属与理由（且脚本没跑）；④ 本批已空（原 13 件已收编 ①）⇒ 以「④ 已空」断言守住这一档；
 //	⑧ 机器面：`--json` 不给字段 ⇒ 退码取自退码表（`usage` · 归一后 = 2）+ stdout 0 字节；点错字段 ⇒ 退 2 + 列合法字段。
 //
 // ★ **成对负控**（最后一格）：判定口喂**改错的期望值**必须报错 —— 否则本件就是恒绿装置。
@@ -124,8 +124,8 @@ func TestCalibEval_LsRoster(t *testing.T) {
 	for _, it := range ev {
 		tally[it["class"]]++
 	}
-	// 上一枚的四类归属表：① 收编 5 · ② 保留内部 4 · ③ 退役 0 · ④ 维持待拍 13。
-	want := map[string]int{"①": 5, "②": 4, "④": 13}
+	// 四类归属表现读：① 收编 18（原 5 + 2026-10-08 同批收编的原 ④「维持待拍」13）· ② 保留内部 4 · ③ 退役 0 · ④ 维持待拍 0。
+	want := map[string]int{"①": 18, "②": 4, "④": 0}
 	for k, v := range want {
 		if tally[k] != v {
 			t.Errorf("归属 %s 应是 %d 件，现算 %d 件（合计 %d/%d）", k, v, tally[k], len(ev), 22)
@@ -272,10 +272,10 @@ func exists(path string) bool {
 
 func TestEvalRun_OnlyAdoptedIsOpen(t *testing.T) {
 	repo, _, evalSentinel := synthCalibEvalRepo(t)
-	for _, name := range []string{"make-manifest", "v25_real10"} {
+	for _, name := range []string{"make-manifest"} {
 		rc, out, errb := runZergRepo(t, repo, "eval", "run", name, "--yes")
 		if errs := judgeRun(2, false, rc, exists(evalSentinel)); len(errs) > 0 {
-			t.Errorf("②/④ 的件 `%s` 不许开 run 面：%v", name, errs)
+			t.Errorf("② 的件 `%s` 不许开 run 面：%v", name, errs)
 		}
 		if out != "" {
 			t.Errorf("`%s` ⇒ stdout 0 字节，得到 %q", name, out)
@@ -284,8 +284,23 @@ func TestEvalRun_OnlyAdoptedIsOpen(t *testing.T) {
 			t.Errorf("`%s` ⇒ 要逐字给出归属与理由（不是「不支持」）：%q", name, errb)
 		}
 	}
+	// ④ 档**本批已空**（原 13 件「维持待拍」2026-10-08 同批收编入 ①）⇒ 这一格改为断言「④ 已空」：
+	//   非 ① 的件仍不许开 run 的语义**不删** —— 由上面 ② 那一格守着（✗ 不放宽、✗ 不删用例）。
+	rc, out, errb := runZergRepo(t, repo, "eval", "ls", "--json", "name,class")
+	if rc != 0 {
+		t.Fatalf("`eval ls --json` ⇒ 退 0，得到 %d · stderr=%s", rc, errb)
+	}
+	pending := 0
+	for _, it := range envelopeItems(t, out) {
+		if strings.HasPrefix(it["class"], "④") {
+			pending++
+		}
+	}
+	if pending != 0 {
+		t.Errorf("④ 维持待拍应 0 件（原 13 件已同批收编 ①），现算 %d 件", pending)
+	}
 	// 同一件 `show` 是**开着**的（只投影、不开 run —— 两件事不是一个开关）
-	rc, out, errb := runZergRepo(t, repo, "eval", "show", "make-manifest", "--json", "name,class,state")
+	rc, out, errb = runZergRepo(t, repo, "eval", "show", "make-manifest", "--json", "name,class,state")
 	if rc != 0 {
 		t.Fatalf("`eval show make-manifest` ⇒ 退 0，得到 %d · stderr=%s", rc, errb)
 	}
