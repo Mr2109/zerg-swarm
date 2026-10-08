@@ -50,7 +50,7 @@ import (
 const (
 	mkcpTableRel     = "scripts/公开标记.tsv"
 	mkcpConfigRel    = "scripts/gates/gate-coverage.config.json"
-	mkcpPublishShRel = "scripts/build/publish-public.sh"
+	mkcpExcludesRel  = "publish/excludes.txt"
 	mkcpMirrorLibRel = "publish/mirror-public-lib.py"
 	mkcpWhitelistRel = "publish/whitelist.txt"
 	mkcpTop          = "" // 顶层 glob（`scripts/*.sh`）的「域」标记：顶层（无第二段）
@@ -202,42 +202,18 @@ func mkcpFaceDomains(rows []mkcpRow, root string) []string {
 }
 
 // ── EXCLUDES / 白名单（check-history-secrets.py L101 / L85 / L120 / L169）──────────────
+// mkcpLoadExcludes：读行式真源 `publish/excludes.txt`（切源 2026-10-08 · `GAP-20260926-223` 账[3]）。
+// 行口径 = 唯一 Go 解析件 `excludes_rules.go::parseExcludesRules`（strip 传本件原 `strings.TrimSpace`）。
+// 缺件 / 读不到 ⇒ 空切片（调用方据 len==0 fail-closed）。
 func mkcpLoadExcludes(path string) []string {
-	var ex []string
 	if !mkcpExists(path) {
-		return ex
+		return []string{}
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return ex
+		return []string{}
 	}
-	text := string(b)
-	key := "EXCLUDES=("
-	i := strings.Index(text, key)
-	if i < 0 {
-		return ex
-	}
-	rest := text[i+len(key):]
-	j := strings.Index(rest, "\n)")
-	if j < 0 {
-		return ex
-	}
-	for _, raw := range strings.Split(rest[:j], "\n") {
-		line := strings.TrimSpace(raw)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		if k := strings.Index(line, "#"); k >= 0 {
-			line = line[:k]
-		}
-		line = strings.TrimSpace(line)
-		line = strings.Trim(line, "\"")
-		line = strings.Trim(line, "'")
-		if line != "" {
-			ex = append(ex, line)
-		}
-	}
-	return ex
+	return parseExcludesRules(strings.Split(string(b), "\n"), strings.TrimSpace)
 }
 
 func mkcpExcluded(rel string, ex []string) bool {
@@ -249,12 +225,7 @@ func mkcpExcluded(rel string, ex []string) bool {
 			return true
 		}
 	}
-	for _, e := range ex {
-		if rel == e || strings.HasPrefix(rel, strings.TrimRight(e, "/")+"/") {
-			return true
-		}
-	}
-	return false
+	return excludesRulesMatch(rel, ex)
 }
 
 func mkcpLoadWhitelist(path string) []string {
@@ -533,10 +504,8 @@ const mkcpSelfWantCases = 18
 
 const mkcpSelfTableHead = "文件	public	理由\n"
 
-// 夹具侧甲：最小旧器（只提供 EXCLUDES 数组；解析器是 check-history-secrets.py 的 load_excludes）
-const mkcpSelfPublishShHead = "#!/usr/bin/env bash\n" +
-	"# 夹具：最小旧器（只提供 EXCLUDES 数组；解析器是 check-history-secrets.py 的 load_excludes）\n" +
-	"EXCLUDES=(\n"
+// 夹具侧甲：排除表新真源（行式 · 裸条目；解析器 = 唯一 Go 件 excludes_rules.go / loadExcludesTable）
+const mkcpSelfExcludesHead = "# 夹具：最小排除表（`publish/excludes.txt` 行式真源 · 裸条目）\n"
 
 // 夹具侧乙：最小镜像器（只提供本门读的两个名字）
 const mkcpSelfMirrorLibHead = "# 夹具：最小镜像器（只提供本门读的两个名字）\n" +
@@ -589,9 +558,9 @@ func mkcpSelfFixture(base, name string, tsvRows []string, globs, files, excludes
 	mkcpSelfWrite(filepath.Join(root, mkcpConfigRel), cb.String())
 	var exb strings.Builder
 	for _, e := range excludes {
-		exb.WriteString("  \"" + e + "\"\n")
+		exb.WriteString(e + "\n")
 	}
-	mkcpSelfWrite(filepath.Join(root, mkcpPublishShRel), mkcpSelfPublishShHead+exb.String()+")\n")
+	mkcpSelfWrite(filepath.Join(root, mkcpExcludesRel), mkcpSelfExcludesHead+exb.String())
 	var db strings.Builder
 	for i, d := range dropExact {
 		if i > 0 {
@@ -752,7 +721,7 @@ func mkcpSelfTest(stdout, stderr io.Writer) int {
 	noCfg := fx("no-config", fxo{})
 	_ = os.Remove(filepath.Join(noCfg, mkcpConfigRel))
 	caseF("钳②", "config 缺件 ⇒ rc=2", 2, []string{"config 不在"}, noCfg)
-	caseF("钳③", "侧甲解析为空 ⇒ rc=2（清单没了所以全绿 = 假绿）", 2, []string{"解析不出任何 EXCLUDES"}, fx("empty-side", fxo{exc: []string{}}))
+	caseF("钳③", "侧甲解析为空 ⇒ rc=2（清单没了所以全绿 = 假绿）", 2, []string{"解析不出任何排除条目"}, fx("empty-side", fxo{exc: []string{}}))
 	caseF("钳④", "script_globs 为空 ⇒ rc=2（空转）", 2, []string{"scan.script_globs 不是非空列表"}, fx("bad-globs", fxo{globs: []string{}}))
 	caseF("钳⑤", "非 git 树（跟踪面读不到）⇒ rc=2（缺件 ≠ 绿）", 2, []string{"git ls-files 失败"}, fx("no-git", fxo{noGit: true}))
 	caseF("钳⑥", "表里一条 `public=no` 都没有 ⇒ rc=2（R2 无区分度）", 2, []string{"一条 `public=no` 都没有"},
@@ -844,7 +813,7 @@ func mkcpRun(stdout io.Writer, root string, table, config string, maxExamples in
 	if configPath == "" {
 		configPath = filepath.Join(root, mkcpConfigRel)
 	}
-	publishSh := filepath.Join(root, mkcpPublishShRel)
+	publishSh := filepath.Join(root, mkcpExcludesRel)
 	mirrorLib := filepath.Join(root, mkcpMirrorLibRel)
 	whitelist := filepath.Join(root, mkcpWhitelistRel)
 	if !mkcpIsDir(root) {
@@ -908,7 +877,7 @@ func mkcpRunInner(out io.Writer, root, table, config, publishSh, mirrorLib, whit
 	}
 	excludes := mkcpLoadExcludes(publishSh)
 	if len(excludes) == 0 {
-		fmt.Fprintf(stderrW, "✗ 侧甲：从 %s 解析不出任何 EXCLUDES 条目 ⇒ 不给结论（rc=2）\n", publishSh)
+		fmt.Fprintf(stderrW, "✗ 侧甲：从 %s 解析不出任何排除条目 ⇒ 不给结论（rc=2）\n", publishSh)
 		fmt.Fprintln(stderrW, "   （「清单没了所以全绿」是最难发现的一类假绿）")
 		return mkcpSilent{}
 	}
@@ -1121,7 +1090,7 @@ func mkcpRunInner(out io.Writer, root, table, config, publishSh, mirrorLib, whit
 
 	fmt.Fprintf(out, "\n══ R2 两器排除面（tsv `public=no` %d 行 · 已跟踪 %d · 未在索引 %d）══\n",
 		len(noRows), trackedNo, len(noRows)-trackedNo)
-	fmt.Fprintf(out, "  侧甲 = `%s` 的 EXCLUDES（%d 条 · 两器共用那把闸）\n", mkcpPublishShRel, len(excludes))
+	fmt.Fprintf(out, "  侧甲 = `%s`（排除表行式真源 · %d 条 · 两器共用那把闸）\n", mkcpExcludesRel, len(excludes))
 	fmt.Fprintf(out, "  侧乙 = `%s` 的 DROP_EXACT %d 条 + DROP_PREFIX %d 条（镜像器自带表）\n",
 		mkcpMirrorLibRel, len(dropExact), len(dropPrefix))
 	fmt.Fprintf(out, "  %s R2-a 已跟踪且缺侧甲（= 判据⑥ 会红的那批的预演）：%d 件\n", mkcpMark(len(r2a) > 0), len(r2a))

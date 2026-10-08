@@ -115,6 +115,11 @@ MARKS = load_reusable_asset("face_sync_marks", os.path.join(REPO, "scripts", "ga
                             os.path.join(REPO, "core", "cmd", "zerg", "check_public_marks.go"), "_InlineMarks")
 MARKS_TABLE_REL = "scripts/公开标记.tsv"
 
+# ★ 切源 2026-10-08（`GAP-20260926-223` 账[3]）：排除表真源改 `publish/excludes.txt`（行式）。
+# 行口径**复用镜像器（单一真源）**的 `_load_excludes_table`，✗ 不另抄一份解析器（既有纪律：单一真源）。
+# 注意：这里刻意从 `REPO`（本门禁所在仓）加载，不是 `--repo` —— 解析器是「复用资产」，必须与真仓同版。
+_MIRROR_PUBLIC_LIB = load_module("face_sync_mirrorlib", os.path.join(REPO, "publish", "mirror-public-lib.py"))
+
 
 def tracked_files(repo):
     # ★ 2026-09-21（公开线⑥ · 补前一批的已知缺口 ①）：`-c core.quotepath=false` **必须给** ——
@@ -168,7 +173,7 @@ def classify(repo, paths):
     由调用方按 **rc=2 不给结论** 处理（照 `check-public-marks.py` 的 A 档口径）。
     """
     entries = HSEC.load_whitelist(paths["whitelist"])
-    excludes = HSEC.load_excludes(paths["publish_sh"])
+    excludes = _MIRROR_PUBLIC_LIB._load_excludes_table(paths["publish_sh"])
     pdirs, pfiles, pallowed = PRIV.load_rules(paths["private_paths"])
     mirror = load_module("face_sync_mirror", paths["mirror_lib"])
     marks = MARKS.load_table(paths["marks_table"])
@@ -312,7 +317,7 @@ def evaluate(repo, paths):
     if not entries:
         return 2, lines + ["  ✗ 守卫：白名单解析为空 ⇒ 拒绝给结论（rc=2）"]
     if not excludes:
-        return 2, lines + ["  ✗ 守卫：EXCLUDES 一条都解析不出来 ⇒ 拒绝给结论（rc=2）"]
+        return 2, lines + ["  ✗ 守卫：排除表一条都解析不出来 ⇒ 拒绝给结论（rc=2）"]
     if not pdirs and not pfiles:
         return 2, lines + ["  ✗ 守卫：私有面黑名单解析为空 ⇒ 拒绝给结论（rc=2）"]
     if WALL_ENTRY not in entries and not any(e.rstrip("/") == WALL_ENTRY.rstrip("/") for e in entries):
@@ -505,9 +510,9 @@ def make_fixture(root, wl, priv, excl, drop, opts):
         fh.write("# 夹具白名单\n" + "\n".join(wl) + "\n")
     with open(os.path.join(root, "publish", "private-paths.txt"), "w", encoding="utf-8") as fh:
         fh.write("# 夹具黑名单\n" + "\n".join(priv) + "\n")
-    ex_lines = "\n".join('  "%s"' % e for e in excl)
-    with open(os.path.join(root, "scripts", "build", "publish-public.sh"), "w", encoding="utf-8") as fh:
-        fh.write("#!/usr/bin/env bash\nEXCLUDES=(\n%s\n)\n" % ex_lines)
+    ex_lines = "\n".join(e for e in excl)
+    with open(os.path.join(root, "publish", "excludes.txt"), "w", encoding="utf-8") as fh:
+        fh.write("# 夹具：排除表（publish/excludes.txt 行式真源 · 裸条目）\n" + ex_lines + "\n")
     with open(os.path.join(root, "publish", "mirror-public-lib.py"), "w", encoding="utf-8") as fh:
         fh.write(FIXTURE_LIB % ", ".join('"%s"' % d for d in drop))
     # 判据⑤ 要读的四件：另两件（规则表 / 豁免清单）也给夹具默认值（合法值 ⇒ 不干扰原有各格）
@@ -540,7 +545,8 @@ def paths_for(repo):
     return {
         "whitelist": os.path.join(repo, "publish", "whitelist.txt"),
         "private_paths": os.path.join(repo, "publish", "private-paths.txt"),
-        "publish_sh": os.path.join(repo, "scripts", "build", "publish-public.sh"),
+        # ★ 切源 2026-10-08：`publish_sh` 这一格语义 = 「排除表真源」⇒ 现指行式新表。
+        "publish_sh": os.path.join(repo, "publish", "excludes.txt"),
         "mirror_lib": os.path.join(repo, "publish", "mirror-public-lib.py"),
         "marks_table": os.path.join(repo, MARKS_TABLE_REL),      # 判据⑥ 的表（缺件 ⇒ rc=2，见 require_paths）
     }
@@ -606,7 +612,7 @@ def main():
     ap.add_argument("--self-test", dest="self_test", action="store_true")
     ap.add_argument("--whitelist")
     ap.add_argument("--private-paths", dest="private_paths")
-    ap.add_argument("--publish-sh", dest="publish_sh")
+    ap.add_argument("--excludes", "--publish-sh", dest="publish_sh")
     ap.add_argument("--mirror-lib", dest="mirror_lib")
     args = ap.parse_args()
 

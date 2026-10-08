@@ -55,7 +55,7 @@ var crcBaseline = [][2]string{
 	//   ⇒ 棘轮基线**同步到新值 = 空**（照现读机制：表外的才是「悬空」；清完悬空/存量均 0）。
 }
 
-// ── 八面（面 ④「两器」= 一件面两件 ⇒ 恰八面）────────────────────────────────────
+// ── 九面（面 ④「两器」= 一件面两件 ⇒ 恰八面 ＋ 2026-10-08 切源补第 ⑨ 面 = 行式排除表）──────
 type crcPart struct{ rel, ex string }
 type crcSurface struct {
 	id, label string
@@ -74,6 +74,9 @@ var crcSurfaces = []crcSurface{
 	{"affected", "affected-map.json", []crcPart{{"scripts/gates/affected-map.json", "affected"}}},
 	{"judge", "judge-registry.json", []crcPart{{"scripts/gates/judge-registry.json", "judge"}}},
 	{"slice", "slice-probes.json", []crcPart{{"scripts/gates/slice-probes.json", "slice"}}},
+	// ★ 2026-10-08 切源（`GAP-20260926-223` 账[3]）：行式排除表真源也进覆盖面 ——
+	//   已退件不得在 `publish/excludes.txt` 里留**悬空行**（今天那条空指正是这面该抓而没抓的）。
+	{"excl", "publish/excludes.txt", []crcPart{{"publish/excludes.txt", "excllines"}}},
 }
 
 // ── 取数工具 ─────────────────────────────────────────────────────────────────
@@ -187,6 +190,12 @@ func crcExExcludes(txt string) []string {
 		}
 	}
 	return out
+}
+
+// crcExExclLines —— 行式排除表真源 `publish/excludes.txt`（切源 2026-10-08 · `GAP-20260926-223`
+// 账[3]）。行口径 = 唯一 Go 解析件 `excludes_rules.go::parseExcludesRules`（strip 传 `strings.TrimSpace`）。
+func crcExExclLines(txt string) []string {
+	return parseExcludesRules(crcSplitLines(txt), strings.TrimSpace)
 }
 
 func crcExDrop(txt string) []string {
@@ -330,6 +339,8 @@ func crcExtract(ex, txt string) ([]string, error) {
 		return crcExDangling(txt), nil
 	case "excludes":
 		return crcExExcludes(txt), nil
+	case "excllines":
+		return crcExExclLines(txt), nil
 	case "drop":
 		return crcExDrop(txt), nil
 	case "coverage":
@@ -673,6 +684,10 @@ func crcSelfTest(stdout io.Writer) int {
 		[]byte("EXCLUDES=(\n  \"scripts/x/GONE.py\"\n  # \"scripts/x/GONE.py\" 注释\n)\n"), 0o644)
 	_ = os.WriteFile(filepath.Join(base, filepath.FromSlash("publish/mirror-public-lib.py")),
 		[]byte("DROP_EXACT = {\n    \"scripts/x/GONE.py\",\n}\nDROP_PREFIX = (\n    \"scripts/x/\",\n)\n"), 0o644)
+	// ★ 九面夹具（切源 2026-10-08）：行式排除表真源（`publish/excludes.txt`）。
+	exclRel := "publish/excludes.txt"
+	_ = os.WriteFile(filepath.Join(base, filepath.FromSlash(exclRel)),
+		[]byte("# c\nscripts/x/LIVE.py\n"), 0o644)
 	for rel, body := range map[string]string{
 		"scripts/gates/dangling-refs-registry.json": `{"entries":[]}`,
 		"scripts/gates/gate-coverage.config.json":   `{"scan":{"script_globs":[]},"exclude":{},"whitelist":{}}`,
@@ -693,6 +708,15 @@ func crcSelfTest(stdout io.Writer) int {
 	report("selftest·absent 只 GONE.py", strings.Join(rep.absent, ","), "scripts/x/GONE.py")
 	report("selftest·新悬空行数（含 DROP_PREFIX 前缀命中）", fmt.Sprint(len(rep.dangling)), "5")
 	report("selftest·例外行数", fmt.Sprint(len(rep.exempt)), "0")
+	// ★ 九面（切源 2026-10-08 · `GAP-20260926-223` 账[3]）：行式排除表面进覆盖面（八面→九面）。
+	report("selftest·九面（含 publish/excludes.txt 面）", fmt.Sprint(len(rep.perSurface)), "9")
+	// ★ 九面有牙：往排除表塞一条**已退且不在盘**的件 ⇒ 该面出新悬空（GONE.py 此时仍不在盘）。
+	_ = os.WriteFile(filepath.Join(base, filepath.FromSlash(exclRel)),
+		[]byte("# c\nscripts/x/LIVE.py\nscripts/x/GONE.py\n"), 0o644)
+	repX := crcCompute(base, tracked, ret, exc, crcBaseline)
+	report("负控·排除表塞一条已退件 ⇒ 新悬空 6（九面有牙）", fmt.Sprint(len(repX.dangling)), "6")
+	_ = os.WriteFile(filepath.Join(base, filepath.FromSlash(exclRel)),
+		[]byte("# c\nscripts/x/LIVE.py\n"), 0o644) // 复原（不污染后续读数）
 	repB := crcCompute(base, tracked, ret, exc, [][2]string{{"marks", "scripts/x/GONE.py"}})
 	report("selftest·棘轮命中 ⇒ 新悬空 4", fmt.Sprint(len(repB.dangling)), "4")
 	report("selftest·棘轮命中 ⇒ 存量 1", fmt.Sprint(len(repB.stock)), "1")

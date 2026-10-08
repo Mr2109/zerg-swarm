@@ -80,24 +80,21 @@ func TestCtwJudgePublicFaceUnlandedVsMissing(t *testing.T) {
 	}
 }
 
-// ⑤ W5 窄豁免：表元素行豁免 · 表外真读判红
+// ⑤ W5 窄豁免：排除表元素行豁免 · 表外真读判红
 func TestCtwJudgeReadersNarrowExcuse(t *testing.T) {
 	lit := strings.ReplaceAll(twAuditCopyRel(), string(os.PathSeparator), "/")
-	exRel := strings.ReplaceAll(twPublishExcludesSh, string(os.PathSeparator), "/")
-	syn := "EXCLUDES=(\n  \"a\"\n  \"" + lit + "\"\n)\ncat \"" + lit + "\"\n"
-	ss, se, ok := twFindTableSpan(syn, "EXCLUDES=(", ")")
-	if !ok {
-		t.Fatalf("定不出表区间（夹具自坏）")
-	}
-	anchors := map[string]twSpan{exRel: {ss, se}}
+	exRel := strings.ReplaceAll(twExcludesRel, string(os.PathSeparator), "/")
+	// ★ 切源后：侧甲是**行式整件即表**（`publish/excludes.txt`）；裸条目行算元素行。
+	syn := "# 合成排除表（行式 · 整件即表）\n" + lit + "\n"
+	anchors := map[string]twSpan{exRel: {1, len(twSplitLines(syn))}}
 	lines := twSplitLines(syn)
-	in := []twHit{{exRel, 3, lines[2]}}
-	out := []twHit{{exRel, 5, lines[4]}}
+	in := []twHit{{exRel, 2, lines[1]}}                                       // 裸条目行 ⇒ 豁免
+	out := []twHit{{"core/cmd/zerg/reader.go", 1, "var p = \"" + lit + "\""}} // 非锚件真读 ⇒ 判红
 	if r, e := twJudgeReaders(in, anchors, "", nil, ""); len(r) != 0 || len(e) != 1 {
-		t.Fatalf("表元素行应豁免：reds=%d excused=%d", len(r), len(e))
+		t.Fatalf("排除表元素行应豁免：reds=%d excused=%d", len(r), len(e))
 	}
 	if r, e := twJudgeReaders(out, anchors, "", nil, ""); len(r) != 1 || len(e) != 0 {
-		t.Fatalf("表外真读应判红：reds=%d excused=%d", len(r), len(e))
+		t.Fatalf("非锚件真读应判红：reds=%d excused=%d", len(r), len(e))
 	}
 	// 无锚 ⇒ 一条都不豁免
 	if r, e := twJudgeReaders(in, nil, "", nil, ""); len(r) != 1 || len(e) != 0 {

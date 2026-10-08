@@ -23,12 +23,9 @@ keep.txt
 # gone/ ← ★ 空指：盘上无此目录（夹具）
 `
 
-const crsTestPublishSh = `#!/usr/bin/env bash
-# 合成 EXCLUDES（自检夹具）
-EXCLUDES=(
-  "gateway/fleet.yaml"
-  "sub/drop.txt"
-)
+const crsTestPublishSh = `# 合成排除表（自检夹具 · publish/excludes.txt 行式真源 · 裸条目）
+gateway/fleet.yaml
+sub/drop.txt
 `
 
 // crsTestFixture —— 在 t.TempDir() 下造一棵合成夹具树（仓外）。mutate ∈ {"dangling","uncovered","stale"}。
@@ -49,15 +46,13 @@ func crsTestFixture(t *testing.T, mutate string, dropWL bool) string {
 	write("sub/drop.txt", "drop\n")
 	write("gateway/fleet.yaml", "fleet\n")
 	write("publish/whitelist.txt", crsTestWhitelist)
-	write("scripts/build/publish-public.sh", crsTestPublishSh)
+	write("publish/excludes.txt", crsTestPublishSh)
 	if mutate == "dangling" {
-		write("scripts/build/publish-public.sh",
-			strings.Replace(crsTestPublishSh, "\n)", "\n  \"never-existed/\"\n)", 1))
+		write("publish/excludes.txt", crsTestPublishSh+"never-existed/\n")
 	}
 	if mutate == "uncovered" {
 		write("loose.txt", "loose\n")
-		write("scripts/build/publish-public.sh",
-			strings.Replace(crsTestPublishSh, "\n)", "\n  \"loose.txt\"\n)", 1))
+		write("publish/excludes.txt", crsTestPublishSh+"loose.txt\n")
 	}
 	if mutate == "stale" {
 		if err := os.MkdirAll(filepath.Join(root, "gone"), 0o755); err != nil {
@@ -129,7 +124,7 @@ func TestCheckRegistryVsDiskGatePort(t *testing.T) {
 		}
 	}
 	_ = os.WriteFile(filepath.Join(empty, "publish", "whitelist.txt"), []byte("# 全注释\n\n"), 0o644)
-	_ = os.WriteFile(filepath.Join(empty, "scripts", "build", "publish-public.sh"), []byte(crsTestPublishSh), 0o644)
+	_ = os.WriteFile(filepath.Join(empty, "publish", "excludes.txt"), []byte(crsTestPublishSh), 0o644)
 	rcVac, outVac, _ := crsTestRun(t, "--repo", empty)
 	if rcVac != 2 || !strings.Contains(outVac, "空转") {
 		t.Fatalf("空转失败（空转必须 ≠ 绿）：得 rc=%d out=%q", rcVac, outVac)

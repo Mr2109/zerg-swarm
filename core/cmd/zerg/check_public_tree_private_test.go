@@ -197,7 +197,7 @@ func TestCPDHistorySecretsRetiredTolerant(t *testing.T) {
 		root := t.TempDir()
 		for _, rel := range []string{
 			"publish/mirror-public-lib.py", "publish/whitelist.txt",
-			"scripts/build/publish-public.sh", hsecPyRel,
+			"publish/excludes.txt", hsecPyRel,
 		} {
 			b, err := os.ReadFile(cptpPyJoin(repo, rel))
 			if err != nil {

@@ -301,8 +301,12 @@ func chsecRepoRoot() string {
 func chsecRulesPath(root string) string {
 	return chsecPyJoin(root, "publish", "replace-rules.tsv")
 }
-func chsecPublishShPath(root string) string {
-	return chsecPyJoin(root, "scripts", "build", "publish-public.sh")
+
+// chsecExcludesPath：排除表真源现读落点。★ 切源 2026-10-08（`GAP-20260926-223` 账[3]）：
+// 由旧 `scripts/build/publish-public.sh` 的 `EXCLUDES=( … )` 数组改指行式新表 `publish/excludes.txt`
+// （双源窗内两份逐条相等，对拍闸兜底；旧数组待 v2.6.0 随弃用件删）。
+func chsecExcludesPath(root string) string {
+	return chsecPyJoin(root, "publish", "excludes.txt")
 }
 func chsecWhitelistPath(root string) string {
 	return chsecPyJoin(root, "publish", "whitelist.txt")
@@ -350,32 +354,16 @@ func chsecLoadWhitelist(path string) []string {
 	return entries
 }
 
-var chsecExcludesRe = regexp.MustCompile(`(?s)EXCLUDES=\((.*?)\n\)`)
-
-// chsecLoadExcludes：从 publish-public.sh 的 EXCLUDES=( … ) 数组解析（单一真源）。
+// chsecLoadExcludes：读行式真源 `publish/excludes.txt` 的活跃条目
+// （切源 2026-10-08 · `GAP-20260926-223` 账[3]）。行口径 = 唯一 Go 解析件
+// `excludes_rules.go::parseExcludesRules`（strip 传本件原 `chsecPyStrip`）。
+// 缺件 / 读不到 ⇒ 空切片（调用方据 len==0 fail-closed · ✗ 不静默当零排除）。
 func chsecLoadExcludes(path string) []string {
-	ex := []string{}
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return ex
+		return []string{}
 	}
-	m := chsecExcludesRe.FindStringSubmatch(string(b))
-	if m == nil {
-		return ex
-	}
-	for _, raw := range strings.Split(m[1], "\n") {
-		line := chsecPyStrip(raw)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		line = chsecPyStrip(strings.SplitN(line, "#", 2)[0])
-		line = chsecPyStripChars(line, `"`)
-		line = chsecPyStripChars(line, `'`)
-		if line != "" {
-			ex = append(ex, line)
-		}
-	}
-	return ex
+	return parseExcludesRules(strings.Split(string(b), "\n"), chsecPyStrip)
 }
 
 func chsecExcluded(rel string, ex []string) bool {
@@ -391,12 +379,7 @@ func chsecExcluded(rel string, ex []string) bool {
 			}
 		}
 	}
-	for _, e := range ex {
-		if rel == e || strings.HasPrefix(rel, strings.TrimRight(e, "/")+"/") {
-			return true
-		}
-	}
-	return false
+	return excludesRulesMatch(rel, ex)
 }
 
 // chsecIsIsolated：py is_isolated（fnmatch，`*` 跨 `/`）。
@@ -1116,8 +1099,8 @@ func checkHistorySecretsGateMain(stdout, stderr io.Writer, argv []string) (rc in
 	}
 
 	lits, regexes, isolated := chsecLoadRulesFn(chsecRulesPath(root))
-	exList := chsecLoadExcludes(chsecPublishShPath(root))
-	fmt.Fprintf(stdout, "排除项: %d 条（从 publish-public.sh 的 EXCLUDES 解析）+ 噪声后缀 %s\n", len(exList), strings.Join(chsecNoiseSuffix, "/"))
+	exList := chsecLoadExcludes(chsecExcludesPath(root))
+	fmt.Fprintf(stdout, "排除项: %d 条（从 publish/excludes.txt 行式真源解析）+ 噪声后缀 %s\n", len(exList), strings.Join(chsecNoiseSuffix, "/"))
 	fmt.Fprintf(stdout, "替换规则: %d 条字面 + %d 条正则（扫描前先套用——审计的是『真会公开的形状』）\n", len(lits), len(regexes))
 	isoSuffix := ""
 	if len(isolated) > 0 {
@@ -1297,7 +1280,7 @@ func chsecShardWorker(a *chsecArgs, stdout, stderr io.Writer) int {
 		return 2
 	}
 	lits, regexes, isolated := chsecLoadRulesFn(chsecRulesPath(root))
-	exList := chsecLoadExcludes(chsecPublishShPath(root))
+	exList := chsecLoadExcludes(chsecExcludesPath(root))
 	wl := chsecWhitelistPath(repo)
 	if !chsecIsFile(wl) {
 		wl = chsecWhitelistPath(root)
@@ -1616,7 +1599,7 @@ func chsecSelfTest(stdout, stderr io.Writer) int {
 	revsN := len(chsecFields(chsecShText([]string{"git", "rev-list", "--all"}, root)))
 	ents := len(chsecLoadWhitelist(chsecWhitelistPath(root)))
 	lits, regexes, _ := chsecLoadRules(chsecRulesPath(root))
-	ex := len(chsecLoadExcludes(chsecPublishShPath(root)))
+	ex := len(chsecLoadExcludes(chsecExcludesPath(root)))
 	okReal := chsecIsDir(chsecPyJoin(root, ".git")) && revsN > 0 && ents > 0 && (len(lits)+len(regexes)) > 0 && ex > 0
 	caseFn("⑫真目标", "真仓：git 仓成立 · 提交数 > 0 · 白名单 / 规则 / 排除项条数 > 0", okReal,
 		fmt.Sprintf("%s ⇒ 提交 %d 笔 · 白名单 %d 条 · 规则 %d 条（字面 %d + 正则 %d）· 排除项 %d 条",

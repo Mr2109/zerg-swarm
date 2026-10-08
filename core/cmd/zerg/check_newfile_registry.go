@@ -136,10 +136,11 @@ const (
 	//   「处置」文案）—— 仓内先例：`check_private_path_forms.go` 的 `pvGoHalfRel`
 	//   「`scripts/gates/<x>.py`」→「`core/cmd/zerg/<x_snake>.go`」· py 缺席且 Go 半在盘 ⇒ 覆盖判据
 	//   改由 Go 半承载（✗ 不判「空指」）。★ `gnrCovJudgeRel` 路径**保持不变**：它是夹具/自检写标记件的
-	//   落点（`core/cmd/zerg/check_newfile_registry_test.go` 冻结「分母 7 件」，逐字断言该标记件在
-	//   `scripts/` 下 ⇒ 挪到 `core/` 会让分母 7→6 而挂红）。
+	//   落点（`core/cmd/zerg/check_newfile_registry_test.go` 冻结「分母 6 件」，逐字断言该标记件在
+	//   `scripts/` 下 ⇒ 挪到 `core/` 会让分母 6→5 而挂红）。★ 切源 2026-10-08：排除表真源移出
+	//   `scripts/build/`（`gnrScanLedgerFace` 只扫 `scripts/`）⇒ 分母 7→6，本行与测试件同批随动。
 	gnrCovJudgeGoRel = "core/cmd/zerg/check_gate_coverage.go"
-	gnrPubRel        = "scripts/build/publish-public.sh"
+	gnrExcludesRel   = "publish/excludes.txt"
 	gnrMirrorRel     = "publish/mirror-public-lib.py"
 	// 面⑨ 真源：`.sh` 门面冻结清册在 real-gates.sh 里（与门65 真跑档那一面同源）
 	gnrShGatesRel = "scripts/gates/real-gates.sh"
@@ -148,7 +149,6 @@ const (
 	gnrStepMark   = "干跑"
 	gnrAddStep    = "add_step"
 	gnrJudgeRE    = `scripts/[A-Za-z0-9_/.-]+\.py`
-	gnrExcludesRE = `(?s)EXCLUDES=\((.*?)\n\)`
 	gnrDropRE     = `(?s)DROP_EXACT\s*=\s*\{(.*?)\n\}`
 	gnrShGatesRE  = `(?s)SH_GATES=\((.*?)\)`
 )
@@ -162,10 +162,9 @@ var gnrScriptExcludes = []string{
 }
 
 var (
-	gnrJudgeRECompiled  = regexp.MustCompile(gnrJudgeRE)
-	gnrExcludesCompiled = regexp.MustCompile(gnrExcludesRE)
-	gnrDropCompiled     = regexp.MustCompile(gnrDropRE)
-	gnrShGatesCompiled  = regexp.MustCompile(gnrShGatesRE)
+	gnrJudgeRECompiled = regexp.MustCompile(gnrJudgeRE)
+	gnrDropCompiled    = regexp.MustCompile(gnrDropRE)
+	gnrShGatesCompiled = regexp.MustCompile(gnrShGatesRE)
 )
 
 // ── 机器面：门76 的**十面**（逐字对齐 py `FACES` · 顺序 = 打印顺序）────────────
@@ -708,9 +707,11 @@ func gnrLoadWhitelistScripts(root string) ([]gnrWlItem, []string) {
 	return items, problems
 }
 
-// gnrLoadExcludes —— ⑤a `EXCLUDES=( … )`（活跃条目）。
+// gnrLoadExcludes —— ⑤a 排除表真源（切源 2026-10-08 · `publish/excludes.txt` 行式 · `GAP-20260926-223` 账[3]）。
+// 行口径 = 唯一 Go 解析件 `excludes_rules.go::parseExcludesRules`（strip 传本件原 `strings.TrimSpace`
+// + 剥引号 `gnrStripQ`）。缺件 / 读不到 / 0 条 ⇒ nil（调用方据 nil fail-closed）。
 func gnrLoadExcludes(root string) map[string]bool {
-	p := filepath.Join(root, gnrPubRel)
+	p := filepath.Join(root, gnrExcludesRel)
 	if !gnrIsFile(p) {
 		return nil
 	}
@@ -718,19 +719,8 @@ func gnrLoadExcludes(root string) map[string]bool {
 	if !ok {
 		return nil
 	}
-	m := gnrExcludesCompiled.FindStringSubmatch(txt)
-	if m == nil {
-		return nil
-	}
 	out := map[string]bool{}
-	for _, ln := range gnrSplitLines(m[1]) {
-		if i := strings.Index(ln, "#"); i >= 0 { // ★ ② 剥行内注释（消假阳性 · 与 gnrLoadDropExact 同法）
-			ln = ln[:i]
-		}
-		s := strings.TrimSpace(ln)
-		if s == "" {
-			continue
-		}
+	for _, s := range parseExcludesRules(gnrSplitLines(txt), strings.TrimSpace) {
 		s = gnrStripQ(s)
 		if s != "" {
 			out[s] = true
@@ -2013,7 +2003,7 @@ func gnrAudit(root string, newFiles []string, newSet bool, inv string, invSet bo
 		{"①公开标记表", marks != nil, gnrMarksRel},
 		{"②干跑登记", dry.hitsOK && dry.regOK, why2},
 		{"③门①两张真源", stepOK && wlItems != nil, gnrStepsRel},
-		{"⑤两器排除表", excludes != nil && drops != nil, gnrPubRel},
+		{"⑤两器排除表", excludes != nil && drops != nil, gnrExcludesRel},
 		{"⑨.sh门面清册", shDisk != nil && shRoster != nil, gnrShGatesRel},
 	} {
 		if !fc.ok {
@@ -2984,10 +2974,8 @@ add_step "gates" tri "门⑩ 干跑：一套语义（阻断）" scripts/gates/ch
 add_step "gates" tri "public: 公开面标记表" python3 scripts/gates/check-public-marks.py
 `
 
-const gnrFixturePub = `#!/usr/bin/env bash
-EXCLUDES=(
-  "tools/ocr/venv"
-)
+const gnrFixturePub = `# 夹具：排除表（publish/excludes.txt 行式真源 · 裸条目）
+tools/ocr/venv
 `
 
 const gnrFixtureMirror = `DROP_EXACT = {
@@ -3049,7 +3037,7 @@ func gnrBuildFixture(t gnrFailer, tmp, probe string, register map[string]bool) {
 				`"whitelist": {"scripts": [{"path": "`+probe+`", "reason": "夹具", "date": "2026-09-28"}]}`, 1)
 		}
 		if register["⑤"] {
-			pub = strings.Replace(pub, "\n)", "\n  \""+probe+"\"\n)", 1)
+			pub = strings.TrimRight(pub, "\n") + "\n" + probe + "\n"
 			mir = strings.Replace(mir, "\n}", "\n    \""+probe+"\",\n}", 1)
 		}
 	}
@@ -3058,7 +3046,7 @@ func gnrBuildFixture(t gnrFailer, tmp, probe string, register map[string]bool) {
 	mk(gnrStubRegRel, dry)
 	mk(gnrStubJudgeRel, gnrFixtureStub)
 	mk(gnrStepsRel, gnrFixtureSteps)
-	mk(gnrPubRel, pub)
+	mk(gnrExcludesRel, pub)
 	mk(gnrMirrorRel, mir)
 	mk(gnrCovJudgeRel, gnrFixtureCovJudge)
 	// ⑨ 面真源桩：`scripts/gates/*.sh` 现盘 = {precommit-gates.sh, real-gates.sh} ⇒ 清册逐只点名、两向皆空
@@ -3296,34 +3284,28 @@ func gnrSelfTest(stdout io.Writer) int {
 		rcROk := gnrRun(io.Discard, tmpS, nil, false, "inv.tsv", true, false, baseRO, true)
 		addCheck("B1-5·① 成对正控：同基线可读且件数吻合 ⇒ 0（读得出 ⇒ 判得了）", 0, rcROk, rcROk == 0)
 
-		// ② load_excludes 剥行内注释（消假阳性）
+		// ② 排除表行口径：整行 `#` 注释 / 空行跳过 · 裸条目照收（消假阳性）
 		if tmpL, errL := os.MkdirTemp("", "gnr-selftest-"); errL == nil {
-			os.MkdirAll(filepath.Join(tmpL, filepath.Dir(gnrPubRel)), 0o755)
-			os.WriteFile(filepath.Join(tmpL, gnrPubRel),
-				[]byte("EXCLUDES=(\n  \"a.sh\"   # 行内注释\n  \"b.sh\"\n)\n"), 0o644)
+			os.MkdirAll(filepath.Join(tmpL, filepath.Dir(gnrExcludesRel)), 0o755)
+			os.WriteFile(filepath.Join(tmpL, gnrExcludesRel),
+				[]byte("# 整行注释（应跳过）\na.sh\n\nb.sh\n"), 0o644)
 			exL := gnrLoadExcludes(tmpL)
 			os.RemoveAll(tmpL)
 			okL := len(exL) == 2 && exL["a.sh"] && exL["b.sh"]
-			addCheck("B1-5·② load_excludes 剥行内注释 ⇒ {a.sh,b.sh}（消假阳性）", 1, gnrB2i(okL), okL)
+			addCheck("B1-5·② 排除表行口径：整行 `#` 注释 / 空行跳过 ⇒ {a.sh,b.sh}（消假阳性）", 1, gnrB2i(okL), okL)
 		}
-		// ② 成对负控：原样不剥 ⇒ 注释尾混入件名（假阳性 · 证明本修必要）
+		// ② 成对负控：原样不跳注释行 ⇒ 注释行混入件名（假阳性 · 证明本修必要）
 		if tmpL2, errL2 := os.MkdirTemp("", "gnr-selftest-"); errL2 == nil {
-			os.MkdirAll(filepath.Join(tmpL2, filepath.Dir(gnrPubRel)), 0o755)
-			os.WriteFile(filepath.Join(tmpL2, gnrPubRel),
-				[]byte("EXCLUDES=(\n  \"a.sh\"   # 行内注释\n  \"b.sh\"\n)\n"), 0o644)
+			os.MkdirAll(filepath.Join(tmpL2, filepath.Dir(gnrExcludesRel)), 0o755)
+			os.WriteFile(filepath.Join(tmpL2, gnrExcludesRel),
+				[]byte("# 整行注释（应跳过）\na.sh\n\nb.sh\n"), 0o644)
 			naive := map[string]bool{}
-			if txt2, okT := gnrReadText(filepath.Join(tmpL2, gnrPubRel)); okT {
-				if i := strings.Index(txt2, "EXCLUDES=("); i >= 0 {
-					rest := txt2[i+len("EXCLUDES=("):]
-					if j := strings.Index(rest, ")"); j >= 0 {
-						for _, q := range strings.Split(rest[:j], "\n") {
-							s := strings.TrimSpace(q)
-							if s == "" || strings.HasPrefix(s, "#") {
-								continue
-							}
-							naive[gnrStripQ(s)] = true
-						}
+			if txt2, okT := gnrReadText(filepath.Join(tmpL2, gnrExcludesRel)); okT {
+				for _, raw := range strings.Split(txt2, "\n") {
+					if strings.TrimSpace(raw) == "" {
+						continue
 					}
+					naive[gnrStripQ(strings.TrimSpace(raw))] = true
 				}
 			}
 			os.RemoveAll(tmpL2)
@@ -3333,7 +3315,7 @@ func gnrSelfTest(stdout io.Writer) int {
 					anyHash = true
 				}
 			}
-			addCheck("B1-5·② 负控：原样不剥注释 ⇒ 注释尾混入件名（假阳性 · 证明本修必要）", 1, gnrB2i(anyHash), anyHash)
+			addCheck("B1-5·② 负控：原样不跳注释行 ⇒ 注释行混入件名（假阳性 · 证明本修必要）", 1, gnrB2i(anyHash), anyHash)
 		}
 
 		// ③ 基线 v2 过期即红（声明件数 > 现读扫面）
