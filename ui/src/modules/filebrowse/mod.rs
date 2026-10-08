@@ -345,11 +345,11 @@ mod tests {
     fn fileroots_fixture() -> serde_json::Value {
         serde_json::json!({
             "roots": [
-                {"id":"docs","label":"虫族文档","path":"<volume-path>","default":true,"writable":true},
-                {"id":"repo","label":"虫族仓库","path":"<volume-path>","default":false,"writable":false},
-                {"id":"models","label":"模型登记库","path":"~/.zerg/models","default":false,"writable":false},
+                {"id":"docs","label":"虫族文档","path":"<volume-path>/Zerg/docs","default":true,"writable":true},
+                {"id":"repo","label":"虫族仓库","path":"<volume-path>/Zerg","default":false,"writable":false},
+                {"id":"models","label":"模型登记库","path":"/Users/<user>/.zerg/models","default":false,"writable":false},
                 {"id":"tasks","label":"任务目录","path":"/tmp/zerg/tasks","default":false,"writable":false},
-                {"id":"weights","label":"模型权重","path":"~/models","default":false,"writable":false}
+                {"id":"weights","label":"模型权重","path":"/Users/<user>/models","default":false,"writable":false}
             ],
             "config": {"display_max": 1048576, "allow_all_types": false, "text_exts": [".md",".txt"]}
         })
@@ -368,7 +368,7 @@ mod tests {
         for ro in ["repo", "models", "tasks", "weights"] {
             assert!(!s.find(ro).unwrap().writable, "{} 根必须只读（§九 Q2）", ro);
         }
-        assert_eq!(s.path_of("weights"), Some("~/models"));
+        assert_eq!(s.path_of("weights"), Some("/Users/<user>/models"));
         assert_eq!(s.config.display_max, 1048576);
         assert_eq!(
             s.config.text_exts,

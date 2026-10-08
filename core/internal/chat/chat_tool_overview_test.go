@@ -48,7 +48,7 @@ func TestOverviewLatestDir(t *testing.T) {
 
 // 模块文档名解析
 func TestOverviewModuleName(t *testing.T) {
-	// 夹具路径**从取源根派生**（本批 E6）：原先写死 `<repo>/docs/项目文档/…`
+	// 夹具路径**从取源根派生**（本批 E6）：原先写死 `<volume-path>/00 项目/模型类/Zerg/docs/项目文档/…`
 	// 私有绝对路径 —— 换机器/换安装位置就失效，且与本批 E1「取源根收口」同源。
 	// 本用例只验 basename 解析 ⇒ 只吃最后两段，取源根在不在盘上都不影响结论。
 	fixture := filepath.Join(zergDocsBase(), "v2.5.7", "01-模块-主控core-20260829.md")

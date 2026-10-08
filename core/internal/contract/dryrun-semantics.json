@@ -191,6 +191,20 @@
    "备注": "评测件：干跑用来量「观测面通不通」"
   },
   {
+   "file": "core/cmd/zerg/eval_chat_harness.go",
+   "类": "脚本侧（评测）· Go 真搬（`scripts/evals/chat-harness.py` 的 Go 真身 · B 组接线 `GoMain`）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "`--dry-run` ⇒ 只建会话与读观测，**不发消息**（模型侧零调用 · 不驱动逐轮 `send`）；退 0。与 py 原件 rc/stdout/stderr 三面逐字节两态对拍。",
+   "备注": "登记依据 = 门⑩ `R1 未登记件`。本件 = 已登记的 `scripts/evals/chat-harness.py`（`语义: dryrun.v1`）的 Go 真搬 ⇒ **同一套语义**，不另立第五套。核销 GAP-20261009-04。"
+  },
+  {
+   "file": "core/cmd/zerg/eval_chat_harness_test.go",
+   "类": "命令面测试件（两态对拍 py 原件 ⟷ Go 真身 + 无害靶子 stub · 不真打生产面）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "测试件本身不驱动生产（靶子 = 本进程内 `net/http/httptest` stub · 端点走 `ZERG_CORE`/`ZERG_LOCAL_AGENT` 旋钮 ⇒ 生产面一个字节不动）；断言的正是 `--dry-run` 一档（只建会话 · 退 0 · 对 stub 逐字节同）。",
+   "备注": "登记依据 = 门⑩ `R1 未登记件`（本件出现 `--dry-run`/`DryRun` 字样即进扫描面；它是**同一套语义**的测试侧，不另立语义）。"
+  },
+  {
    "file": "scripts/gates/precommit-gates.sh",
    "类": "判据面接线（门⑩ 的挂点 · **不是**干跑语义站点）",
    "语义": "dryrun.v1",
@@ -266,20 +280,6 @@
    "语义": "dryrun.v1",
    "零副作用判据": "对拍：干跑单的 `plan_id` 同集两次一致、加一件即变（有区分度）；`--dry-run` 前后合成树逐件不变；真跑（不带 `--dry-run`）仍走同一套防呆形状 ⇒ 拒执 2。",
    "备注": "测试件（外部测试包 `package main_test`）—— 与生产侧读同一份真源 `core/internal/contract/reap.json`。"
-  },
-  {
-   "file": "scripts/docs/gen-cli-reference.py",
-   "类": "文档面：**字样引用**（不是干跑语义站点 —— 本件里的 `--dry-run` 只出现在它渲染的正式面散文模板里，说的是「危险动作未开放、只有计划面可看」这件事本身）",
-   "语义": "dryrun.v1",
-   "零副作用判据": "本件不执行任何命令面动作：只**读** `zerg help` / `zerg help export` 的输出与命令树源码（`main.go`），只**写**两篇文档产物（`docs/zh|en/参考-命令行.md`）；`--emit` 与 `--check` 都不碰服务、不占端口、不改状态、不落盘到产物以外。",
-   "备注": "登记依据 = 门⑩ `R1 未登记件`（现跑命中即红）：它不是第五套语义，也不声明语义 —— 是文档面把命令面的旗标名当**数据**引用。复核：`python3 scripts/gates/check-dryrun-semantics.py` ⇒ rc=0。"
-  },
-  {
-   "file": "scripts/docs/check-outrepo-dead-refs.py",
-   "类": "文档面：**字样引用**（不是干跑语义站点 —— 本件里的 dry-run 字样只出现在它自己的自证夹具与判据散文里，说的是「只读检查、任何写意图都不存在」这件事本身）",
-   "语义": "dryrun.v1",
-   "零副作用判据": "本件默认只读：不写主仓任何路径、不写技能库任何路径、不碰服务与状态目录；唯一的写面 = 带 --self-test 时只在 TMPDIR 下自建擦得掉的夹具，件头第 25-26 行逐字写明本件没有写旗标。",
-   "备注": "登记依据 = 门⑩ R1 未登记件（现跑命中即红）：它不是第五套语义，也不声明语义 —— 是本件的自证夹具把 dry-run 字样当被检词。复核 = zerg gate run --step 门⑩ 干跑：dry-run 一套语义（站点逐件登记 + 零副作用判据）（阻断） --only-step 现跑 rc=0。"
   },
   {
    "file": "core/cmd/zerg/dev_proposal_test.go",
@@ -527,20 +527,6 @@
    "备注": "登记依据 = 门⑩ `R1`（现跑命中即红）。同族测试件处置（`cli_route_test.go` 等）：不声明语义，只**判**那一档。"
   },
   {
-   "file": "scripts/build/pack-release.sh",
-   "类": "脚本侧（发布）：`pack-release.sh --dry-run` 的计划件（只出计划、不执行 —— 归并后那一套）",
-   "语义": "dryrun.v1",
-   "零副作用判据": "`--dry-run` 那一档**只把计划件写进 stdout 后 `exit 0`**（两条分支：`--manifest-only --dry-run` 与裸 `--dry-run`），计划件走在参数解析之后、**任何**构建/拷贝/删目录之前（`build-all.sh` · 交叉编 linux 三件 · `rm -rf` 重打包 · `cp` 到 `bin/` · 编茧壁 → 全部在 `exit 0` 之后）⇒ 不编译 / 不打包 / 不写 `$DIST` `$REL` / 不碰 `bin/` 里在跑的件 / 不重签 / 不重启；计划件自带「零副作用 —— 未执行、未改任何状态」与「会写哪些件」两行。",
-   "备注": "登记依据 = 门⑩ `R1`（现跑命中即红）。`--manifest-only`（缺口 `Q-226` · v2.5.13）与既有 `--dry-run` 在本件**合流**（都走「只出计划」）⇒ 登记为归并后的一套，不新造。"
-  },
-  {
-   "file": "scripts/docs/gen-gap-ledger.py",
-   "类": "脚本侧（文档生成）：`gen-gap-ledger.py --dry-run` 只打落点与差异（零副作用）",
-   "语义": "dryrun.v1",
-   "零副作用判据": "`--dry-run` ⇒ `mode=\"dry\"`：只**读**真源（`zerg gap export` 直出与生成件）并 **print** 落点/差异/模式行，写盘只存在于 `mode == \"emit\"` 那一支（`write_atomic`）—— `--dry-run` 落不到那一支 ⇒ 不改任何件、不写生成件；本档也不碰服务、不占端口、不改 git 状态。",
-   "备注": "登记依据 = 门⑩ `R1`（现跑命中即红）。同 `scripts/docs/gen-cli-reference.py` 一族，但本件是**真站点**（有 `--dry-run` 档）故按「脚本侧」登记，不是「字样引用」。"
-  },
-  {
    "file": "scripts/gates/real-gates.sh",
    "类": "判据面接线（门⑩ 的挂点 · **不是**干跑语义站点）",
    "语义": "dryrun.v1",
@@ -574,13 +560,6 @@
    "语义": "dryrun.v1",
    "零副作用判据": "测试件纯只读：判定口 dangerOpenedProblems / refusingRunnersLiveness 都只收 []*command（正控 = catalog() 现算 · 负控 = 合成夹具），不调任何 runner、不碰文件系统、不碰真源；被断言的只是命令树里 danger/opened/run 三格的形状。",
    "备注": "登记依据 = 门⑩ R1 未登记件（本件出现 dry-run 字样即进扫描面；它是同一套语义的**断言侧**，不另立语义 —— 「谁该真跑、谁只能干跑」正是本件在钉的东西）。"
-  },
-  {
-   "file": "scripts/gates/check-help-shape.py",
-   "类": "判据面：**字样引用**（不是干跑语义站点 —— 全件唯一命中 = 件头注释一行提到「挂门 + `scripts/公开标记.tsv` + `dryrun-semantics.json` 三处登记是随动口」这件事本身；本件**没有** `--dry-run` 档，四个面全是只读：现跑 `bin/zerg help --all` / 裸 `help` / `help dangerous` + 只读矩阵件 `core/cmd/zerg/testdata/cli-matrix.json`）",
-   "语义": "dryrun.v1",
-   "零副作用判据": "本件是**只读面**判据件：取数只走 `bin/zerg help …` 三个只读档（`subprocess.run(..., stdin=DEVNULL)` 直取 stdout）与只读矩阵件 ⇒ 不写任何件（不落盘 / 不删 / 不推 / 不造目录 / 不改 git 状态）；`--self-test` 是**内存合成夹具**（`fix_texts()` 现造三面文本 · 8 格：正控 1 + 负控 6 + 对界 1 · 0 失败），`--emit-baseline` 只 **print** 常量新值（刷新 = 人工照抄，本件自己不写盘）。现跑：真目标 rc=0 / 0.047s · `--self-test` rc=0。",
-   "备注": "登记依据 = 门⑩ `R1 未登记件`（现跑命中即红）：本件的命中是**引文**（件头注释提到本登记表的名字），不是第五套语义。★ 同门⑩ 的另两处挂点先例照抄：`scripts/gates/precommit-gates.sh` 与 `scripts/gates/real-gates.sh` —— 两条都登记为「判据面接线 · **不是**干跑语义站点」。复核：现跑 `check-dryrun-semantics.py` ⇒ 现跑 == 登记 · rc=0。"
   },
   {
    "file": "core/cmd/zerg/family_code.go",
@@ -894,6 +873,83 @@
    "语义": "dryrun.v1",
    "零副作用判据": "`--dry-run` 那一态断言 rc=0 且 stdout 含「计划件」；裸跑 / 坏值两态断言 rc=2 且 stdout 0 字节（确认档前零写）；真写那一态只打**合成主控**（`httptest` · 本机随机端口）—— 本测试件自身不写盘 / 不删 / 不推 / 不改 git 状态 / 不碰真状态目录。",
    "备注": "登记依据 = 门⑩ `R1 未登记件`（P0 #232 第三面 2026-10-08 · 本件新增 `itask interval set` 四态真跑 ⇒ 命中行带 `--dry-run` 字面进扫描面）。它走的是既有的 `dryrun.v1` 一套语义（`--dry-run` ⇒ 计划件 · 零副作用），**不是第五套语义** —— 命中是**调用 argv / 对拍夹具串**（同 `writer_lock_test.go` · `family_impact_matrix_test.go` 先例：测试面，非语义站点）。"
+  },
+  {
+   "file": "core/cmd/zerg/family_agent_workers.go",
+   "类": "命令面三态（`agent workers set` / `agent scheduler set` 的 `--dry-run` 计划件 · 与 guard.go / family_sched.go / family_itask.go 同一套语义）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "`--dry-run` 那一态只打印**计划件**（stdout）＋一行收口（stderr）⇒ 零副作用：不读/不写任何配置文件、不 exec、不碰 git、不落状态目录（真写只在确认档齐那一态，且只写仓内 `config/workers.yaml`）。",
+   "备注": "登记依据 = 门⑩ `R1 未登记件`（P0 #232 第四/第五面 2026-10-08 · 本件新增两条 D2 写面 ⇒ 命中行带 `--dry-run` 字面进扫描面）。走既有的 `dryrun.v1` 一套语义，**不是第五套语义**（同 `family_itask.go` / `family_sched.go` 先例）。"
+  },
+  {
+   "file": "core/cmd/zerg/cli_agent_workers_test.go",
+   "类": "命令面测试件（`agent workers set` / `agent scheduler set` 写门四态真跑的对拍 —— 裸跑 rc=2 / `--dry-run` rc=0 出计划件 / `--yes` 真写回读 / 远机与坏值 rc=2）—— 测试面，非语义站点（本件只把 `--dry-run` 原样交给 CLI 并断言，自身一行干跑逻辑都没有）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "`--dry-run` 那一态断言 rc=0 且 stdout 含「计划件」；裸跑/远机/坏值三态断言 rc=2 且 stdout 0 字节（确认档前零写）；真写那一态只对**合成仓根**（`ZERG_REPO` 指临时目录）写 `config/workers.yaml` —— 本测试件自身不碰真仓、不碰真状态目录。",
+   "备注": "登记依据 = 门⑩ `R1 未登记件`（P0 #232 第四/第五面 2026-10-08 · 本件新增四态真跑 ⇒ 命中行带 `--dry-run` 字面进扫描面）。命中是**调用 argv / 对拍夹具串**（同 `adopt_retire_test.go` · `writer_lock_test.go` 先例：测试面，非语义站点）。"
+  },
+  {
+   "file": "core/cmd/zerg/cli_write_face_gate_test.go",
+   "类": "命令面测试件（写面守卫门的 catalog 用例：把 `zerg w --dry-run` 当合成命令串断言写门判定）—— 测试面，非语义站点",
+   "语义": "dryrun.v1",
+   "零副作用判据": "本件只调判据件纯函数（`cwfgCliMk` 在 `t.TempDir()` 搭合成 catalog/root），断言写面门对「带干跑旗标的命令串」的判定；自身不 exec 真命令、不写盘 / 不删 / 不推 / 不改 git 状态。",
+   "备注": "登记依据 = 门⑩ `R1 未登记件`（现跑命中即红）：命中是**对拍夹具串**（合成命令串带干跑旗标字面），不是第五套语义 —— 同 `writer_lock_test.go` / `cli_route_test.go` 先例（测试面，非语义站点）。"
+  },
+  {
+   "file": "core/cmd/zerg/family_impact.go",
+   "类": "命令面三态（`impact <文件或契约id>` 的干跑计划件 · 与 guard.go 同一套语义）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "`zerg impact … --dry-run` ⇒ 走共享 `writeGuardDryRun` 只出**计划件**（rc=0）、**六层取数一个都不跑**；缺 `--yes` ⇒ rc=2 且零写；真写只在确认档齐那一态。",
+   "备注": "登记依据 = 门⑩ `R1 未登记件`（现跑命中即红）：本件走既有的 `writeGuardDryRun` 一套语义（干跑 ⇒ 计划件 · 零副作用），**不是第五套语义**。"
+  },
+  {
+   "file": "core/cmd/zerg/family_receipt.go",
+   "类": "命令面三态（`receipt …` 的干跑计划件 · 与 guard.go 同一套语义）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "`--dry-run` ⇒ 走共享 `writeGuardDryRun` 只出计划件（rc=0）且零写；缺 `--yes` ⇒ rc=2 零写；`ls`/`show`（只读面）不走这条。",
+   "备注": "登记依据 = 门⑩ `R1 未登记件`（现跑命中即红）：本件走既有的 `writeGuardDryRun` 一套语义，**不是第五套语义**。"
+  },
+  {
+   "file": "core/cmd/zerg/family_swap_core.go",
+   "类": "命令面三态（`swap core …` 的干跑计划件 · 与 guard.go 同一套语义）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "写盘档（裸跑 / `--swap` / `--dry-run` / `--yes`）走 fail-closed 授权门：`--dry-run` ⇒ 共享 `writeGuardDryRun` 只出计划件（rc=0）零写；缺 `--yes` ⇒ rc=2 零写；只报告旗标（`--check` 等）只读透传、不进门。",
+   "备注": "登记依据 = 门⑩ `R1 未登记件`（现跑命中即红）：本件走既有的 `writeGuardDryRun` 一套语义，**不是第五套语义**。"
+  },
+  {
+   "file": "core/cmd/zerg/family_swap_core_test.go",
+   "类": "命令面测试件（`swap core` 的 D3 四态真跑对拍：裸跑 rc=2 零写 / `--dry-run` rc=0 出计划件 / `--yes` 走函数级接缝 / `--dry-run --yes` rc=2）—— 测试面，非语义站点",
+   "语义": "dryrun.v1",
+   "零副作用判据": "干跑那一态断言 rc=0 且出计划件、日志零写；真跑档只走**函数级接缝**（单测绝不真跑换件）；夹具在 `t.TempDir()`（仓外），本件自身不碰真仓。",
+   "备注": "登记依据 = 门⑩ `R1 未登记件`（现跑命中即红）：命中是**调用 argv / 对拍夹具串**（四态串带干跑旗标字面），不是第五套语义 —— 同 `writer_lock_test.go` 先例。"
+  },
+  {
+   "file": "core/cmd/zerg/swap_agent.go",
+   "类": "命令面三态（`swap agent …` 的干跑计划件 · 与 guard.go 同一套语义）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "写盘档（裸跑 / `--swap` / `--dry-run` / `--yes`）走 fail-closed 授权门：`--dry-run` ⇒ 共享 `writeGuardDryRun` 只出计划件（rc=0）零写；缺 `--yes` ⇒ rc=2 零写；只读档不进。",
+   "备注": "登记依据 = 门⑩ `R1 未登记件`（现跑命中即红）：本件走既有的 `writeGuardDryRun` 一套语义，**不是第五套语义**。"
+  },
+  {
+   "file": "core/cmd/zerg/swap_agent_test.go",
+   "类": "命令面测试件（`swap agent` 的 D3 四态真跑对拍：裸跑 rc=2 零写 / `--dry-run` rc=0 出计划件 / `--yes` 走函数级接缝 / `--dry-run --yes` rc=2）—— 测试面，非语义站点",
+   "语义": "dryrun.v1",
+   "零副作用判据": "干跑那一态断言 rc=0 且出计划件、日志零写；真跑档只走**函数级接缝**（单测绝不真跑判据）；夹具在 `t.TempDir()`（仓外），本件自身不碰真仓。",
+   "备注": "登记依据 = 门⑩ `R1 未登记件`（现跑命中即红）：命中是**调用 argv / 对拍夹具串**，不是第五套语义 —— 同 `writer_lock_test.go` 先例。"
+  },
+  {
+   "file": "core/cmd/zerg/swap_ui.go",
+   "类": "命令面三态（`swap ui …` 的干跑计划件 · 与 guard.go 同一套语义）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "写盘档（裸跑 / `--swap` / `--dry-run` / `--yes`）走本层 fail-closed 授权门：`--dry-run` ⇒ 共享 `writeGuardDryRun` 只出计划件（rc=0）零写；缺 `--yes` ⇒ rc=2 零写；`--check` 只读档不进。",
+   "备注": "登记依据 = 门⑩ `R1 未登记件`（现跑命中即红）：本件走既有的 `writeGuardDryRun` 一套语义，**不是第五套语义**。"
+  },
+  {
+   "file": "core/cmd/zerg/swap_ui_test.go",
+   "类": "命令面测试件（`swap ui` 的 D3 四态真跑对拍：裸跑 rc=2 零写 / `--dry-run` rc=0 出计划件 / `--yes` 走函数级接缝 / `--dry-run --yes` rc=2 零写）—— 测试面，非语义站点",
+   "语义": "dryrun.v1",
+   "零副作用判据": "干跑那一态断言 rc=0 且出计划件、日志零写；真跑档只走**函数级接缝**（单测绝不真跑六闸）；夹具在 `t.TempDir()`（仓外），本件自身不碰真仓。",
+   "备注": "登记依据 = 门⑩ `R1 未登记件`（现跑命中即红）：命中是**调用 argv / 对拍夹具串**，不是第五套语义 —— 同 `writer_lock_test.go` 先例。"
   }
 
  ]

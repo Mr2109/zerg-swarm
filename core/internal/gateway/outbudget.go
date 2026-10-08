@@ -4,7 +4,7 @@
 //
 // 背景（实测）：adapter 把 max_tokens 写死 2000 ⇒ 思考型模型思考一开就吃光额度 ⇒ 正文为空
 //
-//	（直连实测 EDGE-NODE 105.5s / Mr2109 69.7s，两条皆 content='' + finish=length）。
+//	（直连实测 node-a 105.5s / node-local 69.7s，两条皆 content='' + finish=length）。
 //
 // 唯一公式（不写死）：
 //

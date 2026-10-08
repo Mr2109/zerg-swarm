@@ -164,7 +164,7 @@ func (g *Gateway) forwardToBackend(
 		// v2.5.6 修复（2026-08-29 q2 go vet）: 请求失败提前 return 必须 cancel——防 context 泄漏
 		cancel()
 		// v2.5.4.9 C failover：转发失败（超时/连接错误——卡死检测）→ 换机器重试 1 次
-		// 场景: EDGE-NODE 单槽卡死——ResponseHeaderTimeout 60s 触发——换本机/其他候选
+		// 场景: node-a 单槽卡死——ResponseHeaderTimeout 60s 触发——换本机/其他候选
 		// reason 传真实错误原文：failover 会涨失败/熔断计数，计数必须带原因（快照 last_error 可见）
 		// required 透传（待修补 #38 ②）：换机是重新选路，新目标引擎必须重新过按引擎的能力门槛。
 		if failoverRoute, ferr := g.pickFallbackRoute(route, modelName(reqMap), fmt.Sprintf("backend %s forward failed: %v", route.Host, err), required); ferr == nil {

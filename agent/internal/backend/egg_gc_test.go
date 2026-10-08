@@ -6,7 +6,7 @@
 //
 // 本文件钉住六件事：
 //
-//	① 单元名解析：只认 `zerg-*.service`（用户自己的 edge-node-agent.service / k2.service 一律跳过）；
+//	① 单元名解析：只认 `zerg-*.service`（用户自己的 node-a-agent.service / k2.service 一律跳过）；
 //	② 归属铁律：**逐个核**单元自己的 Slice / ControlGroup —— 不是 llm.slice 就不许动手
 //	   （真机实测：systemd 259 的 `list-units` 压根不认识 `--slice=`，所以这条不能靠过滤参数）；
 //	③ 归属读不到 ⇒ 不许动手（fail-closed：宁留孤儿要人接手，不误停别人的单元）；
@@ -78,7 +78,7 @@ func (g *gcRecorder) run(_ time.Duration, name string, args ...string) (string, 
 	return "", errors.New("未预置的命令：" + strings.Join(append([]string{name}, args...), " "))
 }
 
-// sliceStateShow 造一段真实形态的 `systemctl --user show` 输出（字段与 EDGE-NODE 实测一致）。
+// sliceStateShow 造一段真实形态的 `systemctl --user show` 输出（字段与 node-a 实测一致）。
 func sliceStateShow(unit, slice, active, sub, result string, execStatus int) string {
 	line := fmt.Sprintf("ActiveState=%s\nSubState=%s\nResult=%s\nExecMainStatus=%d\n", active, sub, result, execStatus)
 	if slice == "" {
@@ -102,7 +102,7 @@ func (g *gcRecorder) unitsTouched(verb string) []string {
 func TestParseEggUnitNames(t *testing.T) {
 	out := "● zerg-dead-egg.service loaded failed failed 卵 dead-egg\n" +
 		"zerg-qwen38-27b-egg.service loaded active running 卵 qwen38-27b-egg\n" +
-		"edge-node-agent.service loaded active running systemd user agent\n" +
+		"node-a-agent.service loaded active running systemd user agent\n" +
 		"k2.service loaded active running 用户手工服务\n" +
 		"zerg.service loaded active running 边界：段名为空\n" +
 		"\n" +
@@ -133,7 +133,7 @@ func TestGCLeftoverEggs_OnlyTouchesEggUnits(t *testing.T) {
 			// 第三条只给 ControlGroup（Slice 属性读不到）——归属两道判据的交叉校验
 			"zerg-cgroup-only.service loaded active running 只读得到 cgroup 的卵\n" +
 			// 下面两条是「绝不许碰」的对照：用户手工服务与子端自己（万一被列进来）
-			"edge-node-agent.service loaded active running agent\n" +
+			"node-a-agent.service loaded active running agent\n" +
 			"k2.service loaded active running 用户服务\n",
 		showByUnit: map[string]string{
 			"zerg-dead-egg.service": sliceStateShow("zerg-dead-egg.service", "llm.slice", "failed", "failed", "exit-code", 127),
@@ -358,13 +358,13 @@ func TestStartupGC_WiredThroughNewManager(t *testing.T) {
 	}
 
 	t.Setenv(EnvHatch, "")
-	NewManager(nil, "edge-node")
+	NewManager(nil, "node-a")
 	if got := atomic.LoadInt32(&called); got != 0 {
 		t.Fatalf("开关关时启动不许碰任何单元（离线路径逐字不变），却调了 %d 次", got)
 	}
 
 	t.Setenv(EnvHatch, "1")
-	NewManager(nil, "edge-node")
+	NewManager(nil, "node-a")
 	if got := atomic.LoadInt32(&called); got != 1 {
 		t.Fatalf("开关开时**启动必须先清遗留卵**（设计 §6.5），调了 %d 次", got)
 	}

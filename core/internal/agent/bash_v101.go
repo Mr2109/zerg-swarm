@@ -324,7 +324,7 @@ func bashExpandDangerScanCoded(command string) (string, error) {
 // bashRmTargetGuard — rm 参数级目标防护（2026-09-07 家目录清空事故修复）
 // 事故根因: checkDangerousCommand 的 endOnly 黑名单只拦 "rm -rf /" 与 "rm -rf ~" 字面量,
 //
-//	"rm -rf ~/Desktop ..."、"$HOME/..."、"~/..." 全部漏过 → 整屋个人文件被 rm
+//	"rm -rf ~/Desktop ..."、"$HOME/..."、"/Users/<user>/..." 全部漏过 → 整屋个人文件被 rm
 //
 // 本守卫处理已展开(~/、$HOME→真实路径)的命令: 逐个解析 rm 目标,
 //
@@ -380,7 +380,7 @@ func rmTargetDangerous(target, home string) bool {
 	if target == "/" {
 		return true
 	}
-	// 目标==家目录, 或目标是家目录祖先(/Users、~ 的上级), 或目标在家目录内
+	// 目标==家目录, 或目标是家目录祖先(/Users、/Users/<user> 的上级), 或目标在家目录内
 	if target == home || strings.HasPrefix(home, target+"/") || strings.HasPrefix(target, home+"/") {
 		return true
 	}

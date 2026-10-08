@@ -234,25 +234,31 @@ func TestCheckGhostDeclDiffGatePort(t *testing.T) {
 		}
 	})
 
-	t.Run("SelfTestRetiredTolerant", func(t *testing.T) {
-		// ★ 退役态（GAP-20261007-16 · 判据件退役前置 ③）：把本件 py 真身从**仓外夹具**移开
-		//   ⇒ 自检仍须照常出结论 rc=0（✗ 不得因缺 py 判红 rc=1）。旧口径此格必红（④c 恒 False）。
-		f := tgFixture(t, []string{"com.zerg.core.plist"})
-		root := f[0]
-		if err := os.Remove(filepath.Join(root, "scripts", "gates", "check-ghost-decl-diff.py")); err != nil {
+	t.Run("SelfTestTwoStateByteEqual", func(t *testing.T) {
+		// ★ 两态逐字同（本单：断「Go 半读 py 源」依赖 —— 源码级牙 / 自检 ④b④c / 只读指纹
+		// 三面数据来源改**内嵌快照** `gddSelfPySource`）：把本件 py 真身从**仓外夹具**移开，
+		// 自检输出必须与「在盘」态**逐字节同**、rc=0/0，且 ④b/④c 两格照出（✗ 不再有「退役态」分叉）。
+		// ★ 回归牙：把 ④b/④c 改回读盘上 py 件（或删掉内嵌快照）⇒ 本格 FAIL 带行号。
+		fA := tgFixture(t, []string{"com.zerg.core.plist"})
+		var bufA bytes.Buffer
+		rcA := gddSelfTestRoot(&bufA, fA[0])
+		fB := tgFixture(t, []string{"com.zerg.core.plist"})
+		if err := os.Remove(filepath.Join(fB[0], "scripts", "gates", "check-ghost-decl-diff.py")); err != nil {
 			t.Fatalf("移开夹具 py 真身失败：%v", err)
 		}
-		var buf bytes.Buffer
-		rc := gddSelfTestRoot(&buf, root)
-		out := buf.String()
-		if rc != 0 {
-			t.Fatalf("退役态自检 rc=%d want 0（✗ 缺 py 不得判红）\n%s", rc, out)
+		var bufB bytes.Buffer
+		rcB := gddSelfTestRoot(&bufB, fB[0])
+		if rcA != 0 || rcB != 0 {
+			t.Fatalf("自检 rc 在盘=%d 移出=%d want 0/0\n--- 在盘 ---\n%s\n--- 移出 ---\n%s", rcA, rcB, bufA.String(), bufB.String())
 		}
-		if !strings.Contains(out, "退役态") {
-			t.Fatalf("退役态自检未点明退役态分支（抽掉该分支本格即红）:\n%s", out)
+		if bufA.String() != bufB.String() {
+			t.Fatalf("两态自检输出不逐字同（本单回归牙）：\n--- 在盘 ---\n%s\n--- 移出 ---\n%s", bufA.String(), bufB.String())
 		}
-		if !strings.Contains(out, "自检结论: 全过") {
-			t.Fatalf("退役态自检未全过:\n%s", out)
+		if !strings.Contains(bufA.String(), "④b") || !strings.Contains(bufA.String(), "④c") {
+			t.Fatalf("源码级牙两条正例未出（应走内嵌快照）：\n%s", bufA.String())
+		}
+		if strings.Contains(bufA.String(), "退役态") {
+			t.Fatalf("旧「退役态」分叉仍在（应已由内嵌快照统一）：\n%s", bufA.String())
 		}
 	})
 

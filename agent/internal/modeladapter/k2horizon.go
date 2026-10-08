@@ -7,12 +7,12 @@ import (
 )
 
 // K2Horizon IFM example-moe-36b 家族适配器（example-moe-36b 架构）。
-// 2026-09-08 接入——EDGE-NODE(gfx1151 APU)实测 MoVA-36B-A4B Q4_K_M：37.9 t/s，reasoning+content 正常。
+// 2026-09-08 接入——node-a(gfx1151 APU)实测 MoVA-36B-A4B Q4_K_M：37.9 t/s，reasoning+content 正常。
 // 架构新（MoVA 混合价值注意力 / Xllm），主线 llama.cpp 不支持（报 unknown model architecture:
 // 'example-moe-36b'）——必须用 IFM fork（/home/<user>/llama-k2/build-k2，model/K2Horizon 分支），
 // 由 agent_models.yaml 的 cmd 指定二进制（同 qwen3.8-flash 挂 build-hip-flash 的先例）。
 // 思考模型：reasoning 走 reasoning_content（--reasoning-preserve 保留），ThinkingFormat: deepseek。
-// 注意：不能 -c 0（原生 512K 上下文）——EDGE-NODE 内存 122G 装 Q4 22.4G 后 KV 空间有限——显式 -c 32768。
+// 注意：不能 -c 0（原生 512K 上下文）——node-a 内存 122G 装 Q4 22.4G 后 KV 空间有限——显式 -c 32768。
 // GGUF 内嵌 chat template 需要 --jinja 启用（同 example-35b-v2/qwen4 系）。
 type K2Horizon struct{}
 

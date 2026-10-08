@@ -8,7 +8,7 @@
 // 方案（**照本仓现成先例**，不另造一套开关）：
 //
 //	· 形态 = **环境变量开关 `ZERG_DEEP=1`** —— 与既有的 `ZERG_LIVE=1`
-//	  （`core/internal/chat/infer_live_test.go`：「加 env 开关（EDGE-NODE 熔断/离线时不红 CI——手动
+//	  （`core/internal/chat/infer_live_test.go`：「加 env 开关（node-a 熔断/离线时不红 CI——手动
 //	  `ZERG_LIVE=1` 跑）」）、`ZERG_REFRESH_HINTS=1`（`unresolved_entries_test.go`：「只在
 //	  `ZERG_REFRESH_HINTS=1` 时跑（默认 skip，免得每次 `go test` 都刷一屏）」）同一条写法：
 //	  默认档 `t.Skip`、设了才跑；分组则沿用本包既有的 `go test ./cmd/zerg -run TestImpact…` 口径。

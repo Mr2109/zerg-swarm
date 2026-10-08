@@ -18,7 +18,7 @@ func TestMaxResident_DefaultsToSingleSlot(t *testing.T) {
 	if got := resolveMaxResidentFromEnv(nil); got != resources.DefaultMaxResident {
 		t.Fatalf("无 getenv 时应为默认单槽 %d，实得 %d", resources.DefaultMaxResident, got)
 	}
-	m := NewManager(nil, "edge-node")
+	m := NewManager(nil, "node-a")
 	if got := m.MaxResident(); got != 1 {
 		t.Fatalf("默认驻留上限必须是 1（单槽，Q1），实得 %d", got)
 	}
@@ -44,10 +44,10 @@ func TestMaxResident_ExplicitAndInvalid(t *testing.T) {
 		}
 	}
 	t.Setenv(EnvMaxResident, "3")
-	if got := NewManager(nil, "edge-node").MaxResident(); got != 3 {
+	if got := NewManager(nil, "node-a").MaxResident(); got != 3 {
 		t.Fatalf("显式多槽配置未生效：实得 %d", got)
 	}
-	m := &Manager{procs: map[string]*subproc{}, loading: map[string]*loadWaiter{}, machine: "edge-node"}
+	m := &Manager{procs: map[string]*subproc{}, loading: map[string]*loadWaiter{}, machine: "node-a"}
 	m.SetMaxResident(2)
 	if got := m.MaxResident(); got != 2 {
 		t.Fatalf("SetMaxResident 未生效：实得 %d", got)
@@ -332,7 +332,7 @@ func newEvictTestManager(limit int, procs map[string]*subproc) *Manager {
 	return &Manager{
 		procs:       procs,
 		loading:     map[string]*loadWaiter{},
-		machine:     "edge-node",
+		machine:     "node-a",
 		maxResident: limit,
 	}
 }

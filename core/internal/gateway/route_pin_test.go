@@ -33,23 +33,23 @@ import (
 //	· `..._RequestCannotPersist`：请求侧**任何**写法都写不进覆盖表（含「写意图头」）；
 //	· `..._GatewayHasNoWritePath`：**源码级**断言 —— 那道门那一件里 0 个写盘调用。
 
-// pinTestConfig —— 一份最小配置：`dual` = 本机 + edge-node 两个候选（现场那条正是这种形状），
-// `only-remote` = 只有 edge-node 一个候选（用来测「点名一台不是候选的机器」的负控）。
+// pinTestConfig —— 一份最小配置：`dual` = 本机 + node-a 两个候选（现场那条正是这种形状），
+// `only-remote` = 只有 node-a 一个候选（用来测「点名一台不是候选的机器」的负控）。
 // 别名一条：钉的是**标准名**、请求可以用别名。
 func pinTestConfig() *config.FleetConfig {
 	return &config.FleetConfig{
 		Models: map[string][]config.ModelCandidate{
 			"dual": {
-				{Host: "Mr2109", Backend: "llama-server", File: "/m/dual.gguf", MemGb: 21},
-				{Host: "edge-node", Backend: "llama-server", File: "/m/dual.gguf", MemGb: 21},
+				{Host: "node-local", Backend: "llama-server", File: "/m/dual.gguf", MemGb: 21},
+				{Host: "node-a", Backend: "llama-server", File: "/m/dual.gguf", MemGb: 21},
 			},
 			"only-remote": {
-				{Host: "edge-node", Backend: "llama-server", File: "/m/only.gguf", MemGb: 5},
+				{Host: "node-a", Backend: "llama-server", File: "/m/only.gguf", MemGb: 5},
 			},
 		},
 		Fleet: map[string]config.FleetNode{
-			"Mr2109": {Host: "127.0.0.1", Port: 8100},
-			"edge-node":   {Host: "<worker-ip>", Port: 8100},
+			"node-local": {Host: "127.0.0.1", Port: 8100},
+			"node-a":     {Host: "<cluster-ip>", Port: 8100},
 		},
 		Aliases: map[string]string{"双候选": "dual"},
 	}
@@ -118,15 +118,15 @@ func defaultHostFresh(t *testing.T, model string) string {
 
 // TestRoutePin_TableHit —— 覆盖表命中 ⇒ **命中即用**（落点名那台；URL/端口按 fleet 真源组装）。
 func TestRoutePin_TableHit(t *testing.T) {
-	g, _ := pinTestGateway(t, pinRow("", "edge-node", 2*time.Hour))
+	g, _ := pinTestGateway(t, pinRow("", "node-a", 2*time.Hour))
 	r, err := g.pickRoute("dual", "", "")
 	if err != nil {
-		t.Fatalf("钉住后本该直接落 edge-node：%v", err)
+		t.Fatalf("钉住后本该直接落 node-a：%v", err)
 	}
-	if r.Host != "edge-node" {
-		t.Fatalf("覆盖表命中没生效：期望 edge-node，实得 %s", r.Host)
+	if r.Host != "node-a" {
+		t.Fatalf("覆盖表命中没生效：期望 node-a，实得 %s", r.Host)
 	}
-	if r.URL != "http://<worker-ip>:8100/infer" || r.Port != 8100 {
+	if r.URL != "http://<cluster-ip>:8100/infer" || r.Port != 8100 {
 		t.Fatalf("URL/端口该按 fleet 真源组装，实得 %q / %d", r.URL, r.Port)
 	}
 }
@@ -134,56 +134,56 @@ func TestRoutePin_TableHit(t *testing.T) {
 // TestRoutePin_TableHit_OnLocal —— 反向也要成立（钉回本机那台 ⇒ 就落本机）：
 // 「命中即用」不许被择优的方向绑住（否则「钉住」会变成「钉到远程」的同义词）。
 func TestRoutePin_TableHit_OnLocal(t *testing.T) {
-	g, _ := pinTestGateway(t, pinRow("", "Mr2109", 2*time.Hour))
+	g, _ := pinTestGateway(t, pinRow("", "node-local", 2*time.Hour))
 	r, err := g.pickRoute("dual", "", "")
 	if err != nil {
-		t.Fatalf("钉住后本该直接落 Mr2109：%v", err)
+		t.Fatalf("钉住后本该直接落 node-local：%v", err)
 	}
-	if r.Host != "Mr2109" {
-		t.Fatalf("覆盖表命中没生效：期望 Mr2109，实得 %s", r.Host)
+	if r.Host != "node-local" {
+		t.Fatalf("覆盖表命中没生效：期望 node-local，实得 %s", r.Host)
 	}
 }
 
 // TestRoutePin_HeaderHit —— 请求头那一档（零落盘的一次性路径）同样命中即用。
 func TestRoutePin_HeaderHit(t *testing.T) {
 	g, _ := pinTestGateway(t)
-	r, err := g.pickRouteForRequest("dual", "edge-node", "", "")
+	r, err := g.pickRouteForRequest("dual", "node-a", "", "")
 	if err != nil {
-		t.Fatalf("带头请求本该落 edge-node：%v", err)
+		t.Fatalf("带头请求本该落 node-a：%v", err)
 	}
-	if r.Host != "edge-node" {
-		t.Fatalf("请求头命中没生效：期望 edge-node，实得 %s", r.Host)
+	if r.Host != "node-a" {
+		t.Fatalf("请求头命中没生效：期望 node-a，实得 %s", r.Host)
 	}
 }
 
 // TestRoutePin_HeaderBeatsTable —— 两档同时给**且指向不同机器** ⇒ **头赢**
 // （「本次请求的意图」比「表里的长期意图」更具体 —— 写死的口径，**不靠遍历顺序说话**）。
 func TestRoutePin_HeaderBeatsTable(t *testing.T) {
-	g, _ := pinTestGateway(t, pinRow("", "Mr2109", 2*time.Hour))
-	r, err := g.pickRouteForRequest("dual", "edge-node", "", "")
+	g, _ := pinTestGateway(t, pinRow("", "node-local", 2*time.Hour))
+	r, err := g.pickRouteForRequest("dual", "node-a", "", "")
 	if err != nil {
 		t.Fatalf("两档同给本该落头点名那台：%v", err)
 	}
-	if r.Host != "edge-node" {
-		t.Fatalf("优先级写反了：头点 edge-node、表钉 Mr2109 ⇒ 该落 edge-node，实得 %s", r.Host)
+	if r.Host != "node-a" {
+		t.Fatalf("优先级写反了：头点 node-a、表钉 node-local ⇒ 该落 node-a，实得 %s", r.Host)
 	}
 }
 
 // TestRoutePin_AliasHit —— 钉的是**标准名**、请求用**别名** ⇒ 照样命中（先解析别名、再查表）。
 func TestRoutePin_AliasHit(t *testing.T) {
-	g, _ := pinTestGateway(t, pinRow("", "edge-node", 2*time.Hour))
+	g, _ := pinTestGateway(t, pinRow("", "node-a", 2*time.Hour))
 	r, err := g.pickRoute("双候选", "", "") // 别名 → dual（配置里那一条）
 	if err != nil {
 		t.Fatalf("别名请求本该命中覆盖表：%v", err)
 	}
-	if r.Host != "edge-node" {
-		t.Fatalf("别名没走到钉住那台：期望 edge-node，实得 %s", r.Host)
+	if r.Host != "node-a" {
+		t.Fatalf("别名没走到钉住那台：期望 node-a，实得 %s", r.Host)
 	}
 }
 
 // TestRoutePin_ModelNotInTable —— 请求的模型不在路由表里 ⇒ 与今天同路（报「不在路由表里」）。
 func TestRoutePin_ModelNotInTable(t *testing.T) {
-	g, _ := pinTestGateway(t, pinRow("", "edge-node", 2*time.Hour))
+	g, _ := pinTestGateway(t, pinRow("", "node-a", 2*time.Hour))
 	_, err := g.pickRoute("压根没有这个模型", "", "")
 	if err == nil || !strings.Contains(err.Error(), "not found in the routing table") {
 		t.Fatalf("期望「不在路由表里」那条原有报错，实得：%v", err)
@@ -194,15 +194,15 @@ func TestRoutePin_ModelNotInTable(t *testing.T) {
 // （**绝不悄悄回默认择优** —— 那正好是「钉住等于没钉」的静默降级）。头/表两条路各判一次。
 func TestRoutePin_NotACandidateIsFailClosed(t *testing.T) {
 	g, _ := pinTestGateway(t)
-	_, err := g.pickRouteForRequest("only-remote", "Mr2109", "", "")
+	_, err := g.pickRouteForRequest("only-remote", "node-local", "", "")
 	if err == nil {
-		t.Fatal("头点名 Mr2109、而 only-remote 在 Mr2109 上没有候选 ⇒ 本该 fail-closed，却放行了")
+		t.Fatal("头点名 node-local、而 only-remote 在 node-local 上没有候选 ⇒ 本该 fail-closed，却放行了")
 	}
 	if !strings.Contains(err.Error(), "没有候选") || !strings.Contains(err.Error(), "不悄悄回默认择优") {
 		t.Fatalf("报错文案该点名「没有候选」+「不悄悄回默认择优」，实得：%v", err)
 	}
 
-	g2, _ := pinTestGateway(t, pinRow("only-remote", "Mr2109", 2*time.Hour))
+	g2, _ := pinTestGateway(t, pinRow("only-remote", "node-local", 2*time.Hour))
 	_, err2 := g2.pickRoute("only-remote", "", "")
 	if err2 == nil || !strings.Contains(err2.Error(), "没有候选") {
 		t.Fatalf("覆盖表点了一台不是候选的机器 ⇒ 本该 fail-closed，实得：%v", err2)
@@ -216,7 +216,7 @@ func TestRoutePin_NotACandidateIsFailClosed(t *testing.T) {
 func TestRoutePin_Expired(t *testing.T) {
 	now := time.Now()
 	expired := routepin.Pin{
-		Model: "dual", Machine: "edge-node",
+		Model: "dual", Machine: "node-a",
 		CreatedAt:  now.Add(-3 * time.Hour).Format(time.RFC3339),
 		ExpiresAt:  now.Add(-1 * time.Minute).Format(time.RFC3339), // 已过期 1 分钟
 		TTLSeconds: 7200,
@@ -241,7 +241,7 @@ func TestRoutePin_Expired(t *testing.T) {
 // TestRoutePin_BadExpiryIsNotHit —— `expires_at` 读不出来（坏形状）⇒ **不命中**：
 // 宁可不钉，也不许把「时刻读不出来」当「永不过期」（后者正好是「永久改变默认」那条路）。
 func TestRoutePin_BadExpiryIsNotHit(t *testing.T) {
-	g, _ := pinTestGateway(t, routepin.Pin{Model: "dual", Machine: "edge-node", ExpiresAt: "不是时刻"})
+	g, _ := pinTestGateway(t, routepin.Pin{Model: "dual", Machine: "node-a", ExpiresAt: "不是时刻"})
 	if h, _ := g.pinnedHostFor("dual"); h != "" {
 		t.Fatalf("坏时刻的行不许命中，实得 %q", h)
 	}
@@ -267,13 +267,13 @@ func TestRoutePin_HotReload(t *testing.T) {
 	g, path := pinTestGateway(t)
 	base := defaultHostOf(t, g, "dual")
 	tbl := &routepin.Table{ID: routepin.TableID}
-	tbl.Upsert(pinRow("", "edge-node", time.Hour))
+	tbl.Upsert(pinRow("", "node-a", time.Hour))
 	if err := tbl.Save(path); err != nil {
 		t.Fatal(err)
 	}
 	touchAhead(t, path, 2*time.Second) // mtime 粒度兜底：明确推到「刚才之后」
-	if h, _ := g.pinnedHostFor("dual"); h != "edge-node" {
-		t.Fatalf("钉下去之后该落 edge-node（热读没生效）：实得 %q", h)
+	if h, _ := g.pinnedHostFor("dual"); h != "node-a" {
+		t.Fatalf("钉下去之后该落 node-a（热读没生效）：实得 %q", h)
 	}
 	if err := (&routepin.Table{ID: routepin.TableID}).Save(path); err != nil { // 撒
 		t.Fatal(err)
@@ -292,9 +292,9 @@ func TestRoutePin_HotReload(t *testing.T) {
 // TestRoutePin_HeaderNeverTouchesDisk —— 带头跑一批请求（多种写法）⇒ 覆盖表
 // **sha256 + 尺寸 + mtime 三者逐字不变**（「零落盘」那条约束的可验证形式）。
 func TestRoutePin_HeaderNeverTouchesDisk(t *testing.T) {
-	g, path := pinTestGateway(t, pinRow("", "Mr2109", time.Hour))
+	g, path := pinTestGateway(t, pinRow("", "node-local", time.Hour))
 	before := fileDigest(t, path)
-	for _, hdr := range []string{"edge-node", "Mr2109", "不存在的机器", "", "edge-node "} {
+	for _, hdr := range []string{"node-a", "node-local", "不存在的机器", "", "node-a "} {
 		_, _ = g.pickRouteForRequest("dual", hdr, "", "")
 	}
 	if after := fileDigest(t, path); after != before {
@@ -309,14 +309,14 @@ func TestRoutePin_RequestCannotPersist(t *testing.T) {
 	before := fileDigest(t, path)
 	// 请求侧「写意图」的三种写法（真实现里**一个都不认**）：写意图头 / 头 + TTL / 另一枚头名。
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"dual"}`))
-	req.Header.Set(machineHeaderName, "edge-node")
+	req.Header.Set(machineHeaderName, "node-a")
 	req.Header.Set(machineHeaderName+"-TTL", "2h")
 	req.Header.Set("X-Zerg-Route-Pin", "2h")
-	if h := machineHeaderOf(req); h != "edge-node" {
-		t.Fatalf("头解析该逐字取 edge-node，实得 %q", h)
+	if h := machineHeaderOf(req); h != "node-a" {
+		t.Fatalf("头解析该逐字取 node-a，实得 %q", h)
 	}
 	if _, err := g.pickRouteForRequest("dual", machineHeaderOf(req), "", ""); err != nil {
-		t.Fatalf("带头请求本该落 edge-node：%v", err)
+		t.Fatalf("带头请求本该落 node-a：%v", err)
 	}
 	if after := fileDigest(t, path); after != before {
 		t.Fatalf("请求面写进了覆盖表（负控失效）：写前 %s ≠ 写后 %s", before, after)
@@ -324,7 +324,7 @@ func TestRoutePin_RequestCannotPersist(t *testing.T) {
 	if tbl, err := routepin.Load(path); err != nil || len(tbl.Pins) != 0 {
 		t.Fatalf("覆盖表里不许出现请求侧写下的行：%+v / %v", tbl, err)
 	}
-	// 一次性：下一次**不带**头的请求不许还落 edge-node（头不是钉）。
+	// 一次性：下一次**不带**头的请求不许还落 node-a（头不是钉）。
 	if h, _ := g.pinnedHostFor("dual"); h != "" {
 		t.Fatalf("头不许变成持久钉：实得 %q", h)
 	}

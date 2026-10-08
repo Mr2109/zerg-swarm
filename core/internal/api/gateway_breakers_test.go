@@ -5,7 +5,7 @@ package api
 // 用真实 chi.NewRouter + AuthMiddleware("test-token") 组路由，验证：
 //   - 带令牌 GET /api/gateway/breakers → 200 且 JSON 可解析（breakers 为数组）；
 //   - 不带令牌 → 401（新接口不是免鉴权旁路）；
-//   - POST /api/gateway/breakers/reset（无 body / {"host":"edge-node"}）→ 200 且 reset >= 0；
+//   - POST /api/gateway/breakers/reset（无 body / {"host":"node-a"}）→ 200 且 reset >= 0；
 //   - 非法 body → 400；Gateway 未注入 → 503。
 
 import (
@@ -123,12 +123,12 @@ func TestBreakerAPI_ResetAllNoBody(t *testing.T) {
 	t.Logf("POST /api/gateway/breakers/reset（空 body）→ 200 %s", w.Body.String())
 }
 
-// TestBreakerAPI_ResetSingleHost POST {"host":"edge-node"} → 200 + reset >= 0。
+// TestBreakerAPI_ResetSingleHost POST {"host":"node-a"} → 200 + reset >= 0。
 func TestBreakerAPI_ResetSingleHost(t *testing.T) {
 	h := newBreakerTestHandlers(t)
 	r := newBreakerTestRouter(h)
 
-	w := doBreakerReq(t, r, http.MethodPost, "/api/gateway/breakers/reset", "test-token", `{"host":"edge-node"}`)
+	w := doBreakerReq(t, r, http.MethodPost, "/api/gateway/breakers/reset", "test-token", `{"host":"node-a"}`)
 	if w.Code != http.StatusOK {
 		t.Fatalf("状态码应为 200——实际 %d body=%s", w.Code, w.Body.String())
 	}
@@ -141,7 +141,7 @@ func TestBreakerAPI_ResetSingleHost(t *testing.T) {
 	if resp.Reset == nil || *resp.Reset < 0 {
 		t.Errorf("reset 应存在且 >= 0——body=%s", w.Body.String())
 	}
-	t.Logf("POST /api/gateway/breakers/reset {\"host\":\"edge-node\"} → 200 %s", w.Body.String())
+	t.Logf("POST /api/gateway/breakers/reset {\"host\":\"node-a\"} → 200 %s", w.Body.String())
 }
 
 // TestBreakerAPI_ResetInvalidBody 非法 JSON → 400。

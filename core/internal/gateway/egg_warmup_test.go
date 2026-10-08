@@ -27,7 +27,7 @@ func newForwardTestGateway(t *testing.T, srv *httptest.Server) *Gateway {
 		port = port*10 + int(c-'0')
 	}
 	return &Gateway{
-		config:    &config.FleetConfig{Fleet: map[string]config.FleetNode{"edge-node": {Host: u[:i], Port: port}}},
+		config:    &config.FleetConfig{Fleet: map[string]config.FleetNode{"node-a": {Host: u[:i], Port: port}}},
 		authToken: "test-token",
 		client:    &http.Client{Timeout: 30 * time.Second},
 	}
@@ -66,7 +66,7 @@ func TestForwardToBackend_ColdEggHatchedThenRetriedOnce(t *testing.T) {
 	defer srv.Close()
 
 	g := newForwardTestGateway(t, srv)
-	route := &RouteResult{Host: "edge-node", URL: srv.URL + "/infer"}
+	route := &RouteResult{Host: "node-a", URL: srv.URL + "/infer"}
 	body := []byte(`{"model":"deepseek-v4-flash","messages":[{"role":"user","content":"hi"}]}`)
 
 	resp, err := g.forwardToBackend(context.Background(), route, "/v1/chat/completions", body, http.Header{}, nil)
@@ -107,7 +107,7 @@ func TestForwardToBackend_ReadyEggFiveXXNotHatched(t *testing.T) {
 	defer srv.Close()
 
 	g := newForwardTestGateway(t, srv)
-	route := &RouteResult{Host: "edge-node", URL: srv.URL + "/infer"}
+	route := &RouteResult{Host: "node-a", URL: srv.URL + "/infer"}
 	body := []byte(`{"model":"deepseek-v4-flash","messages":[{"role":"user","content":"hi"}]}`)
 
 	resp, err := g.forwardToBackend(context.Background(), route, "/v1/chat/completions", body, http.Header{}, nil)
@@ -144,7 +144,7 @@ func TestForwardToBackend_HealthyNoEggTraffic(t *testing.T) {
 	defer srv.Close()
 
 	g := newForwardTestGateway(t, srv)
-	route := &RouteResult{Host: "edge-node", URL: srv.URL + "/infer"}
+	route := &RouteResult{Host: "node-a", URL: srv.URL + "/infer"}
 	body := []byte(`{"model":"deepseek-v4-flash","messages":[]}`)
 
 	resp, err := g.forwardToBackend(context.Background(), route, "/v1/chat/completions", body, http.Header{}, nil)

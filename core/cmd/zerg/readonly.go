@@ -433,7 +433,7 @@ func doctorItems(inv *invocation) []map[string]string {
 
 // doctorMemCells —— 缺口 `GAP-20260925-47`：doctor 的「内存余量 / 内核 OOM 归因」两格。
 //
-// 为什么两格：edge-node 的 llama-server 被内核 OOM 杀掉时，主控侧只表现为 503 + 超时，而机器本体健康
+// 为什么两格：node-a 的 llama-server 被内核 OOM 杀掉时，主控侧只表现为 503 + 超时，而机器本体健康
 // （子端活、heartbeat 绿）⇒ 运维看不出是 OOM。数据在子端（单元结局）与心跳（mem_available）里
 // 都有，缺的是**诊断面把余量与 OOM 事件露出来**（§九 M9 `RC9`：读不到不当健康）。
 //
@@ -724,7 +724,7 @@ func doctorItemsRaw(inv *invocation) []map[string]string {
 //	③ 拿不到结论：`version.Commit` 未注入（裸 `go build` / 进程内测试）或取不到仓根/HEAD ⇒ REPORT 明说拿不到
 //
 // 只读：只跑 `git rev-parse` / `git diff --name-only` / `git status --porcelain`（不写盘、不联网）。
-// 制品身份真源 = `version.Commit`（`-ldflags -X` 注入 · 见 `scripts/build/build-all.sh`）—— 不另造第二份口径。
+// 制品身份真源 = `version.Commit`（`-ldflags -X` 注入 · 见 Go 真身 `scripts/build/cmd/zerg-build-all/main.go`）—— 不另造第二份口径。
 func doctorDriftItem() map[string]string {
 	art := strings.TrimSpace(version.Commit)
 	if art == "" || art == "unknown" {

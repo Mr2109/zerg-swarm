@@ -107,9 +107,9 @@ func TestApproveMerge_A5NegativeControl(t *testing.T) {
 		t.Fatal("A5 负控没牙：`src_basis=default_node`（非法兜底）却判绿（应判红）")
 	}
 	// 负控 3：值与载体不自洽（写死 Mr2109，回指写别机）
-	red3, _ := apmAuditView(apmTMakeView("Mr2109", "edge-node:/x:1", "path_prefix"), []string{"Mr2109", "edge-node"})
+	red3, _ := apmAuditView(apmTMakeView("Mr2109", "node-a:/x:1", "path_prefix"), []string{"Mr2109", "node-a"})
 	if len(red3) == 0 {
-		t.Fatal("A5 负控没牙：`src_basis=path_prefix` 而回指机名 edge-node ≠ src_machine Mr2109 却判绿（应判红）")
+		t.Fatal("A5 负控没牙：`src_basis=path_prefix` 而回指机名 node-a ≠ src_machine Mr2109 却判绿（应判红）")
 	}
 	// 正控：合法 ⇒ 不红
 	redOK, notesOK := apmAuditView(apmTMakeView("Mr2109", "Mr2109:/x:1", "audit_cell"), []string{"Mr2109"})
@@ -126,7 +126,7 @@ func TestApproveMerge_A6RequiredCellPaired(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "anon.jsonl")
 	apmTWrite(t, src, `{"event":"approve_signed","tool":"dev_edit","approver":"A","approved_at":"2026-01-02T03:04:05+08:00","key_id":"0123456789abcdef"}`+"\n")
-	rc, out, _ := apmTRun("--no-self-test", "--source", src, "--roster-nodes", "Mr2109,edge-node")
+	rc, out, _ := apmTRun("--no-self-test", "--source", src, "--roster-nodes", "Mr2109,node-a")
 	if rc != 2 {
 		t.Fatalf("缺 src_machine 应 rc=2 · 实读 %d", rc)
 	}
@@ -135,7 +135,7 @@ func TestApproveMerge_A6RequiredCellPaired(t *testing.T) {
 	}
 	// 成对：补齐 machine ⇒ rc=0
 	apmTWrite(t, src, `{"event":"approve_signed","tool":"dev_edit","approver":"A","approved_at":"2026-01-02T03:04:05+08:00","key_id":"0123456789abcdef","machine":"Mr2109"}`+"\n")
-	rc2, _, _ := apmTRun("--no-self-test", "--source", src, "--roster-nodes", "Mr2109,edge-node")
+	rc2, _, _ := apmTRun("--no-self-test", "--source", src, "--roster-nodes", "Mr2109,node-a")
 	if rc2 != 0 {
 		t.Fatalf("补齐来源机后应 rc=0 · 实读 %d", rc2)
 	}
@@ -147,7 +147,7 @@ func TestApproveMerge_TwoStatesNotSameShape(t *testing.T) {
 	if rcBad != 2 || !strings.Contains(errBad, "用法错") {
 		t.Fatalf("未知旗标应 rc=2 + 「用法错」· 实读 rc=%d err=%q", rcBad, errBad)
 	}
-	rcMiss, _, errMiss := apmTRun("--no-self-test", "--source", "/no/such/source.jsonl", "--roster-nodes", "Mr2109,edge-node")
+	rcMiss, _, errMiss := apmTRun("--no-self-test", "--source", "/no/such/source.jsonl", "--roster-nodes", "Mr2109,node-a")
 	if rcMiss != 2 || strings.Contains(errMiss, "用法错") {
 		t.Fatalf("来源件不在应 rc=2 且 ≠「用法错」· 实读 rc=%d err=%q", rcMiss, errMiss)
 	}

@@ -109,7 +109,7 @@ type OrchestratorConfig struct {
 func DefaultOrchestratorConfig() *OrchestratorConfig {
 	return &OrchestratorConfig{
 		// 2026-08-12: Orn+Nanbeige 临时测试（脑 example-35b-v2 规划 / 手 nanbeige 执行）
-		// Nanbeige 3B 已注册 EDGE-NODE（双机候选——路由自动分配）
+		// Nanbeige 3B 已注册 node-a（双机候选——路由自动分配）
 		BrainModel:     "example-35b",
 		HandModel:      "nanbeige-4.2-3b",
 		Strategy:       StrategySimple,

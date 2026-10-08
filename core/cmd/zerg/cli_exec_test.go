@@ -12,7 +12,7 @@
 //
 // 然后 `ZERG_REPO=<夹具>` 起真二进制 ⇒ 测「脚本退多少、命令面就退多少」。
 //
-// 纪律：`bin/zerg` 不在就 **t.Skip**（本层不自己构建 —— 构建一律走 `scripts/build/build-all.sh`）。
+// 纪律：`bin/zerg` 不在就 **t.Skip**（本层不自己构建 —— 构建一律走 `zerg build all --only cli`）。
 package main_test
 
 import (
@@ -52,7 +52,7 @@ func zergBinary(t *testing.T) string {
 	t.Helper()
 	p := filepath.Join("..", "..", "..", "bin", "zerg")
 	if _, err := os.Stat(p); err != nil {
-		t.Skipf("bin/zerg 不在（本层不自己构建；构建走 scripts/build/build-all.sh --only-cli）：%v", err)
+		t.Skipf("bin/zerg 不在（本层不自己构建；构建走 zerg build all --only cli）：%v", err)
 	}
 	abs, err := filepath.Abs(p)
 	if err != nil {

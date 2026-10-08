@@ -45,13 +45,13 @@ import (
 
 const csfProg = "check-stale-frozen.py"
 
-// csfRefresh 与 py 的 REFRESH 字典逐字同值（仅按键取值，不被迭代 ⇒ 无插入序问题）。
+// csfRefresh 的键与 py 的 REFRESH 字典逐字同（仅按键取值，不被迭代 ⇒ 无插入序问题）；值改现役形（py 原件已退 ⇒ 调用串走 zerg gate check）。
 var csfRefresh = map[string]string{
 	"judge-registry":   "zerg gate check check-judge-registry --emit",
-	"affected-map":     "python3 scripts/gates/check-affected-map.py --emit",
-	"cli-contract":     "python3 scripts/gates/check-cli-contract.py --emit-matrix（★ count 两键按收口批随动 · 门78/门⑪ 现读对拍）",
-	"help-shape":       "python3 scripts/gates/check-help-shape.py --emit-baseline（现读打印 · 照抄 · 禁手写）",
-	"approve-backfill": "python3 scripts/gates/check-approve-backfill.py --refresh-constant（先干跑 · 加 --yes 才落）",
+	"affected-map":     "zerg gate check check-affected-map --emit",
+	"cli-contract":     "zerg gate check check-cli-contract --emit-matrix（★ count 两键按收口批随动 · 门78/门⑪ 现读对拍）",
+	"help-shape":       "zerg gate check check-help-shape --emit-baseline（现读打印 · 照抄 · 禁手写）",
+	"approve-backfill": "zerg gate check check-approve-backfill --refresh-constant（先干跑 · 加 --yes 才落）",
 	"real-gates":       "把新 .sh 门件同批登记进 real-gates.sh 的 SH_TABLE 与字面 SH_GATES（两边不许漂移）",
 	"public-marks":     "在 scripts/公开标记.tsv 补一行（文件\\tpublic\\t理由）",
 }
@@ -359,7 +359,7 @@ func csfNumEq(v any, n int) bool {
 	return false
 }
 
-// ── ④ check-help-shape.py BASELINE（sibling 常量走 python 桥；bin/zerg 走 exec）──
+// ── ④ check-help-shape.py BASELINE（Go 半 chsBaseline 取源 · ✗ 不读 py 件；bin/zerg 走 exec）──
 func csfProbeHelpShape(root string, stderr io.Writer) *csfFace {
 	rel := "scripts/gates/check-help-shape.py"
 	f := csfNewFace(rel, "BASELINE：help --all / help / help dangerous / help config 的 lines·bytes（(+)rows）", csfRefresh["help-shape"])
@@ -768,9 +768,14 @@ func csfJSONErr(err error) string {
 }
 
 // ── python 桥：用同一 importlib 载入同一兄弟判据件取同一读数 ─────────────
-// ✗ 不在 Go 侧重写 build_map / parse_tree / load_matrix / BASELINE / DEV_EDIT_SHA256
+// ✗ 不在 Go 侧重写 build_map / parse_tree / load_matrix / DEV_EDIT_SHA256
 //
-//	—— 那会是那四件的第二条实现（双真源）。故经 python3 子进程复用。
+//	—— 那会是那些件的第二条实现（双真源）。故经 python3 子进程复用。
+//
+// ★ `help_shape` 一路**已取源改走 Go 半**（见下方 `if op == "help_shape"`）：那不是「重写第二条
+//
+//	实现」—— `chsBaseline` 本就是该判据的 **Go 半**（与 py 半同一冻结真源），只是从此**不再读**
+//	`scripts/gates/check-help-shape.py` 取 `BASELINE`（解该 py 件的退役读耦合）。
 const csfBridgeSrc = `
 import importlib.util, sys, json, os
 root = sys.argv[1]
@@ -802,9 +807,6 @@ try:
             except (TypeError, ValueError):
                 pass
         emit({"ok": True, "n_cmd": len(tree), "n_mf": n})
-    elif op == "help_shape":
-        mod = load_module(os.path.join(g, "check-help-shape.py"))
-        emit({"ok": True, "baseline": mod.BASELINE})
     elif op == "approve_backfill":
         mod = load_module(os.path.join(g, "check-approve-backfill.py"))
         emit({"ok": True, "sha": mod.DEV_EDIT_SHA256, "rel": mod.TICKET_REL})
@@ -838,31 +840,30 @@ func csfBridge(root, op string, stderr io.Writer) (map[string]any, string) {
 			return map[string]any{"ok": true, "fp": fp, "head": head}, ""
 		}
 	}
-	// ★ 退役态（2026-10-07 退役批 · help_shape 桥退役容忍）：`help_shape` 这一路的兄弟件
-	//   `scripts/gates/check-help-shape.py` 退役（不在盘）⇒ importlib 桥取不到其 `BASELINE`
-	//   （原样 = 「取不到 ⇒ 不给结论」= fail-closed）。⇒ 回落**同判据的 Go 半** `chsBaseline`
-	//   （本包内 · 与 py 半同一冻结真源 · ✗ 非第二条实现）现取同一读数，✗ 不因缺 py 而 fail-closed。
-	//   ★ 两半皆不在（chsBaseline 空）⇒ fail-closed。py 件在盘时照旧走下面那条 importlib 桥
-	//   （两态逐字同 · 单一真源不变）。
+	// ★ 取源 = Go 半常量（2026-10-08 · 解 `scripts/gates/check-help-shape.py` 的退役读耦合）：
+	//   `help_shape` 这一路的冻结真源 = 本包内 `chsBaseline`（该判据的 **Go 半** · 与 py 半同一
+	//   冻结真源 · ✗ 非第二条实现）。★ **无论该 py 件在不在盘**一律取 Go 半 —— ✗ 不再读
+	//   `scripts/gates/check-help-shape.py` 取 `BASELINE`（该 py 由此对本件解除读耦合 ⇒ 可退）。
+	//   ★「两半同值」这条约束**不取消**：由两侧各自判据（py S2/S4e/S5c ⟷ Go `chsJudge`）＋门113
+	//   （`check-py-go-pairing-drift`）维持；本处只换取源 · ✗ 不改任何冻结读数（两半现值逐字同）。
+	//   ★ 断言面一字不动：`csfProbeHelpShape` 仍逐格比 4 面 lines/bytes。★ Go 半 `chsBaseline`
+	//   空 ⇒ fail-closed（不给结论 · 与在盘态同）。
 	if op == "help_shape" {
-		sib := filepath.Join(root, "scripts", "gates", "check-help-shape.py")
-		if fi, err := os.Stat(sib); err != nil || fi.IsDir() {
-			bl := map[string]any{}
-			for k, v := range chsBaseline {
-				m := map[string]any{}
-				if v.HasLines {
-					m["lines"] = v.Lines
-				}
-				if v.HasBytes {
-					m["bytes"] = v.Bytes
-				}
-				bl[k] = m
+		bl := map[string]any{}
+		for k, v := range chsBaseline {
+			m := map[string]any{}
+			if v.HasLines {
+				m["lines"] = v.Lines
 			}
-			if len(bl) == 0 {
-				return nil, "兄弟件已退役，且 Go 半 chsBaseline 为空（冻结读数取不到）"
+			if v.HasBytes {
+				m["bytes"] = v.Bytes
 			}
-			return map[string]any{"ok": true, "baseline": bl}, ""
+			bl[k] = m
 		}
+		if len(bl) == 0 {
+			return nil, "Go 半 chsBaseline 为空（冻结读数取不到）"
+		}
+		return map[string]any{"ok": true, "baseline": bl}, ""
 	}
 	// ★ 退役态（2026-10-07 退役批 · cli_contract 桥退役容忍）：`cli_contract` 这一路的兄弟件
 	//   `scripts/gates/check-cli-contract.py` 退役（不在盘）⇒ 下面那条 importlib 桥取不到其

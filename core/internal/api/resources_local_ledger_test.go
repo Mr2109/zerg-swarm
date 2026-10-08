@@ -12,9 +12,9 @@ package api
 // ⇒ 本文件失去可测对象（继续留着只会是"给不存在的角色写测试"）。
 //
 // **保证没有被放弃，而是转移了** —— 且已有实测证据（换件 d75c5203 后实测）：
-//   · 子端**确实**上报驻留明细：/api/fleet/status 的 Mr2109 行 `resident` 有明细
-//     （alias / state / req_count / managed / source / weights_bytes ✓，与 edge-node 同形）；
-//   · "拿不到显存就如实说没有"在观测面**可见**：Mr2109 行 `vram_known=false` 出现（edge-node 为 `true` 作对照）
+//   · 子端**确实**上报驻留明细：/api/fleet/status 的 node-local 行 `resident` 有明细
+//     （alias / state / req_count / managed / source / weights_bytes ✓，与 node-a 同形）；
+//   · "拿不到显存就如实说没有"在观测面**可见**：node-local 行 `vram_known=false` 出现（node-a 为 `true` 作对照）
 //     —— 该格此前被响应侧 `omitempty` 吞掉，已修（store.go：false 是有意义的值，不许省略）；
 //   · 子端侧出处：`agent/internal/heartbeat/heartbeat.go` 明确写 `body["vram_known"] = false`
 //     （注释原话"拿不到显存：如实标不可用，不出假值"）；驻留明细由 `backend.Manager.ResidentDetail()`

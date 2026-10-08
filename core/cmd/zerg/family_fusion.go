@@ -716,6 +716,11 @@ func cmdPlan(inv *invocation, stdout, stderr io.Writer) int {
 		}
 		out = filepath.Join(dir, env.Items[0].PlanID+".json")
 	}
+	// ★ 授权侧（`GAP-20260927-140` ① · 2026-10-08 拍）：意图件真写盘 ⇒ 默认档 fail-closed
+	//   （`--dry-run` 出计划件；缺 `--yes` 退 2、零写）。
+	if rc := writeGuardYes(inv, stderr); rc != exitOK {
+		return rc
+	}
 	if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
 		inv.setErr("failed", "plan_dir_create_failed", err.Error())
 		fmt.Fprintf(stderr, "%s: 意图件目录建不出来：%v\n", progName, err)

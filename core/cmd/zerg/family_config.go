@@ -1367,7 +1367,7 @@ func cmdModelSet(inv *invocation, stdout, stderr io.Writer) int {
 //
 // 病根（缺口 `GAP-20260925-32` 逐字）：机器登记件 `~/.zerg/contexts/<档>.yaml` 的 `nodes:`（host/port/os/kind
 // 的**唯一真源**）此前**只有读面**（`zerg context ls` 只出档位名册、连 nodes 都不列）⇒ 当某台机被迫换端口
-// （实测 mini-node-1 的 8100 被无关服务占着、子端挪到 8101）时只能手搓改 YAML，且「看不出主控到底认没认这次改动」。
+// （实测 <某台机> 的 8100 被无关服务占着、子端挪到 8101）时只能手搓改 YAML，且「看不出主控到底认没认这次改动」。
 //
 // 本笔只补**第一条改面** `set-port`（一次改一台机的 `port:`），口径照同族写面 `model add` / `model rm`
 // 的成熟做法：**先校验后写 · 同目录临时件 + rename（原子）· 写完读回逐字节再校 · 任一步不过 ⇒ 回滚**。

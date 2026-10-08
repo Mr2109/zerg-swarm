@@ -107,7 +107,7 @@ func TestImpactLayers_LayerTableAndTier(t *testing.T) {
 	t.Setenv("ZERG_STATE_DIR", t.TempDir())
 	tgt := "core/cmd/zerg/main.go"
 
-	rc, out, errb := runCapture("impact", tgt)
+	rc, out, errb := runCapture("impact", tgt, "--yes")
 	if rc != 0 {
 		t.Fatalf("有影响面的件 ⇒ 期望 rc=0，得到 %d · stderr=%s", rc, errb)
 	}
@@ -203,7 +203,7 @@ func TestImpactLayers_PublicFacePositiveAndNegative(t *testing.T) {
 	// `A5`：`zerg impact` 自本批起**会落盘缓存**（落点在状态目录）⇒ 测试一律把状态目录改到合成目录，
 	// **不碰真状态目录**（本件判据一个字不动；不这么做就是「测试有副作用」）。
 	t.Setenv("ZERG_STATE_DIR", t.TempDir())
-	rc, out, errb := runCapture("impact", "scripts/公开标记.tsv")
+	rc, out, errb := runCapture("impact", "scripts/公开标记.tsv", "--yes")
 	if rc != 0 {
 		t.Fatalf("生效面上的件 ⇒ 期望 rc=0，得到 %d · stderr=%s", rc, errb)
 	}
@@ -259,7 +259,7 @@ func TestImpactLayers_PublicLineThreePieces(t *testing.T) {
 		}
 	}
 	t.Setenv("ZERG_PUB_TREE", pubTree)
-	rc, out, errb := runCapture("impact", "scripts/公开标记.tsv")
+	rc, out, errb := runCapture("impact", "scripts/公开标记.tsv", "--yes")
 	if rc != 0 {
 		t.Fatalf("生效面上的件 ⇒ 期望 rc=0，得到 %d · stderr=%s", rc, tail(errb, 300))
 	}
@@ -298,7 +298,7 @@ func TestImpactLayers_PublicLineThreePieces(t *testing.T) {
 	}
 	// ④ 端到端：产出树读不到 ⇒ 未取数（不是 0，也不是不打）。
 	t.Setenv("ZERG_PUB_TREE", filepath.Join(t.TempDir(), "没这一棵产出树"))
-	rc2, out2, errb2 := runCapture("impact", "scripts/公开标记.tsv")
+	rc2, out2, errb2 := runCapture("impact", "scripts/公开标记.tsv", "--yes")
 	if rc2 != 0 {
 		t.Fatalf("负控丙：退码该仍是 0（这一行不是闸），得到 %d · stderr=%s", rc2, tail(errb2, 300))
 	}
@@ -323,7 +323,7 @@ func TestImpactLayers_MachineFaceItemsCarryLayerWhy(t *testing.T) {
 	// `A5`：`zerg impact` 自本批起**会落盘缓存**（落点在状态目录）⇒ 测试一律把状态目录改到合成目录，
 	// **不碰真状态目录**（本件判据一个字不动；不这么做就是「测试有副作用」）。
 	t.Setenv("ZERG_STATE_DIR", t.TempDir())
-	rc, out, errb := runCapture("impact", "core/cmd/zerg/main.go", "--json", "what,why,how,red")
+	rc, out, errb := runCapture("impact", "core/cmd/zerg/main.go", "--json", "what,why,how,red", "--yes")
 	if rc != 0 {
 		t.Fatalf("期望 rc=0，得到 %d · stderr=%s", rc, errb)
 	}
@@ -378,7 +378,7 @@ func TestImpactLayers_PubTreeEnvOrder(t *testing.T) {
 	// ① 主名在场。
 	t.Setenv("ZERG_PUB_TREE", pubTree)
 	t.Setenv("ZERG_PUBLIC_TREE", "")
-	rc, out, errb := runCapture("impact", tgt)
+	rc, out, errb := runCapture("impact", tgt, "--yes")
 	if rc != 0 {
 		t.Fatalf("① 期望 rc=0，得到 %d · stderr=%s", rc, tail(errb, 300))
 	}
@@ -389,7 +389,7 @@ func TestImpactLayers_PubTreeEnvOrder(t *testing.T) {
 	// ② 主名缺席、兼容别名在场 ⇒ 必须读别名（这一格就是残口：旧码只认主名）。
 	t.Setenv("ZERG_PUB_TREE", "")
 	t.Setenv("ZERG_PUBLIC_TREE", pubTree)
-	rc2, out2, errb2 := runCapture("impact", tgt)
+	rc2, out2, errb2 := runCapture("impact", tgt, "--yes")
 	if rc2 != 0 {
 		t.Fatalf("② 期望 rc=0，得到 %d · stderr=%s", rc2, tail(errb2, 300))
 	}
@@ -401,7 +401,7 @@ func TestImpactLayers_PubTreeEnvOrder(t *testing.T) {
 	// ③ 两名都缺席 ⇒ 默认空 ⇒ 未取数（不打数字那一句）。
 	t.Setenv("ZERG_PUB_TREE", "")
 	t.Setenv("ZERG_PUBLIC_TREE", "")
-	rc3, out3, errb3 := runCapture("impact", tgt)
+	rc3, out3, errb3 := runCapture("impact", tgt, "--yes")
 	if rc3 != 0 {
 		t.Fatalf("③ 期望 rc=0（这一行不是闸），得到 %d · stderr=%s", rc3, tail(errb3, 300))
 	}

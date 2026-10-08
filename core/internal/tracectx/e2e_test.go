@@ -99,8 +99,8 @@ func TestE2EOneTraceAcrossClientGatewaySubEnd(t *testing.T) {
 
 	// ── 真网关（真 HTTP 服务，走认证中间件 + 真实入口 handleRequest）──
 	cfg := &config.FleetConfig{
-		Models: map[string][]config.ModelCandidate{e2eModel: {{Host: "edge-node", File: "/data/trace-e2e.gguf"}}},
-		Fleet:  map[string]config.FleetNode{"edge-node": {Host: u.Hostname(), Port: port}},
+		Models: map[string][]config.ModelCandidate{e2eModel: {{Host: "node-a", File: "/data/trace-e2e.gguf"}}},
+		Fleet:  map[string]config.FleetNode{"node-a": {Host: u.Hostname(), Port: port}},
 	}
 	gw := gateway.NewGateway("tok", cfg, store.NewStore(), nil)
 	router := chi.NewRouter()

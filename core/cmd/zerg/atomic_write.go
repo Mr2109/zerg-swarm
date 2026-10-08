@@ -53,7 +53,7 @@ import (
 	"time"
 )
 
-// awHistWhitelist = 原件 HIST_WHITELIST（照抄 build-all.sh:198-204 history_drop_ok 口径）。
+// awHistWhitelist = 原件 HIST_WHITELIST（照抄 Go 真身 scripts/build/cmd/zerg-build-all/main.go 的 historyDropOK 口径）。
 const awHistWhitelist = "scripts/gates/_history"
 
 // awUsage 复刻原件 usage()（`cat <<'USAGE' … USAGE` 逐字正文 + 尾换行 · 印到 stdout）。
@@ -235,7 +235,7 @@ func (c *awCtx) awDropOk(rel string) bool {
 	return false
 }
 
-// awArchivePrev 照拄原件 archive_prev()（build-all.sh:206-244）：$1 = 将被就地覆盖的件（绝对路径）。
+// awArchivePrev 照拄原件 archive_prev()（Go 真身 scripts/build/cmd/zerg-build-all/main.go 的 archivePrevPiece）：$1 = 将被就地覆盖的件（绝对路径）。
 func (c *awCtx) awArchivePrev(abs string) bool {
 	fi, err := os.Stat(abs)
 	if err != nil || !fi.Mode().IsRegular() { // `[ -f "$b" ] || return 0`

@@ -1,4 +1,4 @@
-// zerg_egg.go —— `scripts/edge-node/zerg-egg.py`（396 行）的 **Go 真搬**（M2 一枚 · 2026-10-07 · 承接
+// zerg_egg.go —— `scripts/node-a/zerg-egg.py`（396 行）的 **Go 真搬**（M2 一枚 · 2026-10-07 · 承接
 // `GAP-20261001-13`）。
 //
 // 搬的是「卵的单文件封装（*.egg）」工具：`pack` / `info` / `verify` / `xfer` ＋ `--self-test`。
@@ -18,7 +18,7 @@
 // ---- M2 落件纪律（照 `check_archive_mount.go` 的同款中间态）----------------------------------
 //
 //	· **只落码、不接线** —— ✗ 不在 `core/cmd/zerg/main.go` 注册命令（✗ 不进命令树 · ✗ 不改 add_step）；
-//	· **不删** `scripts/edge-node/zerg-egg.py` 原件（退场规则：**对拍通过后才**逐件点名退场）；
+//	· **不删** `scripts/node-a/zerg-egg.py` 原件（退场规则：**对拍通过后才**逐件点名退场）；
 //	· 入口 `zergEggGateMain` 目前**无调用点**（M2 的刻意状态）。
 //
 // ---- 两条出厂声明行 -------------------------------------------------------------------------
@@ -986,7 +986,7 @@ func zegParseArgv(argv []string) (*zegArgs, string) {
 
 // ---- 入口（M2 形状：`<名>GateMain(stdout, stderr io.Writer, argv []string) int`）--------------
 
-// zergEggGateMain —— `scripts/edge-node/zerg-egg.py` 的 Go 真搬入口。argv = py 的 `sys.argv[1:]`。
+// zergEggGateMain —— `scripts/node-a/zerg-egg.py` 的 Go 真搬入口。argv = py 的 `sys.argv[1:]`。
 func zergEggGateMain(stdout, stderr io.Writer, argv []string) int {
 	a, errBody := zegParseArgv(argv)
 	if errBody == "HELP" {

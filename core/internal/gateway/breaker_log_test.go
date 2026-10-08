@@ -15,7 +15,7 @@ import (
 // 日志阈值位必须由 circuitFailThreshold 决定（不是任何硬编码数字）。
 func TestBreakerFailLogLine_UsesCircuitFailThreshold(t *testing.T) {
 	const failCount = 3 // 刻意取一个历史硬编码出现过的计数值
-	line := breakerFailLogLine("edge-node", failCount)
+	line := breakerFailLogLine("node-a", failCount)
 
 	// 断言：输出里的阈值位 == 常量（用常量拼出期望，而非写死数字）。
 	want := fmt.Sprintf("(%d/%d)", failCount, circuitFailThreshold)
@@ -33,7 +33,7 @@ func TestBreakerFailLogLine_UsesCircuitFailThreshold(t *testing.T) {
 func TestBreakerFailLogLine_ThresholdIndependentOfCount(t *testing.T) {
 	suffix := fmt.Sprintf("/%d); exceeding threshold will demote", circuitFailThreshold)
 	for _, cnt := range []int{1, 3, 8, 100} {
-		line := breakerFailLogLine("edge-node", cnt)
+		line := breakerFailLogLine("node-a", cnt)
 		if !strings.HasSuffix(line, suffix) {
 			t.Fatalf("count=%d 时日志必须以 /%d 收口：%q", cnt, circuitFailThreshold, line)
 		}

@@ -4,7 +4,7 @@
 //! （bwrap 里 `-- /bin/sh -c …`；macOS 里策略施加后 exec `/bin/sh -c …`）⇒ 两处各留一份
 //! 就会漂移（同一个落点两套真相），故提到这里、两侧共用。
 //!
-//! **为什么不用引擎自带的机制**：EDGE-NODE 真机 2026-09-15 实测，bubblewrap 0.11.1 上
+//! **为什么不用引擎自带的机制**：node-a 真机 2026-09-15 实测，bubblewrap 0.11.1 上
 //! `bwrap … --setenv K=V -- /bin/true` 直接失败（`bwrap: setenv failed`，rc=1）⇒ 凡声明了 env 的卵
 //! 当场秒死，`LD_LIBRARY_PATH` 这类**必需**通路全断。包装 exec 用同一份卵声明面把变量送进空间。
 

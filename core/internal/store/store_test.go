@@ -15,7 +15,7 @@ func modelPtr(s string) *string { return &s }
 // TestReceiveHeartbeat_New 新机器心跳 → 创建快照
 func TestReceiveHeartbeat_New(t *testing.T) {
 	s := NewStore()
-	m := "edge-node"
+	m := "node-a"
 	resp := s.ReceiveHeartbeat(HeartbeatRequest{
 		Machine: m,
 		Model:   modelPtr("Qwen3.8-27B"),
@@ -40,16 +40,16 @@ func TestReceiveHeartbeat_New(t *testing.T) {
 // TestReceiveHeartbeat_Update 已有机器心跳 → 更新快照
 func TestReceiveHeartbeat_Update(t *testing.T) {
 	s := NewStore()
-	s.ReceiveHeartbeat(HeartbeatRequest{Machine: "edge-node", Healthy: true})
+	s.ReceiveHeartbeat(HeartbeatRequest{Machine: "node-a", Healthy: true})
 	// 更新——换模型 + 不健康
 	s.ReceiveHeartbeat(HeartbeatRequest{
-		Machine: "edge-node",
+		Machine: "node-a",
 		Model:   modelPtr("gemma-4-26B"),
 		Healthy: false,
 		CpuPct:  42.5,
 		GpuPct:  88.0,
 	})
-	snap := s.GetSnapshot("edge-node")
+	snap := s.GetSnapshot("node-a")
 	if snap == nil || *snap.Model != "gemma-4-26B" {
 		t.Fatalf("模型未更新: %v", snap)
 	}
@@ -115,7 +115,7 @@ func TestSetLocalSnapshot_CarriesResidentAndVram(t *testing.T) {
 // TestGetAllModels 多快照模型去重
 func TestGetAllModels(t *testing.T) {
 	s := NewStore()
-	s.ReceiveHeartbeat(HeartbeatRequest{Machine: "edge-node", Models: []string{"Qwen3.8-27B", "gemma-4-26B"}})
+	s.ReceiveHeartbeat(HeartbeatRequest{Machine: "node-a", Models: []string{"Qwen3.8-27B", "gemma-4-26B"}})
 	s.ReceiveHeartbeat(HeartbeatRequest{Machine: "local", Models: []string{"Qwen3.8-27B"}})
 	models := s.GetAllModels()
 	if len(models) != 2 {
@@ -126,7 +126,7 @@ func TestGetAllModels(t *testing.T) {
 // TestCreateTask 创建任务（ID 递增）
 func TestCreateTask(t *testing.T) {
 	s := NewStore()
-	t1 := s.CreateTask("Qwen3.8-27B", "edge-node")
+	t1 := s.CreateTask("Qwen3.8-27B", "node-a")
 	t2 := s.CreateTask("gemma-4-26B", "local")
 	if t1.ID == t2.ID {
 		t.Fatalf("任务 ID 应递增: %s/%s", t1.ID, t2.ID)
@@ -145,9 +145,9 @@ func TestMachineCount(t *testing.T) {
 	if s.MachineCount() != 0 {
 		t.Fatal("初始应为 0")
 	}
-	s.ReceiveHeartbeat(HeartbeatRequest{Machine: "edge-node"})
+	s.ReceiveHeartbeat(HeartbeatRequest{Machine: "node-a"})
 	s.ReceiveHeartbeat(HeartbeatRequest{Machine: "local"})
-	s.ReceiveHeartbeat(HeartbeatRequest{Machine: "edge-node"}) // 重复——不增加
+	s.ReceiveHeartbeat(HeartbeatRequest{Machine: "node-a"}) // 重复——不增加
 	if s.MachineCount() != 2 {
 		t.Fatalf("应 2 机器: %d", s.MachineCount())
 	}
@@ -156,11 +156,11 @@ func TestMachineCount(t *testing.T) {
 // TestLastSeen 心跳更新 LastSeen
 func TestLastSeen(t *testing.T) {
 	s := NewStore()
-	s.ReceiveHeartbeat(HeartbeatRequest{Machine: "edge-node"})
-	before := s.GetSnapshot("edge-node").LastSeen
+	s.ReceiveHeartbeat(HeartbeatRequest{Machine: "node-a"})
+	before := s.GetSnapshot("node-a").LastSeen
 	time.Sleep(5 * time.Millisecond)
-	s.ReceiveHeartbeat(HeartbeatRequest{Machine: "edge-node"})
-	after := s.GetSnapshot("edge-node").LastSeen
+	s.ReceiveHeartbeat(HeartbeatRequest{Machine: "node-a"})
+	after := s.GetSnapshot("node-a").LastSeen
 	if !after.After(before) {
 		t.Fatal("LastSeen 应更新")
 	}
@@ -169,7 +169,7 @@ func TestLastSeen(t *testing.T) {
 // TestForget GAP-20260925-29：名册删除面（幂等 + 只删点名那条）。
 func TestForget(t *testing.T) {
 	s := NewStore()
-	s.ReceiveHeartbeat(HeartbeatRequest{Machine: "edge-node"})
+	s.ReceiveHeartbeat(HeartbeatRequest{Machine: "node-a"})
 	s.ReceiveHeartbeat(HeartbeatRequest{Machine: "probe"})
 	if !s.Forget("probe") {
 		t.Fatal("在册条目应删成功（返回 true）")
@@ -177,7 +177,7 @@ func TestForget(t *testing.T) {
 	if s.GetSnapshot("probe") != nil {
 		t.Fatal("Forget 后该条目应消失")
 	}
-	if s.GetSnapshot("edge-node") == nil {
+	if s.GetSnapshot("node-a") == nil {
 		t.Fatal("Forget 不得波及其他机器")
 	}
 	if s.Forget("probe") {

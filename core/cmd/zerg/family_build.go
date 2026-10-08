@@ -4,9 +4,9 @@
 //
 //	① **不新立 `svc` 族**（§7.1 `P11` 的推荐）：服务脚本面走 `zerg core daemon ls`
 //	   （现跑覆盖 `scripts/svc/` 5 件）；构建面才叫 `build`。
-//	② **制品矩阵的真源是脚本**：`scripts/build/build-all.sh` 是「怎么造出这些件」的唯一入口，
+//	② **制品矩阵的真源是构建器**：Go 真身 `scripts/build/cmd/zerg-build-all/main.go`（真搬自壳脚本 `scripts/build/build-all.sh`）是「怎么造出这些件」的唯一入口，
 //	  本族**不复制**它的清单 —— `build ls` 只做**现读**（`bin/` 逐件 sha256 + **逐件**身份
-//	  （读制品自身嵌入段 `commit`/`build_time`）＋ 整批版本（`bin/build-info.json`）），并写明「清单真源 = 那个脚本」。
+//	  （读制品自身嵌入段 `commit`/`build_time`）＋ 整批版本（`bin/build-info.json`）），并写明「清单真源 = 那个构建器」。
 //	③ `build all` / `build release` 会**覆盖正在跑的制品**（主控/子端）⇒ 那是**换件档**
 //	   （不可逆动作的邻居）：本版**只登记形状、不执行**；判据「逐件同 sha」要**真跑一遍**才成立
 //	   ⇒ 记为待拍（跑一次 = 覆盖 `bin/zerg-core` 等在跑的件）。
@@ -89,7 +89,7 @@ func cmdBuildLs(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s: `bin/` 里没扫到件 ⇒ 不给结论（退码 8）\n", progName)
 		return exitBlocked
 	}
-	fmt.Fprintf(stderr, "%s: 制品矩阵的**真源是脚本** `scripts/build/build-all.sh`（本命令只现读 `bin/`，不复制清单）\n", progName)
+	fmt.Fprintf(stderr, "%s: 制品矩阵的**真源是构建器** Go 真身 `scripts/build/cmd/zerg-build-all/main.go`（真搬自壳脚本 `scripts/build/build-all.sh`；本命令只现读 `bin/`，不复制清单）\n", progName)
 	fmt.Fprintf(stderr, "%s: 身份**读制品自身**（设计 §5 `O-12` 取（乙） · 2026-09-24 待拍清单终版 条 4/5）：`code`/`built` 逐件读制品自身嵌入段 `commit=<sha>` / `build_time=<ts>`（`debug/buildinfo` 只读文件头 ⇒ **不执行该件**也读得到）⇒ 「逐件同 sha」判据不再需要（甲）档那条「跑一次 = 覆盖在跑的制品（换件档）」；读它**只读**（负控：制品 `sha256` 跑前跑后不变）。读不到嵌入段（非 Go 制品 / 无该二标签的老件）⇒ 如实示「（无嵌入标签）」（✗ 不回落成 `bin/build-info.json` 的同名值）；`version` 是**整批聚合**版本，仍取 `bin/build-info.json`（嵌入段不含 version）\n", progName)
 	return listCmd(inv, stdout, stderr, []string{"name", "sha256", "bytes", "version", "code", "built"}, rows)
 }
@@ -182,8 +182,8 @@ func artifactEmbeddedIdentity(p string) (code, built string) {
 
 // buildOnlyOpen —— 本版**唯一开放执行**的 `--only` 档：`cli`（只写 `bin/zerg` 一件）。
 //
-// 为什么只开这一档（窄口子，不是把闸拆了）：`build-all.sh --only-cli` 的件是**命令面自己的二进制**
-// —— 不常驻、不绑端口、不在跑（`build-all.sh:28-31` 逐字：本档「只写 `bin/zerg` 一个文件，
+// 为什么只开这一档（窄口子，不是把闸拆了）：`zerg build all --only cli` 的件是**命令面自己的二进制**
+// —— 不常驻、不绑端口、不在跑（`build-all.sh:34-35` 逐字：本档「只写 `bin/zerg` 一个文件，
 // 其余制品与本脚本写的 `build-info.json` **一个字节都不动** ✓」）⇒ 它不是换件，是**自举**
 // （改命令树要能重编命令面，否则「只走命令面」这条铁律在**改命令面自己**时会当场死锁）。
 // `core`（覆盖**正在跑**的主控件）与 `compat` 仍是不可逆档 ⇒ 照旧**未开放**，要跑请 Mr2109 拍。
@@ -220,7 +220,7 @@ func cmdBuildPassthrough(inv *invocation, stdout, stderr io.Writer) int {
 	}
 	script, effect := "scripts/build/build-all.sh", "重编**全部制品**（含正在跑的 zerg-core / zerg-agentd）并重签"
 	if action == "release" {
-		script, effect = "scripts/build/pack-release.sh", "打包发布件（布局三件：dist 目录 + 校验 + 清单）"
+		script, effect = prScriptRel, "打包发布件（布局三件：dist 目录 + 校验 + 清单）"
 	}
 	scriptArgs := []string{}
 	openForExec := false
@@ -257,7 +257,7 @@ func cmdBuildPassthrough(inv *invocation, stdout, stderr io.Writer) int {
 		//   本档会写 `publish/` 外的落点（`dist/<版本>/release/` 三处）⇒ 必须在计划件里点名 ✗ 不许静默重打包。
 		if action == "release" && inv.manifestOnly {
 			fmt.Fprintf(stdout, "  危险档   : D2（清单档：只写 `dist/<版本>/release/` 一个目录 —— **不碰 `bin/` 里的在跑件**）\n")
-			fmt.Fprintf(stdout, "  它会调   : bash %s --manifest-only\n", script)
+			fmt.Fprintf(stdout, "  它会调   : %s\n", buildCallShow(script, scriptArgs))
 			fmt.Fprintf(stdout, "  它会动   : %s\n", effect)
 			fmt.Fprintf(stdout, "  会跑哪几步:\n")
 			fmt.Fprintf(stdout, "    ① 前置检查 `dist/<版本>/release/` 存在且内有 zerg-* 制品（不在 ⇒ 退 8 · 不给结论）\n")
@@ -336,9 +336,16 @@ func cmdBuildPassthrough(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s: 解析不到仓根 ⇒ 跑不动构建（不给结论 · 退码 8）\n", progName)
 		return exitBlocked
 	}
-	if _, err := os.Stat(filepath.Join(root, script)); err != nil {
-		inv.setErr("blocked", "script_absent", "构建脚本不在")
-		fmt.Fprintf(stderr, "%s: 构建脚本不在（%s）⇒ 不给结论（退码 8）\n", progName, script)
+	// ③ 执行面**真身**前置闸（fail-closed 保留 —— 只是把「件必须在盘」换成「能力可用」）。
+	//   ① `build all` 的真跑执行面早改走**源码在仓的 Go 构建器**（下 ④：`cd scripts/build && go run ./cmd/zerg-build-all …`）
+	//   ⇒ 闸看的**真身** = 「Go 工具链可用 ＋ `scripts/build/cmd/zerg-build-all/main.go` 在盘」；
+	//   ✗ 不再是壳脚本 `scripts/build/build-all.sh` 在盘 —— 它一退役，真命令毫无影响、此闸却先假红（绑错了对象）。
+	//   ② `build release` 已于**批B1 真搬**（`core/cmd/zerg/pack_release.go` · 2026-10-08）⇒ 执行真身是
+	//      进程内 Go，✗ 不再是 `scripts/build/pack-release.sh`；保留的 fail-closed 面 = 它仍委派的
+	//      **外部真身** `scripts/evals/make-manifest.py`（清单生成器 · 别件）在盘。
+	if err := buildExecPrereq(root, script); err != nil {
+		inv.setErr("blocked", "exec_prereq_absent", err.Error())
+		fmt.Fprintf(stderr, "%s: %s ⇒ 不给结论（退码 8）\n", progName, err.Error())
 		return exitBlocked
 	}
 	execNote := "只写 bin/zerg 一件"
@@ -348,15 +355,15 @@ func cmdBuildPassthrough(inv *invocation, stdout, stderr io.Writer) int {
 	// ★ 批-6 第三步（调用点接线 · 决-08 旧环护栏）：`build all` 的正门指到**源码在仓的 Go 构建器**
 	//   （现编现跑 `cd scripts/build && go run ./cmd/zerg-build-all …`）—— 环内引导器 = Go 工具链 ＋
 	//   仓内构建器源码，✗ 不 exec 刚产出的 `bin/*` ⇒ 「改命令面 ⇒ 编不出命令面」这条死锁当场解开。
-	//   `build release`（发布链 / `--manifest-only`）**另批接**：仍走 `bash scripts/build/pack-release.sh …`。
-	cmdName, cmdDir := "bash", root
-	cmdArgs := append([]string{filepath.Join(root, script)}, scriptArgs...)
-	if script != "scripts/build/pack-release.sh" {
-		cmdName = "go"
-		cmdArgs = append([]string{"run", "./cmd/zerg-build-all"}, scriptArgs...)
-		cmdDir = filepath.Join(root, "scripts", "build")
-	}
+	//   ★ 批B1（2026-10-08）：`build release` 已**真搬**（`core/cmd/zerg/pack_release.go`）⇒ 进程内
+	//   直调，✗ 不再 `bash scripts/build/pack-release.sh …`（壳转账 → 真搬）。
 	fmt.Fprintf(stderr, "%s: %s执行 —— %s（%s）\n", progName, gateLevel, buildCallShow(script, scriptArgs), execNote)
+	if script == prScriptRel {
+		// 退码**原样直通**（与旧壳同一口径 · §4.3 U1 · ✗ 不翻译）。
+		return packReleaseRun(root, stdout, stderr, scriptArgs)
+	}
+	cmdName, cmdDir := "go", filepath.Join(root, "scripts", "build")
+	cmdArgs := append([]string{"run", "./cmd/zerg-build-all"}, scriptArgs...)
 	cmd := armChildGroup(exec.Command(cmdName, cmdArgs...))
 	runningChild = cmd
 	defer func() { runningChild = nil }()
@@ -389,12 +396,45 @@ func onlyNote(only string) string {
 // exec 的形态**同源**（同一处判定），两处不许各写各的。
 //
 //	build all     ⇒ `cd scripts/build && go run ./cmd/zerg-build-all …`（源码在仓 · 现编现跑）
-//	build release ⇒ `bash scripts/build/pack-release.sh …`（发布链另批接线）
+//	build release ⇒ **进程内 Go 真身** `core/cmd/zerg/pack_release.go`（批B1 真搬 · 2026-10-08）
+//	                —— ✗ 不再是 `bash scripts/build/pack-release.sh …`（该壳已真搬）。
 //
 // ★ 旧环护栏（决-08）：展示串里出现的是**构建器源码路径**，✗ 不是刚产出的 `bin/*`。
 func buildCallShow(script string, args []string) string {
-	if script == "scripts/build/pack-release.sh" {
-		return "bash " + script + " " + strings.Join(args, " ")
+	if script == prScriptRel {
+		return "core/cmd/zerg/pack_release.go（进程内 Go 真身 · 真搬自 " + prScriptRel + "）" + prArgsSuffix(args)
 	}
 	return "cd scripts/build && go run ./cmd/zerg-build-all " + strings.Join(args, " ")
+}
+
+// buildExecPrereq —— 真跑档的**执行真身**可用性闸（fail-closed：不满足 ⇒ 出声 · 退码 8）。
+//
+// 与 `buildCallShow` 同源（都按同一个 `script` 判真身形态），✗ 不许两处各判各的：
+//
+//	`build release` ⇒ 执行面 = **进程内 Go 真身**（`core/cmd/zerg/pack_release.go` · 批B1 真搬）⇒
+//	                  真身恒在；保留的 fail-closed 面 = 它仍要委派的**外部真身**
+//	                  `scripts/evals/make-manifest.py`（清单生成器 · 别件）在盘。
+//	`build all`     ⇒ 执行面 = **源码在仓的 Go 构建器**（`go run ./cmd/zerg-build-all`，
+//	                  工作目录 `scripts/build`）⇒ 看**两样都可用**：
+//	                  ① `go` 工具链在 PATH（能力可用）；② `scripts/build/cmd/zerg-build-all/main.go` 在盘（真身在）。
+//
+// ★ 2026-10-08（退役 build 簇）：✗ 不再看 `scripts/build/build-all.sh` —— `build all` 的执行面
+// 早已不是它（见 `cmdBuildPassthrough` ④，走 `go run ./cmd/zerg-build-all`）。该壳脚本一退役，
+// 真命令照跑，此闸若仍盯它就是**假红**；故换看「能力可用」（同旧语义的 fail-closed）。
+// ★ 2026-10-08（批B1）：同理 ✗ 不再看 `scripts/build/pack-release.sh` —— 它已被真搬，脚本离盘
+// 真命令照跑，再看它就是假红。
+func buildExecPrereq(root, script string) error {
+	if script == prScriptRel {
+		if _, err := os.Stat(filepath.Join(root, prMakeManifestRel)); err != nil {
+			return fmt.Errorf("发布清单生成器不在（%s ⇒ 清单档/组装档跑不动）", prMakeManifestRel)
+		}
+		return nil
+	}
+	if _, err := exec.LookPath("go"); err != nil {
+		return fmt.Errorf("Go 工具链不可用（go 不在 PATH ⇒ 跑不动 `go run ./cmd/zerg-build-all`）")
+	}
+	if _, err := os.Stat(filepath.Join(root, "scripts", "build", "cmd", "zerg-build-all", "main.go")); err != nil {
+		return fmt.Errorf("构建器真身不在（scripts/build/cmd/zerg-build-all/main.go）")
+	}
+	return nil
 }

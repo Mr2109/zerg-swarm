@@ -26,7 +26,7 @@ import (
 //  2. cmd: → 取首词的可执行「可辨识短名」（见 shortEngineName）；
 //  3. backend 声明且非 llama 家族（如 "ds4-server"）→ 原样返回（那是引擎家族名）；
 //  4. 其余（llama 家族 / 未声明）→ **按实际探测到的可执行文件给真值**：
-//     例：EDGE-NODE 上是 `build-hip-flash/llama-server` —— 这正是「卵要体现出用的是什么引擎」：
+//     例：node-a 上是 `build-hip-flash/llama-server` —— 这正是「卵要体现出用的是什么引擎」：
 //     只取基名会把 hip-flash 与主线 llama-server 混成一个名字，两枚不同的卵看起来一样。
 //     探测不到任何可执行文件时退回 "llama-server"。
 func EngineImplOf(entry *registry.ModelEntry) string {

@@ -13,18 +13,18 @@ func TestPickRoute_AllTripped(t *testing.T) {
 	cfg := &config.FleetConfig{
 		Models: map[string][]config.ModelCandidate{
 			"example-35b-v2": {
-				{Host: "edge-node", File: "/m.gguf", MemGb: 22},
+				{Host: "node-a", File: "/m.gguf", MemGb: 22},
 			},
 		},
 		Fleet: map[string]config.FleetNode{
-			"edge-node": {Host: "<worker-ip>", Port: 8100},
+			"node-a": {Host: "<cluster-ip>", Port: 8100},
 		},
 	}
 	g := &Gateway{
 		config:     cfg,
 		roundRobin: map[string]int{},
-		failCounts: map[string]int{"edge-node": 99},
-		failSince:  map[string]time.Time{"edge-node": time.Now()},
+		failCounts: map[string]int{"node-a": 99},
+		failSince:  map[string]time.Time{"node-a": time.Now()},
 		store:      &store.Store{},
 	}
 

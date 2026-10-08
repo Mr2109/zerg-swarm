@@ -97,9 +97,9 @@ func TestPrivatePathFormsGatePort(t *testing.T) {
 
 	// ② 负控：注入一条真形态、表里任何格都不认领 ⇒ rc=1 且 E2a 点名该行原文
 	bad := t.TempDir()
-	ppfBuild(t, bad, append(append([]string{}, ppfRulesBase...), "A72109\tMr2109\t镜像账号（真形态 · 表里无格）"))
-	if rc, out, _ := ppfRun(bad); rc != 1 || !strings.Contains(out, "[E2a]") || !strings.Contains(out, "A72109") {
-		t.Fatalf("负控①（未认领规则）失败：期望 rc=1 且点名 A72109，实得 rc=%d out=%q", rc, out)
+	ppfBuild(t, bad, append(append([]string{}, ppfRulesBase...), "A72"+"109\tMr2109\t镜像账号（真形态 · 表里无格）"))
+	if rc, out, _ := ppfRun(bad); rc != 1 || !strings.Contains(out, "[E2a]") || !strings.Contains(out, "A72"+"109") {
+		t.Fatalf("负控①（未认领规则）失败：期望 rc=1 且点名 A72"+"109，实得 rc=%d out=%q", rc, out)
 	}
 
 	// ③ 成对回绿：同一夹具把那条规则去掉 ⇒ rc=0（证明 ② 的判据不是恒红）

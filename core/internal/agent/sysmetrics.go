@@ -1,7 +1,7 @@
 package agent
 
 // sysmetrics.go — v2.5.4.9 机器级指标采样（CA 全量追踪——设计文档 docs/设计-CA跟踪程序.md）
-// 每轮采样: 本机 CPU/内存/磁盘读写 + EDGE-NODE GPU/CPU/内存（agent 状态接口）
+// 每轮采样: 本机 CPU/内存/磁盘读写 + node-a GPU/CPU/内存（agent 状态接口）
 // 记录到 sysmetrics.jsonl（zerg-trace 时间线视图联动分析瓶颈）
 
 import (
@@ -26,18 +26,18 @@ type SysMetric struct {
 	LocalMem  float64 `json:"local_mem,omitempty"`       // 本机内存 %
 	DiskRead  float64 `json:"disk_read_mbps,omitempty"`  // 磁盘读 MB/s
 	DiskWrite float64 `json:"disk_write_mbps,omitempty"` // 磁盘写 MB/s
-	// EDGE-NODE（agent 状态——如有）
-	X3GPU      float64 `json:"x3_gpu,omitempty"`          // EDGE-NODE GPU %
-	X3CPU      float64 `json:"x3_cpu,omitempty"`          // EDGE-NODE CPU %
-	X3Active   int     `json:"x3_active,omitempty"`       // EDGE-NODE 活跃请求
-	X3MemAvail float64 `json:"x3_mem_avail_gb,omitempty"` // EDGE-NODE 可用内存 GB
+	// node-a（agent 状态——如有）
+	X3GPU      float64 `json:"x3_gpu,omitempty"`          // node-a GPU %
+	X3CPU      float64 `json:"x3_cpu,omitempty"`          // node-a CPU %
+	X3Active   int     `json:"x3_active,omitempty"`       // node-a 活跃请求
+	X3MemAvail float64 `json:"x3_mem_avail_gb,omitempty"` // node-a 可用内存 GB
 }
 
 // SysMetricsCollector 机器指标采集器（写 sysmetrics.jsonl）
 type SysMetricsCollector struct {
 	file  *os.File
-	x3URL string             // EDGE-NODE agent 状态地址（如 http://<worker-ip>:8100/status）——空=不采 EDGE-NODE
-	token string             // EDGE-NODE 认证 token
+	x3URL string             // node-a agent 状态地址（如 http://<cluster-ip>:8100/status）——空=不采 node-a
+	token string             // node-a 认证 token
 	last  map[string]float64 // 上次磁盘读数（算速率）
 	lastT time.Time
 }
@@ -71,7 +71,7 @@ func (c *SysMetricsCollector) Sample(step int) {
 	c.sampleLocal(&m)
 	// 磁盘读写（iostat——macOS）
 	c.sampleDisk(&m)
-	// EDGE-NODE 状态（HTTP——轻量）
+	// node-a 状态（HTTP——轻量）
 	c.sampleX3(&m)
 	// 写入
 	data, _ := json.Marshal(m)
@@ -126,7 +126,7 @@ func (c *SysMetricsCollector) sampleDisk(m *SysMetric) {
 	}
 }
 
-// sampleX3 EDGE-NODE agent 状态（HTTP——超时短——失败跳过）
+// sampleX3 node-a agent 状态（HTTP——超时短——失败跳过）
 func (c *SysMetricsCollector) sampleX3(m *SysMetric) {
 	if c.x3URL == "" {
 		return
@@ -138,7 +138,7 @@ func (c *SysMetricsCollector) sampleX3(m *SysMetric) {
 	if c.token != "" {
 		req.Header.Set("X-Auth-Token", c.token)
 	}
-	// T1.6 传播（出站到子端）：EDGE-NODE /status 采集也是"主控→子端"的 HTTP 调用 ⇒ 带 traceparent，
+	// T1.6 传播（出站到子端）：node-a /status 采集也是"主控→子端"的 HTTP 调用 ⇒ 带 traceparent，
 	// 让这条采样的链在两侧也对得上（无会话 ⇒ 本侧 root，如实）。
 	tracectx.Propagate(req.Header, nil, "", tracectx.ReplayMarked())
 	client := &http.Client{Timeout: 1500 * time.Millisecond}

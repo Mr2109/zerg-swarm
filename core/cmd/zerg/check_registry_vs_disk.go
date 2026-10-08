@@ -10,7 +10,7 @@
 //
 // 选它 / 不选它的理由（4.1 M2-0 = 「无输入物料、纯静态检查的判据（读仓内件即可）」）：
 //
-//	✓ 选：只读仓内两件登记面（`publish/whitelist.txt` + `scripts/build/publish-public.sh` 的 `EXCLUDES=( … )`）
+//	✓ 选：只读仓内两件登记面（`publish/whitelist.txt` + `publish/excludes.txt` 行式排除表）
 //	  与它们点名的仓内真物（**无外部树依赖**）· 输出**定序**（条目按文件序 · 集合处一律 `sorted`）·
 //	  退码 `0/1/2` 三档齐 · 498 行（**行数适中**）· **无人正在改**（`git status` 现读不含它）· 不属已列重件。
 //	✗ 不选 `check-service-declaration.py`（384 行）：现值面靠 `subprocess` 真跑 `ps` / `launchctl`
@@ -43,11 +43,11 @@
 //	(a) **默认根定位差异**：py `REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))`
 //	    ⇒ 默认根 = **脚本所在目录的仓**（与 cwd 无关）；Go 入口**无 `__file__` 语境**（未来接线后是 CLI 子命令，
 //	    更没有脚本路径）⇒ 本件默认从**当前工作目录**上溯 ≤8 层找同时含 `publish/whitelist.txt` 与
-//	    `scripts/build/publish-public.sh` 的目录，找不到回落 cwd。落在**同一真仓、cwd=仓根**时两者读数逐字相同
+//	    `publish/excludes.txt` 的目录，找不到回落 cwd。落在**同一真仓、cwd=仓根**时两者读数逐字相同
 //	    （已对拍 P01/P02/P11/P18）；但「脚本位置 ≠ cwd」时**路径推导面不同** ⇒ 这一面**不属逐字对齐承诺**，
 //	    对拍一律显式传 `--repo`。
 //	(b) **自指检查**：本件**不在**它自己扫的面内 —— 本件扫面 = `publish/whitelist.txt` 与
-//	    `scripts/build/publish-public.sh` 的**正文**（读句子 / 解析 `EXCLUDES`），加「登记条目点名的盘上真物」
+//	    `publish/excludes.txt` 的**条目**（行式排除表：逐行取活跃条目 · 空行 / `#` 注释行跳过），加「登记条目点名的盘上真物」
 //	    的存在性与内容身份。本件落 `core/cmd/zerg/check_registry_vs_disk.go`，**不被任何登记条目点名** ⇒
 //	    **不进**①②③ 任何一格。唯一间接路径：若 `core/` 这一条登记**沦为「空指/悬空」**，才会去算它的
 //	    内容身份（遍历 `core/` 树、**只取件名**、不读件正文）—— 真仓现读 `core/` 在盘 ⇒ 该支不成立。

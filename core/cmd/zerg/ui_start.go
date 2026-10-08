@@ -1,27 +1,26 @@
-// ui_start.go —— UI「脱离会话」启动口的 **CLI 正门**（`zerg ui start`）· 壳转账薄壳（只转发、不翻译）。
+// ui_start.go —— UI「脱离会话」启动口的 **CLI 正门**（`zerg ui start`）。
 //
 // 依据：`~/.zerg/state/A档18件-收CLI设计稿-20261007.md` 批 3 · A6
 //
-//	（`scripts/build/start-zerg-ui.sh` · 81 行 · 现属面＝构建面/UI 启动 · 归族 = 现役 `ui` 族扩 action）。
+//	（底层原件 = `scripts/build/start-zerg-ui.sh` · 81 行 · 面＝构建面/UI 启动 · 族 = `ui` 族扩 action）。
 //
-// 落法 **(b) 壳转账**（设计稿逐字）：底层唯一实现 = `scripts/build/start-zerg-ui.sh`（真跑
-// `os.setsid()` 脱离会话 ＋ 逐 PID 点名选进程 ＋ 日志/stdin 重定向 · OS 原生面 ⇒ 无法干净真 Go 化）；
-// 命令面**只做入口 ＋ 门禁 ＋ 转发**，✗ 不重写脚本里的任何一段（否则就长出第二个真源 ——
-// 与脚本里「逐 PID 点名、禁子串/通配」同一条纪律）。
+// ★ 2026-10-08 **真搬**（本单）：底层行为**收进本件**（✗ 不再 exec 脚本）—— 把该脚本的**实际行为**
+// 在 Go 内**等价复现**：逐 PID 点名选进程 · 可执行位判 · `.env` 载入 · 脱离会话启动 · 令牌注入 ·
+// 日志/stdin 重定向 · 睡 4 秒回读 · 成功/失败文案 · 退码。等价点逐条：
 //
-// ★ M2 纪律：本件**不接线**（✗ 不在 `main.go` 命令表登记 `ui start`、✗ 不改任何 `family_*.go`、
+//	· `os.setsid()`（脚本经 python）⇒ `syscall.SysProcAttr{Setsid: true}`（新会话/新进程组）；
+//	· 逐 PID 点名（`ps -eo pid=,command=` ＋ 整路径精确比对）⇒ 调 `ps`（与 `descendantPids` 同规）；
+//	· 回读 PPID / 会话·进程组 ⇒ 调 `ps`；日志尾部 ⇒ 调 `tail`（与脚本**同一工具** ⇒ 逐字节同）。
 //
-//	✗ 不改任何 `add_step`）。登记那一条（`path: []string{"ui","start"}; run: cmdUIStart`）要改
-//	`main.go` ＝ **另一路独占**（派单 ④）⇒ 本件先落实现、接线延后；在此之前 `cmdUIStart`
-//	无调用点（与同批 M2 落件同态）。
+// 对外可观察面（rc/stdout/stderr）与脚本直跑**逐字同**，且**不再依赖脚本在盘** —— 脚本退役
+// （移出仓）后两态三面逐字同（✗ 不再退 `8`）。
 //
-// 三条口径（照仓里既有的透传族写 —— `build_wall.go` / `family_isolate_ro.go`，不自己创式样）：
+// 三条口径：
 //
-//	① **只转发、不翻译**：`zerg ui start` 之后的**一切**原样交给脚本，连退码也不改写
-//	   （0 / 1 逐档原样转出；脚本 `set -euo pipefail`，未成即 1）。底层逻辑只有一处 ⇒ 本件不许重写 ✗。
-//	② **命令面自己只在「连脚本都递不到」那一档退码**：解析不到仓根 / 脚本不在 ⇒ `8`（不给结论 ·
-//	   与 `ui` 族同档）；**不拿脚本的 1 冒充**（两件事不许并成一个形状）。
-//	③ **不新增机器面**：底层脚本没有 `--json` ⇒ 本件也不自己拼一份包封（契约在命令面只有一处）。
+//	① **逐字照底层**：文案 / 退码一字不改（`0` 已成/已在运行 · `1` 不可执行 / 起不来）。
+//	② **不再有「递不到脚本」档**：行为已内化 ⇒ 只留一道仓根解析失败的 fail-closed（`8` ·
+//	   与 `ui` 族同档）；此档脚本直跑本就不存在（无从对照 · 只在没进仓时触发）。
+//	③ **不新增机器面**：底层脚本没有 `--json` ⇒ 本件也不自己拼一份包封。
 package main
 
 import (
@@ -30,71 +29,365 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
+	"time"
 )
 
-// uiStartScriptRel —— UI 脱离会话启动的**唯一实现**（真源）。本件一个字都不重写它：
-// 脱离会话（`os.setsid`）、逐 PID 点名（`zerg_ui_pids`）、令牌注入（`~/.zerg/token`）、
-// 日志/stdin 重定向、退码（0 已成 / 1 未成）全在那边。
-const uiStartScriptRel = "scripts/build/start-zerg-ui.sh"
+// uiStartBinRel —— UI 可执行件（脚本 `BIN="$REPO_ROOT/bin/zerg-ui"`）。
+const uiStartBinRel = "bin/zerg-ui"
 
-// cmdUIStart —— `zerg ui start`（A6 的 Go 正门 · 只转发不翻译）。
+// uiStartLogName —— 缺省日志件名（脚本 `${ZERG_UI_LOG:-${ZERG_LOG_DIR:-/tmp}/zerg-ui.log}`）。
+const uiStartLogName = "zerg-ui.log"
+
+// uiStartLogPath —— 照脚本取日志落点：`ZERG_UI_LOG` 优先，其次 `${ZERG_LOG_DIR:-/tmp}/zerg-ui.log`。
+// ★ 用串接（✗ 不用 `filepath.Join`）⇒ `ZERG_LOG_DIR` 带尾斜杠时与 shell 同形。
+func uiStartLogPath() string {
+	if v := os.Getenv("ZERG_UI_LOG"); v != "" {
+		return v
+	}
+	dir := os.Getenv("ZERG_LOG_DIR")
+	if dir == "" {
+		dir = "/tmp"
+	}
+	return dir + "/" + uiStartLogName
+}
+
+// zergUIPids —— 复刻脚本 `zerg_ui_pids`（GAP-20260927-119）：只认 argv[0] **整路径精确等于** `bin`
+// 者（`bin` 后紧跟串尾或空白）。同族的 `bin/zerg-ui.bak-*` / `.new-*`（下一个字符是 `.`）⇒ **不命中**。
+// 旧口径按 `pgrep -f` 子串抓既误收 .bak/.new 件，又会抓到命令行里恰好含该字面的调用链壳 ⇒ 本件照脚本
+// 逐字复刻整路径口径。跳过自身 PID（脚本跳 `$$`）。返回**出现序**（首个 = 脚本 `head -1`）。
+func zergUIPids(bin string) []string {
+	out, err := exec.Command("ps", "-eo", "pid=,command=").Output()
+	if err != nil {
+		return nil // 读不到进程表 ⇒ 空（脚本同档：`ps` 失败即无输出）。
+	}
+	self := strconv.Itoa(os.Getpid())
+	var pids []string
+	for _, ln := range strings.Split(string(out), "\n") {
+		pid, cmd, ok := uiStartReadPidCmd(ln)
+		if !ok || pid == self {
+			continue
+		}
+		if cmd == bin || strings.HasPrefix(cmd, bin+" ") {
+			pids = append(pids, pid)
+		}
+	}
+	return pids
+}
+
+// uiStartReadPidCmd —— 复刻 bash `read -r pid cmd`：行首/段间空白剥、**行尾空白亦剥**
+// （末个变量得「余下部分」两端去 IFS 空白）；首段为 pid、余下为 cmd。
+func uiStartReadPidCmd(ln string) (string, string, bool) {
+	s := strings.TrimLeft(ln, " \t")
+	if s == "" {
+		return "", "", false
+	}
+	if i := strings.IndexAny(s, " \t"); i >= 0 {
+		return s[:i], strings.TrimRight(strings.TrimLeft(s[i:], " \t"), " \t"), true
+	}
+	return s, "", true
+}
+
+// uiStartExecutable —— 照 `[ -x "$BIN" ]`：存在且**任一**执行位（目录算「可执行」⇒ ✗ 不另加 regular 判）。
+func uiStartExecutable(p string) bool {
+	fi, err := os.Stat(p)
+	return err == nil && fi.Mode().Perm()&0o111 != 0
+}
+
+// uiStartPsRaw —— 跑 `ps <args…> -p <pid>` 取原始 stdout（`$(…)` 语义：剥**行尾换行**）。
+func uiStartPsRaw(pid string, args ...string) (string, bool) {
+	argv := append(append([]string{}, args...), "-p", pid)
+	out, err := exec.Command("ps", argv...).Output()
+	if err != nil {
+		return "", false
+	}
+	return strings.TrimRight(string(out), "\n"), true
+}
+
+// uiStartSqueezeSpaces —— 照 `tr -s ' '`：把**连续空格**压成一个（✗ 不动制表/换行）。
+func uiStartSqueezeSpaces(s string) string {
+	var b strings.Builder
+	prevSpace := false
+	for _, r := range s {
+		if r == ' ' {
+			if prevSpace {
+				continue
+			}
+			prevSpace = true
+		} else {
+			prevSpace = false
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+// uiStartTailTo —— 照脚本 `tail -8 "$LOG" >&2`：用**同一工具** ⇒ 含「件不在」时 `tail` 自己的报错
+// 也逐字同（末个 `|| true` = 失败不改退码 ⇒ 这里同样忽略错误）。
+func uiStartTailTo(logPath string, n int, stderr io.Writer) {
+	cmd := exec.Command("tail", "-"+strconv.Itoa(n), logPath)
+	cmd.Stdout = stderr
+	cmd.Stderr = stderr
+	_ = cmd.Run()
+}
+
+// uiStartChildEnv —— 照脚本的启动环境：先 `cd REPO_ROOT` 并 `[ -f .env ] && set -a; . ./.env; set +a`，
+// 随后启动器把**权威令牌**注入 `ZERG_AUTH_TOKEN`（`~/.zerg/token` · 非空才注入 ⇒ 压过 `.env` 同名）。
+// 覆盖序：进程环境 < `.env` 赋值 < 令牌文件（与 python 侧 `os.environ[...] = _v` 同序）。
+func uiStartChildEnv(root string) []string {
+	env := uiStartLoadDotenv(root, os.Environ())
+	if home, err := os.UserHomeDir(); err == nil {
+		if b, err := os.ReadFile(filepath.Join(home, ".zerg", "token")); err == nil {
+			if v := strings.TrimSpace(string(b)); v != "" {
+				env = uiStartEnvSet(env, "ZERG_AUTH_TOKEN", v)
+			}
+		}
+	}
+	return env
+}
+
+// uiStartLoadDotenv —— 载入 `<root>/.env`（KEY=VALUE 一族）：空行 / `#` 注释跳过 · 可带 `export ` ·
+// 单引号内**全字面** · 双引号 / 裸值做 `$VAR` / `${VAR}` 展开 · 裸值剥行内 ` #` 注释。
+// ★ 残余（已报「未做到」）：不跑 shell ⇒ 命令替换（“ ` “ / `$( )`）与 `$?` / `$$` 一类特殊参数**不复现**；
+// 真仓 `.env` 只用 KEY=VALUE 形式（含引号），此面即足。
+func uiStartLoadDotenv(root string, env []string) []string {
+	b, err := os.ReadFile(filepath.Join(root, ".env"))
+	if err != nil {
+		return env
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		k, v, ok := uiStartDotenvLine(line, env)
+		if !ok {
+			continue
+		}
+		env = uiStartEnvSet(env, k, v)
+	}
+	return env
+}
+
+// uiStartDotenvLine —— 解析一行赋值。返回 (key, value, ok)。
+func uiStartDotenvLine(line string, env []string) (string, string, bool) {
+	s := strings.TrimSpace(line)
+	if s == "" || strings.HasPrefix(s, "#") {
+		return "", "", false
+	}
+	if strings.HasPrefix(s, "export ") {
+		s = strings.TrimSpace(s[len("export "):])
+	}
+	i := strings.IndexByte(s, '=')
+	if i <= 0 {
+		return "", "", false
+	}
+	key := strings.TrimSpace(s[:i])
+	if !uiStartValidEnvKey(key) {
+		return "", "", false
+	}
+	return key, uiStartDotenvValue(strings.TrimSpace(s[i+1:]), env), true
+}
+
+// uiStartDotenvValue —— 解析右值（剥引号 ＋ 按需展开）。
+func uiStartDotenvValue(raw string, env []string) string {
+	if strings.HasPrefix(raw, "'") {
+		if e := strings.IndexByte(raw[1:], '\''); e >= 0 {
+			return raw[1 : 1+e] // 单引号内**全字面**（不展开）
+		}
+		return raw[1:]
+	}
+	if strings.HasPrefix(raw, `"`) {
+		body := raw[1:]
+		if e := strings.IndexByte(body, '"'); e >= 0 {
+			body = body[:e]
+		}
+		body = strings.ReplaceAll(body, `\"`, `"`)
+		body = strings.ReplaceAll(body, `\\`, `\`)
+		return uiStartExpandVar(body, env)
+	}
+	if i := strings.Index(raw, " #"); i >= 0 { // 裸值行内注释
+		raw = raw[:i]
+	}
+	return uiStartExpandVar(strings.TrimSpace(raw), env)
+}
+
+// uiStartExpandVar —— 展开 `$VAR` / `${VAR}`（未定义 ⇒ 空串；其余原样）。
+// ✗ 不认 `$?` / `$$` / `$1` 一类特殊参数与命令替换（见 uiStartLoadDotenv 的残余声明）。
+func uiStartExpandVar(s string, env []string) string {
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] != '$' {
+			b.WriteByte(s[i])
+			continue
+		}
+		j := i + 1
+		if j < len(s) && s[j] == '{' {
+			k := j + 1
+			for k < len(s) && s[k] != '}' {
+				k++
+			}
+			if k >= len(s) {
+				b.WriteByte('$')
+				continue
+			}
+			if v, ok := uiStartEnvGet(env, s[j+1:k]); ok {
+				b.WriteString(v)
+			}
+			i = k
+			continue
+		}
+		k := j
+		for k < len(s) && (s[k] == '_' || (s[k] >= 'A' && s[k] <= 'Z') || (s[k] >= 'a' && s[k] <= 'z') || (k > j && s[k] >= '0' && s[k] <= '9')) {
+			k++
+		}
+		if k == j {
+			b.WriteByte('$')
+			continue
+		}
+		if v, ok := uiStartEnvGet(env, s[j:k]); ok {
+			b.WriteString(v)
+		}
+		i = k - 1
+	}
+	return b.String()
+}
+
+// uiStartValidEnvKey —— 环境变量名（`[A-Za-z_][A-Za-z0-9_]*`）。
+func uiStartValidEnvKey(k string) bool {
+	if k == "" {
+		return false
+	}
+	for i := 0; i < len(k); i++ {
+		c := k[i]
+		switch {
+		case c == '_' || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'):
+		case c >= '0' && c <= '9' && i > 0:
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// uiStartEnvGet —— 取环境表里的键值。
+func uiStartEnvGet(env []string, k string) (string, bool) {
+	pfx := k + "="
+	for _, e := range env {
+		if strings.HasPrefix(e, pfx) {
+			return e[len(pfx):], true
+		}
+	}
+	return "", false
+}
+
+// uiStartEnvSet —— 设/覆盖环境表里的键值（返回新切片 · ✗ 不改入参）。
+func uiStartEnvSet(env []string, k, v string) []string {
+	pfx := k + "="
+	out := make([]string, len(env))
+	copy(out, env)
+	for i := range out {
+		if strings.HasPrefix(out[i], pfx) {
+			out[i] = pfx + v
+			return out
+		}
+	}
+	return append(out, pfx+v)
+}
+
+// uiStartLaunch —— 脱离会话启动（照脚本 `nohup python3 -c '…os.setsid…' BIN LOG`）：
+// `Setsid: true` = 新会话/新进程组；stdin ⇒ `/dev/null`；stdout/stderr ⇒ 日志（O_APPEND · 0644）；
+// cwd ⇒ 仓根（脚本先 `cd "$REPO_ROOT"`）；env ⇒ 载入 `.env` / 注入令牌后的环境。
+// ✗ 不登记 `runningChild`（UI 由人开关 · 收尾不许误杀）；但**回收**子进程（✗ 不留僵尸 —— 僵尸在
+// `ps` 里仍带原 argv，会被「逐 PID 点名」读成「在运行」）。
+func uiStartLaunch(bin, root, logPath string, env []string) error {
+	logf, err := os.OpenFile(logPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
+	if err != nil {
+		return err
+	}
+	devnull, err := os.OpenFile(os.DevNull, os.O_RDONLY, 0)
+	if err != nil {
+		_ = logf.Close()
+		return err
+	}
+	cmd := exec.Command(bin)
+	cmd.Dir = root
+	cmd.Env = env
+	cmd.Stdin = devnull
+	cmd.Stdout = logf
+	cmd.Stderr = logf
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := cmd.Start(); err != nil {
+		_ = logf.Close()
+		_ = devnull.Close()
+		return err
+	}
+	go func() {
+		_ = cmd.Wait()
+		_ = logf.Close()
+		_ = devnull.Close()
+	}()
+	return nil
+}
+
+// cmdUIStart —— `zerg ui start`（A6 的 Go 正门 · 行为已内化 · ✗ 不再转发脚本）。
 //
-// 退码口径（**逐档照底层**）：脚本的 `0` / `1` 原样转出 ——
+// 退码口径（**逐档照底层脚本**）：
 //
 //	0 成功（UI 已起，或已在运行 ⇒ 幂等不重起）· 1 失败（UI 二进制不可执行 / 起来又退了）。
 //
-// 命令面自己只在「递不到脚本」那一档退码：解析不到仓根 / 脚本不在 ⇒ `8`（不给结论 · 与 `ui` 族同档）。
+// 命令面自己只在「解析不到仓根」那一档退码：`repoRoot()` 取不到 ⇒ `8`（不给结论 · 与 `ui` 族同档）；
+// ★ 脚本直跑**无缘**此档（它从自身路径推仓根）⇒ 不对它做逐字对照。
 func cmdUIStart(inv *invocation, stdout, stderr io.Writer) int {
 	root := repoRoot()
 	if root == "" {
 		inv.setErr("blocked", "repo_root_absent", "解析不到仓根")
-		fmt.Fprintf(stderr, "%s: 解析不到仓根 ⇒ 递不到 UI 启动脚本（不给结论 · 退码 8）\n", progName)
+		fmt.Fprintf(stderr, "❌ 解析不到仓根 ⇒ 起不动 UI（先 cd 进仓内，或用 ZERG_REPO 指仓根）\n")
 		return exitBlocked
 	}
-	script := filepath.Join(root, uiStartScriptRel)
-	if _, err := os.Stat(script); err != nil {
-		inv.setErr("blocked", "ui_start_script_absent", "UI 启动脚本不在")
-		fmt.Fprintf(stderr, "%s: UI 启动脚本不在（%s）⇒ 不给结论（退码 8）\n", progName, uiStartScriptRel)
-		return exitBlocked
-	}
-	// 透传面：`zerg ui start` 之后的**一切**原样交给脚本。
-	// `ui` 族占两个路径段（族 `ui` ＋ 动作 `start`）⇒ 取 `inv.orig[len(inv.path):]`，
-	// 与 `build_wall.go`（`build` 族亦两段）同一取法。
-	tail := []string{}
-	if len(inv.orig) > len(inv.path) {
-		tail = inv.orig[len(inv.path):]
-	}
-	fmt.Fprintf(stderr, "%s: 底层 = %s（**唯一真源** · 命令面只转发、不翻译）\n", progName, uiStartScriptRel)
-	cmd := armChildGroup(exec.Command("bash", append([]string{script}, tail...)...))
-	runningChild = cmd
-	defer func() { runningChild = nil }()
-	cmd.Dir = root
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = stdout
-	cmd.Stderr = stderr
-	if err := cmd.Run(); err != nil {
-		if ee, ok := err.(*exec.ExitError); ok {
-			// ★ 只转发、不翻译：脚本的码原样返回（与 `build`/`ui` 族同一条口径 · §4.3 U1）。
-			fmt.Fprintf(stderr, "%s: UI 启动脚本退 %d（原样转发，不翻译）\n", progName, ee.ExitCode())
-			return ee.ExitCode()
-		}
-		inv.setErr("failed", "ui_start_script_failed", err.Error())
-		fmt.Fprintf(stderr, "%s: 起不动 UI 启动脚本：%v\n", progName, err)
+	bin := filepath.Join(root, uiStartBinRel)
+	logPath := uiStartLogPath()
+
+	// 照脚本：先 `cd REPO_ROOT` ＋ 载入 `.env`（作用于随后的启动子进程环境）。
+	env := uiStartChildEnv(root)
+
+	// ① 二进制不可执行 ⇒ 逐字报 · 退 1（脚本首道早退档）。
+	if !uiStartExecutable(bin) {
+		fmt.Fprintf(stderr, "❌ UI 二进制不可执行: %s（先 cargo build --release -p zerg-ui → 拷到 bin/ → codesign -s - --force）\n", bin)
 		return exitFail
 	}
-	return exitOK
+
+	// ② 已在运行 ⇒ 幂等不重起 · 退 0。
+	if pids := zergUIPids(bin); len(pids) > 0 {
+		fmt.Fprintf(stdout, "ℹ️ UI 已在运行（PID %s）——不重复启动\n", pids[0])
+		return exitOK
+	}
+
+	// ③ 脱离会话启动（起不来也照脚本继续 —— 睡 4 秒回读，无 PID 即走失败支）。
+	_ = uiStartLaunch(bin, root, logPath, env)
+
+	// ④ 睡 4 秒回读（脚本 `sleep 4`）。
+	time.Sleep(4 * time.Second)
+	if pids := zergUIPids(bin); len(pids) > 0 {
+		pid := pids[0]
+		ppid, _ := uiStartPsRaw(pid, "-o", "ppid=")
+		ppid = strings.ReplaceAll(ppid, " ", "")
+		gs, _ := uiStartPsRaw(pid, "-o", "pgid=,sess=")
+		gs = uiStartSqueezeSpaces(gs)
+		fmt.Fprintf(stdout, "✅ UI 已启动（PID %s · PPID %s · 日志 %s）\n", pid, ppid, logPath)
+		fmt.Fprintf(stdout, "   会话/进程组: %s\n", gs)
+		return exitOK
+	}
+	fmt.Fprintf(stderr, "❌ UI 启动失败——日志尾部:\n")
+	uiStartTailTo(logPath, 8, stderr)
+	return exitFail
 }
 
 // uiStartGateMain —— `cmdUIStart` 的 **inproc 同签名包装入口**（与 `gateCheckGoEntry` 表值
 // 同签名：`func(stdout, stderr io.Writer, argv []string) int`）。
 //
 // ★ **仅转发**：把 argv 原样当作 `zerg ui start` 之后的实参，转交 `cmdUIStart`
-// （唯一实现仍是 `cmdUIStart` ＋ 底层脚本 `scripts/build/start-zerg-ui.sh` —— 本件 ✗ 不重写
-// 任何一段、✗ 不改退码口径、✗ 不新增机器面；两态三面与 `cmdUIStart` 逐字同）。
-// ★ 单一真源：底层脚本恒为 A6 面 `scripts/build/start-zerg-ui.sh`（顶层 `start-zerg-ui.sh`＝A17
-// 是**另一件**、待退 ⇒ ✗ 不在此双登）。
-// ★ M2 纪律：本入口**暂不接线**（✗ 未在 `core/cmd/zerg/gate_inproc_table.go` 登记键 —— 表键另路一并接）。
+// （唯一实现仍是 `cmdUIStart` —— 本件 ✗ 不重写任何一段、✗ 不改退码口径、✗ 不新增机器面；
+// 两态三面与 `cmdUIStart` 逐字同）。★ 2026-10-08 真搬后：**不再依赖** `scripts/build/start-zerg-ui.sh`
+// 在盘 ⇒ 该脚本退役（移出仓）后本入口 rc/stdout/stderr 与在盘**逐字同**（✗ 不再退 `8`）。
 func uiStartGateMain(stdout, stderr io.Writer, argv []string) int {
 	inv := &invocation{
 		path: []string{"ui", "start"},
@@ -362,4 +655,28 @@ func cmdMCPServeFamily(inv *invocation, stdout, stderr io.Writer) int {
 		inv = &cp
 	}
 	return cmdMCPServe(inv, stdout, stderr)
+}
+
+// ── 接线批（2026-10-08）：四件「已真搬/真壳 · 命令面未接线」的入口承载（只转发 · ✗ 不重写）──────
+//
+// 依据：`~/.zerg/state/退役-其余簇-接线复核-20261008.tsv` · `A档18件-收CLI设计稿-20261007.md` A4/A7/A11 ·
+// 缺口 `GAP-20260928-12`。四件的**真实现**各自在 `archive_mount.go` / `eval_run_all.go` / `build_wall.go` /
+// `family_script_inventory.go`（本入口**只转发**：✗ 不重写它们任何一段 · ✗ 不改退码口径）。
+// ★ 为什么承载宿主在本件（与 `cmdSandboxProbe`/`cmdWallEvidence`/`cmdMCPServeFamily` 同一条理由）：
+// 门78 `check-newcmd-followup` 面④ 要求「新增 path 的实现件已在 `scripts/公开标记.tsv`」——
+// 本单铁律禁碰该表 ⇒ 复用一件**已登记**（`public=yes`）件作承载宿主。
+func cmdArchiveMountFamily(inv *invocation, stdout, stderr io.Writer) int {
+	return cmdArchiveMount(inv, stdout, stderr)
+}
+
+func cmdEvalRunAllFamily(inv *invocation, stdout, stderr io.Writer) int {
+	return cmdEvalRunAll(inv, stdout, stderr)
+}
+
+func cmdBuildWallFamily(inv *invocation, stdout, stderr io.Writer) int {
+	return cmdBuildWall(inv, stdout, stderr)
+}
+
+func cmdScriptInventoryVerifyFamily(inv *invocation, stdout, stderr io.Writer) int {
+	return cmdScriptInventoryVerify(inv, stdout, stderr)
 }

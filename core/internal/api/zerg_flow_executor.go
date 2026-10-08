@@ -539,6 +539,24 @@ func isRebuildErr(err error) bool {
 	return err != nil && strings.HasPrefix(err.Error(), "REBUILD:")
 }
 
+// localMachineName —— 本机在名册/快照里的机器名（★ 运行期派生 · 照 `core/cmd/zerg` 的
+// `sagLocalMachine` 同口径 · 缺口 GAP-20260925-21）。改前本处把本机机器名当**字面量**写死；
+// 派生后**本机求值逐字同**（机器名不再出现在件里）。
+// macOS 上机型短名与登录用户名同值（本机即该短名）；`USER` 取不到时回落主机名（去掉 `.local` 尾）。
+func localMachineName() string {
+	if u := os.Getenv("USER"); u != "" {
+		return u
+	}
+	h, err := os.Hostname()
+	if err != nil {
+		return ""
+	}
+	if i := strings.IndexByte(h, '.'); i > 0 {
+		h = h[:i]
+	}
+	return h
+}
+
 // ========== v2.5.6 模型探活 ping（Mr2109 2026-08-28——任务执行前先探活） ==========
 
 // pingModel 模型探活（v2.5.6 三级漏斗——Mr2109 2026-08-28 效率优化）
@@ -574,7 +592,7 @@ func (s *MasterScheduler) pingModel(model string) (bool, error) {
 		// 原先查 "local"（localback 不经心跳上报）⇒ 现在本机 = 名字叫 **Mr2109** 的普通子端，
 		// 它的快照经心跳上报，键就是 "Mr2109"。⚠ 该分支是**承重的**
 		// （TestPingModel_SnapshotFastPath 钉着它：命中即跳过 ping）⇒ 所以是改名、不是删除。
-		if lite := s.store.MachineSnapshot("Mr2109"); lite != nil {
+		if lite := s.store.MachineSnapshot(localMachineName()); lite != nil {
 			if lite.Healthy && lite.Model != "" && modelFileLoadedLite(lite, model) {
 				s.cachePing(model, true, nil)
 				return true, nil

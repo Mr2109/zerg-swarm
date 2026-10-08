@@ -261,7 +261,7 @@ func (h *ControlHandlers) dispatchLoad(node config.FleetNode, machine, model str
 }
 
 // LoadHandler 处理 POST /api/control/load
-// body: {"machine": "edge-node"|"Mr2109"|"mini-node-1", "model": "deepseek-v4-flash"}
+// body: {"machine": "node-a"|"node-local"|"node-b", "model": "deepseek-v4-flash"}
 func (h *ControlHandlers) LoadHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeErrorCode(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "仅支持 POST 方法")
@@ -316,7 +316,7 @@ func (h *ControlHandlers) LoadHandler(w http.ResponseWriter, r *http.Request) {
 
 	// 本机角色（localback）已于 2026-09-16 退役（Mr2109 拍：所有可推理的计算机都是子端）。
 	// ⚠ 必须**显式拒绝**：三处注入已改传 nil ⇒ 若还走进老分支（h.LocalBack.LoadModel）就是
-	// 空指针 panic（崩溃比报错糟得多）。本机 = 名为 Mr2109 的普通子端，照远程子端走。
+	// 空指针 panic（崩溃比报错糟得多）。本机 = 名为 node-local 的普通子端，照远程子端走。
 	if req.Machine == "local" {
 		writeErrorCode(w, http.StatusGone, "MACHINE_RETIRED",
 			"本机角色已退役：本机 = 名为 Mr2109 的普通子端，请用 machine=Mr2109")
@@ -376,7 +376,7 @@ func (h *ControlHandlers) LoadHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // UnloadHandler 处理 POST /api/control/unload
-// body: {"machine": "edge-node"|"Mr2109"|"mini-node-1"}（"local" 已退役 ⇒ 410 MACHINE_RETIRED）
+// body: {"machine": "node-a"|"node-local"|"node-b"}（"local" 已退役 ⇒ 410 MACHINE_RETIRED）
 func (h *ControlHandlers) UnloadHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeErrorCode(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "仅支持 POST 方法")

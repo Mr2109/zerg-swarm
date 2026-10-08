@@ -1,22 +1,22 @@
 # doc_index_gen —— 版本目录 INDEX 生成器
 
 **版本**：v1.0.0（2026-09-03——v2.5.8 文档体系 t2 产出）
-**入口**：tools/doc_index_gen.py（python3——无三方依赖）
+**入口**：`zerg doc index-gen`（Go 半 `core/cmd/zerg/doc_index_gen.go` · 原 `tools/doc_index_gen.py`）
 
 ## 作用
 扫版本目录 .md → 按文件名分组 → 生成 llms.txt 风格 INDEX.md（标题/文件链接/单行描述）——模型查文档先读 INDEX 定向（不全文读）。
 
 ## 用法
 ```bash
-python3 tools/doc_index_gen.py docs/项目文档/v2.5.8        # 生成/覆盖该目录 INDEX.md
-python3 tools/doc_index_gen.py docs/项目文档/v2.5.9 --out /tmp/idx.md   # 输出到指定路径
+zerg doc index-gen docs/项目文档/v2.5.8        # 生成/覆盖该目录 INDEX.md
+zerg doc index-gen docs/项目文档/v2.5.9 --out /tmp/idx.md   # 输出到指定路径
 ```
 ★ **2026-09-19「项目文档」二次分家批2（说明书同步 · 工具代码零改动）**：上面的示例路径是**仓内**口径；
 该目录已随**批3**（2026-09-19 已落盘）移入同级仓外目录 `Zerg-内部文档/项目文档/`（工作树之外）⇒ 请按**新位置**传参，例如
-`python3 tools/doc_index_gen.py ../Zerg-内部文档/项目文档/v2.5.10`（本工具**只吃命令行给的目录**，代码里
+`zerg doc index-gen ../Zerg-内部文档/项目文档/v2.5.10`（本工具**只吃命令行给的目录**，代码里
 没有写死的 `docs/项目文档` 路径 ⇒ **零改动、无需升版本**；仓内路径仍在时两处都能用）。**登记未改**：本件同目录的
 `doc_index_gen.py` 头部注释里那条示例（`:5`）仍写仓内路径 ⇒ 属**说明面**（不是靶点）、批3 后随手改。
-`check-doc-freshness.py d4` 的靶点（`scripts/docs/doc-freshness.config.json` 的 `targets_glob` / `targets_glob_alt`）
+`zerg gate check check-doc-freshness d4`（Go 半 `core/cmd/zerg/check_doc_freshness.go`）的靶点（`scripts/docs/doc-freshness.config.json` 的 `targets_glob` / `targets_glob_alt`）
 在同一批做了**双认**（先仓内、缺则仓外取源根）。
 
 ## 行为

@@ -262,7 +262,7 @@ func hsRunArtifact(binz string, args ...string) (string, int, bool) {
 // hsRuntimeRows —— py `runtime_rows()`：现跑 `help export --dry-run` ⇒ (逐条清单行 | None, 理由)。
 func hsRuntimeRows(binz string) ([]string, string) {
 	if !hsIsFile(binz) {
-		return nil, "`bin/zerg` 不在盘（先用 `bash scripts/build/build-all.sh --only-cli` 出新制品）"
+		return nil, "`bin/zerg` 不在盘（先用 `zerg build all --only cli` 出新制品）"
 	}
 	stdout, rc, ok := hsRunArtifact(binz, "help", "export", "--dry-run")
 	if !ok {

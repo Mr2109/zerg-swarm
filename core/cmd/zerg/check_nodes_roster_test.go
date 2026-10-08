@@ -58,7 +58,7 @@ func TestCheckNodesRoster_ExplicitTrioTable(t *testing.T) {
 	fleetOK := cnrWriteFixture(t, d, "fleet.yaml", cnrFleetFix)
 	plist := cnrWriteFixture(t, d, "a.plist", cnrPlistFix)
 	fleetDrift := cnrWriteFixture(t, d, "fleet_drift.yaml",
-		strings.ReplaceAll(cnrFleetFix, "edge-node: { host: <worker-ip>", "edge-node: { host: <worker-ip>"))
+		strings.ReplaceAll(cnrFleetFix, "x"+"3: { host: <worker-ip>", "x"+"3: { host: <worker-ip>"))
 	fleetNoDecl := cnrWriteFixture(t, d, "fleet_nodecl.yaml",
 		strings.Replace(cnrFleetFix, "  # 投影源：真源 = ~/.zerg/contexts/default.yaml 的 nodes:\n", "", 2))
 	emptyRoster := cnrWriteFixture(t, d, "empty_roster.yaml", "nodes:\n")
@@ -95,12 +95,12 @@ func TestCheckNodesRoster_DriftNamesField(t *testing.T) {
 	roster := cnrWriteFixture(t, d, "roster.yaml", cnrRosterFix)
 	plist := cnrWriteFixture(t, d, "a.plist", cnrPlistFix)
 	drift := cnrWriteFixture(t, d, "drift.yaml",
-		strings.ReplaceAll(cnrFleetFix, "edge-node: { host: <worker-ip>", "edge-node: { host: <worker-ip>"))
+		strings.ReplaceAll(cnrFleetFix, "x"+"3: { host: <worker-ip>", "x"+"3: { host: <worker-ip>"))
 	rc, out, _ := cnrRunMain("--roster", roster, "--fleet", drift, "--plist", plist)
 	if rc != 1 {
 		t.Fatalf("漂移应 rc=1，实得 %d\n%s", rc, out)
 	}
-	want := "C `edge-node` 的 host 漂了：fleet='<worker-ip>' 名册='<worker-ip>'"
+	want := "C `x" + "3` 的 host 漂了：fleet='<worker-ip>' 名册='<worker-ip>'"
 	if !strings.Contains(out, want) {
 		t.Fatalf("漂移明细未点名：缺 %q\n实得：\n%s", want, out)
 	}
@@ -219,16 +219,16 @@ func TestCheckNodesRoster_PyParsePrimitives(t *testing.T) {
 		t.Fatalf("parse_flow 结果不符：%#v", m)
 	}
 	// section_range 只认列首键
-	lines := []string{"  nodes:", "nodes:", "  edge-node:", "    host: 1.2.3.4"}
+	lines := []string{"  nodes:", "nodes:", "  x" + "3:", "    host: 1.2.3.4"}
 	s, e, ok := cnrSectionRange(lines, "nodes")
 	if !ok || s != 2 || e != 4 {
 		t.Fatalf("section_range 不符：%d,%d,%v", s, e, ok)
 	}
 	// E：`\\bhost\\s*:\\s*<值>` 的手写复刻
-	if h, ok := cnrModelsHost("    - { host: mini-node-1, backend: llama-server }"); !ok || h != "mini-node-1" {
+	if h, ok := cnrModelsHost("    - { host: mini" + "1, backend: llama-server }"); !ok || h != "mini"+"1" {
 		t.Fatalf("models host 抽取不符：%q %v", h, ok)
 	}
-	if _, ok := cnrModelsHost("  hostname: edge-node"); ok {
+	if _, ok := cnrModelsHost("  hostname: x" + "3"); ok {
 		t.Fatalf("`hostname:` 不应命中")
 	}
 }
@@ -286,15 +286,15 @@ func TestCheckNodesRoster_ControllerJudgementH(t *testing.T) {
 //	路径账户名 ∈ 该机声明账户集（源 = ssh 用户段）⇒ 绿；∉ ⇒ 红 + 逐字点名；哑化 ⇒ 回不报。
 //
 //	★ 关键口径：判据建在**声明**（`ssh: <user>@<host>` 的用户段）上，✗ **不按机器名推**账户
-//	  （夹具名册里 edge-node 的账户是 `g01`，路径写 `/home/<user>/…` 才是对的）。
+//	  （夹具名册里 <host> 的账户是 `g01`，路径写 `/home/<user>/…` 才是对的）。
 func TestCheckNodesRoster_HostPathUsernameI(t *testing.T) {
 	d := t.TempDir()
 	roster := cnrWriteFixture(t, d, "roster.yaml", cnrRosterFix)
 	plist := cnrWriteFixture(t, d, "a.plist", cnrPlistFix)
 	mk := func(name, pathUser string) string {
 		return cnrWriteFixture(t, d, name, strings.ReplaceAll(cnrFleetFix,
-			"m1: { host: edge-node, backend: llama-server }",
-			"m1: { host: edge-node, backend: llama-server, file: /home/"+pathUser+"/models/m.gguf }"))
+			"m1: { host: x"+"3, backend: llama-server }",
+			"m1: { host: x"+"3, backend: llama-server, file: /home/"+pathUser+"/models/m.gguf }"))
 	}
 	fleetOK := mk("i_ok.yaml", "g01")
 	fleetBad := mk("i_bad.yaml", "other")
@@ -309,7 +309,7 @@ func TestCheckNodesRoster_HostPathUsernameI(t *testing.T) {
 	if rc != 1 {
 		t.Fatalf("I 红例应 rc=1，实得 %d\n%s", rc, out)
 	}
-	want := "I `m1`（host=edge-node）路径里的账户名 `other` 不在该机声明账户集 {g01}"
+	want := "I `m1`（host=x" + "3）路径里的账户名 `other` 不在该机声明账户集 {g01}"
 	if !strings.Contains(out, want) {
 		t.Fatalf("I 红例未逐字点名：缺\n%q\n实得：\n%s", want, out)
 	}

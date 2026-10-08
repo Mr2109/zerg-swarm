@@ -365,8 +365,8 @@ const clicMatrixNote = "命令面自身的 must-fail 矩阵（§九 M17 `T2` · 
 	"退码一致、且与判据语义相符才入矩阵；改行为就必须改这一格（改不动就是回归）。\n" +
 	"候选口令按命令形状给（危险档 / 字段面 / 说明面 / 透传型），执行前判的那两条（未知旗标 · " +
 	"不认的主号）**每条命令都有**；透传型只留执行前判那条 —— 别的会把被包的脚本真跑一遍。\n" +
-	"重生成：`python3 scripts/gates/check-cli-contract.py --emit-matrix`" +
-	"（先用 `bash scripts/build/build-all.sh --only-cli` 出**新**制品）。\n" +
+	"重生成：`zerg gate check check-cli-contract --emit-matrix`" +
+	"（先用 `zerg build all --only cli` 出**新**制品）。\n" +
 	"★ 生成是**增量合并**（不是整表重写）：只刷新机器可派生列" +
 	"（`want_rc` / `want_stdout_bytes` = **现跑字节数** `len(stdout.encode())` —— 不是字符数），" +
 	"既有格的 id/command/argv/why 与顺序逐字保留（手写格不会被重写吃掉），" +
@@ -1017,7 +1017,7 @@ func clicLiveVerify(root string, matrixPath *string) (int, []string) {
 func clicLiveVerifyBin(root string, matrixPath *string, binPath string) (int, []string) {
 	binz := clicResolveBin(root, binPath)
 	if fi, err := os.Stat(binz); err != nil || fi.IsDir() {
-		return 2, []string{"⛔ 不给结论：找不到 bin/zerg —— 先用 `bash scripts/build/build-all.sh --only-cli` 出新制品"}
+		return 2, []string{"⛔ 不给结论：找不到 bin/zerg —— 先用 `zerg build all --only cli` 出新制品"}
 	}
 	mpath := clicPyJoin(root, clicMatrixRel)
 	if matrixPath != nil {
@@ -1287,7 +1287,7 @@ func clicPythonSplitN(s string, maxsplit int) []string {
 func clicTierCellLive(root string, matrixRaw []byte, binPath string) (int, []string, []string, map[string]any) {
 	binz := clicResolveBin(root, binPath)
 	if fi, err := os.Stat(binz); err != nil || fi.IsDir() {
-		return 2, []string{"⛔ 不给结论：找不到 bin/zerg —— T7 绿格现跑跑不起来（先用 `bash scripts/build/build-all.sh --only-cli` 出**新**制品）"}, nil, map[string]any{}
+		return 2, []string{"⛔ 不给结论：找不到 bin/zerg —— T7 绿格现跑跑不起来（先用 `zerg build all --only cli` 出**新**制品）"}, nil, map[string]any{}
 	}
 	root0, err := clicJSONOrdered(matrixRaw)
 	if err != nil {
@@ -1576,7 +1576,7 @@ func clicEmitMatrix(root string, outPath *string) (int, []string) {
 func clicEmitMatrixOpt(root string, outPath *string, dryRun bool, binPath string) (int, []string) {
 	binz := clicResolveBin(root, binPath)
 	if fi, err := os.Stat(binz); err != nil || fi.IsDir() {
-		return 2, []string{"⛔ 不给结论：找不到 bin/zerg —— 先用 bash scripts/build/build-all.sh --only-cli 出新制品"}
+		return 2, []string{"⛔ 不给结论：找不到 bin/zerg —— 先用 zerg build all --only cli 出新制品"}
 	}
 	tree := clicParseTree(root)
 	if len(tree) == 0 {
@@ -2161,12 +2161,12 @@ func clicCheckBin(root string, noRuntime bool, binPath string) (int, []string) {
 	}
 	gatesNamed := false
 	for _, g := range gates {
-		if strings.Contains(g, "check-cli-contract.py") {
+		if strings.Contains(g, "check_cli_contract.go") || strings.Contains(g, "check-cli-contract.py") {
 			gatesNamed = true
 		}
 	}
 	if !gatesNamed {
-		errs = append(errs, "T6 引用：契约登记表里**没有**任何条目的 gate 字段点名 check-cli-contract.py（引用面 = 0 ⇒ 本门挂在空气上）")
+		errs = append(errs, "T6 引用：契约登记表里**没有**任何条目的 gate 字段点名本门（Go 半 check_cli_contract.go / py 原件 check-cli-contract.py）（引用面 = 0 ⇒ 本门挂在空气上）")
 	}
 	selfSrc, selfPath, selfOK := clicSelfSource(root)
 	if !selfOK || !strings.Contains(selfSrc, "M6 R7") {
@@ -2828,7 +2828,7 @@ func clicHelp() string {
 		"  --bin PATH            缺口 GAP-20260926-12：指定制品路径。不给 = <root>/bin/zerg；给了 = 用该路径（绝对化后）—— 仓外临时仓根复用本机真制品，免造 bin/\n" +
 		"  --self-test\n" +
 		"  --no-runtime          **只给夹具用**：跳过 T4 的 go test（真目标不许带这个开关）\n" +
-		"  --emit-matrix [PATH]  按命令树 + 现跑 bin/zerg **重生成** must-fail 矩阵（先用 `bash scripts/build/build-all.sh --only-cli` 出新制品）\n" +
+		"  --emit-matrix [PATH]  按命令树 + 现跑 bin/zerg **重生成** must-fail 矩阵（先用 `zerg build all --only cli` 出新制品）\n" +
 		"  --dry-run             **只判定 · 不落任何产物**（缺口 GAP-20260927-372）：与 --emit-matrix 同给时只报将要合并的增量、**不写**矩阵件；不给 --emit-matrix 时 = 只读判定（同裸跑）\n" +
 		"  --verify-live         §六 R-6：拿冻结的矩阵逐格现跑同一 argv（每格两遍）、核 rc 与 stdout 字节数 —— 抓「多余格 / 幽灵格」（0 全合 / 1 mismatch / 2 不给结论）\n"
 }

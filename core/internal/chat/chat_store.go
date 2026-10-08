@@ -1,5 +1,5 @@
 // chat_store.go — v2.5.7 对话模块存储（借鉴 Hermes sessions/messages 双表——Mr2109 Go SQLite）
-// SQLite: modernc.org/sqlite（纯 Go 无 CGO——跨平台 EDGE-NODE/mini）
+// SQLite: modernc.org/sqlite（纯 Go 无 CGO——跨平台 node-a/mini）
 // 表: sessions（会话元数据）+ messages（消息流）+ messages_fts（FTS5 全文索引）+ schema_version
 
 package chat

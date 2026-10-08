@@ -33,22 +33,22 @@ func routeParityConfig() *config.FleetConfig {
 	return &config.FleetConfig{
 		Models: map[string][]config.ModelCandidate{
 			"m-双候选": {
-				{Host: "Mr2109", Backend: "llama-server", File: "/m/a.gguf", MemGb: 21},
-				{Host: "edge-node", Backend: "llama-server", File: "/m/a.gguf", MemGb: 21},
+				{Host: "node-local", Backend: "llama-server", File: "/m/a.gguf", MemGb: 21},
+				{Host: "node-a", Backend: "llama-server", File: "/m/a.gguf", MemGb: 21},
 			},
 			"m-三候选": {
-				{Host: "Mr2109", Backend: "llama-server", File: "/m/b.gguf", MemGb: 17},
-				{Host: "edge-node", Backend: "llama-server", File: "/m/b.gguf", MemGb: 17},
-				{Host: "mini-node-1", Backend: "llama-server", File: "/m/b.gguf", MemGb: 8},
+				{Host: "node-local", Backend: "llama-server", File: "/m/b.gguf", MemGb: 17},
+				{Host: "node-a", Backend: "llama-server", File: "/m/b.gguf", MemGb: 17},
+				{Host: "node-b", Backend: "llama-server", File: "/m/b.gguf", MemGb: 8},
 			},
 			"m-单候选": {
-				{Host: "edge-node", Backend: "llama-server", File: "/m/c.gguf", MemGb: 5},
+				{Host: "node-a", Backend: "llama-server", File: "/m/c.gguf", MemGb: 5},
 			},
 		},
 		Fleet: map[string]config.FleetNode{
-			"Mr2109":  {Host: "127.0.0.1", Port: 8100},
-			"edge-node":    {Host: "<worker-ip>", Port: 8100},
-			"mini-node-1": {Host: "<worker-ip>", Port: 8100},
+			"node-local": {Host: "127.0.0.1", Port: 8100},
+			"node-a":     {Host: "<cluster-ip>", Port: 8100},
+			"node-b":     {Host: "<cluster-ip>", Port: 8100},
 		},
 		Aliases: map[string]string{"别名": "m-双候选"},
 	}
@@ -99,7 +99,7 @@ func routeParityFingerprint(t *testing.T) []string {
 
 	// 乙组：某台熔断 ⇒ 择优要跳过它（熔断那一支）。
 	gTrip := &Gateway{config: routeParityConfig(), roundRobin: map[string]int{},
-		failCounts: map[string]int{"Mr2109": 99}, failSince: map[string]time.Time{"Mr2109": time.Now()},
+		failCounts: map[string]int{"node-local": 99}, failSince: map[string]time.Time{"node-local": time.Now()},
 		store: &store.Store{}}
 	for i := 0; i < 3; i++ {
 		r, err := gTrip.pickRoute("m-双候选", "", "")
@@ -127,28 +127,28 @@ func routeParityFingerprint(t *testing.T) []string {
 // 打印出来逐字粘在这里；改动落回后再跑一次 ⇒ 两跑逐行相同 ⇒ 用例绿。
 //
 // ★ 金标准**只许在「默认择优那一段真的改了」时更新**（那一天必然是一次明说的行为变更）。
-const routeParityGolden = `双候选#0 => Mr2109:8100 http://127.0.0.1:8100/infer
-双候选#1 => Mr2109:8100 http://127.0.0.1:8100/infer
-双候选#2 => Mr2109:8100 http://127.0.0.1:8100/infer
-双候选#3 => Mr2109:8100 http://127.0.0.1:8100/infer
-三候选#0 => Mr2109:8100 http://127.0.0.1:8100/infer
-三候选#1 => Mr2109:8100 http://127.0.0.1:8100/infer
-三候选#2 => Mr2109:8100 http://127.0.0.1:8100/infer
-三候选#3 => Mr2109:8100 http://127.0.0.1:8100/infer
-别名 => Mr2109:8100 http://127.0.0.1:8100/infer
-粘性#首次 => Mr2109:8100 http://127.0.0.1:8100/infer
-粘性#复用 => Mr2109:8100 http://127.0.0.1:8100/infer
-前缀 => Mr2109:8100 http://127.0.0.1:8100/infer
-单候选 => edge-node:8100 http://<worker-ip>:8100/infer
-必需能力 => ERR capability gate rejected: model "m-双候选" on engine "llama.cpp" lacks proven capability "vision" (no_snapshot) — capability gate: no capability snapshot — cannot verify "vision" for engine "llama.cpp" (fail-closed) — blocked candidates: Mr2109(engine=llama.cpp):no_snapshot; edge-node(engine=llama.cpp):no_snapshot
+const routeParityGolden = `双候选#0 => node-local:8100 http://127.0.0.1:8100/infer
+双候选#1 => node-local:8100 http://127.0.0.1:8100/infer
+双候选#2 => node-local:8100 http://127.0.0.1:8100/infer
+双候选#3 => node-local:8100 http://127.0.0.1:8100/infer
+三候选#0 => node-local:8100 http://127.0.0.1:8100/infer
+三候选#1 => node-local:8100 http://127.0.0.1:8100/infer
+三候选#2 => node-local:8100 http://127.0.0.1:8100/infer
+三候选#3 => node-local:8100 http://127.0.0.1:8100/infer
+别名 => node-local:8100 http://127.0.0.1:8100/infer
+粘性#首次 => node-local:8100 http://127.0.0.1:8100/infer
+粘性#复用 => node-local:8100 http://127.0.0.1:8100/infer
+前缀 => node-local:8100 http://127.0.0.1:8100/infer
+单候选 => node-a:8100 http://<cluster-ip>:8100/infer
+必需能力 => ERR capability gate rejected: model "m-双候选" on engine "llama.cpp" lacks proven capability "vision" (no_snapshot) — capability gate: no capability snapshot — cannot verify "vision" for engine "llama.cpp" (fail-closed) — blocked candidates: node-local(engine=llama.cpp):no_snapshot; node-a(engine=llama.cpp):no_snapshot
 不在表 => ERR model 压根没有的模型 not found in the routing table
-熔断跳过#0 => edge-node:8100 http://<worker-ip>:8100/infer
-熔断跳过#1 => edge-node:8100 http://<worker-ip>:8100/infer
-熔断跳过#2 => edge-node:8100 http://<worker-ip>:8100/infer
-熔断跳过#三候选 => edge-node:8100 http://<worker-ip>:8100/infer
-排除本机#0 => Mr2109:8100 http://127.0.0.1:8100/infer
-排除本机#1 => Mr2109:8100 http://127.0.0.1:8100/infer
-排除本机#2 => Mr2109:8100 http://127.0.0.1:8100/infer`
+熔断跳过#0 => node-a:8100 http://<cluster-ip>:8100/infer
+熔断跳过#1 => node-a:8100 http://<cluster-ip>:8100/infer
+熔断跳过#2 => node-a:8100 http://<cluster-ip>:8100/infer
+熔断跳过#三候选 => node-a:8100 http://<cluster-ip>:8100/infer
+排除本机#0 => node-local:8100 http://127.0.0.1:8100/infer
+排除本机#1 => node-local:8100 http://127.0.0.1:8100/infer
+排除本机#2 => node-local:8100 http://127.0.0.1:8100/infer`
 
 // TestRouteDefault_ABParity —— 未命中显式指定时，行为与改动前**逐字一致**。
 //

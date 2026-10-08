@@ -14,8 +14,8 @@ import (
 // TestClassifyRouteError_CircuitOpen 熔断/无候选 → circuit_open(503)
 func TestClassifyRouteError_CircuitOpen(t *testing.T) {
 	cases := []string{
-		"模型 X 唯一候选 edge-node 已熔断——无可用候选",
-		"模型 Y 无可用候选（全部熔断或排除: local,edge-node）",
+		"模型 X 唯一候选 node-a 已熔断——无可用候选",
+		"模型 Y 无可用候选（全部熔断或排除: local,node-a）",
 		"模型 Z 已被排除",
 	}
 	for _, msg := range cases {
@@ -50,15 +50,15 @@ func TestClassifyRouteError_Default(t *testing.T) {
 // TestMarkFailure_Counts markFailure 累计失败计数（熔断判定输入）
 func TestMarkFailure_Counts(t *testing.T) {
 	g := NewGateway("test-token", nil, nil, nil)
-	g.markFailure("edge-node", "backend edge-node returned 502: upstream refused")
-	g.markFailure("edge-node", "backend edge-node returned 502: upstream refused")
-	if g.failCounts["edge-node"] != 2 {
-		t.Fatalf("failCounts[x3] = %d，应 2", g.failCounts["edge-node"])
+	g.markFailure("node-a", "backend node-a returned 502: upstream refused")
+	g.markFailure("node-a", "backend node-a returned 502: upstream refused")
+	if g.failCounts["node-a"] != 2 {
+		t.Fatalf("failCounts[node-a] = %d，应 2", g.failCounts["node-a"])
 	}
 	// markSuccess 清零
-	g.markSuccess("edge-node")
-	if g.failCounts["edge-node"] != 0 {
-		t.Fatalf("markSuccess 后 failCounts[x3] = %d，应 0", g.failCounts["edge-node"])
+	g.markSuccess("node-a")
+	if g.failCounts["node-a"] != 0 {
+		t.Fatalf("markSuccess 后 failCounts[node-a] = %d，应 0", g.failCounts["node-a"])
 	}
 }
 
@@ -75,8 +75,8 @@ func TestExtractModelWithAction(t *testing.T) {
 }
 
 // TestPickRouteLocal 已随函数改名退役（3c：pickRouteLocal → pickRouteHost(model, host)）。
-// ⚠ 承接项：应补一个 pickRouteHost(model, "Mr2109") 的用例（需把 configForTest 的夹具从 local 候选
-// 改成 Mr2109 候选）。之所以先删不硬改：configForTest 的主体内容我没读全，不冒险猜夹具。
+// ⚠ 承接项：应补一个 pickRouteHost(model, "node-local") 的用例（需把 configForTest 的夹具从 local 候选
+// 改成 node-local 候选）。之所以先删不硬改：configForTest 的主体内容我没读全，不冒险猜夹具。
 // 语义不变的部分（"强制挑指定机器"的取值与错误路径）在函数本体里逐行可读，且由编译与端到端兜底。
 
 // configForTest 测试用 FleetConfig（含 local 候选）
@@ -84,8 +84,8 @@ func configForTest() *config.FleetConfig {
 	return &config.FleetConfig{
 		Models: map[string][]config.ModelCandidate{
 			"Qwen3.8-27B": {
-				{Host: "local", File: "~/models/Qwen3.8-27B-Q4_K_M-vcruz305.gguf", MemGb: 18},
-				{Host: "edge-node", File: "/data/models/qwen/Qwen3.8-27B-Q4_K_M-vcruz305.gguf", MemGb: 18},
+				{Host: "local", File: "/Users/<user>/models/Qwen3.8-27B-Q4_K_M-vcruz305.gguf", MemGb: 18},
+				{Host: "node-a", File: "/data/models/qwen/Qwen3.8-27B-Q4_K_M-vcruz305.gguf", MemGb: 18},
 			},
 		},
 	}

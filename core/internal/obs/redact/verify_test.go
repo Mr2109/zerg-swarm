@@ -93,7 +93,7 @@ func TestGateSharesPolicyOnKeepFields(t *testing.T) {
 }
 
 // TestGateNotFooledByJSONEscapeArtifacts：JSON 转义序列本身可能与被转义字符的邻居「拼出」needle
-// 的字节（fuzz 实测：输入 "\x10.0.0.0 0.0.0.0" ⇒ 行里 `\u0010` 的尾零 + 紧随的 ".0.0.0" 拼成
+// 的字节（fuzz 实测：输入 "\x<cluster-ip> 0.0.0.0" ⇒ 行里 `\u0010` 的尾零 + 紧随的 ".0.0.0" 拼成
 // "0.0.0.0"）。那不是秘密 ⇒ 输出侧比较必须先还原转义，否则门禁自己制造假 leak（D18）。
 func TestGateNotFooledByJSONEscapeArtifacts(t *testing.T) {
 	in := "\x10" + ".0.0.0 0.0.0.0"

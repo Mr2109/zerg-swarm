@@ -20,8 +20,8 @@ func TestLedger_RoomForNeed_Table(t *testing.T) {
 		{"装不下", m(10), 10.5, 0, false},
 		{"单槽默认-已有驻留即拒", m(40, ResidentEntry{Digest: "d1", MemGb: 2, Managed: true, State: StateReady}), 2, 0, false},
 		{"显式多槽-内存够即过", m(40, ResidentEntry{Digest: "d1", MemGb: 2, Managed: true, State: StateReady}), 2, 3, true},
-		{"显存不足-拒(内存够)", MachineLedger{Machine: "edge-node", MemTotalGb: 128, MemAvailGb: 100, VramTotalGb: 24, VramFreeGb: 1}, 2, 0, false},
-		{"显存未知且非统一内存-拒(fail-closed)", MachineLedger{Machine: "edge-node", MemTotalGb: 128, MemAvailGb: 100}, 2, 0, false},
+		{"显存不足-拒(内存够)", MachineLedger{Machine: "node-a", MemTotalGb: 128, MemAvailGb: 100, VramTotalGb: 24, VramFreeGb: 1}, 2, 0, false},
+		{"显存未知且非统一内存-拒(fail-closed)", MachineLedger{Machine: "node-a", MemTotalGb: 128, MemAvailGb: 100}, 2, 0, false},
 		{"统一内存-只按内存口径", MachineLedger{Machine: "mac", MemTotalGb: 64, MemAvailGb: 40, UnifiedMemory: true}, 20, 0, true},
 	}
 	for _, c := range cases {
@@ -111,7 +111,7 @@ func TestLedger_VramKnownAndDefaults(t *testing.T) {
 // TestLedger_Q6_UnmanagedVisible —— 手工服务如实标 managed=false 且可见；不被自动接管。
 func TestLedger_Q6_UnmanagedVisible(t *testing.T) {
 	m := MachineLedger{
-		Machine: "edge-node", MemTotalGb: 128, MemAvailGb: 50,
+		Machine: "node-a", MemTotalGb: 128, MemAvailGb: 50,
 		Resident:  []ResidentEntry{{Digest: "sha256-manual", State: StateReady, Managed: false, MemGb: 8}},
 		Unmanaged: []UnmanagedProcess{{PID: 4242, Port: 8100, Command: "llama-server", RssGb: 8, Note: "手工 screen 起，只绑 127.0.0.1"}},
 	}

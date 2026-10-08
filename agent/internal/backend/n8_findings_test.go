@@ -22,7 +22,7 @@ func TestProbeServiceIdle_DirectionIsIdleNotBusy(t *testing.T) {
 		wantIdle bool
 	}{
 		{
-			name:     "四个槽全空闲（EDGE-NODE 真机形态）",
+			name:     "四个槽全空闲（node-a 真机形态）",
 			body:     `[{"is_processing":false},{"is_processing":false},{"is_processing":false},{"is_processing":false}]`,
 			wantIdle: true,
 		},
@@ -66,7 +66,7 @@ func TestProbeServiceIdle_UnreachableMeansNotIdle(t *testing.T) {
 func TestDeductOccupancyFromAvail_DefaultOff(t *testing.T) {
 	t.Setenv(EnvDeductOccupancy, "")
 	if deductOccupancyFromAvail() {
-		t.Fatal("默认必须为 false —— EDGE-NODE 实测 MemAvailable 61.0GB 里已含基线 56.68GB，" +
+		t.Fatal("默认必须为 false —— node-a 实测 MemAvailable 61.0GB 里已含基线 56.68GB，" +
 			"再扣一次只剩 4.3GB，任何真实模型都装不下")
 	}
 	t.Setenv(EnvDeductOccupancy, "1")

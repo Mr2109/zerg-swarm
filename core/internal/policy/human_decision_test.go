@@ -220,7 +220,7 @@ func TestHumanDecision_CorrectReplacesArgsKeepsOriginalAndWarns(t *testing.T) {
 			Type:         EditActionType,
 			EditedAction: EditedToolCall{Name: "write", Args: newArgs},
 		},
-		EditedBy: "Mr2109@local", Reason: ReasonHumanCorrect,
+		EditedBy: "node-local@local", Reason: ReasonHumanCorrect,
 	}
 	p := answeredFor(t, PendingToolApproval, "write", "sha256:cccc3333", AnswerCorrect, pendingAt(5*time.Minute))
 
@@ -252,14 +252,14 @@ func TestHumanDecision_CorrectReplacesArgsKeepsOriginalAndWarns(t *testing.T) {
 		t.Errorf("TargetTool：got %q", out.TargetTool())
 	}
 	// 谁改的必须留痕，且**进得了序列化面**（重启/取证都读得到）。
-	if out.EditedBy != "Mr2109@local" {
+	if out.EditedBy != "node-local@local" {
 		t.Errorf("EditedBy 必须留痕：got %q", out.EditedBy)
 	}
 	b, jerr := json.Marshal(out)
 	if jerr != nil {
 		t.Fatalf("outcome 必须可序列化（审计要落盘）：%v", jerr)
 	}
-	if !strings.Contains(string(b), `"edited_by":"Mr2109@local"`) {
+	if !strings.Contains(string(b), `"edited_by":"node-local@local"`) {
 		t.Errorf("「谁改的」必须进序列化面：%s", string(b))
 	}
 	if !strings.Contains(string(b), `"args_digest":"sha256:cccc3333"`) {

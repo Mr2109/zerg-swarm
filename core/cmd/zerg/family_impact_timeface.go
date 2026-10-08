@@ -320,7 +320,7 @@ func impactCalibProbeRun(root, flag string) (impactCalibRun, string, string) {
 		rc = gateCheckRunInproc(checkSliceGateMain, root, &so, &se, []string{flag})
 		out, errb = so.String(), se.String()
 	} else {
-		out, errb, rc, err = impactRunIn(root, "python3", impactCalibScriptRel, flag)
+		out, errb, rc, err = impactRunIn(root, filepath.Join(root, "bin", "zerg"), "gate", "check", "check-slice", flag)
 	}
 	r := impactCalibRun{Name: flag, RC: rc, Cost: time.Since(beg)}
 	if err != nil {

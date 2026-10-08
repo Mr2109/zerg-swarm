@@ -177,3 +177,62 @@ func TestCpfsGateMain_HelpFace(t *testing.T) {
 		t.Errorf("-h usage 续行缩进不符：\n%s", out.String())
 	}
 }
+
+// ── B1 有牙（判据⑧）：只存于 HEAD（索引已删）的白名单件 ⇒ 必报 + 降档 rc=2 ──────────────
+// 合成桩：件已提交进 HEAD，再从索引 `git rm --cached` 并删工作树件 ⇒ `ls-files` 与 `ls-files --others`
+// 都看不见它，而镜像器真源 `ls-tree -r HEAD` 仍看得见它。改前（无判据⑧）本门 **rc=0 假绿**。
+func TestCpfsEvaluate_HeadOnlyReported(t *testing.T) {
+	t.Setenv("GIT_AUTHOR_NAME", "t")
+	t.Setenv("GIT_AUTHOR_EMAIL", "t@e")
+	t.Setenv("GIT_COMMITTER_NAME", "t")
+	t.Setenv("GIT_COMMITTER_EMAIL", "t@e")
+	root := t.TempDir()
+	cpfsMakeFixture(root, cpfsFx{
+		name: "headonly", wl: []string{"scripts/", "wall/"},
+		priv: []string{"scripts/mech.py"}, excl: []string{"scripts/mech.py"},
+		drop: []string{"scripts/mech.py"}, want: 2,
+		trackedExtra: []string{"scripts/head_only.py"},
+		marksText: "文件\tpublic\t理由\n" +
+			"scripts/mech.py\tno\t夹具：B 类（合成）\n" +
+			"scripts/keep.py\tyes\t夹具：A 类（合成）\n" +
+			"scripts/head_only.py\tno\t夹具：只存于 HEAD（索引已删）· 镜像器仍发 · 判据⑥ 看不见\n",
+	})
+	// 提交成 HEAD 后，把 head_only.py 从索引删 + 删工作树件 ⇒ 只存于 HEAD（两旧面都看不见它）
+	cpfsGit("-C", root, "commit", "-q", "--no-gpg-sign", "-m", "fx")
+	cpfsGit("-C", root, "rm", "-q", "--cached", "--", "scripts/head_only.py")
+	_ = os.Remove(cpfsPyJoin(root, "scripts/head_only.py"))
+	rc, lines := cpfsEvaluate(root, cpfsPathsFor(root))
+	joined := strings.Join(lines, "\n")
+	if rc != 2 {
+		t.Fatalf("只存于 HEAD 件 rc = %d，期望 2（判据⑧ 无牙 · 假绿）\n%s", rc, joined)
+	}
+	if !strings.Contains(joined, "判据⑧") {
+		t.Errorf("判据⑧ 未出声：\n%s", joined)
+	}
+	if !strings.Contains(joined, "只存于 HEAD") || !strings.Contains(joined, "scripts/head_only.py") {
+		t.Errorf("判据⑧ 未报出「只存于 HEAD」的件：\n%s", joined)
+	}
+}
+
+// ── B1 正控：件集 HEAD == 索引 ⇒ 判据⑧ 报 0 条 · rc 不变（不误伤正常件）──────────────
+func TestCpfsEvaluate_HeadSameAsIndexGreen(t *testing.T) {
+	t.Setenv("GIT_AUTHOR_NAME", "t")
+	t.Setenv("GIT_AUTHOR_EMAIL", "t@e")
+	t.Setenv("GIT_COMMITTER_NAME", "t")
+	t.Setenv("GIT_COMMITTER_EMAIL", "t@e")
+	root := t.TempDir()
+	cpfsMakeFixture(root, cpfsFx{
+		name: "headsame", wl: []string{"scripts/", "wall/"},
+		priv: []string{"scripts/mech.py"}, excl: []string{"scripts/mech.py"},
+		drop: []string{"scripts/mech.py"}, want: 0,
+	})
+	cpfsGit("-C", root, "commit", "-q", "--no-gpg-sign", "-m", "fx")
+	rc, lines := cpfsEvaluate(root, cpfsPathsFor(root))
+	joined := strings.Join(lines, "\n")
+	if rc != 0 {
+		t.Fatalf("正常件（HEAD==索引）rc = %d，期望 0\n%s", rc, joined)
+	}
+	if !strings.Contains(joined, "判据⑧ 只存于 HEAD 的件 0 条") {
+		t.Errorf("判据⑧ 正控行不符：\n%s", joined)
+	}
+}

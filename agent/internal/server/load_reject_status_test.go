@@ -93,7 +93,7 @@ func TestLoadReject_HTTPStatusIs507(t *testing.T) {
 		"  schema_version: 1\n"+
 		"  idle_unload_s: 600\n"+
 		"  cmd: /nonexistent/zerg-noop -m {file} --port {port}\n")
-	s := NewServer(NewAgent("edge-node", "tok", reg, backend.NewManager(reg, "edge-node"), ""))
+	s := NewServer(NewAgent("node-a", "tok", reg, backend.NewManager(reg, "node-a"), ""))
 
 	code, out := postLoadRaw(t, s, "tok", `{"model":"egg-a"}`)
 	if code != 507 {
@@ -121,7 +121,7 @@ func TestLoadReject_HTTPStatusIs502(t *testing.T) {
 		"  mem_gb: 1\n"+
 		"  schema_version: 99\n"+
 		"  cmd: /nonexistent/zerg-noop -m {file} --port {port}\n")
-	s := NewServer(NewAgent("edge-node", "tok", reg, backend.NewManager(reg, "edge-node"), ""))
+	s := NewServer(NewAgent("node-a", "tok", reg, backend.NewManager(reg, "node-a"), ""))
 
 	code, out := postLoadRaw(t, s, "tok", `{"model":"egg-v99"}`)
 	if code != 502 {

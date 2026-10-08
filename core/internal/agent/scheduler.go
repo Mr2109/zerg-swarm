@@ -101,7 +101,7 @@ type WorkersConfig struct {
 
 // LoadWorkersConfig — 加载 workers.yaml 配置（v2.5.2 设备感知版）
 // 1. 尝试读取 config/workers.yaml
-// 2. 文件不存在 → 按 hostname 匹配内置默认值（mini-node-1=1/EDGE-NODE=3/Mr2109=0暂停/mini-node-2=1）
+// 2. 文件不存在 → 按 hostname 匹配内置默认值（node-b=1/node-a=3/node-local=0暂停/node-c=1）
 // 3. 解析失败 → 回退到内置默认值
 // 4. 0 一律=暂停（文件显式 0、或缺省回退到内置 0，都原样 0·永不抬升）；抬升只留给真·非法值（负数）（GAP-20260927-298 · 2026-10-04 拍板）
 func LoadWorkersConfig(workDir string) WorkersConfig {
@@ -153,6 +153,11 @@ type Scheduler struct {
 	doneCh       chan struct{}        // 停止信号
 	runner       WorkerRunner         // v2.5.2 可注入 runner（测试 mock——生产默认 exec）
 	logger       *Logger              // v2.5.4.9 结构化日志（可选——nil 不记录）
+	// P0 #232（2026-10-08）：运行期旋钮（落点 config/workers.yaml 的 `scheduler:` 段；未给值时 =
+	// 编译期常量缺省 —— 见 LoadSchedulerConfig / cooldown() / retryLimit()）。
+	pollEvery   time.Duration // 轮询间隔（缺省 pollInterval）
+	cooldownDur time.Duration // 失败冷却（缺省 defaultCooldown）
+	maxRetry    int           // 死信阈值（缺省 maxRetries）
 	// v2.5.3 容器模式（CA 脱离沙箱——docker run 完整环境）
 	ContainerMode     bool   // true=容器内执行 worker（默认 false=exec 兼容）
 	ContainerAgentBin string // Linux zerg-agent 路径（容器内挂载）
@@ -163,12 +168,57 @@ type Scheduler struct {
 // NewScheduler — 创建调度器
 func NewScheduler(workDir string) *Scheduler {
 	cfg := LoadWorkersConfig(workDir)
+	// P0 #232（2026-10-08）：运行期旋钮读侧接线 —— 从 config/workers.yaml 的 `scheduler:` 段读；
+	// 未给值 ⇒ 编译期常量缺省（✗ 不许删常量）。
+	pollEvery, retryLimit, cooldownDur := LoadSchedulerConfig(workDir)
 	return &Scheduler{
 		workDir:      workDir,
 		maxWorkers:   cfg.MaxWorkers,
+		pollEvery:    pollEvery,
+		cooldownDur:  cooldownDur,
+		maxRetry:     retryLimit,
 		lastDispatch: make(map[string]time.Time),
 		doneCh:       make(chan struct{}),
 	}
+}
+
+// LoadSchedulerConfig — 读 config/workers.yaml 的 `scheduler:` 段三枚运行旋钮（P0 #232 · 2026-10-08）。
+//
+// 返回 (轮询间隔, 死信阈值, 失败冷却)；**未给值 / 读不到 / 解析失败 / 非正** ⇒ 一律回退**编译期常量缺省**
+// （pollInterval / maxRetries / defaultCooldown —— 常量保留为缺省值，✗ 不许删）。落点与 fail-open-to-default
+// 的口径逐字照 LoadWorkersConfig（同一件、同一纪律）。
+func LoadSchedulerConfig(workDir string) (time.Duration, int, time.Duration) {
+	poll, retries, cool := pollInterval, maxRetries, defaultCooldown
+	cfg, err := loadDeviceMaxWorkers(workDir)
+	if err != nil || cfg.Scheduler == nil {
+		return poll, retries, cool
+	}
+	if d, perr := time.ParseDuration(strings.TrimSpace(cfg.Scheduler.PollInterval)); perr == nil && d > 0 {
+		poll = d
+	}
+	if cfg.Scheduler.MaxRetries != nil && *cfg.Scheduler.MaxRetries > 0 {
+		retries = *cfg.Scheduler.MaxRetries
+	}
+	if d, perr := time.ParseDuration(strings.TrimSpace(cfg.Scheduler.Cooldown)); perr == nil && d > 0 {
+		cool = d
+	}
+	return poll, retries, cool
+}
+
+// cooldown — 失败冷却现值（零值兜底编译期常量；防手工构造的 Scheduler 取到 0）。
+func (s *Scheduler) cooldown() time.Duration {
+	if s.cooldownDur > 0 {
+		return s.cooldownDur
+	}
+	return defaultCooldown
+}
+
+// retryLimit — 死信阈值现值（零值兜底编译期常量）。
+func (s *Scheduler) retryLimit() int {
+	if s.maxRetry > 0 {
+		return s.maxRetry
+	}
+	return maxRetries
 }
 
 // 核心：扫描
@@ -544,7 +594,7 @@ func (s *Scheduler) handleFailure(issuePath string, exitCode int, stderr string)
 	content = strings.Join(lines, "\n")
 
 	// 重试次数 ≥ maxRetries → 死信
-	if retryCount >= maxRetries {
+	if retryCount >= s.retryLimit() {
 		newContent, terr := CanDead(content, StatusRunning)
 		if terr != nil {
 			log.Printf("⚠️ failed to mark dead %s: %v", issuePath, terr)
@@ -555,7 +605,7 @@ func (s *Scheduler) handleFailure(issuePath string, exitCode int, stderr string)
 				}
 			}
 		}
-		log.Printf("📛 dead letter: %s (retries %d reached limit %d)", issuePath, retryCount, maxRetries)
+		log.Printf("📛 dead letter: %s (retries %d reached limit %d)", issuePath, retryCount, s.retryLimit())
 		return
 	}
 
@@ -564,9 +614,9 @@ func (s *Scheduler) handleFailure(issuePath string, exitCode int, stderr string)
 	lastTime, existed := s.lastDispatch[issuePath]
 	s.mu.Unlock()
 
-	if existed && time.Since(lastTime) < defaultCooldown {
+	if existed && time.Since(lastTime) < s.cooldown() {
 		// 冷却中——但先查死信（重试 ≥ maxRetries → dead——不受冷却影响——防无限循环）
-		if retryCount >= maxRetries {
+		if retryCount >= s.retryLimit() {
 			newContent, terr := CanDead(content, StatusRunning)
 			if terr != nil {
 				log.Printf("⚠️ failed to mark dead during cooldown %s: %v", issuePath, terr)
@@ -575,7 +625,7 @@ func (s *Scheduler) handleFailure(issuePath string, exitCode int, stderr string)
 					log.Printf("⚠️ failed to write dead letter during cooldown %s: %v", issuePath, err)
 				}
 			}
-			log.Printf("📛 dead letter during cooldown: %s (retries %d reached limit %d — preventing infinite loop)", issuePath, retryCount, maxRetries)
+			log.Printf("📛 dead letter during cooldown: %s (retries %d reached limit %d — preventing infinite loop)", issuePath, retryCount, s.retryLimit())
 			return
 		}
 		// 未达死信——标记 queued（排队等重派——不保持 running——否则扫描跳过）
@@ -593,7 +643,7 @@ func (s *Scheduler) handleFailure(issuePath string, exitCode int, stderr string)
 			log.Printf("⚠️ failed to write queued %s: %v", issuePath, err)
 			return
 		}
-		log.Printf("❄️ cooling down: %s (since last %v < %v — queued for re-dispatch)", issuePath, time.Since(lastTime), defaultCooldown)
+		log.Printf("❄️ cooling down: %s (since last %v < %v — queued for re-dispatch)", issuePath, time.Since(lastTime), s.cooldown())
 		return
 	}
 
@@ -639,10 +689,14 @@ func (s *Scheduler) Start(ctx context.Context) {
 	s.cancelPoll = cancel
 	s.mu.Unlock()
 
-	log.Printf("🚀 scheduler started (max_workers=%d, cooldown=%v, max_retries=%d)",
-		s.maxWorkers, defaultCooldown, maxRetries)
+	// P0 #232（2026-10-08）：运行期旋钮读侧接线（落点 config/workers.yaml 的 scheduler: 段；零值兜底常量）。
+	if s.pollEvery <= 0 {
+		s.pollEvery = pollInterval
+	}
+	log.Printf("🚀 scheduler started (max_workers=%d, cooldown=%v, max_retries=%d, poll=%v)",
+		s.maxWorkers, s.cooldown(), s.retryLimit(), s.pollEvery)
 
-	ticker := time.NewTicker(pollInterval)
+	ticker := time.NewTicker(s.pollEvery)
 	defer ticker.Stop()
 
 	// 立即执行一轮
@@ -721,7 +775,7 @@ func (s *Scheduler) poll(ctx context.Context) {
 		lastTime, existed := s.lastDispatch[issue.Path]
 		s.mu.Unlock()
 
-		if existed && time.Since(lastTime) < defaultCooldown {
+		if existed && time.Since(lastTime) < s.cooldown() {
 			log.Printf("❄️ skipping due to cooldown: %s", issue.InstanceID)
 			continue
 		}

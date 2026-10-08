@@ -1,6 +1,6 @@
 // package gateway — 熔断卡表只读快照 + 手动复位（原因可见）。
 //
-// 背景：网关熔断后客户端只收到一句「无可用候选（全部熔断或排除: edge-node,local）」，
+// 背景：网关熔断后客户端只收到一句「无可用候选（全部熔断或排除: node-a,local）」，
 // 看不到「为什么熔断 / 什么时候能恢复 / 怎么手动复位」。本文件把 chat 包
 // ResetCompactState/CompactStateSnapshot 的「只读快照 + 手动重置」范式复制到网关卡表：
 //   - BreakerSnapshot()  只读状态快照（GET /api/gateway/breakers）

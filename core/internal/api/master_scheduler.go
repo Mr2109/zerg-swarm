@@ -663,7 +663,7 @@ func (s *MasterScheduler) runTask(task *Task) {
 		if task.RetryCount <= 3 {
 			task.Status = "queued"
 			// v2.5.5 修复（2026-08-24 Mr2109）: 同一个任务不换模型——重跑保持原模型
-			// 之前换模型（nextModelForRetry）导致: 每次换模型→EDGE-NODE 加载切换窗口→请求失败→熔断累计→EDGE-NODE 误熔断
+			// 之前换模型（nextModelForRetry）导致: 每次换模型→node-a 加载切换窗口→请求失败→熔断累计→node-a 误熔断
 			// 失败根因是系统（加载切换/超时）不是模型——换模型反而引入新失败点——保持原模型重跑（同配置同后端——恢复概率高）
 			task.FailReason = fmt.Sprintf("auto-retry %d after failure (same model %s — same ID)", task.RetryCount, task.Model)
 			heap.Push(&s.queue, task)

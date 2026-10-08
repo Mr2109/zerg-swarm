@@ -50,7 +50,7 @@ func newLoop(agent *Agent, tools []ToolDef, logger *Logger, state *agentstate.Ha
 	if budget <= 0 {
 		budget = agent.cfg.Budget
 	}
-	// v2.5.4.9 机器级采样（每轮——sysmetrics.jsonl——EDGE-NODE 状态地址从环境取）
+	// v2.5.4.9 机器级采样（每轮——sysmetrics.jsonl——node-a 状态地址从环境取）
 	var sm *SysMetricsCollector
 	if logger != nil {
 		if c, err := NewSysMetricsCollector(logger.dir, os.Getenv("ZERG_X3_STATUS"), os.Getenv("ZERG_X3_TOKEN")); err == nil {

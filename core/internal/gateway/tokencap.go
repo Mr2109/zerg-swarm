@@ -272,7 +272,7 @@ func (g *Gateway) ApplyAdapterOverrides(model string, forwardBody []byte, ada pl
 }
 
 // resolveCtxWindow 上下文来源三态（④）：档案(事实) > 声明(意图，已在声明袋里) > 默认。
-// 实测教训：EDGE-NODE 的 Qwen 配置声明 1M 而实跑 -c 262144 ⇒ 信声明会算错额度，故档案优先。
+// 实测教训：node-a 的 Qwen 配置声明 1M 而实跑 -c 262144 ⇒ 信声明会算错额度，故档案优先。
 func (g *Gateway) resolveCtxWindow(model string, res map[string]any) (int, string) {
 	ctx, src := 0, "默认（无档案、无声明）"
 	if cw, ok := res["ctx_window"].(int); ok && cw > 0 {

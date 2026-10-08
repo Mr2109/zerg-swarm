@@ -19,9 +19,9 @@ func parseSysfsUintLine(content string) (uint64, bool) {
 }
 
 // parseDrmGttKibCommon drm-memory-gtt 的解析本体（KiB 合计）。
-// Linux 版与桩版都转调这里 ⇒ EDGE-NODE 实测样例在 darwin 上即可验证真读层用的同一段逻辑。
+// Linux 版与桩版都转调这里 ⇒ node-a 实测样例在 darwin 上即可验证真读层用的同一段逻辑。
 //
-// EDGE-NODE 实测格式（冒号后空格/制表符混排；vram/cpu 行不认）：
+// node-a 实测格式（冒号后空格/制表符混排；vram/cpu 行不认）：
 //
 //	drm-memory-vram:	2208 KiB
 //	drm-memory-gtt: 	34286572 KiB

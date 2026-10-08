@@ -1,196 +1,306 @@
-// archive_mount_test.go —— A11 薄壳（`zerg archive mount` · `cmdArchiveMount`）的**两态对拍**与**哑化负控**。
+// archive_mount_test.go —— 归档挂/卸口（`zerg archive mount` · `cmdArchiveMount`）的
+// **Go 真身行为金标自证** ＋ **脚本移出仓无依赖**负控。
 //
-// 为什么这么测（照 M2 口径 · 与 `build_wall_test.go` 同型）：进程内直调 `cmdArchiveMount`（不引真二进制、
-// 不依赖构建），用**仓外合成夹具**给一个可控退码/可控输出/可回声 argv 的 stub 脚本，验四面：
+// 为什么这么测（M2 口径 · 与 `check_archive_mount_test.go` 的成对负控同族）：
 //
-//	① **退码只转发不翻译**：脚本退 0/1/2/64 ⇒ 命令面退同一码（不许吞成 0，也不许翻成别的）；
-//	② **stdout 逐字同**（两态）：走命令面拿到的 stdout == 脚本直跑同一参数的 stdout（逐字节）；
-//	③ **stderr 只多转发宣言**：命令面 stderr == 转发宣言 ＋ 脚本 stderr（rc=0 档无多余行）⇒ 不改原件行为；
-//	④ **递不到脚本 ⇒ 8**（不给结论），**不拿脚本的某个码冒充**。
+//	真搬后命令面**零引用**脚本 ⇒ 原「脚本直跑 ⟷ 命令面」逐字对拍（旧名
+//	`TestArchiveMountTwoStatesVerbatim`）的**对拍源** `scripts/svc/archive-mount.sh` 已于
+//	2026-10-08 退场（DEV-2031）⇒ 对拍源消失、断言恒 Skip。按 DEV-2115 先例（同件
+//	`TestArchiveMountUsageGoldenInternalized`）把金标真源**收回 Go 真身本身**：十四档在
+//	合成夹具上归一化后的 (rc, stdout, stderr) 冻成常量，现跑 `cmdArchiveMount` 自证
+//	（✗ 不再读任何脚本 · ✗ 不放宽为「不检/只判非空」）；并另证**脚本不在仓**时命令面
+//	读数不变（✗ 不得因脚本缺席退 8/2 —— 那是壳转账残留）。
 //
-// 哑化负控（"牙"）：把 `cmdArchiveMount` 改成「一律 return 0 / 吞 stdout」⇒ 上面 ①② 当场 FAIL 并给出
-// 本件行号（负控只在**仓外副本**做，✗ 不在落仓件上做 —— 见 `zerg-m2-parallel-go-migration` 技能）。
+// 夹具用 env 旋钮钉死（脚本与本件**同一批旋钮名**）：
 //
-// 另有一条**真件两态**（`archive-mount.sh` 现读在位才跑，否则 Skip）：`--help`（rc=0）与未知参数（rc=64）
-// 各跑「脚本直跑 ⟷ 走 `cmdArchiveMount`」，断言 rc/stdout 逐字同、stderr 剥掉命令面那两行后逐字同
-// （证明命令面**不改原件行为**）。
+//	ZERG_ARCHIVE_DMG / ZERG_ARCHIVE_MOUNT / ZERG_ARCHIVE_LINK / ZERG_HDIUTIL / ZERG_MOUNT_LIST
+//
+// 真挂/摘要插介质（本机不可跑）⇒ 用 **stub `hdiutil`** ＋ **stub 挂载表命令**（仓外夹具）
+// 把 `on`/`off`/`status` 三档全跑起来；`attach`/`detach` 只写/清挂载表件、命令本身绝不碰真卷。
+// ★ 金标把夹具绝对路径归一为 `<FIX>`（`amNorm`）⇒ 与 `t.TempDir()` 随机路径无关、跨机可复现。
+//
+// 哑化负控（"牙"）只在**仓外副本**做（✗ 不在落仓件上做）：把 `amCmdStatus` 改 `return 0`、
+// 或把 `amGrepF` 改成恒空 ⇒ 对应档 rc/stdout 与冻值不符 ⇒ 当场 FAIL 并给出行号。
 package main
 
 import (
 	"bytes"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 )
 
-// amSyntheticRepo 建最小合成仓根：仓根判据件 ＋ 一个可控退码/可控输出/可回声 argv 的 stub `archive-mount.sh`。
-func amSyntheticRepo(t *testing.T, rc int, body string) string {
+// ── 夹具 ─────────────────────────────────────────────────────────────────────
+
+type amFixture struct {
+	dir        string
+	dmg        string
+	mount      string
+	link       string
+	hdiutil    string
+	mountlist  string
+	tablePath  string
+	tableBody  string
+	mountDir   bool
+	mountFileN int
+}
+
+func amWrite(t *testing.T, p, body string) {
 	t.Helper()
-	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, "core", "internal", "version"), 0o755); err != nil {
+	if err := os.WriteFile(p, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "core", "internal", "version", "version.go"),
-		[]byte("package version\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	scriptPath := filepath.Join(root, archiveMountScriptRel)
-	if err := os.MkdirAll(filepath.Dir(scriptPath), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	full := "#!/usr/bin/env bash\nset -u\n" + body + "exit " + strconv.Itoa(rc) + "\n"
-	if err := os.WriteFile(scriptPath, []byte(full), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	return root
 }
 
-// amEmptyRepo 只建仓根判据件、**不建**脚本（核「递不到 ⇒ 8」）。
-func amEmptyRepo(t *testing.T) string {
+// amMakeFixture 造一棵夹具树：dmg 件 + 挂载点目录（可缺）+ 原路径符号链接 + stub hdiutil + stub 挂载表。
+//
+//	mountDir=false ⇒ 挂载点目录不建（原路径 = 悬空符号链接）。
+//	mountFileN    ⇒ 挂载点目录里放几个件（给 status 的「抽验读」面）。
+func amMakeFixture(t *testing.T, mountDir bool, mountFileN int, tableTpl string) *amFixture {
 	t.Helper()
-	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, "core", "internal", "version"), 0o755); err != nil {
+	d := t.TempDir()
+	f := &amFixture{dir: d, mountDir: mountDir, mountFileN: mountFileN}
+	f.dmg = filepath.Join(d, "arch.dmg")
+	amWrite(t, f.dmg, "x\n")
+	f.mount = filepath.Join(d, "mnt")
+	f.link = filepath.Join(d, "Zerg-归档")
+	if err := os.Symlink(f.mount, f.link); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "core", "internal", "version", "version.go"),
-		[]byte("package version\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	return root
+	f.tablePath = filepath.Join(d, "mount.table")
+	f.tableBody = strings.ReplaceAll(tableTpl, "@@MOUNT@@", f.mount)
+	f.mountlist = filepath.Join(d, "stub-mountlist.sh")
+	amWrite(t, f.mountlist, "#!/usr/bin/env bash\nexec cat '"+f.tablePath+"'\n")
+	f.hdiutil = filepath.Join(d, "stub-hdiutil.sh")
+	amWrite(t, f.hdiutil,
+		"#!/usr/bin/env bash\n"+
+			"case \"$1\" in\n"+
+			"  info)   exec cat '"+f.tablePath+"' ;;\n"+
+			"  attach) printf 'stubfs on %s (apfs, local, read-only)\\n' '"+f.mount+"' >> '"+f.tablePath+"' ;;\n"+
+			"  detach) : > '"+f.tablePath+"' ;;\n"+
+			"esac\n")
+	f.reset(t)
+	return f
 }
 
-// amRun 走正门（进程内直调 `cmdArchiveMount`）：给合成仓根，返回 rc / stdout / stderr。
-func amRun(t *testing.T, root string, tail ...string) (int, string, string) {
+// reset 把夹具复位到初态（挂载点目录与件 + 挂载表件）—— 两态各自跑前各调一次。
+func (f *amFixture) reset(t *testing.T) {
 	t.Helper()
-	t.Setenv("ZERG_REPO", root)
-	var out, errb bytes.Buffer
-	inv := &invocation{
-		path: []string{"archive", "mount"},
-		orig: append([]string{"archive", "mount"}, tail...),
-	}
-	rc := cmdArchiveMount(inv, &out, &errb)
-	return rc, out.String(), errb.String()
-}
-
-// amBanner —— 命令面固定加在 stderr 顶部的那行转发宣言（对比时剥掉，不改本件行为）。
-func amBanner() string {
-	return progName + ": 底层 = " + archiveMountScriptRel + "（**唯一真源** · 命令面只转发、不翻译）\n"
-}
-
-// amRcLine —— 非 0 档命令面补的那行「原样转发」（rc=0 档不出现）。
-func amRcLine(rc int) string {
-	return progName + ": 归档挂载脚本退 " + strconv.Itoa(rc) + "（原样转发，不翻译）\n"
-}
-
-// TestArchiveMountPassthroughCarriesScriptExitCode —— **只转发、不翻译**：逐档原样转出（0/1/2/64）。
-func TestArchiveMountPassthroughCarriesScriptExitCode(t *testing.T) {
-	for _, want := range []int{0, 1, 2, 64} {
-		root := amSyntheticRepo(t, want, "echo 'stub 归档：跑了'\n")
-		rc, _, errb := amRun(t, root, "status")
-		if rc != want {
-			t.Fatalf("脚本退 %d ⇒ 命令面退 %d（薄壳只转发、不翻译：两值必须相等）· stderr=%s", want, rc, errb)
+	_ = os.RemoveAll(f.mount)
+	if f.mountDir {
+		if err := os.MkdirAll(f.mount, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		for i := 0; i < f.mountFileN; i++ {
+			amWrite(t, filepath.Join(f.mount, "f"+string(rune('0'+i))+".md"), "x")
 		}
 	}
+	amWrite(t, f.tablePath, f.tableBody)
 }
 
-// TestArchiveMountStdoutVerbatimTwoStates —— **两态 stdout 逐字同**：命令面的 stdout **就是**脚本直跑的 stdout。
-func TestArchiveMountStdoutVerbatimTwoStates(t *testing.T) {
-	root := amSyntheticRepo(t, 0, "echo '✅ 已挂：/Volumes/ZERG-ARCHIVE（只读）'\necho '  挂载行 : dev on /Volumes/ZERG-ARCHIVE'\n")
-	_, out, _ := amRun(t, root, "status")
-	direct, err := exec.Command("bash", filepath.Join(root, archiveMountScriptRel), "status").Output()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if out != string(direct) {
-		t.Errorf("`cmdArchiveMount` 与脚本直跑 stdout **逐字节不同**：\n命令面=%q\n脚本  =%q", out, string(direct))
-	}
+func amSetEnv(t *testing.T, f *amFixture) {
+	t.Helper()
+	t.Setenv("ZERG_ARCHIVE_DMG", f.dmg)
+	t.Setenv("ZERG_ARCHIVE_MOUNT", f.mount)
+	t.Setenv("ZERG_ARCHIVE_LINK", f.link)
+	t.Setenv("ZERG_HDIUTIL", f.hdiutil)
+	t.Setenv("ZERG_MOUNT_LIST", f.mountlist)
 }
 
-// TestArchiveMountStderrPassthroughVerbatim —— 命令面 stderr == 转发宣言 ＋ 脚本 stderr（rc=0 档无多余行）。
-func TestArchiveMountStderrPassthroughVerbatim(t *testing.T) {
-	root := amSyntheticRepo(t, 0, "echo 'stub：只剩宣言这行不同' >&2\n")
-	_, _, errb := amRun(t, root, "status")
-	direct, err := exec.Command("bash", filepath.Join(root, archiveMountScriptRel), "status").CombinedOutput()
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := amBanner() + string(direct)
-	if errb != want {
-		t.Errorf("命令面 stderr 与「转发宣言 ＋ 脚本 stderr」**逐字节不同**：\n命令面=%q\n期望  =%q", errb, want)
-	}
+// amFace 走命令面（进程内直调 `cmdArchiveMount`）。
+func amFace(t *testing.T, args ...string) (int, string, string) {
+	t.Helper()
+	var o, e bytes.Buffer
+	inv := &invocation{path: []string{"archive", "mount"}, orig: append([]string{"archive", "mount"}, args...)}
+	rc := cmdArchiveMount(inv, &o, &e)
+	return rc, o.String(), e.String()
 }
 
-// TestArchiveMountForwardsTailArgsVerbatim —— **尾部实参原样转出**：`on`/`off`/`status` 之后的一切都在。
-func TestArchiveMountForwardsTailArgsVerbatim(t *testing.T) {
-	root := amSyntheticRepo(t, 0, "printf '%s\\n' \"$@\"\n")
-	rc, out, _ := amRun(t, root, "on", "status", "--x")
-	if rc != 0 {
-		t.Fatalf("rc=%d（要 0）", rc)
+// ── 十四档 Go 真身金标（现跑自证 · ✗ 不读已退脚本）──────────────────────────
+
+// amNorm 把夹具绝对路径归一为 `<FIX>`（`t.TempDir()` 随机 ＋ macOS `/var`↔`/private/var`）⇒ 金标跨机可复现。
+func amNorm(f *amFixture, s string) string {
+	s = strings.ReplaceAll(s, f.dir, "<FIX>")
+	if real, err := filepath.EvalSymlinks(f.dir); err == nil && real != f.dir {
+		s = strings.ReplaceAll(s, real, "<FIX>")
 	}
-	if out != "on\nstatus\n--x\n" {
-		t.Errorf("尾部实参未逐字转出：%q（要 %q）", out, "on\nstatus\n--x\n")
-	}
+	return s
 }
 
-// TestArchiveMountScriptAbsentIsBlocked8 —— 递不到脚本 ⇒ 退 8（不给结论）· ✗ 不拿脚本的某个码冒充。
-func TestArchiveMountScriptAbsentIsBlocked8(t *testing.T) {
-	root := amEmptyRepo(t)
-	rc, _, errb := amRun(t, root, "status")
-	if rc != exitBlocked {
-		t.Fatalf("脚本不在 ⇒ 命令面退 %d（要 %d）· stderr=%s", rc, exitBlocked, errb)
-	}
-}
-
-// TestArchiveMountRealScriptTwoStatesVerbatim —— **真件两态**（`archive-mount.sh` 现读在位才跑，否则 Skip）：
-// `--help`（rc=0）与未知参数（rc=64）各跑「脚本直跑 ⟷ 走 `cmdArchiveMount`」，断言 rc/stdout 逐字同、
-// stderr 剥掉命令面那两行后逐字同（证明命令面**不改原件行为**）。
-func TestArchiveMountRealScriptTwoStatesVerbatim(t *testing.T) {
-	root := repoRoot()
-	if root == "" {
-		t.Skip("解析不到仓根（合成环境）⇒ 跳真件两态（合成夹具已覆盖四面）")
-	}
-	script := filepath.Join(root, archiveMountScriptRel)
-	if _, err := os.Stat(script); err != nil {
-		t.Skipf("真件不在（仅公开快照/桩树会走到这里）：%v", err)
-	}
-	for _, tc := range []struct {
-		name string
-		tail []string
+// TestArchiveMountTwoStatesGoldenInternalized —— 十四档（旧名 TestArchiveMountTwoStatesVerbatim）的
+// rc/stdout/stderr **冻结金标自证**：`usage` 档 stdout 必须逐字 == Go 真源 `amUsage`（DEV-2115 同族），
+// 其余档与冻值逐字同（✗ 不再读任何脚本 · ✗ 不放宽为「不检/只判非空」）。
+func TestArchiveMountTwoStatesGoldenInternalized(t *testing.T) {
+	const mounted = "stubfs on @@MOUNT@@ (apfs, local, read-only)\n"
+	cases := []struct {
+		name          string
+		args          []string
+		mountDir      bool
+		mountFile     int
+		table         string
+		dmgAbsent     bool
+		linkAsFile    bool
+		hdiutilBroken bool
+		usage         bool // stdout 必须逐字 == Go 真源 amUsage
+		wantRC        int
+		wantOut       string
+		wantErr       string
 	}{
-		{"help", []string{"--help"}},
-		{"unknown-arg", []string{"--nope-not-a-flag"}},
-	} {
-		// 态1：脚本直跑。
-		var o1, e1 bytes.Buffer
-		c1 := exec.Command("bash", append([]string{script}, tc.tail...)...)
-		c1.Stdin = strings.NewReader("")
-		c1.Stdout, c1.Stderr = &o1, &e1
-		rc1 := 0
-		if err := c1.Run(); err != nil {
-			if ee, ok := err.(*exec.ExitError); ok {
-				rc1 = ee.ExitCode()
-			} else {
-				t.Fatalf("[%s] 脚本直跑起不来：%v", tc.name, err)
+		{name: "usage-help", args: []string{"--help"}, mountDir: true, usage: true},
+		{name: "usage-short-h", args: []string{"-h"}, mountDir: true, usage: true},
+		{name: "usage-empty", args: []string{}, mountDir: true, usage: true},
+		{name: "unknown-arg", args: []string{"--nope-not-a-flag"}, mountDir: true,
+			wantRC:  64,
+			wantErr: "❌ 未知参数: --nope-not-a-flag（只认 on | off | status）\n"},
+		{name: "status-unmounted-empty-dir", args: []string{"status"}, mountDir: true,
+			wantRC: 1,
+			wantOut: "⚠️ **未挂**（按需挂载态里「没挂」的那一态 —— 这是本命令的**正常业务态**，不是命令坏了）\n" +
+				"  原路径 : <FIX>/Zerg-归档 → <FIX>/mnt\n" +
+				"  ★ 挂载点目录 <FIX>/mnt 还在（空目录）⇒ 原路径**不报错、会静默返回空** ——\n" +
+				"     别把它当「归档是空的」；要真挂上：`zerg archive mount on`\n" +
+				"  要读归档：先 `zerg archive mount on`；用完 `… off`（按需，不常驻）\n"},
+		{name: "status-unmounted-dangling", args: []string{"status"}, mountDir: false,
+			wantRC: 1,
+			wantOut: "⚠️ **未挂**（按需挂载态里「没挂」的那一态 —— 这是本命令的**正常业务态**，不是命令坏了）\n" +
+				"  原路径 : <FIX>/Zerg-归档 → <FIX>/mnt\n" +
+				"  ★ 此刻 <FIX>/mnt 不存在 ⇒ <FIX>/Zerg-归档 是**真·悬空符号链接**：读 <FIX>/Zerg-归档/… 会**明确失败**\n" +
+				"     （就是 `No such file or directory` —— 不是「空目录」、更不是「读到空内容」）\n" +
+				"  要读归档：先 `zerg archive mount on`；用完 `… off`（按需，不常驻）\n"},
+		{name: "status-mounted", args: []string{"status"}, mountDir: true, mountFile: 4, table: mounted,
+			wantRC: 0,
+			wantOut: "✅ 已挂（按需挂载态里「挂上」的那一态）\n" +
+				"  挂载行 : stubfs on <FIX>/mnt (apfs, local, read-only)\n" +
+				"  hdiutil: stubfs on <FIX>/mnt (apfs, local, read-only)\n" +
+				"  原路径 : <FIX>/Zerg-归档 → <FIX>/mnt（符号链接**解析得通** —— 读它 = 读只读镜像内的件）\n" +
+				"  抽验读 : f0.md f1.md f2.md \n"},
+		{name: "on-idempotent", args: []string{"on"}, mountDir: true, table: mounted,
+			wantRC: 0,
+			wantOut: "✅ 已挂（幂等：<FIX>/mnt 已在挂，本次**不重复挂**）\n" +
+				"  挂载行 : stubfs on <FIX>/mnt (apfs, local, read-only)\n"},
+		{name: "off-idempotent", args: []string{"off"}, mountDir: true,
+			wantRC:  0,
+			wantOut: "✅ 未挂（幂等：<FIX>/mnt 本就不在挂载表里，本次**不重复摘**）\n"},
+		{name: "on-attach", args: []string{"on"}, mountDir: true,
+			wantRC: 0,
+			wantOut: "✅ 已挂：<FIX>/mnt（只读）\n" +
+				"  挂载行 : stubfs on <FIX>/mnt (apfs, local, read-only)\n" +
+				"  原路径 : <FIX>/Zerg-归档 → <FIX>/mnt（符号链接现在解析得通）\n"},
+		{name: "off-detach", args: []string{"off"}, mountDir: true, table: mounted,
+			wantRC: 0,
+			wantOut: "✅ 已摘：<FIX>/mnt 不在挂载表里了\n" +
+				"  挂载点空目录已收起 ⇒ 原路径现在是**真·悬空符号链接**（读它 = `No such file or directory`）\n" +
+				"  原路径 : <FIX>/Zerg-归档 → <FIX>/mnt（要读归档就再 `on` 一次 —— 按需，不常驻）\n"},
+		{name: "preflight-dmg-absent", args: []string{"status"}, mountDir: true, dmgAbsent: true,
+			wantRC:  2,
+			wantErr: "⛔ 不给结论：归档 dmg 不在盘上（<FIX>/no-such.dmg）—— 没有可挂的件，本脚本不硬造\n"},
+		{name: "preflight-link-not-symlink", args: []string{"on"}, mountDir: true, linkAsFile: true,
+			wantRC:  2,
+			wantErr: "⛔ 不给结论：原路径 <FIX>/real-file **不是符号链接**（是实体）⇒ 本脚本的前提不成立（不许把实体目录当挂载点用）\n"},
+		{name: "preflight-hdiutil-broken", args: []string{"status"}, mountDir: true, hdiutilBroken: true,
+			wantRC:  2,
+			wantErr: "⛔ 不给结论：/usr/bin/false 跑不起来（判据取不到读数 ⇒ 绿就是假绿）\n"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := amMakeFixture(t, c.mountDir, c.mountFile, c.table)
+			amSetEnv(t, f)
+			if c.dmgAbsent {
+				t.Setenv("ZERG_ARCHIVE_DMG", filepath.Join(f.dir, "no-such.dmg"))
 			}
-		}
-		// 态2：走命令面。
-		rc2, out2, err2 := amRun(t, root, tc.tail...)
-		if rc1 != rc2 {
-			t.Errorf("[%s] 两态 rc 不同：脚本=%d 命令面=%d", tc.name, rc1, rc2)
-		}
-		if o1.String() != out2 {
-			t.Errorf("[%s] 两态 stdout 不同：\n脚本  =%q\n命令面=%q", tc.name, o1.String(), out2)
-		}
-		if !strings.HasPrefix(err2, amBanner()) {
-			t.Errorf("[%s] 命令面 stderr 缺转发宣言（期待前缀 %q）：%q", tc.name, amBanner(), err2)
-		}
-		got := strings.TrimPrefix(err2, amBanner())
-		got = strings.TrimSuffix(got, amRcLine(rc2))
-		if e1.String() != got {
-			t.Errorf("[%s] 剥掉命令面宣言后 stderr 与脚本不同（改了原件行为）：\n脚本  =%q\n命令面=%q", tc.name, e1.String(), got)
-		}
+			if c.linkAsFile {
+				lp := filepath.Join(f.dir, "real-file")
+				amWrite(t, lp, "x")
+				t.Setenv("ZERG_ARCHIVE_LINK", lp)
+			}
+			if c.hdiutilBroken {
+				t.Setenv("ZERG_HDIUTIL", "/usr/bin/false")
+			}
+			wantOut := c.wantOut
+			if c.usage {
+				wantOut = amUsage
+			}
+			f.reset(t)
+			rc, out, errb := amFace(t, c.args...)
+			gotOut, gotErr := amNorm(f, out), amNorm(f, errb)
+			if rc != c.wantRC {
+				t.Errorf("%s：rc=%d（冻值 %d）", c.name, rc, c.wantRC)
+			}
+			if gotOut != wantOut {
+				t.Errorf("%s：stdout 漂移\n实得=%q\n冻值=%q", c.name, gotOut, wantOut)
+			}
+			if gotErr != c.wantErr {
+				t.Errorf("%s：stderr 漂移\n实得=%q\n冻值=%q", c.name, gotErr, c.wantErr)
+			}
+		})
+	}
+}
+
+// ── 脚本移出仓 ⇒ 命令面读数不变（✗ 不退 8/2）──────────────────────────────────
+
+// TestArchiveMountRunsWithoutScript —— 仓根里**没有**脚本时命令面照样跑，且读数与「脚本在盘」逐字同。
+func TestArchiveMountRunsWithoutScript(t *testing.T) {
+	realRoot := repoRoot()
+	if realRoot == "" {
+		t.Skip("解析不到仓根（合成环境）")
+	}
+	const mounted = "stubfs on @@MOUNT@@ (apfs, local, read-only)\n"
+	cases := []struct {
+		name   string
+		args   []string
+		table  string
+		wantRC int
+	}{
+		{"usage", []string{"--help"}, "", 0},
+		{"unknown", []string{"--bogus"}, "", 64},
+		{"status-unmounted", []string{"status"}, "", 1},
+		{"status-mounted", []string{"status"}, mounted, 0},
+		{"on-idempotent", []string{"on"}, mounted, 0},
+		{"off-idempotent", []string{"off"}, "", 0},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := amMakeFixture(t, true, 0, c.table)
+			amSetEnv(t, f)
+
+			// 态 A：仓根 = 真仓（脚本在盘）
+			t.Setenv("ZERG_REPO", realRoot)
+			f.reset(t)
+			rcA, oA, eA := amFace(t, c.args...)
+
+			// 态 B：仓根 = 合成树（**无** scripts/svc/archive-mount.sh）
+			noScript := t.TempDir()
+			if _, err := os.Stat(filepath.Join(noScript, archiveMountScriptRel)); err == nil {
+				t.Fatalf("负控前提破：合成仓根里居然有脚本")
+			}
+			t.Setenv("ZERG_REPO", noScript)
+			f.reset(t)
+			rcB, oB, eB := amFace(t, c.args...)
+
+			if rcA != c.wantRC || rcB != c.wantRC {
+				t.Errorf("rc：在盘=%d 移出=%d（要 %d；移出档出现 8/2 = 壳转账残留）", rcA, rcB, c.wantRC)
+			}
+			if oA != oB {
+				t.Errorf("stdout 两态不同：在盘=%q 移出=%q", oA, oB)
+			}
+			if eA != eB {
+				t.Errorf("stderr 两态不同：在盘=%q 移出=%q", eA, eB)
+			}
+		})
+	}
+}
+
+// TestArchiveMountUsageGoldenInternalized —— amUsage（Go 真源）的 sha256 内化自证（体例同
+// ctocHelpNativeSha256 / csdHelpNativeSha256 · GAP-20261007:16）。
+// 原版把 amUsage 与脚本第 2..50 行对拍；原件 `scripts/svc/archive-mount.sh` 已于 2026-10-08
+// 退场（DEV-2031）⇒ 对拍源消失、断言恒 Skip；金标真源**收回 Go 常量本身** ⇒ 现算自证
+// （✗ 不再读任何脚本）。★ 哑化负控：改 amUsage 一字（或把 amUsageNativeSha256 改成与 amUsage
+// 无关的值）⇒ 本用例 FAIL（带行号）。
+func TestArchiveMountUsageGoldenInternalized(t *testing.T) {
+	if got := amUsageNativeSha256(); got != amUsageSha256 {
+		t.Fatalf("Go 真源现算 sha256 = %s ≠ 冻结回归值 %s（用法文案真源漂了）", got, amUsageSha256)
+	}
+	if len(amUsage) != 3203 {
+		t.Fatalf("amUsage 字节数：实得 %d（期望 3203）", len(amUsage))
 	}
 }

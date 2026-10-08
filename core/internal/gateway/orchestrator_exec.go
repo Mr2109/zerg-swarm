@@ -17,7 +17,7 @@ import (
 // gatewayExecutor 编排器执行器——按模型直连推理端点（不经网关，避免流式 EOF）。
 type gatewayExecutor struct {
 	client *http.Client
-	// 模型 → 端点映射（脑 example-35b-v2 EDGE-NODE 隧道 / 手 nanbeige 本机）
+	// 模型 → 端点映射（脑 example-35b-v2 node-a 隧道 / 手 nanbeige 本机）
 	endpoints map[string]string
 	authToken string // 备用认证（网关路径用）
 }
@@ -29,8 +29,8 @@ func newGatewayExecutor(authToken string) *gatewayExecutor {
 		client:    &http.Client{Timeout: 10 * time.Minute},
 		authToken: authToken,
 		endpoints: map[string]string{
-			// 全部走网关——网关按模型名路由（example-35b-v2→EDGE-NODE / gemma→候选 / Qwable→候选）
-			// 排除本机模式：网关路由自动跳过 local（参考模型候选 EDGE-NODE）
+			// 全部走网关——网关按模型名路由（example-35b-v2→node-a / gemma→候选 / Qwable→候选）
+			// 排除本机模式：网关路由自动跳过 local（参考模型候选 node-a）
 			"*": "http://127.0.0.1:8082/v1",
 		},
 	}

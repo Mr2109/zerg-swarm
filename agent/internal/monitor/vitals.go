@@ -56,7 +56,7 @@ type GpuBusySample struct {
 	Ok  bool
 }
 
-// DiskSample 盘空间（statfs 数据盘——EDGE-NODE 上是 /data，权重与 KV 盘所在）。
+// DiskSample 盘空间（statfs 数据盘——node-a 上是 /data，权重与 KV 盘所在）。
 type DiskSample struct {
 	FreeGb  float64
 	TotalGb float64
@@ -180,7 +180,7 @@ type VitalsRecorder struct {
 	fastInterval time.Duration
 	slowInterval time.Duration
 	aggWindow    time.Duration
-	dataDir      string // 盘空间探测点（EDGE-NODE = /data）
+	dataDir      string // 盘空间探测点（node-a = /data）
 
 	recent ringBuf[Vitals]       // 近期原始（快采）
 	attrib ringBuf[AttribSample] // 逐进程归因（慢采）

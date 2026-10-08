@@ -7,7 +7,7 @@ import (
 )
 
 // TestSkillManagerSkipsAppleDoubleDirs —— ._* 目录与隐藏目录不得被当成技能。
-// 场景来源：2026-09-14 跨机 tar 中转在 EDGE-NODE 留下 785 个 AppleDouble 文件（含 ._ca-troubleshooting 这类目录名）。
+// 场景来源：2026-09-14 跨机 tar 中转在 node-a 留下 785 个 AppleDouble 文件（含 ._ca-troubleshooting 这类目录名）。
 func TestSkillManagerSkipsAppleDoubleDirs(t *testing.T) {
 	dir := t.TempDir()
 	mk := func(sub string) {

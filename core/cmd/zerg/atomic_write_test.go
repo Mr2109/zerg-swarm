@@ -271,10 +271,31 @@ func awRunSh(t *testing.T, script, dir string, argv []string, neg, drop string) 
 	return rc, so.String() + se.String()
 }
 
+// awT_pyRel / awT_goHalfRel —— 两态对拍所依赖的 sh 原件与其同源 Go 半（本件实现件）的仓根相对路径。
+const (
+	awT_pyRel     = "scripts/dev/atomic-write.sh"
+	awT_goHalfRel = "core/cmd/zerg/atomic_write.go"
+)
+
+// awT_fileIsFile —— 存在且是普通文件（退役判定的两缀之一）。
+func awT_fileIsFile(p string) bool {
+	st, err := os.Stat(p)
+	return err == nil && st.Mode().IsRegular()
+}
+
 func TestAwTwoStateParity(t *testing.T) {
 	root := awTestRepoRoot(t)
 	script := filepath.Join(root, "scripts", "dev", "atomic-write.sh")
 	if _, err := os.Stat(script); err != nil {
+		// ★ 三段式回退腿（先例 `check_public_face_anchor_test.go:106` / `check_wallclock_ratchet_test.go:173`
+		//   的「退役态 ⇒ 对拍格无对象，容忍跳过」）：sh 原件缺席而其 **Go 半**在盘 ⇒ 退役态
+		//   —— 两态对拍没有对拍对象 ⇒ **体面跳过**（✗ 不判失败、✗ 不把断言改宽成永真）。
+		//   Go 半自身的断言由本包其余用例（TestAwHelp / TestAwReplaceFresh / TestAwCreateFirst /
+		//   TestAwArchiveSkipSameSha / TestAwDropOutOfBounds / TestAwCorruptArchive / TestAwMutateTarget /
+		//   TestAwSelfTest）**照常覆盖**。两半皆缺（真消失）⇒ fail-closed（缺件 ≠ 绿），照旧判红。
+		if awT_fileIsFile(filepath.Join(root, awT_goHalfRel)) {
+			t.Skipf("退役态：sh 原件 %s 已退场（其 Go 半 %s 在盘）⇒ 两态对拍格无对象，容忍跳过", awT_pyRel, awT_goHalfRel)
+		}
 		t.Fatalf("原件不在盘：%s", script)
 	}
 	seedDemo := func(dir string) {

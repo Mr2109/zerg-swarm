@@ -5,7 +5,7 @@
 //
 //	① **收编为命令（5 件 · 2026-10-08 按意见扩至 18 件）** —— 它们本身是**可复用的判据工具**（自带用法、只读或自带 `--self-test`）⇒
 //	   有命令面上的名字：`zerg eval show|run <名>`。原 ④「维持待拍」13 件同批收编入 ①（现读 ① 18 / ④ 0）。
-//	② **保留为内部实现（4 件）** —— 已经被别的入口接线在跑（`pack-release.sh` / CI / `run_all.sh`）⇒
+//	② **保留为内部实现（4 件）** —— 已经被别的入口接线在跑（`pack-release.sh` / CI / `zerg eval run-all`）⇒
 //	   命令面**只做投影**、**不开 run 面**（开了就是两份真相）。
 //	④ **维持待拍（0 件 · 原 13 件 2026-10-08 收编入 ①）** —— 2026-08-13 的历史一次性任务集 · 仓内零调用方
 //	   （登记非死件 ⇒ 无第二入口）⇒ 收编为 ①；**仍不许 AI 判退役**（✗）。
@@ -18,7 +18,9 @@
 //
 // 三条硬口径：
 //
-//	① **不搬实现**：执行面永远是 `bash|python3 scripts/evals/<件>` —— 22 个脚本**一个字节不改**。
+//	① **不搬实现**：未真搬的件，执行面永远是 `bash|python3 scripts/evals/<件>` —— 脚本**一个字节不改**。
+//	   ★ 2026-10-08（退役解耦）：已真搬 Go 的件（现读 `stability-stats` / `compare`，`GoMain` 非 nil）
+//	   真跑走 **Go 真身**（与 `zerg gate check <名>` 同源入口）⇒ 旧脚本退役（移出仓）后照跑、✗ 不退 8。
 //	② **退码原样转出**：脚本退多少就返多少（含异常码）。
 //	③ **归属是闸**：`run` 只对 ① 开放；②/④ 的件 ⇒ 退 2 并**逐字给出为什么**（不是「不支持」，是「不归本批」）。
 package main
@@ -50,10 +52,15 @@ var evalClassState = map[string]string{
 // evalEntry —— 评测线的一件（命令面上的**对象**）。
 type evalEntry struct {
 	Name  string // 命令面上的对象名（去扩展名的件名）
-	File  string // 件（仓内相对路径）
+	File  string // 件（仓内相对路径 · 人面标名；真跑用不用它见 GoMain）
 	Run   string // 执行器（`bash` / `python3`）
 	Class string // 归属（①②④ 闭集）
 	Why   string // 一句理由（逐字取自上一枚的归属表）
+	// GoMain —— 该件的 **Go 真身**（真搬后的进程内入口 · 与 `zerg gate check <名>` 同源）。
+	// 非 nil ⇒ `eval run` 的**真跑走它**（✗ 不再 exec 旧脚本）—— 旧脚本退役（移出仓）后
+	// 本命令 rc/stdout/stderr 与在盘逐字同（✗ 不再退 8）。
+	// nil   ⇒ 旧脚本仍是唯一真源（照旧 exec）。
+	GoMain func(stdout, stderr io.Writer, argv []string) int
 }
 
 // evalRoster —— 评测线 22 件（**逐件归属照抄 · 一件不自编**）。
@@ -62,22 +69,32 @@ var evalRoster = []evalEntry{
 	{
 		Name: "compare-wall-argv", File: "scripts/evals/compare-wall-argv.py", Run: "python3", Class: evalClassAdopt,
 		Why: "迁移桥门禁：同一批卵配方两侧 argv 逐条对拍（Go `BuildBwrapArgv` ↔ Rust `zerg-wall plan`）· 判据写在文件名里 · 自带 `--self-test`（自检不过 rc=2）",
+		// 真搬 = core/cmd/zerg/eval_wall_argv.go（入口 evalWallArgvGateMain）。
+		GoMain: evalWallArgvGateMain,
 	},
 	{
 		Name: "replay-fidelity", File: "scripts/evals/replay-fidelity.sh", Run: "bash", Class: evalClassAdopt,
 		Why: "T4.4 保真度三指标（+ 二分定位 E7）的可执行验收：跨实现复核产物 sha256 · 自检不过拒出结论",
+		// 真搬 = core/cmd/zerg/eval_replay_fidelity.go（入口 evalReplayFidelityGateMain）。
+		GoMain: evalReplayFidelityGateMain,
 	},
 	{
 		Name: "chat-harness", File: "scripts/evals/chat-harness.py", Run: "python3", Class: evalClassAdopt,
 		Why: "v2.5.10 对话/卵 测试骨架：X1–X5 逐轮断言 · 只建自己的会话（不碰生产）",
+		// 真搬 = core/cmd/zerg/eval_chat_harness.go（入口 evalChatHarnessGateMain）。
+		GoMain: evalChatHarnessGateMain,
 	},
 	{
 		Name: "stability-stats", File: "scripts/evals/stability-stats.py", Run: "python3", Class: evalClassAdopt,
 		Why: "T7.3 稳定性统计口径：分歧率 + Clopper-Pearson 单侧 95% 上界 · 纯 stdin→口径 · 零副作用",
+		// 真搬 = core/cmd/zerg/eval_stability_stats.go（inproc 键 `stability-stats`）。
+		GoMain: evalStabilityStatsGateMain,
 	},
 	{
 		Name: "compare", File: "scripts/evals/compare.py", Run: "python3", Class: evalClassAdopt,
 		Why: "两次 run 目录逐层通过率对拍（只读：各层通过率 + 每项 PASS/FAIL 变化）",
+		// 真搬 = core/cmd/zerg/eval_compare.go（inproc 键 `compare`）。
+		GoMain: evalCompareGateMain,
 	},
 	// ── ② 保留为内部实现（4 件）────────────────────────────────────────────────────────
 	{
@@ -85,16 +102,18 @@ var evalRoster = []evalEntry{
 		Why: "发布清单生成器，**已接线**在 `scripts/build/pack-release.sh:87` + CI `release-agent.yml:160` ⇒ 收编即两份真相 ⇒ 只做投影",
 	},
 	{
-		Name: "v25_example-35b-v2_tasks", File: "scripts/evals/v25_example-35b-v2_tasks.py", Run: "python3", Class: evalClassInternal,
-		Why: "`scripts/build/run_all.sh:27` 层 2 的**在跑实现** ⇒ 它是任务集、不是命令名",
+		Name: "v25_example-35b-v2_tasks", File: "scripts/evals/_archive/v25_example-35b-v2_tasks.py", Run: "python3", Class: evalClassInternal,
+		Why: "层 2 的**在跑实现**（批跑入口 `zerg eval run-all` · 真搬 Go `core/cmd/zerg/eval_run_all.go`）⇒ 它是任务集、不是命令名",
 	},
 	{
-		Name: "v25_complex_tasks", File: "scripts/evals/v25_complex_tasks.py", Run: "python3", Class: evalClassInternal,
-		Why: "`scripts/build/run_all.sh:33` 层 3 的**在跑实现** ⇒ 同上",
+		Name: "v25_complex_tasks", File: "scripts/evals/_archive/v25_complex_tasks.py", Run: "python3", Class: evalClassInternal,
+		Why: "层 3 的**在跑实现**（批跑入口 `zerg eval run-all` · 同上）⇒ 同上",
 	},
 	{
 		Name: "ab-campaigns", File: "scripts/evals/ab-campaigns.py", Run: "python3", Class: evalClassInternal,
 		Why: "实验编排（要**跑着的**生产对话面 + 真任务）⇒ 只做投影、不开 run 面",
+		// 真搬 = core/cmd/zerg/eval_ab_campaigns.go（入口 evalABCampaignsGateMain）。
+		GoMain: evalABCampaignsGateMain,
 	},
 	// ── ① 收编（续 · 原 ④ 待拍 13 件 · 2026-10-08 按意见同批收编 ① · 现读 ① 18 / ④ 0）─────────
 	{
@@ -102,51 +121,51 @@ var evalRoster = []evalEntry{
 		Why: "① 收编（2026-10-08 按意见）：2026-08-13 历史一次性任务集 · 仓内零调用方 · 工作区写死在临时目录（登记非死件 ⇒ 无第二入口）⇒ 收编为 `zerg eval run` 可跑件 · ✗ 不删脚本",
 	},
 	{
-		Name: "v25_agent_tasks", File: "scripts/evals/v25_agent_tasks.py", Run: "python3", Class: evalClassAdopt,
+		Name: "v25_agent_tasks", File: "scripts/evals/_archive/v25_agent_tasks.py", Run: "python3", Class: evalClassAdopt,
 		Why: "① 收编（2026-10-08 按意见）：2026-08-13 历史一次性任务集 · 仓内零调用方（登记非死件 ⇒ 无第二入口）⇒ 收编为 `zerg eval run` 可跑件 · ✗ 不删脚本",
 	},
 	{
-		Name: "v25_benchmark", File: "scripts/evals/v25_benchmark.py", Run: "python3", Class: evalClassAdopt,
+		Name: "v25_benchmark", File: "scripts/evals/_archive/v25_benchmark.py", Run: "python3", Class: evalClassAdopt,
 		Why: "① 收编（2026-10-08 按意见）：2026-08-13 历史一次性任务集 · 仓内零调用方（登记非死件 ⇒ 无第二入口）⇒ 收编为 `zerg eval run` 可跑件 · ✗ 不删脚本",
 	},
 	{
-		Name: "v25_eval_task", File: "scripts/evals/v25_eval_task.py", Run: "python3", Class: evalClassAdopt,
+		Name: "v25_eval_task", File: "scripts/evals/_archive/v25_eval_task.py", Run: "python3", Class: evalClassAdopt,
 		Why: "① 收编（2026-10-08 按意见）：2026-08-13 历史一次性任务集 · 仓内零调用方（登记非死件 ⇒ 无第二入口）⇒ 收编为 `zerg eval run` 可跑件 · ✗ 不删脚本",
 	},
 	{
-		Name: "v25_full_test", File: "scripts/evals/v25_full_test.py", Run: "python3", Class: evalClassAdopt,
+		Name: "v25_full_test", File: "scripts/evals/_archive/v25_full_test.py", Run: "python3", Class: evalClassAdopt,
 		Why: "① 收编（2026-10-08 按意见）：2026-08-13 历史一次性任务集 · 仓内零调用方（登记非死件 ⇒ 无第二入口）⇒ 收编为 `zerg eval run` 可跑件 · ✗ 不删脚本",
 	},
 	{
-		Name: "v25_m1_accept", File: "scripts/evals/v25_m1_accept.py", Run: "python3", Class: evalClassAdopt,
+		Name: "v25_m1_accept", File: "scripts/evals/_archive/v25_m1_accept.py", Run: "python3", Class: evalClassAdopt,
 		Why: "① 收编（2026-10-08 按意见）：2026-08-13 历史一次性任务集 · 仓内零调用方（登记非死件 ⇒ 无第二入口）⇒ 收编为 `zerg eval run` 可跑件 · ✗ 不删脚本",
 	},
 	{
-		Name: "v25_more_classes", File: "scripts/evals/v25_more_classes.py", Run: "python3", Class: evalClassAdopt,
+		Name: "v25_more_classes", File: "scripts/evals/_archive/v25_more_classes.py", Run: "python3", Class: evalClassAdopt,
 		Why: "① 收编（2026-10-08 按意见）：2026-08-13 历史一次性任务集 · 仓内零调用方（登记非死件 ⇒ 无第二入口）⇒ 收编为 `zerg eval run` 可跑件 · ✗ 不删脚本",
 	},
 	{
-		Name: "v25_more_tasks", File: "scripts/evals/v25_more_tasks.py", Run: "python3", Class: evalClassAdopt,
+		Name: "v25_more_tasks", File: "scripts/evals/_archive/v25_more_tasks.py", Run: "python3", Class: evalClassAdopt,
 		Why: "① 收编（2026-10-08 按意见）：2026-08-13 历史一次性任务集 · 仓内零调用方（登记非死件 ⇒ 无第二入口）⇒ 收编为 `zerg eval run` 可跑件 · ✗ 不删脚本",
 	},
 	{
-		Name: "v25_real10", File: "scripts/evals/v25_real10.py", Run: "python3", Class: evalClassAdopt,
+		Name: "v25_real10", File: "scripts/evals/_archive/v25_real10.py", Run: "python3", Class: evalClassAdopt,
 		Why: "① 收编（2026-10-08 按意见）：2026-08-13 历史一次性任务集 · 仓内零调用方（登记非死件 ⇒ 无第二入口）⇒ 收编为 `zerg eval run` 可跑件 · ✗ 不删脚本",
 	},
 	{
-		Name: "v25_real10_v2", File: "scripts/evals/v25_real10_v2.py", Run: "python3", Class: evalClassAdopt,
+		Name: "v25_real10_v2", File: "scripts/evals/_archive/v25_real10_v2.py", Run: "python3", Class: evalClassAdopt,
 		Why: "① 收编（2026-10-08 按意见）：2026-08-13 历史一次性任务集 · 仓内零调用方（登记非死件 ⇒ 无第二入口）⇒ 收编为 `zerg eval run` 可跑件 · ✗ 不删脚本",
 	},
 	{
-		Name: "v25_real_tasks", File: "scripts/evals/v25_real_tasks.py", Run: "python3", Class: evalClassAdopt,
+		Name: "v25_real_tasks", File: "scripts/evals/_archive/v25_real_tasks.py", Run: "python3", Class: evalClassAdopt,
 		Why: "① 收编（2026-10-08 按意见）：2026-08-13 历史一次性任务集 · 仓内零调用方（登记非死件 ⇒ 无第二入口）⇒ 收编为 `zerg eval run` 可跑件 · ✗ 不删脚本",
 	},
 	{
-		Name: "v25_realproj", File: "scripts/evals/v25_realproj.py", Run: "python3", Class: evalClassAdopt,
+		Name: "v25_realproj", File: "scripts/evals/_archive/v25_realproj.py", Run: "python3", Class: evalClassAdopt,
 		Why: "① 收编（2026-10-08 按意见）：2026-08-13 历史一次性任务集 · 仓内零调用方（登记非死件 ⇒ 无第二入口）⇒ 收编为 `zerg eval run` 可跑件 · ✗ 不删脚本",
 	},
 	{
-		Name: "v25_research", File: "scripts/evals/v25_research.py", Run: "python3", Class: evalClassAdopt,
+		Name: "v25_research", File: "scripts/evals/_archive/v25_research.py", Run: "python3", Class: evalClassAdopt,
 		Why: "① 收编（2026-10-08 按意见）：2026-08-13 历史一次性任务集 · 仓内零调用方（登记非死件 ⇒ 无第二入口）⇒ 收编为 `zerg eval run` 可跑件 · ✗ 不删脚本",
 	},
 }
@@ -263,10 +282,15 @@ func cmdEvalRun(inv *invocation, stdout, stderr io.Writer) int {
 		return exitBlocked
 	}
 	script := filepath.Join(root, filepath.FromSlash(e.File))
-	if fi, err := os.Stat(script); err != nil || fi.IsDir() {
-		inv.setErr("blocked", "script_absent", "件不在盘上")
-		fmt.Fprintf(stderr, "%s: 件不在盘上：%s（%v）⇒ 不给结论（退码 8 · **不假装跑过**）\n", progName, e.File, err)
-		return exitBlocked
+	// ★ 真源判定（2026-10-08 · 退役解耦）：本件已真搬 Go（`GoMain != nil`）⇒ 真跑走 **Go 真身**，
+	//   **不再**要求旧脚本在盘 —— ✗ 别再把「执行面可用」绑死成「壳脚本在盘」（同 `family_build.go`
+	//   对 build-all.sh 的解耦口径）。旧脚本仍是真源的件（`GoMain == nil`）照旧要求它在位。
+	if e.GoMain == nil {
+		if fi, err := os.Stat(script); err != nil || fi.IsDir() {
+			inv.setErr("blocked", "script_absent", "件不在盘上")
+			fmt.Fprintf(stderr, "%s: 件不在盘上：%s（%v）⇒ 不给结论（退码 8 · **不假装跑过**）\n", progName, e.File, err)
+			return exitBlocked
+		}
 	}
 	extra := []string{}
 	if len(inv.args) > 1 {
@@ -306,23 +330,31 @@ func cmdEvalRun(inv *invocation, stdout, stderr io.Writer) int {
 		return exitOK
 	}
 
-	// 真跑那一态：执行面 = 旧脚本自己；命令面只转出退码（**连异常码也不改写**）。
-	cmd := armChildGroup(exec.Command(argv[0], argv[1:]...))
-	cmd.Dir = root
-	cmd.Stdin = os.Stdin
+	// 真跑那一态：命令面只转出退码（**连异常码也不改写**）。执行面按**真源**分两档：
+	//   · 已真搬 Go（`GoMain != nil`）⇒ 走 **Go 真身**（与 `zerg gate check <名>` 同源入口；
+	//     argv 与 py `sys.argv[1:]` 同形）—— 旧脚本退役后照跑，✗ 不退 8；
+	//   · 未搬（`GoMain == nil`）⇒ 执行面 = 旧脚本自己（照旧 exec）。
 	var human bytes.Buffer
-	cmd.Stdout = &human
-	cmd.Stderr = stderr
-	runningChild = cmd
-	err := cmd.Run()
-	runningChild = nil
-	rc := exitOK
-	if ee, ok := err.(*exec.ExitError); ok {
-		rc = ee.ExitCode() // ★ 只转发、不翻译
-	} else if err != nil {
-		inv.setErr("failed", "exec_failed", err.Error())
-		fmt.Fprintf(stderr, "%s: 跑不动 %s：%v\n", progName, e.File, err)
-		return exitFail
+	var rc int
+	if e.GoMain != nil {
+		rc = gateCheckRunInproc(e.GoMain, root, &human, stderr, extra)
+	} else {
+		cmd := armChildGroup(exec.Command(argv[0], argv[1:]...))
+		cmd.Dir = root
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = &human
+		cmd.Stderr = stderr
+		runningChild = cmd
+		err := cmd.Run()
+		runningChild = nil
+		rc = exitOK
+		if ee, ok := err.(*exec.ExitError); ok {
+			rc = ee.ExitCode() // ★ 只转发、不翻译
+		} else if err != nil {
+			inv.setErr("failed", "exec_failed", err.Error())
+			fmt.Fprintf(stderr, "%s: 跑不动 %s：%v\n", progName, e.File, err)
+			return exitFail
+		}
 	}
 	if inv.jsonGiven {
 		_, _ = io.Copy(stderr, &human)
@@ -352,7 +384,11 @@ func emitEvalPlan(w io.Writer, e *evalEntry, argv []string, blocked bool) {
 	fmt.Fprintf(w, "  动作     : %s eval run %s\n", progName, e.Name)
 	fmt.Fprintf(w, "  件       : %s（归属：%s %s）\n", e.File, e.Class, evalClassState[e.Class])
 	fmt.Fprintf(w, "  理由     : %s\n", e.Why)
-	fmt.Fprintf(w, "  执行面   : %s（脚本本体是唯一真源 —— 命令面不搬它的实现）\n", strings.Join(argv, " "))
+	if e.GoMain != nil {
+		fmt.Fprintf(w, "  执行面   : Go 真身（进程内入口 —— `%s eval run %s` 走它 · ✗ 不再 exec 旧脚本 %s）\n", progName, e.Name, e.File)
+	} else {
+		fmt.Fprintf(w, "  执行面   : %s（脚本本体是唯一真源 —— 命令面不搬它的实现）\n", strings.Join(argv, " "))
+	}
 	fmt.Fprintln(w, "  退码口径 : 脚本的退码**原样转出**；命令面自己只退 2（用法错 · 含未知名/未收编）与 8（件不在盘上）")
 	if blocked {
 		fmt.Fprintln(w, "  未执行   : D2 档 —— 要 `--yes`（或先 `--dry-run` 看这一份）")

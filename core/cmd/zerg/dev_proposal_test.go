@@ -215,7 +215,7 @@ func TestDevProposalCheckFailsClosed(t *testing.T) {
 func runProposalNew(t *testing.T, argv ...string) (int, string, string) {
 	t.Helper()
 	var out, errb strings.Builder
-	rc := zerg.RunForTest(append([]string{"dev", "proposal", "new"}, argv...), &out, &errb)
+	rc := zerg.RunForTest(append([]string{"dev", "proposal", "new", "--yes"}, argv...), &out, &errb)
 	return rc, out.String(), errb.String()
 }
 

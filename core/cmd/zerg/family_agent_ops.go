@@ -129,7 +129,7 @@ func agentFleetAddrs(stderr io.Writer) (map[string]agentAddr, []string, int) {
 	return addrs, names, exitOK
 }
 
-// yamlInlineField 从 `{ host: <worker-ip>, port: 8101, os: macos }` 这种**单行内联**里取一个字段值。
+// yamlInlineField 从 `{ host: <cluster-ip>, port: 8101, os: macos }` 这种**单行内联**里取一个字段值。
 func yamlInlineField(rest, key string) string {
 	seg := rest
 	for {
@@ -1439,7 +1439,7 @@ func agentOpsNames() []string {
 // 病根（缺口逐字）：子端**启动时读一次令牌、之后只比内存里那一份**（`agent/cmd/zerg-agentd/main.go:173`
 // `resolveToken` ⇒ 冻结在 `server.go:86-97` 的 `Agent.token` 与 `heartbeat.go:65-68` 的 `Runner.token`；
 // **无 SIGHUP/USR1 重读面**）⇒ 改令牌文件对运行中的子端无效 ⇒ 轮换令牌后四台子端全部 401 掉线。
-// 当时的修法只能是**手敲** `launchctl kickstart -k gui/501/com.zerg.agent-Mr2109`（远端三台 kill + nohup）。
+// 当时的修法只能是**手敲** `launchctl kickstart -k gui/501/com.zerg.agent-node-local`（远端三台 kill + nohup）。
 // 本命令把「重启子端进程」收进命令面 —— 形状照同族已开放的 `core restart`（`family_core_restart.go`）：
 // 三态 + **审计先落盘**（写不进就不许动进程）+ 就绪绑**自己的读数**（子端 HTTP 面 200），✗ 不从 env 取命令串。
 //

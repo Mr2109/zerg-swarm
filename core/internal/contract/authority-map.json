@@ -195,7 +195,7 @@
     {
       "命令": "agent reload",
       "授权类": "无闸",
-      "理由": "无闸 —— 门100（`scripts/gates/check-write-face-gate.py`）现读「已登记 danger 但 usage 未声明对应旗标」：`catalog()` 有 danger 档，而 `usage`（`zerg agent reload <机器名> [--json <字段>]`）无 `--yes`/`--confirm` ⇒ 声明面无闸（未声明）",
+      "理由": "无闸 —— 门100（`core/cmd/zerg/check_write_face_gate.go（CLI 门 check-write-face-gate）`）现读「已登记 danger 但 usage 未声明对应旗标」：`catalog()` 有 danger 档，而 `usage`（`zerg agent reload <机器名> [--json <字段>]`）无 `--yes`/`--confirm` ⇒ 声明面无闸（未声明）",
       "出处": "GAP-20260927-90 · 门100 现读"
     },
     {
@@ -212,28 +212,28 @@
     },
     {
       "命令": "dev verify",
-      "授权类": "无闸",
-      "理由": "无闸 —— 门100 现读「写面但 usage 未声明写旗标且无 danger（缺白名单）」：本命令会写盘却既无 danger 档、`usage` 也无写旗标 ⇒ 属未白名单，无闸",
-      "出处": "GAP-20260927-90 · 门100 现读"
+      "授权类": "D2",
+      "理由": "D2 —— `dev verify` 真写 `dist/candidates/<id>/evidence.json`（判据物 · 仓内工作树）；`catalog()` 已挂 `dangerSpec{D2}`（`opened`）+ `usage` 声明 `[--dry-run | --yes]`；默认档 fail-closed（缺 `--yes` 退 2）（GAP-20260927-140 ① · Mr2109 2026-10-08 拍）",
+      "出处": "GAP-20260927-140 ① · 门100 现读"
     }
 ,
     {
       "命令": "dev proposal",
-      "授权类": "无闸",
-      "理由": "无闸 —— `dev proposal new` 会写提案件（`family_dev.go` 的 `cmdDevProposalNew`：`os.MkdirAll`(:261) + `os.OpenFile`(:273)），而 `catalog()` 无 danger 档、`usage` 也无 `--yes`/`--confirm`/`--out` ⇒ 声明面无闸（未声明）",
-      "出处": "GAP-20260927-90 · 门100 现读 · 写点 family_dev.go:261/:273"
+      "授权类": "D2",
+      "理由": "D2 —— `dev proposal new` 会写提案件（`family_dev.go` 的 `cmdDevProposalNew`：`os.MkdirAll` + `os.OpenFile`）；`catalog()` 已挂 `dangerSpec{D2}`（`opened`）+ `usage` 声明 `[--dry-run | --yes]`；默认档 fail-closed（GAP-20260927-140 ① · Mr2109 2026-10-08 拍）",
+      "出处": "GAP-20260927-140 ① · 门100 现读 · 写点 family_dev.go"
     },
     {
       "命令": "dev receipt",
-      "授权类": "无闸",
-      "理由": "无闸 —— `dev receipt new` 会写回执件（`family_receipt.go` 的 `cmdReceiptNew`：`os.MkdirAll`(:135) + `os.WriteFile`(:142)），而 `catalog()` 无 danger 档、`usage` 亦无写旗标 ⇒ 声明面无闸（未声明）",
-      "出处": "GAP-20260927-90 · 门100 现读 · 写点 family_receipt.go:135/:142"
+      "授权类": "D2",
+      "理由": "D2 —— `dev receipt new` 会写回执件（`family_receipt.go` 的 `cmdReceiptNew`：`os.MkdirAll` + `os.WriteFile`）；`catalog()` 已挂 `dangerSpec{D2}`（`opened`）+ `usage` 声明 `[--dry-run | --yes]`；默认档 fail-closed（GAP-20260927-140 ① · Mr2109 2026-10-08 拍）",
+      "出处": "GAP-20260927-140 ① · 门100 现读 · 写点 family_receipt.go"
     },
     {
       "命令": "isolate-ro",
       "授权类": "无闸",
-      "理由": "无闸 —— `isolate-ro new` 经 `exec.Command(bash <隔离脚本>)` 转出写面（`family_isolate_ro.go:82`；写只落在副本目录），而 `catalog()` 无 danger 档、`usage` 无写旗标 ⇒ 声明面无闸（未声明）",
-      "出处": "GAP-20260927-90 · 门100 现读 · 写面 exec 转出 family_isolate_ro.go:82"
+      "理由": "无闸 —— `isolate-ro new` 的写面已**真搬进 Go 真身**（`isolate_ro.go` 的 `isolateRoGateMain`；`family_isolate_ro.go` 只做入口转发，✗ 不再 exec `scripts/dev/isolate-ro.sh`），落盘点全在**副本目录**（`os.MkdirAll`/`os.OpenFile`/`os.WriteFile`，✗ 不碰真仓），而 `catalog()` 无 danger 档、`usage` 无写旗标 ⇒ 声明面无闸（未声明）",
+      "出处": "GAP-20260927-90 · 门100 现读 · 写面 Go 真身 isolate_ro.go（isolateRoGateMain · 写只落副本目录）"
     },
     {
       "命令": "gate run",
@@ -246,6 +246,30 @@
       "授权类": "无闸",
       "理由": "无闸 —— `gate bench` 建临时日志目录并 `exec.Command(bash <门脚本>)`（`family_gate_bench.go`：`os.MkdirTemp`(:108) / `os.Create`(:123) / `exec`(:129)；临时日志 defer 自回收），而 `catalog()` 无 danger 档、`usage` 无写旗标 ⇒ 声明面无闸（未声明）",
       "出处": "GAP-20260927-90 · 门100 现读 · 写面 family_gate_bench.go:123/:129"
+    }
+    ,{
+      "命令": "swap core",
+      "授权类": "D3",
+      "理由": "D3 —— `swap core` 的换件写面已**真搬进本件**（`family_swap_core.go`；✗ 不再 exec `scripts/build/zerg-swap-core.sh`；★ 2026-10-09 该壳件已登记退场 `DEV-2055`/`GAP-20261008-16`，行为由 Go 真身承载）：落盘点 = 备份件 `bin/_history/…bak-<ts>`（`cp -p`）＋ 构建产件 `bin/zerg-core`（`bash scripts/build/build-all.sh --only-core` **薄壳**）＋ 运行日志 `$LOG`（`appendLog`）；codesign/launchctl/curl/python3 皆**薄壳**；`catalog()` 已挂 `dangerSpec{D3}`（`opened`）+ `usage` 声明 `[--dry-run | --yes]`；**写盘档**（裸跑 / `--swap` / `--dry-run` / `--yes`）走本层 fail-closed 授权门（`guard.go` 的 `writeGuardDryRun` / `writeGuardYes`）；只读档（`--help` / `--self-test-rollback`）原样透传、不进门（GAP-20260927-140 ① · Mr2109 2026-10-08 拍「默认档要 fail-closed」）",
+      "出处": "GAP-20260927-140 ① · 门100 现读 · 写面真身 family_swap_core.go（备份 cp -p · 产件 build-all.sh · 日志 appendLog）"
+    }
+    ,{
+      "命令": "swap agent",
+      "授权类": "D3",
+      "理由": "D3 —— `swap agent` 的行为已**真搬进本件**（`swap_agent.go`；✗ 不再 exec `scripts/build/zerg-swap-agent.sh`；★ 2026-10-09 该壳件已登记退场 `DEV-2055`/`GAP-20261008-16`，行为由 Go 真身承载）：现读**只报告档**（裸跑 / `--check`）零写——六闸只做 git/codesign/curl/python3（皆**薄壳**），唯一落盘 = 运行日志 `$LOG`（`appendLog`）；`--swap` 真换件档未开放（rc=2 零副作用）；`catalog()` 已挂 `dangerSpec{D3}`（`opened`）+ `usage` 声明 `[--dry-run | --yes]`；**写盘档**（裸跑 / `--swap` / `--dry-run` / `--yes`）走本层 fail-closed 授权门（`guard.go` 的 `writeGuardDryRun` / `writeGuardYes`）；只读档（`--check` / `--self-test` / `--machine` / `--label`）原样透传、不进门（GAP-20260927-140 ① · Mr2109 2026-10-08 拍「默认档要 fail-closed」）",
+      "出处": "GAP-20260927-140 ① · 门100 现读 · 写面真身 swap_agent.go（只报告档 · 唯一落盘 = 日志 appendLog）"
+    }
+    ,{
+      "命令": "swap ui",
+      "授权类": "D3",
+      "理由": "D3 —— `swap ui` 的行为已**真搬进本件**（`swap_ui.go`；✗ 不再 exec `scripts/build/zerg-swap-ui.sh`；★ 2026-10-09 该壳件已登记退场 `DEV-2055`/`GAP-20261008-16`，行为由 Go 真身承载）：现读**只报告档**（裸跑 / `--check`）零写——六闸只做 git/codesign/pgrep/lsof/python3（皆**薄壳**），唯一落盘 = 运行日志 `$LOG`（`appendLog`）；`--swap` 真换件档未开放（rc=2 零副作用）；`catalog()` 已挂 `dangerSpec{D3}`（`opened`）+ `usage` 声明 `[--dry-run | --yes]`；**写盘档**（裸跑 / `--swap` / `--dry-run` / `--yes`）走本层 fail-closed 授权门（`guard.go` 的 `writeGuardDryRun` / `writeGuardYes`）；只读档（`--check`）原样透传、不进门（GAP-20260927-140 ① · Mr2109 2026-10-08 拍「默认档要 fail-closed」）",
+      "出处": "GAP-20260927-140 ① · 门100 现读 · 写面真身 swap_ui.go（只报告档 · 唯一落盘 = 日志 appendLog）"
+    }
+    ,{
+      "命令": "deploy launch",
+      "授权类": "D3",
+      "理由": "D3 —— `deploy launch` 真落**意图件**（`deploy_launch.go` 的 `dplWriteIntent`：`os.MkdirAll` + `os.OpenFile` · 落点 `~/.zerg/deploy_launch/`）＋ `ssh` 到节点跑发布器（`dplSSH`）⇒ 是写面；`catalog()` 已挂 `dangerSpec{D3}`（`opened`）+ `usage` 声明 `[--dry-run | --yes]`；**写盘档**（裸跑 / `--dry-run` / `--yes`）走本层 fail-closed 授权门（`guard.go` 的 `writeGuardYes` —— 本命令**有自己的 `--dry-run` 支**，照 `dev proposal new` 同型，✗ 不用 `writeGuardDryRun`）（GAP-20260927-140 ① · 门100 写面登记 · 2026-10-08 真搬后成写面）",
+      "出处": "GAP-20260927-140 ① · 门100 现读 · 写面 deploy_launch.go（意图件落盘 dplWriteIntent）"
     }
   ],
   "写面登记_说明": "本表照「无对应」一格体例：**写面登记** = 每一处会写盘的命令面点名自己的**授权类**；授权类取 `授权类闭集`（`D2`/`D3`/`无闸`）。**无闸**一档 = 该写面没有闸（既无 danger 档、`usage` 也无写旗标）⇒ 必须显式进白名单、`理由` 里逐字写「无闸」（✗ 不许把「未声明/未白名单」写成「已授权」= 洗白）。本批只登记门100 现读「未声明/未白名单」的 4 条；已登记 danger 且 `usage` 已声明旗标的写面由 `catalog()` 的 `dangerSpec` 登记、本表不重复列。",

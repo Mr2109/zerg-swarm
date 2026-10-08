@@ -1,6 +1,6 @@
 // baseline_mem_test.go —— M15：基线/托管项占用必须取 drm fdinfo（gtt+vram），不能取 RSS。
 //
-// 用例文本**逐字照抄 EDGE-NODE 实测**（2026-09-14，两条手工推理服务，端口语义见设计附录 A）：
+// 用例文本**逐字照抄 node-a 实测**（2026-09-14，两条手工推理服务，端口语义见设计附录 A）：
 //
 //	Qwen3.8-27B → drm-memory-gtt 34286572 KiB = 32.70 GB（旧口径 RSS 只报 1.41 GB）
 //	k2horizon   → drm-memory-gtt 25144840 KiB = 23.98 GB（旧口径 RSS 只报 0.77 GB）
@@ -19,8 +19,8 @@ func TestParseDrmMemoryGb(t *testing.T) {
 		text   string
 		wantGB float64
 	}{
-		{"X3 Qwen 实测（KiB）", "pos:\t0\nflags:\t0100002\ndrm-memory-vram:\t2208 KiB\ndrm-memory-gtt: \t34286572 KiB\ndrm-memory-cpu: \t0 KiB\n", 32.70},
-		{"X3 K2 实测（KiB）", "pos:\t0\nflags:\t0100002\ndrm-memory-vram:\t1992 KiB\ndrm-memory-gtt: \t25144840 KiB\ndrm-memory-cpu: \t0 KiB\n", 23.98},
+		{"node-a Qwen 实测（KiB）", "pos:\t0\nflags:\t0100002\ndrm-memory-vram:\t2208 KiB\ndrm-memory-gtt: \t34286572 KiB\ndrm-memory-cpu: \t0 KiB\n", 32.70},
+		{"node-a K2 实测（KiB）", "pos:\t0\nflags:\t0100002\ndrm-memory-vram:\t1992 KiB\ndrm-memory-gtt: \t25144840 KiB\ndrm-memory-cpu: \t0 KiB\n", 23.98},
 		{"无 drm 行（非 GPU 宿主）", "pos:\t0\nflags:\t0100002\n", 0},
 		{"GiB 单位", "drm-memory-gtt: 2 GiB\n", 2},
 		{"MiB 单位", "drm-memory-gtt: 1024 MiB\n", 1},

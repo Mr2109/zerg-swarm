@@ -128,7 +128,7 @@ func TestCheckPasswordArgvGatePort(t *testing.T) {
 	t.Run("负控④ usage 仍在教弃用环境变量入口 ⇒ rc=1 [ENV-TAUGHT-USAGE]", func(t *testing.T) {
 		d := cpwTFix(t)
 		cpwTWrite(t, filepath.Join(d, "a.sh"),
-			"#!/usr/bin/env bash\nusage() { echo \"export EDGE-NODE"+"_PASS=<口令> 后再跑\"; }\n")
+			"#!/usr/bin/env bash\nusage() { echo \"export X"+"3_PASS=<口令> 后再跑\"; }\n")
 		rc, out, _ := cpwTEntry("--root", d)
 		if rc != 1 || !strings.Contains(out, "a.sh:2  [ENV-TAUGHT-USAGE]") {
 			t.Fatalf("负控④失败：rc=%d out=%q", rc, out)

@@ -24,7 +24,7 @@ import (
 	"time"
 )
 
-// withUnitStateProbe 注入单元状态探针（开发机上没有 systemd 用户实例，真依赖只在 EDGE-NODE 上）。
+// withUnitStateProbe 注入单元状态探针（开发机上没有 systemd 用户实例，真依赖只在 node-a 上）。
 func withUnitStateProbe(t *testing.T, fn func(string) (unitState, error)) {
 	t.Helper()
 	old := unitStateProbe

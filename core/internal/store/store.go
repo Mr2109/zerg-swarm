@@ -13,7 +13,7 @@ import (
 // HeartbeatRequest 子端发送的心跳请求体。
 // 字段参考 v1 主控协议。
 type HeartbeatRequest struct {
-	Machine        string   `json:"machine"`          // 机器标识（如 edge-node, local）
+	Machine        string   `json:"machine"`          // 机器标识（如 node-a, local）
 	Model          *string  `json:"model"`            // 当前加载的模型名（可为 null）
 	Backend        *string  `json:"backend"`          // 后端名称（如 llama-server, ds4-server）
 	Port           *int     `json:"port"`             // 后端端口
@@ -93,7 +93,7 @@ type FleetSnapshot struct {
 	// ⚠ 两个布尔**绝不能带 omitempty**（2026-09-16 修，实测踩过）：false 是**有意义的值** ——
 	//   `vram_known=false` 表示"该机器拿不到显存"（口径见 #29：拿不到就 false，绝不用内存/RSS 冒充），
 	//   `vram_unified=false` 表示"独显平台"；被 omitempty 吞掉后，消费方**分不清"没有"与"没报"** ✗。
-	//   （实测形态：edge-node 的 vram_known=true 看得见 ✓，Mr2109 的 false 整个消失 ✗。）
+	//   （实测形态：node-a 的 vram_known=true 看得见 ✓，node-local 的 false 整个消失 ✗。）
 	VramKnown   bool    `json:"vram_known"`              // 能否拿到真实显存；false 时 gpu_used_gb 视为未知
 	VramUnified bool    `json:"vram_unified"`            // 统一内存平台（显存即内存，§3.1）；false = 独显平台
 	VramTotalGb float64 `json:"vram_total_gb,omitempty"` // 真实显存总量（GB）

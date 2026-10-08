@@ -14,12 +14,12 @@ import (
 // （反射调用 SetConfigSource：改前源无此方法 ⇒ 不注入、退化为快照，正是要复现的旧行为。）
 func TestGAP42_ControlSeesReloadedModels(t *testing.T) {
 	oldCfg := &config.FleetConfig{
-		Models: map[string][]config.ModelCandidate{"oldmodel": {{Host: "edge-node"}}},
-		Fleet:  map[string]config.FleetNode{"edge-node": {Host: "127.0.0.1", Port: 1}},
+		Models: map[string][]config.ModelCandidate{"oldmodel": {{Host: "node-a"}}},
+		Fleet:  map[string]config.FleetNode{"node-a": {Host: "127.0.0.1", Port: 1}},
 	}
 	newCfg := &config.FleetConfig{
-		Models: map[string][]config.ModelCandidate{"newmodel": {{Host: "edge-node"}}},
-		Fleet:  map[string]config.FleetNode{"edge-node": {Host: "127.0.0.1", Port: 1}},
+		Models: map[string][]config.ModelCandidate{"newmodel": {{Host: "node-a"}}},
+		Fleet:  map[string]config.FleetNode{"node-a": {Host: "127.0.0.1", Port: 1}},
 	}
 	h := NewControlHandlers("tok", oldCfg)
 	cur := oldCfg
@@ -30,7 +30,7 @@ func TestGAP42_ControlSeesReloadedModels(t *testing.T) {
 	cur = newCfg // 模拟 POST /api/config/reload：主控配置指针换成新对象
 
 	req := httptest.NewRequest("POST", "/api/control/load",
-		strings.NewReader(`{"machine":"edge-node","model":"newmodel"}`))
+		strings.NewReader(`{"machine":"node-a","model":"newmodel"}`))
 	w := httptest.NewRecorder()
 	h.LoadHandler(w, req)
 	body := w.Body.String()

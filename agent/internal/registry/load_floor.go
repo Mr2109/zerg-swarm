@@ -22,12 +22,12 @@ import "time"
 type StorageTier string
 
 const (
-	// TierNVMe NVMe SSD（EDGE-NODE 实测 rotational=0，/dev/nvme0n1p7，§2.0 / §9.6）。
+	// TierNVMe NVMe SSD（node-a 实测 rotational=0，/dev/nvme0n1p7，§2.0 / §9.6）。
 	TierNVMe StorageTier = "nvme"
 	// TierSataSSD SATA SSD（量级 ⇒ 装载下限上百秒）。
 	TierSataSSD StorageTier = "sata_ssd"
 	// TierHDD 机械盘（旁注：MoE 按需加载的小随机读会被寻道打死，§9.6——
-	// EDGE-NODE 不是这种情况；这条只用于将来别的设备进族时判型）。
+	// node-a 不是这种情况；这条只用于将来别的设备进族时判型）。
 	TierHDD StorageTier = "hdd"
 )
 

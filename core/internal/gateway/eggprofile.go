@@ -2,7 +2,7 @@
 //
 // 原则（与"闸门只读实测档案"同一条理）：
 //
-//	配置里的 ctx_window 是**意图**（可能不准，实测 EDGE-NODE 的 Qwen 声明 1M 而实跑 -c 262144）；
+//	配置里的 ctx_window 是**意图**（可能不准，实测 node-a 的 Qwen 声明 1M 而实跑 -c 262144）；
 //	档案里的 ctx_window 是**事实**（孵化/标定时记录的实际启动值）。
 //	取值顺序：档案（事实）⇒ 配置声明（意图）⇒ 保守默认。三态必须在日志里可分。
 //
@@ -83,7 +83,7 @@ func ProfileFirstTokenSec(model string) (int, bool) {
 }
 
 // thinkingModelFirstTokenMin — 思考型/大参数模型的保守下限（离线表；无档案时的兜底）。
-// 只用于「放宽」首 token 闸：本地 27B 思考型 + 十几 k 提示，首 token 远超 120s（实测 Mr2109 69.7s / EDGE-NODE 105.5s 仅 32token 小请求）。
+// 只用于「放宽」首 token 闸：本地 27B 思考型 + 十几 k 提示，首 token 远超 120s（实测 node-local 69.7s / node-a 105.5s 仅 32token 小请求）。
 func thinkingModelFirstTokenMin(model string) int {
 	m := strings.ToLower(model)
 	for _, k := range []string{"qwen3.8-27b", "qwen3.8", "nemotron", "deepseek", "qwen3"} {

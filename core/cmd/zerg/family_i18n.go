@@ -13,7 +13,7 @@
 //
 // 三条口径：① **直通不翻译**（脚本退 1 本命令必非 0，薄壳只转发不改写）；
 // ② **stdout/stderr 原样**（脚本自己的结论逐字转出，命令面不二次加工）；
-// ③ **缺件即硬错**（脚本最小入口不在 = 自举件缺席，不给结论，退码 8）。
+// ③ **两半皆缺才硬错**（三段式回退腿：py 在盘优先 ⇒ 缺席回退 Go 半 `ci18Run`/`checkI18nGateMain` ⇒ 两半皆缺才判不了，不给结论、退码 8；✗ **不把「py 件不在盘」当成失败**）。
 package main
 
 import (
@@ -30,6 +30,17 @@ var i18nFields = []string{"rc", "verdict"}
 // i18nScriptRel —— 门禁脚本相对仓根的路径（红线：不许写死私有绝对路径，走 repoRoot 推导）。
 const i18nScriptRel = "ui/scripts/check-i18n.py"
 
+// i18nGoHalfRel —— i18n 门禁脚本（`ui/scripts/check-i18n.py`）的 **Go 半**（本仓真搬体 `check_i18n.go`）。
+// 三段式回退腿：py 在盘优先 · 缺席回退 Go 半（`ci18Run` / `checkI18nGateMain`）· 两半皆缺才判不了（fail-closed）。
+// 先例：`check_private_path_forms.go` 的 `pvGoHalfRel` · `check_newfile_registry.go` 的 `gnrLoadWording`。
+const i18nGoHalfRel = "core/cmd/zerg/check_i18n.go"
+
+// i18nIsFile —— 存在且是普通文件（退役判定的两缀之一 · 与同族先例同形）。
+func i18nIsFile(root, rel string) bool {
+	st, err := os.Stat(filepath.Join(root, filepath.FromSlash(rel)))
+	return err == nil && st.Mode().IsRegular()
+}
+
 func cmdI18n(inv *invocation, stdout, stderr io.Writer) int {
 	// ★ 用法错**先判**：`--json` 不给字段 ⇒ 当场 1 + stdout 0 字节（§4.1 K2）—— 不许先真跑门禁。
 	if inv.jsonGiven && len(inv.fields) == 0 {
@@ -44,10 +55,13 @@ func cmdI18n(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "在仓内跑，或设 ZERG_REPO=<仓根>\n")
 		return exitBlocked
 	}
-	script := filepath.Join(root, i18nScriptRel)
-	if _, err := os.Stat(script); err != nil {
+	// ★ 三段式回退腿（先例 `check_private_path_forms.go` 的 `pvGoHalfRel` / `check_newfile_registry.go`
+	//   的 `gnrLoadWording`）：py 在盘 ⇒ 照旧（后端已是 Go 半 `ci18Run` · 逐字不变）；
+	//   py 缺席而其 **Go 半**在盘 ⇒ 退役态（门禁改由 Go 半承载 · **照常跑** · ✗ 不判「缺件」）；
+	//   两半皆缺（真消失）⇒ 判不了（fail-closed · 退码 8，原语义保留）。
+	if !i18nIsFile(root, i18nScriptRel) && !i18nIsFile(root, i18nGoHalfRel) {
 		inv.setErr("blocked", "i18n_script_absent", "i18n 门禁脚本最小入口不在")
-		fmt.Fprintf(stderr, "%s: i18n 门禁脚本最小入口不在（%s）—— 它是自举件，就地缺席即硬错（退码 8）\n", progName, i18nScriptRel)
+		fmt.Fprintf(stderr, "%s: i18n 门禁脚本最小入口不在（%s · 其 Go 半 %s 亦不在盘）—— 判不了（退码 8）\n", progName, i18nScriptRel, i18nGoHalfRel)
 		return exitBlocked
 	}
 

@@ -22,8 +22,8 @@ import (
 // 每台机器一台账本（内存/显存/驻留明细/未托管项）+ 逐登记模型在该机上的估算。
 //
 // 【机器列表来源】store 心跳快照（**所有机器一律走心跳**）。
-// 3a（2026-09-16 Mr2109 拍：所有可推理的计算机都是子端）：本机 = 名为 Mr2109 的普通子端，
-// 与 edge-node 同形、经心跳上报资源/驻留/代码身份 ⇒ 原先那条"本机实时快照"来源（liveLocalFleetSnapshot，
+// 3a（2026-09-16 Mr2109 拍：所有可推理的计算机都是子端）：本机 = 名为 node-local 的普通子端，
+// 与 node-a 同形、经心跳上报资源/驻留/代码身份 ⇒ 原先那条"本机实时快照"来源（liveLocalFleetSnapshot，
 // 存在理由是 localback 不经心跳、需主控自己补一行）**已随角色退役删除** ⇒ 两个观测面来源单一，不再有
 // "刚启动 30 秒内账本缺 local 而 status 有"的来源不对称问题（该问题随角色本身一起消失）。
 //
@@ -248,7 +248,7 @@ func (h *Handlers) registeredFitInputs() ([]fitInput, string) {
 
 // localModelIndex 从 fleet 配置建"权重文件名(basename) → 本地路径 + 架构族"索引，
 // 用于把登记库记录里的建材定位到本机可读的 .gguf。文件不存在也保留路径，
-// 由 resolveWeightFile 再做存在性判断（本机没有的（如 EDGE-NODE 权重）自然缺席）。
+// 由 resolveWeightFile 再做存在性判断（本机没有的（如 node-a 权重）自然缺席）。
 func (h *Handlers) localModelIndex() map[string]localModelFile {
 	idx := map[string]localModelFile{}
 	if h.Config == nil {

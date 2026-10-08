@@ -1,6 +1,6 @@
 // hatch_check.go —— 孵化后的**运行时封闭性核验**（设计 §6.9：静默失效不得当凭据）。
 //
-// 为什么必须有这一步：EDGE-NODE 实测里 systemd 的挂载类选项**报 `Result=success` 却零约束**——
+// 为什么必须有这一步：node-a 实测里 systemd 的挂载类选项**报 `Result=success` 却零约束**——
 // 账面"隔离好了"、实际什么都没有。所以凡声称"隔离生效"，一律**读 `/proc/<pid>/mountinfo`
 // 实地核**，不得以单元状态为凭。
 //
@@ -93,7 +93,7 @@ type EnclosureReport struct {
 	// HomeMounts 在 mountinfo 里**实地见到**的 /home* 挂载点（判据的实证；空 = 一个都没有）。
 	//
 	// 为什么留这一列：HomeHidden 只表示「mountinfo 里没有 /home* 挂载」⇒「无宿主家目录**内容**」，
-	// 而**不**表示「空间内没有 /home」—— EDGE-NODE 真机 2026-09-15 实测：空间里仍会出现引擎**自建**的
+	// 而**不**表示「空间内没有 /home」—— node-a 真机 2026-09-15 实测：空间里仍会出现引擎**自建**的
 	// `/home/<user>/.cache/comgr`（空目录，宿主家目录内容未泄露）。判据文本必须按「内容」说，
 	// 否则下一个读日志的人会把「/home/<user> 存在」误当成泄露（或反过来，把这条判据当成没用）。
 	HomeMounts []string

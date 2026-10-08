@@ -900,14 +900,14 @@ func afmBuildMap(root string) (afmJV, bool) {
 	}
 	return afmObj(
 		afmKP{afmK("schema"), afmStr("affected-map/1")},
-		afmKP{afmK("_口径"), afmStr("声明表（件→步/面 映射真源）· 由 `python3 scripts/gates/check-affected-map.py --emit` " +
+		afmKP{afmK("_口径"), afmStr("声明表（件→步/面 映射真源）· 由 `zerg gate check check-affected-map --emit` " +
 			"**现读生成**（A 步表 ＋ B gate-coverage.config.json ＋ C newcmd-paths-baseline.json）· " +
 			"✗ 手敲。未声明件按已拍「默认每轮都跑」处置（本表 files 未覆盖者即未声明）。")},
 		afmKP{afmK("source_head"), head},
 		afmKP{afmK("input_fingerprint"), afmStr(afmFingerprint(root, steps, cov, newcmd))},
 		afmKP{afmK("_fingerprint_note"), afmStr("入键 = 步表文本 ＋ 每个按名点到脚本件的 sha256 ＋ gate-coverage.config.json " +
 			"＋ newcmd-paths-baseline.json（内容相对 · ✗ 不含 git HEAD ⇒ 无冻结点自指 · 只有被管辖输入变才过期）。" +
-			"取不到 ⇒ 下游 affected-steps.py 报「不给结论」rc=2。")},
+			"取不到 ⇒ 下游 affected-steps 报「不给结论」rc=2。")},
 		afmKP{afmK("faces"), afmObj(faceOut...)},
 		afmKP{afmK("files"), afmArr(entries...)},
 		afmKP{afmK("undeclared"), afmObj(

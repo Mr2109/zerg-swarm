@@ -8,7 +8,7 @@ import (
 
 // TestRocmVramFrom_SingleSource —— `Q-214` 的判据：used / total **必须同源折叠**。
 //
-// 背景（照实）：`Q-214` 报「edge-node 报 `vram_free_gb 124.8` / `vram_total_gb 125`，而 `vram_used_gb`
+// 背景（照实）：`Q-214` 报「node-a 报 `vram_free_gb 124.8` / `vram_total_gb 125`，而 `vram_used_gb`
 // 仍显 0.2（= 只有 VRAM，未含 GTT）」，怀疑心跳里 used / free 走了两条采样路径。
 // 复核结论 = **不成立**（单一折叠，见本测 + 心跳侧 `TestBuildBody_VramFreeEqualsTotalMinusUsed`），
 // 但「不同源」这个形状**没有机器判据挡着** ⇒ 本测把那一条钉死：
@@ -20,7 +20,7 @@ import (
 //	负控③：VRAM total ≤ 0 ⇒ `ok=false`（拿不到就如实说未知，不编）。
 func TestRocmVramFrom_SingleSource(t *testing.T) {
 	const gib = 1 << 30
-	// 照 EDGE-NODE/Strix Halo 实测量级：专用显存 1 GiB（used 0.16），模型驻 GTT 124 GiB（used ≈26.06）。
+	// 照 node-a/Strix Halo 实测量级：专用显存 1 GiB（used 0.16），模型驻 GTT 124 GiB（used ≈26.06）。
 	rocm := "GPU[0] : VRAM Total Memory (B): 1073741824\n" +
 		"GPU[0] : VRAM Total Used Memory (B): 171798692\n"
 

@@ -112,10 +112,10 @@ const chglRCBlocked = 2
 // chglCols —— 表头唯一真源（与 py COLS 逐字同）。
 var chglCols = []string{"zh", "en", "id", "do_not_translate", "forbid_zh", "forbid_en", "owner", "note"}
 
-// chglWhitelist —— 词表文件自身与两个脚本（否则规则文本自己就红）。
+// chglWhitelist —— 词表文件自身与两个脚本（否则规则文本自己就红）。末项 = 生成器 Go 真身（原 py 退役随动）。
 var chglWhitelist = []string{
 	"docs/术语表.tsv", "docs/术语表.md", "docs/术语表.jieba.txt", "docs/术语表.forbid.txt",
-	"docs/术语表-说明.md", "scripts/gates/check-glossary.py", "scripts/docs/gen-glossary-exports.py",
+	"docs/术语表-说明.md", "scripts/gates/check-glossary.py", "core/cmd/zerg/gen_glossary_exports.go",
 }
 
 // chglPrivateExact —— 「术语」（标题文本恰为此值即命中 W5）。

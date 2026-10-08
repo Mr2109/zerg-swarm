@@ -120,6 +120,11 @@ var brConditions = []brCond{
 		unit:      "i18n 中文门禁基线白名单的**声明条数**（只许收不许放：白名单多一条 ⇒ 门 G4 当场红）",
 		measure:   []string{"python3", brPyJoin("ui", "scripts", "check-i18n.py"), "--json"},
 		measureRe: `"baseline_allowed"\s*:\s*(\d+)`,
+		// ★ 退役态回落（2026-10-08 · 壳转账接线）：本格现测件 `ui/scripts/check-i18n.py` 有 Go 半
+		//   `checkI18nGateMain`（= 命令面 `zerg ui i18n` 的执行体 `ci18Run`）⇒ 带上它。py 在盘 ⇒
+		//   旧路逐字不变；py 退役 ⇒ 进程内跑 Go 半（同判据 · 同 measureRe · ✗ 不 fail-closed）。
+		//   同族三格（check-gate-coverage / cli-contract / doc-cmds）2026-10-07 已同形接线。见 `brMeasureValue`。
+		goMain: checkI18nGateMain,
 	},
 }
 

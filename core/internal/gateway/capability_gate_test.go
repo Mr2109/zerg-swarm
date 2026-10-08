@@ -40,10 +40,10 @@ func (f *fakeCapSource) CapabilitySnapshot(model string) (*modelreg.CapabilitySn
 }
 
 // gateTestGateway 造一个带假能力来源的网关：模型 model 有两个候选，
-// local 的 backend=llama-server、edge-node 的 backend=vllm（两种引擎，正是打穿场景）。
+// local 的 backend=llama-server、node-a 的 backend=vllm（两种引擎，正是打穿场景）。
 func gateTestGateway(t *testing.T, src CapabilitySnapshotSource, candidates []config.ModelCandidate) *Gateway {
 	t.Helper()
-	fleet := map[string]config.FleetNode{"edge-node": {Host: "<worker-ip>", Port: 8100}}
+	fleet := map[string]config.FleetNode{"node-a": {Host: "<cluster-ip>", Port: 8100}}
 	return &Gateway{
 		config:     &config.FleetConfig{Models: map[string][]config.ModelCandidate{"visionmodel": candidates}, Fleet: fleet},
 		roundRobin: map[string]int{},
@@ -52,11 +52,11 @@ func gateTestGateway(t *testing.T, src CapabilitySnapshotSource, candidates []co
 	}
 }
 
-// twoEngineCandidates：local(llama-server) + edge-node(vllm)。
+// twoEngineCandidates：local(llama-server) + node-a(vllm)。
 func twoEngineCandidates() []config.ModelCandidate {
 	return []config.ModelCandidate{
-		{Host: "local", Backend: "llama-server", File: "~/visionmodel.gguf"},
-		{Host: "edge-node", Backend: "vllm", File: "/data/visionmodel.gguf"},
+		{Host: "local", Backend: "llama-server", File: "/Users/<user>/visionmodel.gguf"},
+		{Host: "node-a", Backend: "vllm", File: "/data/visionmodel.gguf"},
 	}
 }
 
@@ -80,7 +80,7 @@ func TestRouteGate_RejectUnprovenTargetEngine(t *testing.T) {
 
 	// 只有 vllm 候选时 → fail-closed，且错误写明哪个引擎缺哪条能力证据。
 	gOnly := gateTestGateway(t, src, []config.ModelCandidate{
-		{Host: "edge-node", Backend: "vllm", File: "/data/visionmodel.gguf"},
+		{Host: "node-a", Backend: "vllm", File: "/data/visionmodel.gguf"},
 	})
 	_, err = gOnly.pickRoute("visionmodel", "", "", "vision")
 	if err == nil {
@@ -118,8 +118,8 @@ func TestRouteGate_PerEngineValues(t *testing.T) {
 	if err != nil {
 		t.Fatalf("vllm 上 vision=true 应可路由：%v", err)
 	}
-	if route.Host != "edge-node" {
-		t.Fatalf("应选被证 vision=true 的 vllm 候选（edge-node），实际 %s", route.Host)
+	if route.Host != "node-a" {
+		t.Fatalf("应选被证 vision=true 的 vllm 候选（node-a），实际 %s", route.Host)
 	}
 	// 反向：被证 false 的引擎不得被选中。
 	if route.Host == "local" {

@@ -100,7 +100,7 @@ func TestEnvelopeTruth_SixKeysExactly(t *testing.T) {
 	cases := [][]string{
 		{"version", "--json", "name"},
 		{"repo", "status", "--json", "head"},
-		{"impact", impactZeroHitTarget(), "--json", "what"},
+		{"impact", impactZeroHitTarget(), "--json", "what", "--yes"},
 	}
 	for _, argv := range cases {
 		doc, _ := envelopeDoc(t, argv...)
@@ -159,7 +159,7 @@ func TestEnvelopeTruth_TruncatedAndWarningsPair(t *testing.T) {
 	t.Setenv("ZERG_STATE_DIR", t.TempDir())
 
 	// 正控：`impact` 打在**真会被裁**的大件上（六层全量 > 卡片上限 ⇒ 卡片块自己报 truncated=true）。
-	doc, errb := envelopeDoc(t, "impact", "core/cmd/zerg/main.go", "--json", "what,why")
+	doc, errb := envelopeDoc(t, "impact", "core/cmd/zerg/main.go", "--json", "what,why", "--yes")
 	if !strings.Contains(errb, "本跑 truncated=true") {
 		t.Fatalf("准备态不对：卡片块没报真裁（stderr 里找不到「本跑 truncated=true」）—— 换一个更大的件再判")
 	}
@@ -207,7 +207,7 @@ func TestEnvelopeTruth_TruncatedAndWarningsPair(t *testing.T) {
 	}
 
 	// 成对负控（**没裁**）：零命中件 ⇒ 卡片一条不裁。
-	neg, _ := envelopeDoc(t, "impact", impactZeroHitTarget(), "--json", "what")
+	neg, _ := envelopeDoc(t, "impact", impactZeroHitTarget(), "--json", "what", "--yes")
 	if string(neg["truncated"]) != "false" {
 		t.Errorf("负控②失败：一条都没裁，包封 `truncated` = %s（要 false）", string(neg["truncated"]))
 	}
@@ -297,7 +297,7 @@ func TestEnvelopeTruth_MetaSubkeysAndOldKeys(t *testing.T) {
 	t.Setenv("ZERG_STATE_DIR", t.TempDir())
 
 	// 正控：`meta` 的三个**旧子键**取法一字未动（count == items 条数 · source 非空 · changed 布尔字面量）。
-	doc, _ := envelopeDoc(t, "impact", "core/cmd/zerg/main.go", "--json", "what,why")
+	doc, _ := envelopeDoc(t, "impact", "core/cmd/zerg/main.go", "--json", "what,why", "--yes")
 	var meta map[string]json.RawMessage
 	if err := json.Unmarshal(doc["meta"], &meta); err != nil {
 		t.Fatalf("`meta` 不是对象：%v", err)

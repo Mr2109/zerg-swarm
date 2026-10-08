@@ -153,8 +153,8 @@ func TestModelsHandler_RegistryIDJoin(t *testing.T) {
 	h := &Handlers{
 		Config: &config.FleetConfig{
 			Models: map[string][]config.ModelCandidate{
-				"example-35b-v2": {{Host: "Mr2109", Backend: "llama-server"}},
-				"gemma-4-26B":    {{Host: "edge-node", Backend: "llama-server"}},
+				"example-35b-v2": {{Host: "node-local", Backend: "llama-server"}},
+				"gemma-4-26B":    {{Host: "node-a", Backend: "llama-server"}},
 				"test-model":     {{Host: "127.0.0.1", Backend: "llama-server"}},
 			},
 			Fleet: map[string]config.FleetNode{},

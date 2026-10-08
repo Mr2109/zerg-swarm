@@ -38,8 +38,8 @@ func TestImpact_CommandTreeAndEnvelopeSource(t *testing.T) {
 	// 也 rc=0 且真写三件缓存；挂 D2 只会让帮助面计数与真实行为不一致）⇒ 本条**不挂 `danger`**。
 	// 本格由「唯不许非空」改成**逐字钉状态**：要**空串**（一旦有人挂了 `D2`/`D1`/`D3` 而执行门
 	// 未同修 ⇒ 判红，逼其与 `GAP-20260929-31` 的治法同批落）。比原本的空串断言**更窄**，不是放宽。
-	if info.DangerLevel != "" {
-		t.Errorf("`impact` 档位 = %q（要**逐字**空串）—— 它是写面（账 `GAP-20260927-140`），但定档与执行门待拍板（账 `GAP-20260929-31`：登记 ≠ 拦）⇒ 拍板前不挂 danger；挂档必须与执行门同批落", info.DangerLevel)
+	if info.DangerLevel != "D2" {
+		t.Errorf("`impact` 档位 = %q（要**逐字** `D2`）—— 它是写面（账 `GAP-20260927-140`）；本单（2026-10-08 拍「默认档要 fail-closed」）已把定档（`D2`）与执行门（`writeGuardYes`）**同批**落齐（账 `GAP-20260927-140` ① · 撤销 `GAP-20260929-31` 的「拍板前不挂 danger」）", info.DangerLevel)
 	}
 	if strings.Join(info.Fields, ",") != "what,why,how,red" {
 		t.Errorf("字段表 = %v（要 §3.1 的四字段 what/why/how/red）", info.Fields)
@@ -116,7 +116,7 @@ func TestImpact_MachineFaceSixKeysAndEmptyItems(t *testing.T) {
 	t.Setenv("ZERG_STATE_DIR", t.TempDir())
 	tgt := impactZeroHitTarget()
 
-	rc, out, errb := runCapture("impact", tgt, "--json", "what,why,how,red")
+	rc, out, errb := runCapture("impact", tgt, "--json", "what,why,how,red", "--yes")
 	if rc != 1 {
 		t.Fatalf("目标有效但零命中 ⇒ 退码 1（§7.5「无影响面」· 不是 0、不是失败），得到 %d · stderr=%s", rc, errb)
 	}
@@ -138,7 +138,7 @@ func TestImpact_MachineFaceSixKeysAndEmptyItems(t *testing.T) {
 	}
 
 	// 判据③（正控）：不给 `--json` ⇒ 人面恒三行。
-	rc, out, _ = runCapture("impact", tgt)
+	rc, out, _ = runCapture("impact", tgt, "--yes")
 	if rc != 1 {
 		t.Errorf("人面零命中 ⇒ 退码 1，得到 %d", rc)
 	}
@@ -147,7 +147,7 @@ func TestImpact_MachineFaceSixKeysAndEmptyItems(t *testing.T) {
 	}
 
 	// 反面对照（`A2` 的正控）：有影响面的件 ⇒ 退码 **0**（不是 1）· 人面仍恒三行。
-	rc, out, errb = runCapture("impact", "core/cmd/zerg/main.go")
+	rc, out, errb = runCapture("impact", "core/cmd/zerg/main.go", "--yes")
 	if rc != 0 {
 		t.Errorf("有影响面的件 ⇒ 退码 0，得到 %d · stderr=%s", rc, errb)
 	}
@@ -156,7 +156,7 @@ func TestImpact_MachineFaceSixKeysAndEmptyItems(t *testing.T) {
 	}
 
 	// 契约 id 目标（第二态）也走同一条路（在册 id 现读自 registry.json）。
-	rc, out, errb = runCapture("impact", "S-g", "--json", "what")
+	rc, out, errb = runCapture("impact", "S-g", "--json", "what", "--yes")
 	if rc != 0 {
 		t.Errorf("在册契约 id 目标（`S-g` 指向命令面目录）⇒ 退码 0，得到 %d · stderr=%s", rc, errb)
 	}
@@ -179,7 +179,7 @@ func TestImpact_NegativeControls(t *testing.T) {
 	t.Setenv("ZERG_STATE_DIR", t.TempDir())
 
 	// ① 判定口的负控：三枚坏期望，逐枚**必须**报错。
-	rc, out, _ := runCapture("impact", impactZeroHitTarget(), "--json", "what")
+	rc, out, _ := runCapture("impact", impactZeroHitTarget(), "--json", "what", "--yes")
 	if rc != 1 {
 		t.Fatalf("准备态不对：正控退码 = %d（要 1 —— 零命中件见 impactZeroHitTarget）", rc)
 	}

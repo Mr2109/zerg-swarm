@@ -122,7 +122,7 @@ func (c *ChatInfer) Infer(ctx context.Context, model string, sysPrompt string, m
 		body["session_id"] = sid
 	}
 	if len(tools) > 0 && len(tools[0]) > 0 {
-		// P4-50 修复: __temp__ 是温度标记（收尾轮 0.3）——不是真 tools——必须剥离（EDGE-NODE 拒绝 Missing tool type）
+		// P4-50 修复: __temp__ 是温度标记（收尾轮 0.3）——不是真 tools——必须剥离（node-a 拒绝 Missing tool type）
 		realTools := make([]map[string]any, 0, len(tools[0]))
 		for _, t := range tools[0] {
 			if _, isTemp := t["__temp__"]; isTemp {
@@ -180,7 +180,7 @@ func (c *ChatInfer) Infer(ctx context.Context, model string, sysPrompt string, m
 	}
 	res, perr := parseChatResult(raw)
 	// T1.4 批量几何：非流式响应体里同样抄一份（拿不到 ⇒ 不设 ⇒ 事件流里字段缺席，绝不编造）。
-	// ⚠ 响应被截断（EDGE-NODE 截断容错路径）时 JSON 不完整 ⇒ 解析不出几何 ⇒ 缺席（宁缺不编）。
+	// ⚠ 响应被截断（node-a 截断容错路径）时 JSON 不完整 ⇒ 解析不出几何 ⇒ 缺席（宁缺不编）。
 	if res != nil {
 		if g, _ := infergeom.Parse(raw); g.Any() {
 			res.Geometry = &g
@@ -223,7 +223,7 @@ func (c *ChatInfer) InferStream(ctx context.Context, model string, sysPrompt str
 	}
 	body["temperature"] = toolTemp
 	if len(tools) > 0 && len(tools[0]) > 0 {
-		// P4-50 修复: __temp__ 是温度标记（收尾轮 0.3）——不是真 tools——必须剥离（EDGE-NODE 拒绝 Missing tool type）
+		// P4-50 修复: __temp__ 是温度标记（收尾轮 0.3）——不是真 tools——必须剥离（node-a 拒绝 Missing tool type）
 		realTools := make([]map[string]any, 0, len(tools[0]))
 		for _, t := range tools[0] {
 			if _, isTemp := t["__temp__"]; isTemp {
@@ -364,7 +364,7 @@ func (c *ChatInfer) InferStream(ctx context.Context, model string, sysPrompt str
 	return res, nil
 }
 
-// parseChatResultTolerant — 容错解析（EDGE-NODE llama-server 对含 tool_calls 响应固定截断——issue-3889 同类）
+// parseChatResultTolerant — 容错解析（node-a llama-server 对含 tool_calls 响应固定截断——issue-3889 同类）
 // 截断点在 timings/usage 处——content/reasoning_content/tool_calls 已完整——字符串提取
 // 标准解析失败时调用（故障自愈——不因尾部截断丢整个响应）
 func parseChatResultTolerant(raw []byte) *InferResult {
@@ -527,7 +527,7 @@ func parseChatResult(raw []byte) (*InferResult, error) {
 		} `json:"usage"`
 	}
 	if err := json.Unmarshal(raw, &obj); err != nil {
-		// EDGE-NODE 截断容错（tool_calls 响应在 usage 处断——content/tool_calls 完整）
+		// node-a 截断容错（tool_calls 响应在 usage 处断——content/tool_calls 完整）
 		tol := parseChatResultTolerant(raw)
 		if tol.Content != "" || len(tol.ToolCalls) > 0 || tol.Reasoning != "" {
 			return tol, nil

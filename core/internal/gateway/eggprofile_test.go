@@ -15,7 +15,7 @@ func TestProfileCtxWindow(t *testing.T) {
 	}
 	// 正常档案（含注释行，模拟真实档案形态）
 	if err := os.WriteFile(filepath.Join(dir, "Qwen3.8-27B.yaml"),
-		[]byte("# 实测档案\n# ctx_window: 999(注释应忽略)\nctx_window: 262144\nmachine: edge-node\n"), 0o644); err != nil {
+		[]byte("# 实测档案\n# ctx_window: 999(注释应忽略)\nctx_window: 262144\nmachine: node-a\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	v, ok := ProfileCtxWindow("Qwen3.8-27B")

@@ -33,7 +33,7 @@ func hatchTestProfile() monitor.EggProfile {
 		SuggestedIdleUnloadS: 600,
 		SchemaVersion:        1,
 		MeasuredAt:           time.Now(),
-		Machine:              "edge-node",
+		Machine:              "node-a",
 		CalibRuns:            3,
 	}
 }

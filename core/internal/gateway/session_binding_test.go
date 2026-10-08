@@ -12,7 +12,7 @@ func TestSessionBindingCapAndLRU(t *testing.T) {
 	g := NewGateway("test-token", nil, nil, nil)
 	total := maxSessionBindings + 88
 	for i := 0; i < total; i++ {
-		g.bindSession(fmt.Sprintf("k%04d", i), "edge-node", "m")
+		g.bindSession(fmt.Sprintf("k%04d", i), "node-a", "m")
 	}
 	if n := len(g.sessions); n > maxSessionBindings {
 		t.Fatalf("超出硬上限：%d > %d", n, maxSessionBindings)
@@ -27,9 +27,9 @@ func TestSessionBindingCapAndLRU(t *testing.T) {
 
 func TestBoundSessionRefreshKeepsAlive(t *testing.T) {
 	g := NewGateway("test-token", nil, nil, nil)
-	g.bindSession("s1", "edge-node", "m")
-	g.sessions["s1"] = sessionBinding{host: "edge-node", model: "m", lastUsed: time.Now().Add(-sessionTTL + 2*time.Minute)}
-	if got := g.boundSession("s1", "m"); got != "edge-node" {
+	g.bindSession("s1", "node-a", "m")
+	g.sessions["s1"] = sessionBinding{host: "node-a", model: "m", lastUsed: time.Now().Add(-sessionTTL + 2*time.Minute)}
+	if got := g.boundSession("s1", "m"); got != "node-a" {
 		t.Fatalf("未命中：%q", got)
 	}
 	if d := time.Since(g.sessions["s1"].lastUsed); d > time.Minute {
@@ -39,14 +39,14 @@ func TestBoundSessionRefreshKeepsAlive(t *testing.T) {
 
 func TestBoundSessionExpiredAndModelMismatch(t *testing.T) {
 	g := NewGateway("test-token", nil, nil, nil)
-	g.sessions["s2"] = sessionBinding{host: "edge-node", model: "m", lastUsed: time.Now().Add(-2 * sessionTTL)}
+	g.sessions["s2"] = sessionBinding{host: "node-a", model: "m", lastUsed: time.Now().Add(-2 * sessionTTL)}
 	if got := g.boundSession("s2", "m"); got != "" {
 		t.Fatalf("过期项应返回空，得到 %q", got)
 	}
 	if _, ok := g.sessions["s2"]; ok {
 		t.Fatal("过期项应被删除")
 	}
-	g.bindSession("s3", "edge-node", "m1")
+	g.bindSession("s3", "node-a", "m1")
 	if got := g.boundSession("s3", "m2"); got != "" {
 		t.Fatalf("换模型应重新路由，得到 %q", got)
 	}

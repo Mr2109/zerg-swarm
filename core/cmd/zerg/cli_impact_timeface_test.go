@@ -55,7 +55,19 @@ else:
     sys.exit(2)
 `
 
-// timefaceFixtureRoot 造一棵**合成仓**（只放一把合成尺 ⇒ 判据全在这一件上）。
+// timefaceFixtureZergShim —— 合成 `bin/zerg`（**新调用形态**的装配件）。
+// `family_impact_timeface.go` 的接线批 4 把探针那一跑改成了 `bin/zerg gate check check-slice <flag>`
+// （现读 `impactCalibProbeRun`）⇒ 合成仓里也得有这一件才起得来。本件**只做调用形态的装配**：
+// 把前三个词 `gate check check-slice` 剥掉，余下旗标交给**同一把合成尺**
+// （`scripts/gates/check-slice.py` ⇒ 夹具自己的 7 条），✗ 不改被测行为（产品码一字不动）。
+const timefaceFixtureZergShim = `#!/bin/sh
+if [ "$1" = "gate" ] && [ "$2" = "check" ] && [ "$3" = "check-slice" ]; then
+  shift 3
+fi
+exec python3 "$(dirname "$0")/../scripts/gates/check-slice.py" "$@"
+`
+
+// timefaceFixtureRoot 造一棵**合成仓**（只放一把合成尺 + 它的调用装配 ⇒ 判据全在这两件上）。
 func timefaceFixtureRoot(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
@@ -65,6 +77,14 @@ func timefaceFixtureRoot(t *testing.T) string {
 	if err := os.WriteFile(filepath.Join(root, "scripts", "gates", "check-slice.py"),
 		[]byte(timefaceFixtureScript), 0o644); err != nil {
 		t.Fatalf("合成尺写不出来：%v", err)
+	}
+	// 夹具的 `bin/zerg`：产品按新调用形态找它（`filepath.Join(root,"bin","zerg")`）⇒ 必须可执行。
+	if err := os.MkdirAll(filepath.Join(root, "bin"), 0o755); err != nil {
+		t.Fatalf("合成 bin 目录造不出来：%v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "bin", "zerg"),
+		[]byte(timefaceFixtureZergShim), 0o755); err != nil {
+		t.Fatalf("合成 bin/zerg 写不出来：%v", err)
 	}
 	return root
 }

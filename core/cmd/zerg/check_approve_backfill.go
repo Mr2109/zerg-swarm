@@ -724,7 +724,7 @@ func cafbJudgeAll(r *cafbReadings, regConst string) ([]string, [3]int) {
 	// ★ 缺口 `GAP-20260928-88`：红行**必须印出应有值**（判据一字不放宽 · 仍逐字比 sha256）。
 	// ★ 登记值 `regConst` 由同一真源现读（缺口 `GAP-20261004-09`），✗ 不是件内编译期快照。
 	if r.devSHA != regConst {
-		problems = append(problems, fmt.Sprintf("B5 破：在册 `dev_edit.json` 的 sha256 = %s ≠ 登记值（明标没进件 = 它一个字节不该动）· **应改为** %s = \"%s\" —— 正门刷值：`python3 scripts/gates/check-approve-backfill.py --refresh-constant`（先干跑）· 加 `--yes` 才落（只读看值：`--emit-constant`）",
+		problems = append(problems, fmt.Sprintf("B5 破：在册 `dev_edit.json` 的 sha256 = %s ≠ 登记值（明标没进件 = 它一个字节不该动）· **应改为** %s = \"%s\" —— 正门刷值：`zerg gate check check-approve-backfill --refresh-constant`（先干跑）· 加 `--yes` 才落（只读看值：`--emit-constant`）",
 			r.devSHA, cafbConstName, r.devSHA))
 	}
 	return problems, [3]int{n, ev, bf}
@@ -762,7 +762,7 @@ func cafbEmitConstant(out io.Writer, gatePath string, devSHA *string) int {
 	}
 	fmt.Fprintln(out, "   判定       : **不一致** ⇒ 门⑰ 现读 B5 破 · 该刷成下面这一行")
 	fmt.Fprintf(out, "   %s = \"%s\"\n", cafbConstName, *devSHA)
-	fmt.Fprintln(out, "   正门       : python3 scripts/gates/check-approve-backfill.py --refresh-constant --yes（先干跑不带 `--yes` · 只读再看一遍用 `--emit-constant`）")
+	fmt.Fprintln(out, "   正门       : zerg gate check check-approve-backfill --refresh-constant --yes（先干跑不带 `--yes` · 只读再看一遍用 `--emit-constant`）")
 	return 1
 }
 

@@ -27,7 +27,7 @@
 | 项 | 值 |
 |---|---|
 | 支持线（release line） | **一条**：`2.x`（单产品线 · 私有主体 · 无 nightly/beta/stable 多通道） |
-| 当前支持版本 | **最新发布的 patch 版**。版本真源 = `core/internal/version/version.go` 的 `const Version`（**本件不复写具体版本 —— 以该件现读为准**）；「四处同版」由机检脚本（`scripts/gates/check-version-sources.py`） |
+| 当前支持版本 | **最新发布的 patch 版**。版本真源 = `core/internal/version/version.go` 的 `const Version`（**本件不复写具体版本 —— 以该件现读为准**）；「四处同版」由机检脚本（`core/cmd/zerg/check_version_sources.go` · Go 半 · `zerg gate check check-version-sources`） |
 | patch 窗口长度 | **到下一个 patch 版发布为止** —— 照 Go 口径「1.x 的小版本修到 1.x+2 发布为止」的**最小形式**：只支持最新一版。★ 这个长度是**虫族自定的声明**，不是业界统一值（业界有 9 个月 / 1 年 / 2 年多种取法）—— 别把它读成行业合规值 |
 | 旧版怎么办 | **不回移**：安全与阻断级修复只对当前支持版本出；旧版不再维护（留在旧版 = 自行承担，不承诺二进制兼容） |
 | 安全修复的判定入口 | 私有漏洞报告（见上「报告漏洞」）；7 天内确认收到 |
@@ -41,6 +41,6 @@
 - **跨架构两件**（`zerg-agentd-linux-amd64` · `zerg-agentd-darwin-amd64`；组件 agentd；
   旧三段名 `zerg-agent-amd64` / `zerg-agent-linux` 已于 2026-10-03 改名迁移）**已纳入构建与签名线**。——
   已知缺口。发布闸按「即刻拦 / 先报告」两档分：**arm64 四件即刻拦**（`zerg-core` · `zerg-agent` · `zerg-ui` · `zerg-wall`），
-  这两件**先报告**。★ 2026-10-03 起它们已**纳入构建与签名线**（`build-all.sh` 非 `--dist` 档产出、
+  这两件**先报告**。★ 2026-10-03 起它们已**纳入构建与签名线**（`scripts/build/build-all.sh` 非 `--dist` 档产出、
   与其余件同一对签名函数）⇒ 跨平台签名不再需要额外工具链；保留「先报告」档是因为该档位的
   挡位口径尚未随产出线上调（上调要单独拍板）。

@@ -124,8 +124,8 @@ func TestCompositeBranch_TextRequestUnaffected(t *testing.T) {
 	}
 }
 
-// failoverGateGateway：模型 visionmodel 两候选——mini-node-1=llama-server（vision 已证）/
-// edge-node=vllm（vision 未证）。正是「首跳引擎被证过、换机目标未验证」的场景。
+// failoverGateGateway：模型 visionmodel 两候选——node-b=llama-server（vision 已证）/
+// node-a=vllm（vision 未证）。正是「首跳引擎被证过、换机目标未验证」的场景。
 func failoverGateGateway(t *testing.T) *Gateway {
 	t.Helper()
 	src := &fakeCapSource{snaps: map[string]*modelreg.CapabilitySnapshotArtifact{
@@ -136,18 +136,18 @@ func failoverGateGateway(t *testing.T) *Gateway {
 	cfg := &config.FleetConfig{
 		Models: map[string][]config.ModelCandidate{
 			"visionmodel": {
-				{Host: "mini-node-1", Backend: "llama-server", File: "/mini-node-1/visionmodel.gguf"},
-				{Host: "edge-node", Backend: "vllm", File: "/data/visionmodel.gguf"},
+				{Host: "node-b", Backend: "llama-server", File: "/node-b/visionmodel.gguf"},
+				{Host: "node-a", Backend: "vllm", File: "/data/visionmodel.gguf"},
 			},
 		},
 		Fleet: map[string]config.FleetNode{
-			"mini-node-1": {Host: "<worker-ip>", Port: 8100},
-			"edge-node":    {Host: "<worker-ip>", Port: 8100},
+			"node-b": {Host: "<cluster-ip>", Port: 8100},
+			"node-a": {Host: "<cluster-ip>", Port: 8100},
 		},
 	}
 	st := store.NewStore()
-	injectSnap(st, "mini-node-1", "visionmodel", 0, true, 0.1)
-	injectSnap(st, "edge-node", "visionmodel", 0, true, 0.1)
+	injectSnap(st, "node-b", "visionmodel", 0, true, 0.1)
+	injectSnap(st, "node-a", "visionmodel", 0, true, 0.1)
 	return &Gateway{
 		config:     cfg,
 		roundRobin: map[string]int{},
@@ -159,13 +159,13 @@ func failoverGateGateway(t *testing.T) *Gateway {
 	}
 }
 
-// ②a 首跳引擎（mini-node-1/llama.cpp）被证过 vision，换机目标只剩 edge-node（vllm，未验证）
+// ②a 首跳引擎（node-b/llama.cpp）被证过 vision，换机目标只剩 node-a（vllm，未验证）
 // → 换机后**必须**被拦（fail-closed，*CapabilityGateError，分类 400 capability_unavailable）。
 func TestPickFallbackRoute_ReGatesCapabilityAfterSwitch(t *testing.T) {
 	g := failoverGateGateway(t)
-	failed := &RouteResult{Host: "mini-node-1"} // 首跳 = 被证过的引擎
+	failed := &RouteResult{Host: "node-b"} // 首跳 = 被证过的引擎
 
-	_, err := g.pickFallbackRoute(failed, "visionmodel", "backend mini-node-1 forward failed: i/o timeout", []string{"vision"})
+	_, err := g.pickFallbackRoute(failed, "visionmodel", "backend node-b forward failed: i/o timeout", []string{"vision"})
 	if err == nil {
 		t.Fatal("换机目标引擎（vllm）未被证过 vision 却放行——门槛被换机绕过（静默降级）")
 	}
@@ -181,12 +181,12 @@ func TestPickFallbackRoute_ReGatesCapabilityAfterSwitch(t *testing.T) {
 // ②b 无必需能力（required=nil）→ 换机照常（不得误拦，回归）。
 func TestPickFallbackRoute_WithoutRequiredStillSwitches(t *testing.T) {
 	g := failoverGateGateway(t)
-	route, err := g.pickFallbackRoute(&RouteResult{Host: "mini-node-1"}, "visionmodel", "backend mini-node-1 forward failed: i/o timeout", nil)
+	route, err := g.pickFallbackRoute(&RouteResult{Host: "node-b"}, "visionmodel", "backend node-b forward failed: i/o timeout", nil)
 	if err != nil {
 		t.Fatalf("无必需能力时换机不应被误拦：%v", err)
 	}
-	if route.Host != "edge-node" {
-		t.Fatalf("应换到 edge-node，实际 %s", route.Host)
+	if route.Host != "node-a" {
+		t.Fatalf("应换到 node-a，实际 %s", route.Host)
 	}
 }
 
@@ -198,12 +198,12 @@ func TestPickFallbackRoute_RequiredProvenOnTargetStillSwitches(t *testing.T) {
 			{Name: "vision", Value: true, Source: "probed", Evidence: modelreg.EvidenceVision, Engines: []string{"llama.cpp", "vllm"}},
 		}},
 	}}
-	route, err := g.pickFallbackRoute(&RouteResult{Host: "mini-node-1"}, "visionmodel", "backend mini-node-1 forward failed: i/o timeout", []string{"vision"})
+	route, err := g.pickFallbackRoute(&RouteResult{Host: "node-b"}, "visionmodel", "backend node-b forward failed: i/o timeout", []string{"vision"})
 	if err != nil {
 		t.Fatalf("目标引擎也被证过 vision，换机不应被拦：%v", err)
 	}
-	if route.Host != "edge-node" {
-		t.Fatalf("应换到 edge-node，实际 %s", route.Host)
+	if route.Host != "node-a" {
+		t.Fatalf("应换到 node-a，实际 %s", route.Host)
 	}
 }
 
@@ -214,7 +214,7 @@ func TestForwardToBackend_FailoverReGatesWithRequired(t *testing.T) {
 	g.client = &http.Client{Timeout: 5 * time.Second}
 
 	// 首跳 URL 指向必然失败的本机端口（连接被拒）→ 触发内部换机 failover
-	route := &RouteResult{Host: "mini-node-1", Port: 1, URL: "http://127.0.0.1:1/infer"}
+	route := &RouteResult{Host: "node-b", Port: 1, URL: "http://127.0.0.1:1/infer"}
 	body := []byte(`{"model":"visionmodel","messages":[{"role":"user","content":"看图"}]}`)
 
 	_, err := g.forwardToBackend(context.Background(), route, "/v1/chat/completions", body, http.Header{}, []string{"vision"})

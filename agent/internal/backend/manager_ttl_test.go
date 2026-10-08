@@ -137,16 +137,16 @@ func TestTTL_EnvParse(t *testing.T) {
 func TestTTL_WiredThroughNewManager(t *testing.T) {
 	t.Setenv(EnvMaxResident, "")
 	t.Setenv(EnvModelTTL, "")
-	if got := NewManager(nil, "edge-node").IdleTTL(); got != DefaultIdleTTL {
+	if got := NewManager(nil, "node-a").IdleTTL(); got != DefaultIdleTTL {
 		t.Fatalf("未配置 TTL 时应取默认 %v，实得 %v", DefaultIdleTTL, got)
 	}
 	t.Setenv(EnvModelTTL, "0")
-	if got := NewManager(nil, "edge-node").IdleTTL(); got != 0 {
+	if got := NewManager(nil, "node-a").IdleTTL(); got != 0 {
 		t.Fatalf("显式设 0 应关闭 TTL（0），实得 %v", got)
 	}
 	t.Setenv(EnvModelTTL, "")
 	t.Setenv(EnvModelTTL, "300")
-	m := NewManager(nil, "edge-node")
+	m := NewManager(nil, "node-a")
 	defer m.StopIdleReaper()
 	if got := m.IdleTTL(); got != 300*time.Second {
 		t.Fatalf("EnvModelTTL=300 应生效为 300s，实得 %v", got)

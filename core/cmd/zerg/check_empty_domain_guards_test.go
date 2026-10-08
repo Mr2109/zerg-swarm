@@ -205,8 +205,8 @@ func TestCheckEmptyDomainGuardsGate(t *testing.T) {
 		}
 		want := `{"schema": "zerg/v1", "kind": "EmptyDomainGuards", "root": ` + edgJSONString(d) +
 			`, "scanned": 1, "baseline": 0, "unguarded": 1, "unguarded_files": ["bad.py"], "subproc_unchecked": 0, ` +
-			`"non_scan_reviewed": ["check-placeholder-residue.py", "check-manifest-freshness.py", "check-gotoolchain.py", ` +
-			`"check-doc-section-numbers.py", "check-public-tree-hazards.py", "check_version.py"], "non_scan_reviewed_count": 6, ` +
+			`"non_scan_reviewed": ["core/cmd/zerg/check_placeholder_residue.go", "core/cmd/zerg/check_manifest_freshness.go", "core/cmd/zerg/check_gotoolchain.go", ` +
+			`"core/cmd/zerg/check_doc_section_numbers.go", "core/cmd/zerg/check_public_tree_hazards.go", "core/cmd/zerg/check_version.go"], "non_scan_reviewed_count": 6, ` +
 			`"registry_stale": []}` + "\n"
 		if out != want {
 			t.Fatalf("JSON 逐字不符：\n got=%q\nwant=%q", out, want)
@@ -215,15 +215,25 @@ func TestCheckEmptyDomainGuardsGate(t *testing.T) {
 
 	t.Run("RegistryStale_Rc1", func(t *testing.T) {
 		d := t.TempDir()
-		edgWrite(t, d, "check_version.py", edgUnguardedBody) // 登记项现读为扫面型
-		rc, out, errs := edgT(t, "--root", d, "--baseline", "14")
+		// 登记项现为**仓相对** Go 真身名 ⇒ 扫面根 = <临时仓根>/scripts/gates（本门据上溯两级定仓根）。
+		scanRoot := filepath.Join(d, "scripts", "gates")
+		if err := os.MkdirAll(scanRoot, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		edgWrite(t, scanRoot, "a_scan.py", edgUnguardedBody) // 域非空（否则先撞空集守卫 rc=2）
+		reg := filepath.Join(d, "core", "cmd", "zerg", "check_version.go")
+		if err := os.MkdirAll(filepath.Dir(reg), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		edgWrite(t, filepath.Dir(reg), "check_version.go", edgUnguardedBody) // 登记项现读为扫面型
+		rc, out, errs := edgT(t, "--root", scanRoot, "--baseline", "14")
 		if rc != 1 || errs != "" {
 			t.Fatalf("登记与结构不符应 rc=1：rc=%d out=%q err=%q", rc, out, errs)
 		}
 		if !strings.Contains(out, "⇒ 登记与结构不符 1 门 ⇒ rc=1（登记过期，登记面须随动）") {
 			t.Fatalf("登记结语不符：%q", out)
 		}
-		if !strings.Contains(out, "  ✗ check_version.py —— 已补件内 fail-closed") {
+		if !strings.Contains(out, "  ✗ core/cmd/zerg/check_version.go —— 已补件内 fail-closed") {
 			t.Fatalf("登记项未被标 ✗：%q", out)
 		}
 	})

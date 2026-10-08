@@ -1119,7 +1119,7 @@ func cmdGapLs(inv *invocation, stdout, stderr io.Writer) int {
 // 病（账内逐字 · 两条同族）：
 //
 //	① `GAP-20260926-15`（P1 · 命令面）：「zerg gap 无 show：单条缺口取不到（只有 ls / export 两条面）」
-//	② `GAP-20260928-243`：`gap ls --json` 全量直出、单次超过 1MB 会被读方截断，而人面每行又把正文
+//	② `GAP-20260927-243`：`gap ls --json` 全量直出、单次超过 1MB 会被读方截断，而人面每行又把正文
 //	   截到 40 显示宽（下面 `truncateDisplay(r.Symptom, 40)`）⇒ 想取**某一条**的正文 / 判据 / 证据，
 //	   只能绕过 CLI 直接读 jsonl 真源。
 //

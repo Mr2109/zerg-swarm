@@ -90,7 +90,7 @@ const (
 	jrRosterDir        = "scripts"
 	jrRegistryDefault  = "scripts/gates/judge-registry.json"
 	jrDecisionsDefault = "scripts/gates/judge-adoption.json"
-	jrGeneratedBy      = "scripts/gates/check-judge-registry.py --emit"
+	jrGeneratedBy      = "zerg gate check check-judge-registry --emit"
 )
 
 var jrInterp = map[string]string{".py": "python3", ".sh": "bash"}

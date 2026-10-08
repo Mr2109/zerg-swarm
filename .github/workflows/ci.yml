@@ -221,8 +221,25 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
-      - name: 检查
-        run: python3 ui/scripts/check-i18n.py
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff  # v5
+        with:
+          go-version-file: core/go.mod
+          cache-dependency-path: core/go.sum
+      - name: 构建命令面 CLI（Go 判据入口 · 公开面判据件走 Go 半）
+        working-directory: core
+        run: mkdir -p ../bin && go build -o ../bin/zerg ./cmd/zerg
+      - name: 检查（i18n · Go 半优先）
+        run: |
+          rc=0
+          if [ -x ./bin/zerg ]; then
+            ./bin/zerg ui i18n || rc=$?
+          elif [ -f ui/scripts/check-i18n.py ]; then
+            python3 ui/scripts/check-i18n.py || rc=$?
+          else
+            echo "❌ 判据件 check-i18n 两半皆缺（py 与 Go 半）⇒ 拒通过（不给结论）" >&2
+            exit 1
+          fi
+          exit "$rc"
 
   secrets:
     name: 密钥扫描

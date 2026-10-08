@@ -24,7 +24,7 @@ func TestChatSystemPromptResolvedIsLiteralOnThisMachine(t *testing.T) {
 	}
 	// 注意：断言的是**常量**里不得写死路径（替换后的正文在本机本来就含真实路径，那是应该的）。
 	// 写死路径一旦回到常量，公开快照脱敏后机群就会指向不存在的目录（待修补 #44 的根因）。
-	if strings.Contains(chatSystemPrompt, "<volume-path>") || strings.Contains(chatSystemPrompt, "~") {
+	if strings.Contains(chatSystemPrompt, "<volume-path>") || strings.Contains(chatSystemPrompt, "/Users/node-local") {
 		t.Fatalf("chatSystemPrompt 常量里又出现了写死的私有路径")
 	}
 	if !strings.Contains(chatSystemPrompt, "{{REPO_ROOT}}") {

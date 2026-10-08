@@ -206,7 +206,7 @@ func sampleGpuPct() float64 {
 //
 // 缺口 GAP-20260925-34（真修点 · 本函数）：原实现读 ioreg 的 `gpu-perf-tgt-utilization`，
 // 那是 GPU 性能**目标档位**（机台固有的寄存器值，不随负载变）⇒ `zerg agent ls/show`
-// 的 `gpu_pct` 每台机恒为一个常数（Mr2109 实测恒 70=0x46、mini 恒 85），拿它判
+// 的 `gpu_pct` 每台机恒为一个常数（node-local 实测恒 70=0x46、mini 恒 85），拿它判
 // 「此刻有没有在算」必得假绿（永远像在忙）。正解 = 读 IOAccelerator 的
 // PerformanceStatistics["Device Utilization %"]（真实 GPU 占用；同一份 ioreg 里就有）。
 // 取不到该键 ⇒ 返回 -1（"无数据"，不冒充常数）。

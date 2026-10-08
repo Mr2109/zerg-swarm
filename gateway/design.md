@@ -1,4 +1,4 @@
-# EDGE-NODE Model Gateway — 设计文档（v2：多机模型群 + 三件套融合）
+# node-a Model Gateway — 设计文档（v2：多机模型群 + 三件套融合）
 
 > 2026-08-07 · 需求方：Mr2109 · 设计：Hermes · 实现：Codex
 > 版本历史：v1 单机网关（已废弃）→ v2 多机模型群
@@ -6,12 +6,12 @@
 ## 一、需求（用户定稿）
 
 1. **一个 API 接口**，不同的 model 参数调不同的模型，不同请求按排队机制，自主加载/卸载
-2. **多机模型群**：本机(Mac M4 Max 64G) + EDGE-NODE(Ubuntu 128G ROCm) + M1 Mini×2(16G，第3台待入) 协同工作
+2. **多机模型群**：本机(Mac M4 Max 64G) + node-a(Ubuntu 128G ROCm) + M1 Mini×2(16G，第3台待入) 协同工作
 3. **本机=主控端**（agent 都在本机），其他机器=被控子端
-4. **本机只跑 llama 系模型**（example-35b-v2 等），DS4/GLM 只能 EDGE-NODE 跑
+4. **本机只跑 llama 系模型**（example-35b-v2 等），DS4/GLM 只能 node-a 跑
 5. **防爆机制**：内存/请求/磁盘/进程四重防护
 6. **三件套融合**：模型管理器 App（管理）+ 群调度网关（路由/排队/防爆）+ X3Monitor（可视化）合一
-7. **跨平台**：子端 Agent 必须同时支持 Ubuntu(EDGE-NODE) 和 macOS(Mini)
+7. **跨平台**：子端 Agent 必须同时支持 Ubuntu(node-a) 和 macOS(Mini)
 
 ## 二、总体架构
 
@@ -36,7 +36,7 @@
    │ HTTP :8100               │ HTTP :8100
    ▼                          ▼
 ┌─────────────────┐    ┌─────────────────┐
-│ EDGE-NODE (Ubuntu 子端) │    │ Mini×2 (macOS)  │
+│ node-a (Ubuntu 子端) │    │ Mini×2 (macOS)  │
 │ 128G + ROCm     │    │ 16G             │
 │ ★ 子端Agent      │    │ ★ 子端Agent      │
 │ (Python:8100)   │    │ (Python:8100)   │
@@ -53,7 +53,7 @@
 ### 3.1 子端 Agent（新写，跨平台 Python）
 
 **技术**：Python 3 标准库（http.server + subprocess + threading），无第三方依赖。
-**EDGE-NODE = Ubuntu 26.04 python3；Mini = macOS python3（自带，若版本旧用 brew python3）。**
+**node-a = Ubuntu 26.04 python3；Mini = macOS python3（自带，若版本旧用 brew python3）。**
 
 **职责**：
 1. 监听 :8100，提供 HTTP API：
@@ -64,11 +64,11 @@
 2. 本地排队：子端内请求按序（同主控全局排队的下层缓冲）
 3. 本地防爆：加载前检查本机内存，不足返回 507
 4. 崩溃自愈：后端进程死亡 → 下次 load 自动重启
-5. 日志：/home/<user>/agent/agent.log（EDGE-NODE）、~/agent/agent.log（Mini）
+5. 日志：/home/<user>/agent/agent.log（node-a）、~/agent/agent.log（Mini）
 
 **后端管理**（子端内）：
 - llama-server：`llama-server -m <file> --host 127.0.0.1 --port <动态> -ngl 999(Apple) / --rocm(Linux)`
-- ds4-server（仅 EDGE-NODE）：`/home/<user>/ds4-server --rocm --ctx 262144 --threads 16 --host 127.0.0.1 --port <动态>`
+- ds4-server（仅 node-a）：`/home/<user>/ds4-server --rocm --ctx 262144 --threads 16 --host 127.0.0.1 --port <动态>`
 - 停止：SIGTERM → 30s → SIGKILL → 确认端口释放
 - 端口：8001-8090 动态分配
 
@@ -78,27 +78,27 @@
 ```yaml
 models:
   example-35b:      { host: local,      backend: llama-server, file: ~/models/example-35b-Q4_K_M.gguf, mem_gb: 22 }
-  deepseek-v4-flash:   { host: edge-node,         backend: ds4-server,   file: /data/models/DeepSeek-V4-Flash-...gguf, mem_gb: 86 }
-  GLM-5.2:             { host: edge-node,         backend: llama-server, file: /data/models/glm/GLM-...gguf, mem_gb: 100, ssd: true }
-  qwen2.5-3b:          { host: mini-node-1,      backend: llama-server, file: ..., mem_gb: 3 }
-  # mini-node-2 / mini3(待入) 同理
+  deepseek-v4-flash:   { host: node-a,         backend: ds4-server,   file: /data/models/DeepSeek-V4-Flash-...gguf, mem_gb: 86 }
+  GLM-5.2:             { host: node-a,         backend: llama-server, file: /data/models/glm/GLM-...gguf, mem_gb: 100, ssd: true }
+  qwen2.5-3b:          { host: node-b,      backend: llama-server, file: ..., mem_gb: 3 }
+  # node-c / node-d(待入) 同理
 fleet:
-  edge-node:    { host: <worker-host>, port: 8100, os: ubuntu }
-  mini-node-1: { host: <worker-host>,  port: 8100, os: macos }
-  mini-node-2: { host: <worker-host>,  port: 8100, os: macos }
-  mini3: { host: <worker-host>,  port: 8100, os: macos }   # 几天后加入
+  node-a:    { host: <worker-host>, port: 8100, os: ubuntu }
+  node-b: { host: <worker-host>,  port: 8100, os: macos }
+  node-c: { host: <worker-host>,  port: 8100, os: macos }
+  node-d: { host: <worker-host>,  port: 8100, os: macos }   # 几天后加入
 ```
 
 **调度逻辑**：
 1. 请求进 :8082 → 解析 model → 路由表查 (host, backend)
 2. host=local → 本机 ServiceController 处理（复用已有）
-3. host=edge-node/mini → 调子端 Agent API（HTTP）
-4. 全局排队：同一时间只有一次"加载/切换"动作（跨机器也串行，防两台子端同时加载大模型抢电/带宽——EDGE-NODE 独享大模型，Mini 常驻小模型不冲突）
+3. host=node-a/mini → 调子端 Agent API（HTTP）
+4. 全局排队：同一时间只有一次"加载/切换"动作（跨机器也串行，防两台子端同时加载大模型抢电/带宽——node-a 独享大模型，Mini 常驻小模型不冲突）
 5. 状态聚合：/v1/models 汇总所有子端 + 本机
 
 **驻留策略（用户定稿，2026-08-07）**：
-- **EDGE-NODE / Mini：常驻**——专用机，用户不直接使用，模型常驻内存不卸载
-  - EDGE-NODE 常驻 DS4（deepseek-v4-flash），GLM 按需切换（201G 太大不能与 DS4 并存，切换时卸载 DS4）
+- **node-a / Mini：常驻**——专用机，用户不直接使用，模型常驻内存不卸载
+  - node-a 常驻 DS4（deepseek-v4-flash），GLM 按需切换（201G 太大不能与 DS4 并存，切换时卸载 DS4）
   - Mini 常驻各自小模型（如 qwen2.5-3b），随时响应
 - **本机：按需加载 + 空闲即卸载**——这是用户的工作机，需要内存给剪辑/其他工作
   - 本机 llama-server 有请求才加载（或已有则复用）
@@ -107,7 +107,7 @@ fleet:
 
 **本机空闲卸载细节**（用户工作机铁律）：
 - 请求完成后启动短计时器（60s），无新请求 → 卸载本机模型，内存归还
-- 与 EDGE-NODE/Mini 的"空闲 30 分钟卸载"不同——本机要激进得多
+- 与 node-a/Mini 的"空闲 30 分钟卸载"不同——本机要激进得多
 - 用户明确："没有调用就要卸载模型"
 
 **防爆（主控级，v2 升级：实时监控 + 动态拦截，用户定稿 2026-08-07）**：
@@ -117,7 +117,7 @@ fleet:
 1. **实时内存监控（周期性采样，非一次性检查）**
    - 主控每 5s 采样所有机器（本机 + 各子端）的：
      - 系统内存：`MemAvailable`（/proc/meminfo，Linux）/ `vm_stat`（macOS）——不用 free（buff/cache 可回收）
-     - 显存/GTT：EDGE-NODE 上报 ROCm 显存占用（`rocm-smi` 或 ds4-server 状态）；本机/Mini 上报 GPU 统一内存占用（`sysctl`/`powermetrics`）
+     - 显存/GTT：node-a 上报 ROCm 显存占用（`rocm-smi` 或 ds4-server 状态）；本机/Mini 上报 GPU 统一内存占用（`sysctl`/`powermetrics`）
      - 模型进程实际 RSS：子端 Agent 上报当前后端进程的 RSS（`ps -o rss`）
    - 采样数据进环形缓冲，供告警/决策
 
@@ -142,7 +142,7 @@ fleet:
    - 请求：队列上限 20 → 429；等待超时 600s → 504
    - 磁盘：load 前检查 df
    - 进程：连续 3 次启动失败 → 熔断标记 error，人工干预
-   - 空闲卸载策略差异化：本机 60s 激进卸载（工作机），EDGE-NODE/Mini 常驻（专用机，仅切换时卸载）
+   - 空闲卸载策略差异化：本机 60s 激进卸载（工作机），node-a/Mini 常驻（专用机，仅切换时卸载）
 
 **实时监控数据流**：
 ```
@@ -156,9 +156,9 @@ fleet:
 
 ### 3.3 X3Monitor 扩展（可视化层）
 
-- 数据源：从「SSH 直连 EDGE-NODE」改为「调主控 :8580 API 拉全群状态」
-- 显示：本机/EDGE-NODE/Mini1/Mini2/Mini3 每台的状态卡片（当前模型/内存/GPU/队列长度）
-- 菜单栏简洁显示：EDGE-NODE GPU + 活跃子端数（如 `GPU 100% · 3端在线`）
+- 数据源：从「SSH 直连 node-a」改为「调主控 :8580 API 拉全群状态」
+- 显示：本机/node-a/Mini1/Mini2/Mini3 每台的状态卡片（当前模型/内存/GPU/队列长度）
+- 菜单栏简洁显示：node-a GPU + 活跃子端数（如 `GPU 100% · 3端在线`）
 
 ### 3.4 可靠性设计（P0 红线，用户审查补缺 2026-08-07）
 
@@ -212,7 +212,7 @@ fleet:
 
 4. **查询工具**：
    - `fleet_logs.py`（主控侧小工具）：
-     - `logs query --machine edge-node --component agent --since 10m`
+     - `logs query --machine node-a --component agent --since 10m`
      - `logs trace <request_id>`（全链路）
      - `logs errors --since 1h`（只看错误）
      - `logs stats --model GLM-5.2`（某模型的加载/卸载/失败统计）
@@ -232,12 +232,12 @@ fleet:
 |---|---|---|
 | 模型管理器 App | 本机单机管理 | + FleetController 群调度 + 子端管理 |
 | ProxyDaemon :8082 | 本机转发 | + 多机路由 + 排队 + 防爆 |
-| X3Monitor | SSH 监控 EDGE-NODE | 调 :8580 监控全群 |
+| X3Monitor | SSH 监控 node-a | 调 :8580 监控全群 |
 
 ## 四、API 兼容
 
 - :8082 统一 OpenAI 兼容（/v1/chat/completions、/v1/models）
-- 透传 /v1/responses（Codex 依赖，仅 EDGE-NODE ds4-server 支持时透传）
+- 透传 /v1/responses（Codex 依赖，仅 node-a ds4-server 支持时透传）
 - 子端 Agent :8100 用简化内部协议（非 OpenAI，主控翻译）
 
 ## 四·五、网络拓扑（重要约束）
@@ -264,7 +264,7 @@ fleet:
    - 子端 Agent 预留 `/infer-file` 端点（现在不实现，接口形态预留）
 
 3. **机器分工扩展**（模态亲和性）：
-   - EDGE-NODE（128G ROCm）：可承载视频生成/大模型推理（显存大）
+   - node-a（128G ROCm）：可承载视频生成/大模型推理（显存大）
    - 本机 Mac（M4 Max 统一内存）：适合音频（Whisper 等，Metal 加速好）
    - Mini（16G）：仅轻量文字模型（3-8B），多模态不进 Mini（内存不够）
    - 路由表按 `modality + mem_gb` 决策机器
@@ -272,7 +272,7 @@ fleet:
 4. **音频/视频模型的驻留策略**：
    - 同样遵循"一台机器一个后端进程"（防爆规则不变）
    - 按需加载 + 空闲卸载（与文字模型同一套生命周期管理）
-   - 常驻与否同样遵循用户定稿：EDGE-NODE/Mini 常驻、本机空闲即卸
+   - 常驻与否同样遵循用户定稿：node-a/Mini 常驻、本机空闲即卸
 
 5. **未来扩展步骤**（不在本期实现，仅在设计预留）：
    - 本期：路由表加 modality 字段（默认 text）
@@ -280,18 +280,18 @@ fleet:
 
 ## 五、部署步骤
 
-1. **EDGE-NODE**：装 python3 子端 Agent（scp agent.py + systemd 常驻 :8100）
+1. **node-a**：装 python3 子端 Agent（scp agent.py + systemd 常驻 :8100）
 2. **Mini×2**：装 python3 子端 Agent（scp agent.py + launchd 常驻 :8100）
 3. **本机**：模型管理器 App 升级（FleetController + 路由表 + X3Monitor 扩展）
 4. **配置**：路由表 YAML 统一维护
 
 ## 六、验收标准
 
-- [ ] 子端 Agent 在 EDGE-NODE(Ubuntu) 跑通：/status、/load、/infer、/unload
+- [ ] 子端 Agent 在 node-a(Ubuntu) 跑通：/status、/load、/infer、/unload
 - [ ] 子端 Agent 在 Mini(macOS) 跑通：同上
 - [ ] 主控 :8082 调 example-35b-v2（本地）成功
-- [ ] 主控 :8082 调 deepseek-v4-flash（EDGE-NODE）成功——自动经子端
-- [ ] 切模型：本地→EDGE-NODE 自动切换，全程无人工
+- [ ] 主控 :8082 调 deepseek-v4-flash（node-a）成功——自动经子端
+- [ ] 切模型：本地→node-a 自动切换，全程无人工
 - [ ] 排队：切换期间并发请求按序不丢
 - [ ] 防爆：内存不足拒绝（507）、队列超限（429）、超时（504）
 - [ ] X3Monitor 显示全群状态（从 :8580 拉）
@@ -300,5 +300,5 @@ fleet:
 
 ## 七、分工
 
-- **Hermes**：设计、验收、部署协调、EDGE-NODE/Mini 端部署执行
+- **Hermes**：设计、验收、部署协调、node-a/Mini 端部署执行
 - **Codex**：子端 Agent（agent.py 跨平台）、主控 FleetController（Swift，集成进模型管理器 App）、X3Monitor 扩展、路由表配置

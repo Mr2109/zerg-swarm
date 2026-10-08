@@ -761,7 +761,7 @@ func checkArchiveMountGateMain(stdout, stderr io.Writer, argv []string) int {
 		for _, r := range camRules {
 			fmt.Fprintf(stdout, "  %s\n", r)
 		}
-		fmt.Fprint(stdout, "  红线：本门只读 —— 不挂/不摘/不写/不 chmod；挂摘只走 `bash scripts/svc/archive-mount.sh on|off|status`\n")
+		fmt.Fprint(stdout, "  红线：本门只读 —— 不挂/不摘/不写/不 chmod；挂摘只走 `zerg archive mount on|off|status`\n")
 		return 0
 	}
 	if a.SelfTest {

@@ -254,7 +254,7 @@ func TestImpactContract_CompatLevelReportOnlyPaired(t *testing.T) {
 
 	// 正控①（真命令）：块里恒打兼容级别那一行，且那一行**不参与**任何红绿判定。
 	var out, errb strings.Builder
-	rc := zerg.RunForTest([]string{"impact", "S-g"}, &out, &errb)
+	rc := zerg.RunForTest([]string{"impact", "S-g", "--yes"}, &out, &errb)
 	if rc != 0 {
 		t.Fatalf("`impact S-g` 该退 0（有影响面），实得 rc=%d", rc)
 	}

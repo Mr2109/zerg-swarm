@@ -40,7 +40,7 @@ func aiBoundaryEvidenceDir(t *testing.T) {
 func proposalNewAuthz(t *testing.T, extra ...string) (int, string, string) {
 	t.Helper()
 	t.Setenv("ZERG_PROPOSAL_DIR", t.TempDir())
-	argv := append([]string{"dev", "proposal", "new",
+	argv := append([]string{"dev", "proposal", "new", "--yes",
 		"--title", "授权面", "--target", "待办:D1", "--goal", "g",
 		"--evidence", "GAP-20260927-254", "--rollback", "r", "--criterion", "zerg gate run --fast"}, extra...)
 	return runCapture(argv...)
@@ -120,7 +120,7 @@ func TestProposalAuthzRules(t *testing.T) {
 	}
 	// 读回一件：subject/subject_kind 必须在；`by` 是兼容别名（两者同值）。
 	t.Setenv("ZERG_PROPOSAL_DIR", t.TempDir())
-	rc, out, errb := runCapture("dev", "proposal", "new", "--title", "读回", "--target", "待办:D1",
+	rc, out, errb := runCapture("dev", "proposal", "new", "--yes", "--title", "读回", "--target", "待办:D1",
 		"--goal", "g", "--evidence", "GAP-20260927-254", "--rollback", "r", "--by", "老王", "--subject-kind", "ai",
 		"--criterion", "zerg gate run --fast")
 	if rc != 0 {

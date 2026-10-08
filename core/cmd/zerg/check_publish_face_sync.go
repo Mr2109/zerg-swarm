@@ -31,9 +31,11 @@
 //	  自写 `cpfsPyJoin`（照 CPython `posixpath.join` 逐段规则）＋ `cpfsPyNormpath`/`cpfsPyAbspath`
 //	  （`os.path.abspath` = `normpath(join(getcwd(), p))`）；定向单测把三态各钉一格。
 //	· `fnmatch` / `glob`：**本件不涉**（py 正文无 `glob`/`fnmatch` 调用）⇒ 无 `*` 跨 `/` 面。
-//	· 正则：**本件 py 正文零 `re`**；唯一一处正则面在被复用的 `check-history-secrets.py::load_excludes`
-//	  （`re.search(r"EXCLUDES=\((.*?)\n\)", text, re.S)`）⇒ 由**已落仓件** `check_marks_coverage_parity.go`
-//	  的 `mkcpLoadExcludes`（纯字符串切分，同构）承接，本件不另写 RE2。见交付⑥。
+//	· 正则：**本件 py 正文零 `re`**；排除表**行口径复用镜像器（单一真源）**的 `_load_excludes_table`
+//	  （★ 切源 2026-10-08 · `GAP-20260926-223` 账[3]：旧 `check-history-secrets.py::load_excludes` 的
+//	  `re.search(r"EXCLUDES=\((.*?)\n\)", text, re.S)` 正则面已随切源退役）⇒ 由**已落仓件**
+//	  `check_marks_coverage_parity.go` 的 `mkcpLoadExcludes`（经唯一解析件
+//	  `excludes_rules.go::parseExcludesRules`）承接，本件不另写 RE2。见交付⑥。
 //
 // 复用面（单一真源 · ✗ 不另抄第二份）：
 //
@@ -358,6 +360,8 @@ func cpfsRequirePaths(p cpfsPaths) []string {
 type cpfsClass struct {
 	cand, dropped, wall   []string
 	others                []string // 判据⑦：面外 = 未入索引的白名单件
+	headOnly              []string // 判据⑧：只存于 HEAD（索引面看不见）的白名单件（★ GAP-20261009-B1）
+	headTotal             int      // HEAD 面件数（关系式用）
 	hits                  [][2]string
 	entries, excludes     []string
 	pdirs, pfiles         []string
@@ -393,6 +397,36 @@ func cpfsUntrackedFiles(repo string) ([]string, error) {
 		}
 		return nil, mkcpUnsupported{fmt.Sprintf(
 			"git ls-files --others 失败：%s（rc=%d ⇒ 面外面读不到 = 判不了，缺件 ≠ 绿）", repo, rc)}
+	}
+	var files []string
+	for _, ln := range strings.Split(out.String(), "\n") {
+		if ln != "" {
+			files = append(files, ln)
+		}
+	}
+	return files, nil
+}
+
+// cpfsHeadFiles = 镜像器真源面：`git -C repo -c core.quotepath=false ls-tree -r --name-only HEAD`
+// （逐字对齐 `publish/mirror-public-lib.py:1329` 的 `ls-tree -r --name-only -z HEAD`；本判据**旧面**只读
+// `ls-files`（索引）＋`ls-files --others`（工作树未跟踪）⇒ 对「在 HEAD、索引已删」的件**完全空判** ⇒
+// 镜像器仍会发而本判据看不见（假绿 · ★ GAP-20261009-B1）。★ 无 HEAD（未诞生分支 / 空仓，如自检夹具仓）
+// ⇒ 返回空（**不是**缺件 —— 镜像器此时亦无件可发）；其余 git 失败 ⇒ 与 tracked_files 同口径 fail-closed。
+func cpfsHeadFiles(repo string) ([]string, error) {
+	cmd := exec.Command("git", "-C", repo, "-c", "core.quotepath=false", "ls-tree", "-r", "--name-only", "HEAD")
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	if err := cmd.Run(); err != nil {
+		if verr := exec.Command("git", "-C", repo, "rev-parse", "--verify", "-q", "HEAD").Run(); verr != nil {
+			return nil, nil // 无 HEAD：HEAD 面为空
+		}
+		rc := 1
+		if ee, ok := err.(*exec.ExitError); ok {
+			rc = ee.ExitCode()
+		}
+		return nil, mkcpUnsupported{fmt.Sprintf(
+			"git ls-tree HEAD 失败：%s（rc=%d ⇒ HEAD 面读不到 = 判不了，缺件 ≠ 绿）", repo, rc)}
 	}
 	var files []string
 	for _, ln := range strings.Split(out.String(), "\n") {
@@ -479,6 +513,27 @@ func cpfsClassify(repo string, p cpfsPaths) (*cpfsClass, error) {
 			continue
 		}
 		c.others = append(c.others, rel)
+	}
+	head, err := cpfsHeadFiles(repo)
+	if err != nil {
+		return nil, err
+	}
+	c.headTotal = len(head)
+	inIndex := map[string]bool{}
+	for _, rel := range tracked {
+		inIndex[rel] = true
+	}
+	for _, rel := range head { // 判据⑧：只存于 HEAD（索引面看不见）的白名单件
+		if inIndex[rel] {
+			continue
+		}
+		if !mkcpPublishedPath(rel, c.entries) {
+			continue
+		}
+		if strings.HasPrefix(rel, "publish/") {
+			continue
+		}
+		c.headOnly = append(c.headOnly, rel)
 	}
 	return c, nil
 }
@@ -672,6 +727,37 @@ func cpfsEvaluate(repo string, paths cpfsPaths) (int, []string) {
 		return 2, lines
 	}
 	lines = append(lines, fmt.Sprintf("  ✅ 判据⑦ 面外件（未入索引）%d 条，无一入库即红", len(cl.others)))
+
+	// ⑧ HEAD 面 × 索引面（镜像器真源 = `git ls-tree -r HEAD`；本判据候选面 = `git ls-files` 看不见它）——
+	//   只存于 HEAD（索引已删 / 未入索引）的白名单件：镜像器**仍会发**它们，而候选集看不见 ⇒
+	//   判据①/②/⑥ 对它们**静默空判**（★ GAP-20261009-B1 · 假绿）。口径照判据⑦ 同构（**只降档不报红**）：
+	//   逐条预演判据①/②/⑥ 有效判定，凡「一入库即红」⇒ rc=2；并**逐条报出**（命中/未命中两态都报）。
+	lines = append(lines, fmt.Sprintf("  HEAD 面 %d 件 · 只存于 HEAD（索引已删/未入索引）%d 条 —— 镜像器真源 `ls-tree HEAD` 看得见、本判据候选面 `ls-files` 看不见",
+		cl.headTotal, len(cl.headOnly)))
+	if len(cl.headOnly) > 0 {
+		lim := cpfsLim(len(cl.headOnly))
+		for _, p := range cl.headOnly[:lim] {
+			lines = append(lines, "      "+p)
+		}
+	}
+	var headViol []string
+	for _, rel := range cl.headOnly {
+		droppedHit := cpfsMapPathNone(rel, cl.dropExact, cl.dropPrefix)
+		excl := mkcpExcluded(rel, cl.excludes)
+		priv := cpfsPrivateHit(rel, cl.pdirs, cl.pfiles, cl.privAllowed)
+		wouldRed := (droppedHit && !excl) ||
+			(priv != "" && !excl && !droppedHit) ||
+			(noSet[rel] && !excl)
+		if wouldRed {
+			headViol = append(headViol, rel)
+		}
+	}
+	if len(headViol) > 0 {
+		lines = append(lines, fmt.Sprintf("  ✗ 判据⑧ 只存于 HEAD 的件一入库即红 %d 条 ⇒ 降档（只降档不报红 · rc=2）—— 镜像器仍发而判据①/②/⑥ 看不见它们（上列里带 `no`/黑名单命中的那几条）：", len(headViol)))
+		lines = append(lines, "  ⇒ HEAD 面有候选面看不见的件 ⇒ 现刻判不了（拒绝给结论 rc=2）")
+		return 2, lines
+	}
+	lines = append(lines, fmt.Sprintf("  ✅ 判据⑧ 只存于 HEAD 的件 %d 条，无一入库即红", len(cl.headOnly)))
 	return bad, lines
 }
 
@@ -1096,7 +1182,7 @@ func checkPublishFaceSyncGateMain(stdout, stderr io.Writer, argv []string) int {
 		}
 	}
 	fmt.Fprintf(stdout, "仓：%s\n", repo)
-	fmt.Fprint(stdout, "口径：候选集排除 `publish/`（旧器对它是结构性处置，不由排除表驱动）\n\n")
+	fmt.Fprint(stdout, "口径：候选集排除 `publish/`（旧器对它是结构性处置，不由 EXCLUDES 驱动）\n\n")
 	code, lines := cpfsEvaluate(repo, paths)
 	for _, ln := range lines {
 		fmt.Fprintln(stdout, ln)

@@ -43,7 +43,7 @@ func writeProfileForServer(t *testing.T, dir, eggID string, peakGtt, peakMem flo
 		"peak_gtt_gb: " + strconv.FormatFloat(peakGtt, 'f', -1, 64) + "\n" +
 		"peak_mem_gb: " + strconv.FormatFloat(peakMem, 'f', -1, 64) + "\n" +
 		"load_seconds: 120\nthroughput_tok_s: 4.8\nsuggested_idle_unload_s: 600\n" +
-		"schema_version: 1\nmeasured_at: 2026-09-15T10:00:00+08:00\nmachine: edge-node\ncalib_runs: 3\n"
+		"schema_version: 1\nmeasured_at: 2026-09-15T10:00:00+08:00\nmachine: node-a\ncalib_runs: 3\n"
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -65,8 +65,8 @@ func TestInferReload_RefreshesEggProfileCache(t *testing.T) {
 		"  schema_version: 1\n"+
 		"  idle_unload_s: 600\n"+
 		"  cmd: /nonexistent/zerg-noop -m {file} --port {port}\n")
-	mgr := backend.NewManager(reg, "edge-node")
-	s := NewServer(NewAgent("edge-node", "tok", reg, mgr, ""))
+	mgr := backend.NewManager(reg, "node-a")
+	s := NewServer(NewAgent("node-a", "tok", reg, mgr, ""))
 
 	// 盘上先放旧档案（真机里的 14.5/15.2）并让它进缓存
 	writeProfileForServer(t, dir, "egg-a", 14.5, 15.2)
@@ -106,7 +106,7 @@ func TestInferReload_ReportsUnreadableProfiles(t *testing.T) {
 		"  schema_version: 1\n"+
 		"  idle_unload_s: 600\n"+
 		"  cmd: /nonexistent/zerg-noop -m {file} --port {port}\n")
-	s := NewServer(NewAgent("edge-node", "tok", reg, backend.NewManager(reg, "edge-node"), ""))
+	s := NewServer(NewAgent("node-a", "tok", reg, backend.NewManager(reg, "node-a"), ""))
 
 	code, out := postReloadRaw(t, s, "tok")
 	if code != 200 {

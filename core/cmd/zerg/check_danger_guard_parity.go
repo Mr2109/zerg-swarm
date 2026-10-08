@@ -74,13 +74,23 @@ var dangerGuardParityGuardedRunners = []string{
 
 // dangerGuardParityOffenders —— 现算脱钩清单（`catalog()` 现读 ⇒ 命令树一变它即变）。
 func dangerGuardParityOffenders() []dangerGuardParityOffender {
+	return dangerGuardParityOffendersIn(catalog())
+}
+
+// dangerGuardParityOffendersIn —— 现算**给定命令集**的脱钩清单（生产入口仍读 `catalog()`）。
+//
+// ★ 输入面显式化（`--self-test` 面所需）：判定**逐字不变**（`c.danger != nil && !openedForRun(c)`
+// 且 `run` 名不在白名单里），只把「命令来源」从写死的 `catalog()` 提成入参 —— 自检据此喂合成夹具。
+// 同型先例：`check_write_face_gate.go` 的 `cwfgCatalogEntries(mainGo, consts)` ·
+// `check_contract_registry.go` 的 `ccrCheck(root, rootOK, reg)`（都把真源提成入参、判定一字不动）。
+func dangerGuardParityOffendersIn(cmds []*command) []dangerGuardParityOffender {
 	guarded := map[string]bool{}
 	for _, n := range dangerGuardParityGuardedRunners {
 		guarded[n] = true
 	}
 	want := strings.Join(dangerGuardParityGuardedRunners, " | ")
 	var out []dangerGuardParityOffender
-	for _, c := range catalog() {
+	for _, c := range cmds {
 		if c.danger == nil || openedForRun(c) {
 			continue
 		}
@@ -100,16 +110,84 @@ func dangerGuardParityOffenders() []dangerGuardParityOffender {
 	return out
 }
 
+// dangerGuardParitySelfTestRunner —— `--self-test` 专用 runner 桩：函数名**不在**白名单里
+// ⇒ 合成 {danger 非空 · 未开放 · run=本桩} 必判脱钩（负控的牙）。名含 SelfTest ⇒ 夹具函数
+// （照 `check_write_face_gate.go` 的夹具命名规；本桩只返回 0、不写盘 ⇒ 不进任何裸写点判据）。
+func dangerGuardParitySelfTestRunner(_ *invocation, _, _ io.Writer) int { return 0 }
+
+// dangerGuardParitySelfTest —— 同型自检面（成对正负控 · 合成夹具 · 不碰真目标）。
+//
+// 形态逐字对齐同族先例（`check_write_face_gate.go:743` 的 `cwfgSelfTest` ·
+// `check_write_authz.go:505` 的 `cwaSelfTest` · `check_gate_point_output.go:354` 的 `cgpoSelfTest`）：
+// 逐格断言 · 失败打 `✗ 格%d …` · 末行 `自检 PASS/FAIL（N 格）` · rc 0 全过 / 1 有格未过。
+//
+// ★ fail-closed（✗ 两半皆缺仍 fail-closed）：正控（真表 · 非危险档 · 已开放 · 白名单 run）与
+// 负控（合成脱钩件**必被点名**）**成对**断言 —— 任一半不出预期读数即整件 FAIL（rc≠0），
+// 禁「没检到就绿」。✗ 判据一格不放宽、✗ 白名单原样。
+func dangerGuardParitySelfTest(stdout io.Writer) int {
+	ok := true
+	n := 0
+	check := func(label string, got, want int) {
+		n++
+		if got != want {
+			fmt.Fprintf(stdout, "  ✗ 格%d %s：得 %d（要 %d）\n", n, label, got, want)
+			ok = false
+		}
+	}
+	mk := func(path []string, danger, opened bool, run func(*invocation, io.Writer, io.Writer) int) *command {
+		c := &command{path: path, opened: opened, run: run}
+		if danger {
+			c.danger = &dangerSpec{Level: dangerD2}
+		}
+		return c
+	}
+	// 格1 正控：真表（现读 catalog()）—— 未开放的危险档 run 皆白名单 ⇒ 脱钩 0 条。
+	check("正控·真表（catalog() 现读）脱钩 0 条", len(dangerGuardParityOffenders()), 0)
+	// 格2 负控（牙）：合成 {danger 非空 · 未开放 · run 非白名单} ⇒ 必判 1 条。
+	check("负控·合成 {danger · 未开放 · run 非白名单} 判 1 条", len(dangerGuardParityOffendersIn([]*command{
+		mk([]string{"合成", "dehook"}, true, false, dangerGuardParitySelfTestRunner),
+	})), 1)
+	// 格3 正控：同件但**已开放**（opened=true）⇒ 不判。
+	check("正控·已开放（opened）不判", len(dangerGuardParityOffendersIn([]*command{
+		mk([]string{"合成", "opened"}, true, true, dangerGuardParitySelfTestRunner),
+	})), 0)
+	// 格4 正控：**非危险档**（danger=nil）⇒ 不判。
+	check("正控·非危险档（danger=nil）不判", len(dangerGuardParityOffendersIn([]*command{
+		mk([]string{"合成", "safe"}, false, false, dangerGuardParitySelfTestRunner),
+	})), 0)
+	// 格5 正控：白名单 runner（cmdGuarded）⇒ 不判。
+	check("正控·白名单 run（cmdGuarded）不判", len(dangerGuardParityOffendersIn([]*command{
+		mk([]string{"合成", "guarded"}, true, false, cmdGuarded),
+	})), 0)
+	res := "FAIL"
+	if ok {
+		res = "PASS"
+	}
+	fmt.Fprintf(stdout, "自检 %s（%d 格）\n", res, n)
+	if ok {
+		return 0
+	}
+	return 1
+}
+
 // dangerGuardParityMain —— 入口（与其它 Go 真搬门同形：rc 0 全过 / 1 有红 / 2 不给结论）。
 func dangerGuardParityMain(stdout, stderr io.Writer, argv []string) int {
 	wantJSON := false
+	selfTest := false
 	for _, a := range argv {
 		if a == "--json" {
 			wantJSON = true
 			continue
 		}
-		fmt.Fprintf(stderr, "usage: zerg-gate danger-guard-parity [--json]\n")
+		if a == "--self-test" {
+			selfTest = true
+			continue
+		}
+		fmt.Fprintf(stderr, "usage: zerg-gate danger-guard-parity [--json] [--self-test]\n")
 		return 2
+	}
+	if selfTest {
+		return dangerGuardParitySelfTest(stdout)
 	}
 	iffs := dangerGuardParityOffenders()
 	if wantJSON {

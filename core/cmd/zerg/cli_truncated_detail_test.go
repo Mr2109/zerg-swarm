@@ -154,7 +154,7 @@ func TestTruncatedDetail_RealRunPairsWithCutCount(t *testing.T) {
 	t.Setenv("ZERG_STATE_DIR", t.TempDir())
 
 	// 正控：真被裁的件（六层全量 > 卡片上限 ⇒ 卡片块自己报真裁）。
-	rc, out, errb := runCapture("impact", "core/cmd/zerg/main.go", "--json", "what,why")
+	rc, out, errb := runCapture("impact", "core/cmd/zerg/main.go", "--json", "what,why", "--yes")
 	if rc != 0 && rc != 1 {
 		t.Fatalf("准备态不对：`impact core/cmd/zerg/main.go --json what,why` 退码 = %d（要 0/1 档真跑）· stderr=%s",
 			rc, tail(errb, 400))
@@ -198,7 +198,7 @@ func TestTruncatedDetail_RealRunPairsWithCutCount(t *testing.T) {
 		strings.Trim(string(d["cut_from"]), `"`), kept, dropped, total, len(env.Items), cutWarningCount(env.Warnings))
 
 	// 成对负控（**没裁**）：零命中件 ⇒ `truncated=false` 且本格**缺席**（缺席 ≠ 假值）。
-	rc, out, _ = runCapture("impact", impactZeroHitTarget(), "--json", "what")
+	rc, out, _ = runCapture("impact", impactZeroHitTarget(), "--json", "what", "--yes")
 	if rc != 1 {
 		t.Fatalf("准备态不对：零命中件退码 = %d（要 1）", rc)
 	}

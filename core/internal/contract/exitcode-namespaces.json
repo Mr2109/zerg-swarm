@@ -60,7 +60,7 @@
       "owner": "scripts/build/zerg-swap-core.sh",
       "scan": "sh",
       "declared": { "0": "换件成功", "1": "不成功（未动生产 / **回滚成功** 两支，靠 error.kind 分辨）", "2": "用法错", "3": "回滚也失败（需人工 · error.kind=ROLLBACK_FAILED）" },
-      "note": "批 B ④ 已把「回滚成功」从 `2` 收敛到 `1` + `error.kind=ROLLED_BACK`（`P-129` 的唯一说法）。"
+      "note": "批 B ④ 已把「回滚成功」从 `2` 收敛到 `1` + `error.kind=ROLLED_BACK`（`P-129` 的唯一说法）。★ 2026-10-09（退场批-换件三件-20261009 · `DEV-2055`/`GAP-20261008-16`）：本件（脚本壳）已登记退场 ⇒ 码空间由 **Go 真身** `core/cmd/zerg/family_swap_core.go` 承载；`check_exit_codes.go` 的 `cecRetireGoHalf` 三段式回退腿（件缺席 ∧ Go 真身在盘 ⇒ 读 Go 半里的同一说法 · 两半皆缺才 fail-closed）保本命名空间照旧可判。`sites` 条目按 `pack-release.sh` / `build-all.sh` 先例**保留**（件路径即命名空间键 · 件离盘后由同一回退腿解析）。"
     },
     {
       "id": "zerg-upgrade.sh",

@@ -38,7 +38,7 @@ models:
   probe-list:
     - { host: Mr2109, backend: llama-server, file: "/models/old-a.gguf", mem_gb: 6, ctx_window: 8192 }
     - { host: Mr2109, backend: llama-server, file: "/models/old-b.gguf", mem_gb: 8, ctx_window: 16384, added: "2026-09-01" }
-  probe-bare: { host: edge-node, backend: ds4-server, file: "/data/models/old-c.gguf", mem_gb: 18, ctx_window: 131072 }
+  probe-bare: { host: node-a, backend: ds4-server, file: "/data/models/old-c.gguf", mem_gb: 18, ctx_window: 131072 }
 
 aliases:
   zerg-a: old-a
@@ -47,7 +47,7 @@ fleet:
   Mr2109:
     host: Mr2109
     port: 8580
-  edge-node:
+  node-a:
     host: <worker-ip>
     port: 8100
 `
@@ -185,7 +185,7 @@ func TestModelAddListShapeWriteOneLineAdded(t *testing.T) {
 	_, path := fleetFixtureAt(t)
 	repoBefore := repoFleetSHA(t)
 	rc, out, errb := runCapture("model", "add", "--path", path, "--model", "probe-list",
-		"--host", "edge-node", "--file", "/models/new-x3.gguf", "--confirm", "probe-list", "--mem-gb", "18", "--ctx", "131072",
+		"--host", "node-a", "--file", "/models/new-x3.gguf", "--confirm", "probe-list", "--mem-gb", "18", "--ctx", "131072",
 		"--arch", "qwen3", "--desc", "夹具新条", "--added", "2026-09-24", "--yes")
 	if rc != 0 {
 		t.Fatalf("真写 rc=%d（要 0）· stderr=%s", rc, errb)
@@ -214,7 +214,7 @@ func TestModelAddListShapeWriteOneLineAdded(t *testing.T) {
 	if at < 0 {
 		t.Fatalf("找不到新行的位置")
 	}
-	if !strings.HasPrefix(newLines[at], "    - { host: edge-node,") {
+	if !strings.HasPrefix(newLines[at], "    - { host: node-a,") {
 		t.Fatalf("新条不是列表形条目（缩进/形状不对）：%q", newLines[at])
 	}
 	restored := append(append([]string{}, newLines[:at]...), newLines[at+1:]...)
@@ -258,7 +258,7 @@ func TestModelAddBareShapeExpandsToList(t *testing.T) {
 		t.Fatalf("行数 %d → %d（要 +2：原条那一行拆成 3 行 ⇒ 净增 2）", len(oldLines), len(newLines))
 	}
 	// 原条正文**逐字**搬进列表形条目（只换前缀），键那一行也在
-	if !strings.Contains(string(got), "    - { host: edge-node, backend: ds4-server, file: \"/data/models/old-c.gguf\", mem_gb: 18, ctx_window: 131072 }") {
+	if !strings.Contains(string(got), "    - { host: node-a, backend: ds4-server, file: \"/data/models/old-c.gguf\", mem_gb: 18, ctx_window: 131072 }") {
 		t.Fatalf("原条正文没有逐字保留成列表形条目：%s", got)
 	}
 	if !strings.Contains(string(got), "\n  probe-bare:\n") {
@@ -273,8 +273,8 @@ func TestModelAddBareShapeExpandsToList(t *testing.T) {
 		switch {
 		case strings.Contains(l, "/models/new-bare-Mr2109.gguf"):
 			continue // 新增条
-		case strings.HasPrefix(l, "    - { host: edge-node, backend: ds4-server, file: \"/data/models/old-c.gguf\""):
-			restored = append(restored, `  probe-bare: { host: edge-node, backend: ds4-server, file: "/data/models/old-c.gguf", mem_gb: 18, ctx_window: 131072 }`)
+		case strings.HasPrefix(l, "    - { host: node-a, backend: ds4-server, file: \"/data/models/old-c.gguf\""):
+			restored = append(restored, `  probe-bare: { host: node-a, backend: ds4-server, file: "/data/models/old-c.gguf", mem_gb: 18, ctx_window: 131072 }`)
 		case strings.TrimRight(l, " ") == "  probe-bare:":
 			continue // 展开时新生的键那一行（由上面那一行还原）
 		default:
@@ -299,7 +299,7 @@ func TestModelAddBareShapeExpandsToList(t *testing.T) {
 	}
 	// 读回再校：该块现在 2 条
 	rc2, out2, errb2 := runCapture("model", "add", "--path", path, "--model", "probe-bare",
-		"--host", "edge-node", "--file", "/models/again.gguf", "--dry-run")
+		"--host", "node-a", "--file", "/models/again.gguf", "--dry-run")
 	if rc2 != 0 || !strings.Contains(out2, "`probe-bare` 下 2 条") {
 		t.Fatalf("改后档 `probe-bare` 没解析成 2 条：rc=%d out=%s stderr=%s", rc2, out2, errb2)
 	}
@@ -309,7 +309,7 @@ func TestModelAddBareShapeExpandsToList(t *testing.T) {
 func TestModelAddNewBlockRealWriteTwoLinesAdded(t *testing.T) {
 	_, path := fleetFixtureAt(t)
 	rc, out, errb := runCapture("model", "add", "--path", path, "--model", "probe-fresh",
-		"--host", "edge-node", "--file", "/models/fresh.gguf", "--confirm", "probe-fresh", "--mem-gb", "17", "--ctx", "131072", "--yes")
+		"--host", "node-a", "--file", "/models/fresh.gguf", "--confirm", "probe-fresh", "--mem-gb", "17", "--ctx", "131072", "--yes")
 	if rc != 0 {
 		t.Fatalf("真写（新建块）rc=%d（要 0）· stderr=%s", rc, errb)
 	}
@@ -337,12 +337,12 @@ func TestModelAddNewBlockRealWriteTwoLinesAdded(t *testing.T) {
 	if hdr < 0 || at != hdr+1 {
 		t.Fatalf("新建块的两行没接在一起：块首下标=%d 条目下标=%d", hdr, at)
 	}
-	if !strings.HasPrefix(newLines[at], "    - { host: edge-node,") {
+	if !strings.HasPrefix(newLines[at], "    - { host: node-a,") {
 		t.Fatalf("新条不是列表形条目：%q", newLines[at])
 	}
 	lastModels := -1
 	for i, l := range newLines {
-		if strings.Contains(l, `  probe-bare: { host: edge-node`) {
+		if strings.Contains(l, `  probe-bare: { host: node-a`) {
 			lastModels = i
 		}
 	}
@@ -373,7 +373,7 @@ func TestModelAddNewBlockRealWriteTwoLinesAdded(t *testing.T) {
 func TestModelAddPreservesMissingTrailingNewline(t *testing.T) {
 	text := strings.TrimRight(fleetFixture, "\n")
 	p := writeFixture(t, text)
-	rc, _, errb := runCapture("model", "add", "--path", p, "--model", "probe-list", "--host", "edge-node",
+	rc, _, errb := runCapture("model", "add", "--path", p, "--model", "probe-list", "--host", "node-a",
 		"--file", "/models/tail.gguf", "--confirm", "probe-list", "--yes")
 	if rc != 0 {
 		t.Fatalf("真写 rc=%d（要 0）· stderr=%s", rc, errb)
@@ -451,10 +451,10 @@ func TestModelAddNegativeBlockAbsentNotCreatable(t *testing.T) {
 
 // 反例探针二 · 块形态**认不出**（不是列表形也不是同行裸映射形）⇒ 退非 0 且不动（不猜）。
 func TestModelAddNegativeUnknownBlockShape(t *testing.T) {
-	p := writeFixture(t, "models:\n  probe-weird:\n    host: edge-node\n    file: /data/models/w.gguf\n\nfleet:\n  edge-node: { host: <worker-ip>, port: 8100 }\n")
+	p := writeFixture(t, "models:\n  probe-weird:\n    host: node-a\n    file: /data/models/w.gguf\n\nfleet:\n  node-a: { host: <worker-ip>, port: 8100 }\n")
 	before := fileSHA(t, p)
 	rc, _, errb := runCapture("model", "add", "--path", p, "--model", "probe-weird",
-		"--host", "edge-node", "--file", "/data/models/w2.gguf", "--yes")
+		"--host", "node-a", "--file", "/data/models/w2.gguf", "--yes")
 	if rc == 0 {
 		t.Fatalf("认不出的块形态却 rc=0（要非 0 —— 不许猜）")
 	}
@@ -475,7 +475,7 @@ func TestModelAddNegativeHostNotInRoster(t *testing.T) {
 	if rc != 2 || !strings.Contains(errb, "不在名册") {
 		t.Fatalf("主机不在名册：rc=%d stderr=%s（要 2 + 「不在名册」）", rc, errb)
 	}
-	if !strings.Contains(errb, "Mr2109") || !strings.Contains(errb, "edge-node") {
+	if !strings.Contains(errb, "Mr2109") || !strings.Contains(errb, "node-a") {
 		t.Fatalf("判词没列出在册主机：%s", errb)
 	}
 	if after := fileSHA(t, path); after != before {
@@ -618,7 +618,7 @@ func TestConfigReloadDryRunSendsNoRequest(t *testing.T) {
 // 0 个 host」（见本文件末尾那条已核事实）——它只对**旧 CLI 的严格档**是坏档。判据意思不变
 // （坏档 ⇒ 1 且不发请求），夹具换成主控也认的**真类型错**。
 func TestConfigReloadBadConfigRefusesBeforeRequest(t *testing.T) {
-	p := writeFixture(t, "models:\n  probe-x:\n    - { host: edge-node, ctx_window: 大 }\n")
+	p := writeFixture(t, "models:\n  probe-x:\n    - { host: node-a, ctx_window: 大 }\n")
 	rc, out, errb := runCapture("config", "reload", "--path", p, "--yes")
 	if rc != 1 {
 		t.Fatalf("坏档 rc=%d（要 1）", rc)
@@ -655,10 +655,10 @@ func TestConfigReloadRequiresYes(t *testing.T) {
 func TestFleetParserSameEntryBothShapes(t *testing.T) {
 	listShape := `models:
   probe-x3:
-    - { host: edge-node, backend: llama-server, file: "/data/models/probe.gguf", mem_gb: 18, ctx_window: 131072 }
+    - { host: node-a, backend: llama-server, file: "/data/models/probe.gguf", mem_gb: 18, ctx_window: 131072 }
 `
 	bareShape := `models:
-  probe-x3: { host: edge-node, backend: llama-server, file: "/data/models/probe.gguf", mem_gb: 18, ctx_window: 131072 }
+  probe-x3: { host: node-a, backend: llama-server, file: "/data/models/probe.gguf", mem_gb: 18, ctx_window: 131072 }
 `
 	rosterLine := func(t *testing.T, out string) string {
 		t.Helper()
@@ -696,9 +696,9 @@ func TestFleetParserSameEntryBothShapes(t *testing.T) {
 	// 不是本笔引入的放宽；改前 CLI 那声 rc=1 来自**分叉的严格档**，不是安全网。收紧它属**改主控侧**，
 	// 本笔不做 ✗（已在回执里记成缺口）。
 	for _, c := range []struct{ name, text string }{
-		{"`ctx_window` 给非数（裸映射）", "models:\n  probe-x3: { host: edge-node, ctx_window: 大 }\n"},
-		{"`ctx_window` 给非数（列表）", "models:\n  probe-x3:\n    - { host: edge-node, ctx_window: 大 }\n"},
-		{"流式映射少一个 `}`（语法错）", "models:\n  probe-x3:\n    - { host: edge-node, ctx_window: 131072\n"},
+		{"`ctx_window` 给非数（裸映射）", "models:\n  probe-x3: { host: node-a, ctx_window: 大 }\n"},
+		{"`ctx_window` 给非数（列表）", "models:\n  probe-x3:\n    - { host: node-a, ctx_window: 大 }\n"},
+		{"流式映射少一个 `}`（语法错）", "models:\n  probe-x3:\n    - { host: node-a, ctx_window: 131072\n"},
 	} {
 		rc, out, errb := runCapture("config", "reload", "--path", writeFixture(t, c.text), "--dry-run")
 		if rc == 0 {

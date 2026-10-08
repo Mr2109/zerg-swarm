@@ -34,7 +34,7 @@ func fleetWithDecl(t *testing.T, model string, ctx, maxTokens int) *config.Fleet
 	t.Helper()
 	yaml := "models:\n" +
 		"  " + model + ":\n" +
-		"    host: edge-node\n" +
+		"    host: node-a\n" +
 		"    backend: ds4-server\n" +
 		"    file: /data/models/x.gguf\n" +
 		"    mem_gb: 86\n" +

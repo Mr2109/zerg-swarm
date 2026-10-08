@@ -30,7 +30,7 @@ func TestLlamaInit_Defaults(t *testing.T) {
 func TestLlamaInit_Config(t *testing.T) {
 	l := NewLlamaRuntime()
 	cfg := map[string]interface{}{
-		"host":            "<worker-ip>",
+		"host":            "<cluster-ip>",
 		"port":            int64(8100), // int64 类型
 		"model_file":      "/data/models/test.gguf",
 		"ngl":             float64(32), // float64（JSON 反序列化）
@@ -42,8 +42,8 @@ func TestLlamaInit_Config(t *testing.T) {
 	if err := l.Init(cfg); err != nil {
 		t.Fatalf("Init 失败: %v", err)
 	}
-	if l.Host != "<worker-ip>" || l.Port != "8100" {
-		t.Fatalf("host/port = %s:%s，应 <worker-ip>:8100", l.Host, l.Port)
+	if l.Host != "<cluster-ip>" || l.Port != "8100" {
+		t.Fatalf("host/port = %s:%s，应 <cluster-ip>:8100", l.Host, l.Port)
 	}
 	if l.NGPULayers != 32 {
 		t.Fatalf("ngl = %d，应 32", l.NGPULayers)
@@ -54,7 +54,7 @@ func TestLlamaInit_Config(t *testing.T) {
 	if l.StartupTimeout != 120*time.Second || l.RequestTimeout != 300*time.Second {
 		t.Fatalf("timeout = %v/%v，应 120s/300s", l.StartupTimeout, l.RequestTimeout)
 	}
-	if !strings.HasPrefix(l.baseURL, "http://<worker-ip>:8100") {
+	if !strings.HasPrefix(l.baseURL, "http://<cluster-ip>:8100") {
 		t.Fatalf("baseURL = %s", l.baseURL)
 	}
 }

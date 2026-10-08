@@ -33,7 +33,7 @@ func readDataDisk(dir string) DiskSample {
 // readProcAttribution 非 Linux 无 /proc ⇒ 空归因（Ok=false）。
 func readProcAttribution() AttribSample { return AttribSample{} }
 
-// parseDrmGttKib 非 Linux 平台保留解析纯函式（用 EDGE-NODE 实测样例驱动单测，保证
+// parseDrmGttKib 非 Linux 平台保留解析纯函式（用 node-a 实测样例驱动单测，保证
 // Linux 实读层同款格式的解析逻辑在 darwin 上也能被验证）。
 func parseDrmGttKib(text string) float64 { return parseDrmGttKibCommon(text) }
 

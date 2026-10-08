@@ -346,6 +346,15 @@ func run(args []string, stdout, stderr io.Writer) int {
 	if inv.hasFlag("--hours") && !usageDeclaresFlag(cmd, "--hours") {
 		inv.unknown = append(inv.unknown, "--hours")
 	}
+	// ★ 同一条数据驱动收口（P0 #232 · 2026-10-08）：`--max` / `--poll-interval` / `--max-retries` /
+	//   `--cooldown` 在解析面刚上户口（`valueFlagName`）⇒ 全族共用；若不在此收口，别族（usage 未列它的
+	//   命令）真给它们会从「未知旗标 2」退化成**静默吞**（硬约束⑤：既有命令的退码与输出一字不动）。
+	//   形状逐字照拄上面 `--hours` 那条。
+	for _, f := range []string{"--max", "--poll-interval", "--max-retries", "--cooldown"} {
+		if inv.hasFlag(f) && !usageDeclaresFlag(cmd, f) {
+			inv.unknown = append(inv.unknown, f)
+		}
+	}
 	if len(inv.unknown) > 0 && !cmd.passthrough {
 		fmt.Fprintf(stderr, "%s: 未知旗标 %q\n", progName, inv.unknown[0])
 		fmt.Fprintf(stderr, "See '%s --help'。\n", progName)
@@ -674,11 +683,15 @@ func init() {
 			run:      cmdModelLs,
 		},
 		{
-			path:     []string{"help", "export"},
-			kind:     "HelpExport",
-			summary:  "把命令树导出 markdown 进版本档案目录（产物 · 勿手改）；只读档 `--dry-run` 出逐条清单、一个字节不写",
-			usage:    "zerg help export [--out <目录> | --docs-ver <X.Y.Z>] [--dry-run] [--json <字段>]",
-			fields:   helpExportFields,
+			path:    []string{"help", "export"},
+			kind:    "HelpExport",
+			summary: "把命令树导出 markdown 进版本档案目录（产物 · 勿手改）；`--dry-run` 出逐条清单、真写要 `--yes`（默认档 fail-closed）",
+			usage:   "zerg help export [--out <目录> | --docs-ver <X.Y.Z>] [--dry-run | --yes] [--json <字段>]",
+			fields:  helpExportFields,
+			// 授权侧（缺口 `GAP-20260927-140` ① · Mr2109 2026-10-08 拍「默认档要 fail-closed」）：
+			// 本条**真写盘**（往版本档案目录落一件导出物）而修前无 `danger` ⇒ 默认档零授权写。
+			danger:   &dangerSpec{dangerD2, "（落点目录）", "往版本档案目录落一件导出物（命令面 markdown · 同日幂等覆盖 · 仓外落点）", "GAP-20260927-140 ① · GAP-20260927-135 · 同族先例 doc meta fill（D2）", false},
+			opened:   true,
 			endpoint: "",
 			run:      cmdHelpExport,
 		},
@@ -996,6 +1009,34 @@ func init() {
 			fields:   agentSlotsFields,
 			endpoint: "GET http://<host>:<engine_port>/slots（+ /props 的 total_slots；非 JSON 数组 ⇒ blocked 退 8）",
 			run:      cmdAgentSlots,
+		},
+		// ---- P0 #232 第四/第五面（2026-10-08 · 本枚）：`agent workers set` / `agent scheduler set` 两条 D2 写面 ----
+		// 落点 = **本地** `<仓根>/config/workers.yaml`（✗ 不碰主控 / ✗ 不碰远端）；口径逐字照同族写面先例
+		// `itask interval set`（D2 + `--confirm=<本机名>` + `--yes` + `--dry-run` 计划件 + 落地值回读）。
+		{
+			path:     []string{"agent", "workers", "set"},
+			kind:     "AgentWorkersSet",
+			summary:  "设某机并发上限（D2 写面 · **只写本机** `config/workers.yaml` · `--dry-run` 零副作用 · 缺 `--confirm=<本机名>`/`--yes` ⇒ 2 · 远机 ⇒ 拒执）",
+			usage:    "zerg agent workers set <机> --max N [--dry-run | --confirm=<本机名> --yes] [--json <字段>]",
+			arity:    "any",
+			args:     []string{"机器名（**必须是本机**；远机需子端控制端点 · 本版未开 ⇒ 拒执退 2）"},
+			fields:   []string{"machine", "max", "landed", "changed", "path"},
+			danger:   &dangerSpec{dangerD2, "本机名", "把本机 devices 条目的 max_workers 设成 --max N（**持久化**到 config/workers.yaml —— scheduler 下次 NewScheduler 读到生效；0 = 暂停派活）—— 可逆：再设回旧值即回原态", "P0 #232 · 同族写面先例 `itask interval set`（D2 + --confirm + --yes + 落地值回读）", true},
+			opened:   true,
+			endpoint: "",
+			run:      cmdAgentWorkersSetGuarded,
+		},
+		{
+			path:     []string{"agent", "scheduler", "set"},
+			kind:     "AgentSchedulerSet",
+			summary:  "设调度器旋钮（D2 写面 · 写 `config/workers.yaml` 顶 `scheduler:` 段 · `--dry-run` 零副作用 · 缺 `--confirm=<本机名>`/`--yes` ⇒ 2）",
+			usage:    "zerg agent scheduler set [--poll-interval <N>] [--max-retries <N>] [--cooldown <N>] [--dry-run | --confirm=<本机名> --yes] [--json <字段>]",
+			arity:    "none",
+			fields:   []string{"path", "poll_interval", "max_retries", "cooldown", "changed"},
+			danger:   &dangerSpec{dangerD2, "本机名", "改本地 `config/workers.yaml` 的 `scheduler:` 段（轮询间隔 / 死信阈值 / 失败冷却 —— scheduler.go 的 Start()/handleFailure() 读侧接线；未给值时用编译期常量兜底）—— 可逆：再设回旧值即回原态", "P0 #232 · 同族写面先例 `itask interval set`（D2 + --confirm + --yes + 落地值回读）", true},
+			opened:   true,
+			endpoint: "",
+			run:      cmdAgentSchedulerSetGuarded,
 		},
 		// ---- 缺口 `GAP-20260927-195` · `agent` 族：`agent restart`（D3 · 已开放 · 照同族 `core restart` 形状）----
 		{
@@ -1534,6 +1575,20 @@ func init() {
 			opened: true,
 			run:    cmdDocMeta,
 		},
+		// ── 缺口面 `GAP-20260927-129` ④「把『定格』做成可现算读数」：只读命令 `zerg doc consumers` ──
+		//   逐消费者现读其**解析出的版本目录**（zerg_overview / help export / doc meta fill / doc_search）·
+		//   缺件不静默（版本档案取源根判不了 ⇒ 退 8 并点名候选）· 判定口径与判据 `check-doc-consumers`
+		//   共用同一份现读（✗ 不两处各写一套）。
+		{
+			path:    []string{"doc", "consumers"},
+			kind:    "DocConsumers",
+			summary: "四个消费判据各自解析出的「定格版本目录」现读读数（**只读**：不写盘、不起子进程、不联网 · 逐消费者可比出定格是否分叉 · 判据 `check-doc-consumers` 共用同一读数）",
+			usage:   "zerg doc consumers [--json <字段>]",
+			arity:   "none",
+			args:    []string{"（无位置参数）"},
+			fields:  docConsumersFields,
+			run:     cmdDocConsumers,
+		},
 		// ── S7 · 5 键归口（doc 族扩容）：3 件独立工具收成命令面（`kb-docs-sync`=A18 · `gen-tools-md` · `doc-index-gen`）──
 		// 归口件：`~/.zerg/state/②类-5键-CLI工具子命令归口-20261007.md`。三件底层唯一实现 = 各自 Go 真搬体
 		// （`kb_docs_sync.go` / `gen_tools_md.go` / `doc_index_gen.go`）；命令面**只做入口 ＋ 转发**（连退码也不改写）
@@ -1964,7 +2019,7 @@ func init() {
 		},
 		{
 			path:    []string{"build", "all"},
-			danger:  &dangerSpec{dangerD3, "主机名", "重编制品（自举档 `--only cli` 只写 bin/zerg 一件；**换件档会覆盖 bin/ 里的在跑制品** · 底层 scripts/build/build-all.sh）", "GAP-20261005-39 · family_build.go:279 自印「危险档：D3」· §17.2 ③ 建环", true},
+			danger:  &dangerSpec{dangerD3, "主机名", "重编制品（自举档 `--only cli` 只写 bin/zerg 一件；**换件档会覆盖 bin/ 里的在跑制品** · 底层 Go 真身 scripts/build/cmd/zerg-build-all/main.go）", "GAP-20261005-39 · family_build.go:279 自印「危险档：D3」· §17.2 ③ 建环", true},
 			opened:  true,
 			summary: "重编制品（**自举档已开放**：`--only cli` 只写 bin/zerg 一件；换件档/发布档仍未开放）",
 			usage:   "zerg build all [--only cli] [--dry-run | --confirm=<主机名> --yes]",
@@ -1972,7 +2027,7 @@ func init() {
 		},
 		{
 			path:    []string{"build", "release"},
-			danger:  &dangerSpec{dangerD3, "主机名", "打包发布件（清单档 `--manifest-only` 只写 dist/<版本>/release/；**换件档真跑未开放** · 底层 scripts/build/build-all.sh）", "GAP-20261005-39 · family_build.go:279 自印「危险档：D3」· §17.2 ③ 建环", true},
+			danger:  &dangerSpec{dangerD3, "主机名", "打包发布件（清单档 `--manifest-only` 只写 dist/<版本>/release/；**换件档真跑未开放** · 底层 Go 真身 scripts/build/cmd/zerg-build-all/main.go）", "GAP-20261005-39 · family_build.go:279 自印「危险档：D3」· §17.2 ③ 建环", true},
 			opened:  true,
 			summary: "打包发布件（**计划面已开放**：`--dry-run` 出计划件；**清单档 `--manifest-only` 已开放** —— 只重写 `dist/<版本>/release/` 的清单与逐件 sha256，不编译、不重打包、不碰在跑件；换件档真跑本版未开放 · 拒执退码 2）",
 			usage:   "zerg build release [--manifest-only] [--dry-run | --confirm=<主机名> --yes]",
@@ -2219,13 +2274,18 @@ func init() {
 			run:     cmdGuarded,
 		},
 		{
-			path:     []string{"dev", "proposal"},
-			kind:     "Proposal",
-			summary:  "提案件通道：只产可审查物（new|list|show|check）· 目标必须回指既有编号 · **判据必须可机检** · 「提 ≠ 批」两对字段（subject/approver）",
-			usage:    "zerg dev proposal new --title <题（必填）> --target <待办编号（必填 · 只收 D/E/F/G 族编号 · 逐条闭集真源 core/internal/contract/dev-targets.json）> --goal <目标（必填）> --evidence <出处（必填 · 至少一条）> --rollback <退点件（必填 · 仓外整件路径 —— 退建议照它核 sha256 取改前态；不是这一种形态的在提案这一步不拒，到退建议那一步才判不可退）> --criterion <判据（必填 · 一条首词是 zerg、本版真跑得动的命令）> [--by <提出者>] [--file <要改的件（仓内相对路径 —— 与 --rollback 收的**仓外**整件路径是两套口径 · 别混）>]… [--subject <提出者>] [--subject-kind human|ai|egg|ci] [--egg-id <卵 id>] [--approver <批准者>] [--approver-kind human]",
-			arity:    "any",
-			args:     []string{"动作：new | list | show | check", "提案 id（show/check 才要）"},
-			fields:   proposalFields,
+			path:    []string{"dev", "proposal"},
+			kind:    "Proposal",
+			summary: "提案件通道：只产可审查物（new|list|show|check）· 目标必须回指既有编号 · **判据必须可机检** · 「提 ≠ 批」两对字段（subject/approver）",
+			usage:   "zerg dev proposal new --title <题（必填）> --target <待办编号（必填 · 只收 D/E/F/G 族编号 · 逐条闭集真源 core/internal/contract/dev-targets.json）> --goal <目标（必填）> --evidence <出处（必填 · 至少一条）> --rollback <退点件（必填 · 仓外整件路径 —— 退建议照它核 sha256 取改前态；路径形的退点（绝对 / 带目录分隔符）在提案这一步就要求**现读可得**（读不到 / 是目录 ⇒ 当场退 2），非路径形的「方式」文本才留到退建议那一步判）> --criterion <判据（必填 · 一条首词是 zerg、本版真跑得动的命令）> [--by <提出者>] [--file <要改的件（仓内相对路径 —— 与 --rollback 收的**仓外**整件路径是两套口径 · 别混）>]… [--subject <提出者>] [--subject-kind human|ai|egg|ci] [--egg-id <卵 id>] [--approver <批准者>] [--approver-kind human] [--dry-run | --yes]",
+			arity:   "any",
+			args:    []string{"动作：new | list | show | check", "提案 id（show/check 才要）"},
+			fields:  proposalFields,
+			// 授权侧（`GAP-20260927-140` ①）：`new` 真写提案件（状态目录）而修前无 `danger`。
+			// 声明面照 `agent registry` 先例：**整条命令**登记危险档，`list`/`show`/`check` 只读
+			// （fail-closed 只落在 `new` 的写盘点上 —— 见 `cmdDevProposalNew` 的 `--yes` 门）。
+			danger:   &dangerSpec{dangerD2, "（提案 id）", "落一件提案件（状态目录）—— `new` 写、`list`/`show`/`check` 只读", "GAP-20260927-140 ① · GAP-20260927-90 · 同族先例 agent registry（声明面 · `--list` 只读）", false},
+			opened:   true,
 			endpoint: "",
 			run:      cmdDevProposal,
 		},
@@ -2289,7 +2349,7 @@ func init() {
 			arity:   "any",
 			args:    []string{"提案 id（--proposal）", "要改的件（--file · 必须在提案的 files[] 里）"},
 			fields:  devEditFields,
-			danger:  &dangerSpec{dangerD3, "本机名", "改仓内件（写工作树）—— 作用域 = 提案声明的件；审计一行一事件；回滚 = 提案退点 + git", "§17.3 铁律③ · §九 M3 C4/C5 · §4.1 K7 · D3b 第二步", true},
+			danger:  &dangerSpec{dangerD3, "本机名", "改仓内件（写工作树）—— 作用域 = 提案声明的件；审计一行一事件；回滚 = 提案退点件（回到 before_sha256；`git revert` 不算退点）", "§17.3 铁律③ · §九 M3 C4/C5 · §4.1 K7 · D3b 第二步", true},
 			// `opened`: 真跑已开放（`--confirm=<本机名> --yes` 齐 + 人签批准件 ⇒ 写工作树）。
 			opened:   true,
 			endpoint: "",
@@ -2317,7 +2377,7 @@ func init() {
 			usage:   "zerg dev build --candidate <候选 id> [--scope go|rust|ui|all] [--dist] [--yes] [--dry-run]",
 			arity:   "any",
 			args:    []string{"候选 id"},
-			danger:  &dangerSpec{dangerD2, "候选 id", "在候选区编出成套制品（底层就是 scripts/build/build-all.sh —— 不新造第二条构建路）", "§17.4 第 2 条 · §17.6 SD10-b · 开工单 T-58", true},
+			danger:  &dangerSpec{dangerD2, "候选 id", "在候选区编出成套制品（底层就是 Go 真身 scripts/build/cmd/zerg-build-all/main.go —— 不新造第二条构建路）", "§17.4 第 2 条 · §17.6 SD10-b · 开工单 T-58", true},
 			run:     cmdDevBuild,
 		},
 		{
@@ -2330,13 +2390,17 @@ func init() {
 			run:     cmdDevTest,
 		},
 		{
-			path:     []string{"dev", "verify"},
-			kind:     "DevEvidence",
-			summary:  "合成一份验收证据单（只收证据、**不给「通过」的结论**）· 证据为空 ⇒ 2",
-			usage:    "zerg dev verify --candidate <候选 id> [--results <结果表>] [--code-sha <sha>] [--node <名>] [--layer <档>] [--gate [--human-approval <名>]] [--dry-run] [--json <字段>]",
-			arity:    "any",
-			args:     []string{"候选 id"},
-			fields:   devVerifyFields,
+			path:    []string{"dev", "verify"},
+			kind:    "DevEvidence",
+			summary: "合成一份验收证据单（只收证据、**不给「通过」的结论**）· 证据为空 ⇒ 2",
+			usage:   "zerg dev verify --candidate <候选 id> [--results <结果表>] [--code-sha <sha>] [--node <名>] [--layer <档>] [--gate [--human-approval <名>]] [--dry-run | --yes] [--json <字段>]",
+			arity:   "any",
+			args:    []string{"候选 id"},
+			fields:  devVerifyFields,
+			// 授权侧（`GAP-20260927-140` ①）：真写 `dist/candidates/<id>/evidence.json`（判据物 ·
+			// **仓内工作树**）而修前无 `danger` ⇒ 默认档零授权写。fail-closed 落在写盘点（见 `cmdDevVerify`）。
+			danger:   &dangerSpec{dangerD2, "候选 id", "写 `dist/candidates/<id>/evidence.json`（判据物 · 仓内候选区）", "GAP-20260927-140 ① · GAP-20260927-90 · dev verify 是零授权写里唯一落仓内工作树者", false},
+			opened:   true,
 			endpoint: "",
 			run:      cmdDevVerify,
 		},
@@ -2383,13 +2447,17 @@ func init() {
 			run:      cmdAsk,
 		},
 		{
-			path:     []string{"plan"},
-			kind:     "Plan",
-			summary:  "**算**：产出一份意图件（M6 包封 · F1–F7 + 四附加件）· **零副作用**",
-			usage:    "zerg plan <族> <动作> <对象…> [--node 名]… [--expect 旧值] [--target-ref <编号>] [--out <件>] [--json <字段>]",
-			arity:    "any",
-			args:     []string{"族（= target.kind）", "动作", "对象名"},
-			fields:   planFields,
+			path:    []string{"plan"},
+			kind:    "Plan",
+			summary: "**算**：产出一份意图件（M6 包封 · F1–F7 + 四附加件）· 写意图件要 `--yes`（默认档 fail-closed）",
+			usage:   "zerg plan <族> <动作> <对象…> [--node 名]… [--expect 旧值] [--target-ref <编号>] [--out <件>] [--dry-run | --yes] [--json <字段>]",
+			arity:   "any",
+			args:    []string{"族（= target.kind）", "动作", "对象名"},
+			fields:  planFields,
+			// 授权侧（`GAP-20260927-140` ①）：真写意图件（`--out <件>` 或 `$ZERG_PLAN_DIR`）而修前无
+			// `danger` ⇒ 默认档零授权写。fail-closed 落在写盘点（见 `cmdPlan`）。
+			danger:   &dangerSpec{dangerD2, "（意图件落点）", "写一份意图件（`--out <件>` 或 `$ZERG_PLAN_DIR` 缺省 ~/.zerg/plans/<plan_id>.json）", "GAP-20260927-140 ① · GAP-20260927-90 · 同族先例 doc meta fill（D2）", false},
+			opened:   true,
 			endpoint: "",
 			run:      cmdPlan,
 		},
@@ -2408,18 +2476,24 @@ func init() {
 		// ---- §20.3 H3 交接回执（批 E · T-61）----
 		// 轮级续做件（`P-119` 的取舍：变更账是版本级史书、回执是轮级续做件，不许混）。
 		{
-			path:     []string{"dev", "receipt"},
-			kind:     "Receipt",
-			summary:  "交接回执（一轮一页 · 带 trace_id）：new | ls | show；读法 = `zerg context ls --resume`",
-			usage:    "zerg dev receipt new --what <做了什么> --next <下一步> [--evidence <证据>]… [--blockers <阻碍>]… [--commit <sha>]… [--trace <trace_id>]",
-			arity:    "any",
-			args:     []string{"动作：new | ls | show", "轮次 id（只 show 要）"},
-			fields:   receiptFields,
+			path:    []string{"dev", "receipt"},
+			kind:    "Receipt",
+			summary: "交接回执（一轮一页 · 带 trace_id）：new | ls | show；读法 = `zerg context ls --resume`（`new` 写要 `--yes`）",
+			usage:   "zerg dev receipt new --what <做了什么> --next <下一步> [--evidence <证据>]… [--blockers <阻碍>]… [--commit <sha>]… [--trace <trace_id>] [--dry-run | --yes]",
+			arity:   "any",
+			args:    []string{"动作：new | ls | show", "轮次 id（只 show 要）"},
+			fields:  receiptFields,
+			// 授权侧（`GAP-20260927-140` ①）：`new` 真写回执件（状态目录 `receipts/`）而修前无 `danger`。
+			// 声明面照 `agent registry` 先例：**整条命令**登记危险档，`ls`/`show` 只读
+			// （fail-closed 只落在 `new` 的写盘点上 —— 见 `cmdReceiptNew` 的 `--yes` 门）。
+			danger:   &dangerSpec{dangerD2, "（轮次 id）", "落一件回执（状态目录 `receipts/<R-…>.json`）—— `new` 写、`ls`/`show` 只读", "GAP-20260927-140 ① · GAP-20260927-90 · 同族先例 agent registry（声明面）", false},
+			opened:   true,
 			endpoint: "",
 			run:      cmdDevReceipt,
 		},
 		// ---- 只读隔离（`GAP-20260926-20` P0 · 2026-09-26）：脚本面的**CLI 正门** · **顶层命令** ----
-		// 底层唯一实现 = `scripts/dev/isolate-ro.sh`（只转发、不翻译；退码 0/1/2 原样转出）。
+		// 底层原件 = `scripts/dev/isolate-ro.sh`（只转发、不翻译；退码 0/1/2 原样转出）。
+		// ★ 真搬后本件自足（✗ 不再 exec 脚本 · ✗ 无「递不到脚本退 8」档）：旗标 / 退码 / 文案逐档照原件。
 		// ★ 落**顶层**（父代理一拍）：① 与已登记名一致 —— 技能参考 `references/safe-isolation.md`
 		//   与缺口账写的就是 `zerg isolate-ro new|verify`；② 不撞 standing 判据 —— `dev` 族被钉成
 		//   「只增改环 · 读环一条都不新增」（`TestDevFamilyIsACHangedOnlyRingNoNewReadCommands`
@@ -2427,109 +2501,115 @@ func init() {
 		// 名字分家：`new` = 造副本（写只落在副本/`--dst`）· `verify` = 只读逐件 sha256 验回。
 		{
 			path:        []string{"isolate-ro"},
-			summary:     "只读隔离：「在别处试」的**硬拷贝**副本（new）/ 逐件 sha256 验回没碰真仓（verify）· 底层只调 scripts/dev/isolate-ro.sh（命令面不重写逻辑）",
+			summary:     "只读隔离：「在别处试」的**硬拷贝**副本（new）/ 逐件 sha256 验回没碰真仓（verify）· 真搬 · 行为落 Go —— 不再 exec scripts/dev/isolate-ro.sh",
 			usage:       "zerg isolate-ro new <真仓> [--dst <目录>] [--include <glob>]… [--exclude <路径>]… [--all] [--reject-symlinks] [--no-manifest] [--quiet] | zerg isolate-ro verify <副本> <真仓> [--max-examples N] [--quiet] | zerg isolate-ro --self-test",
 			arity:       "any",
-			args:        []string{"动作：new（造副本 · 真仓只读）| verify（只读对拍）", "旗标与退码逐字来自 scripts/dev/isolate-ro.sh（原样透传）"},
+			args:        []string{"动作：new（造副本 · 真仓只读）| verify（只读对拍）", "旗标与退码逐档照 scripts/dev/isolate-ro.sh（真搬 · 原件退役后逐字同）"},
 			endpoint:    "",
 			passthrough: true,
 			run:         cmdIsolateRO,
 		},
-		// ---- A 档 批 1（换件面）· A1：主控换件的 **CLI 正门**（`zerg swap core` · 新族 `swap` · 壳转账）----
+		// ---- A 档 批 1（换件面）· A1：主控换件的 **CLI 正门**（`zerg swap core` · 新族 `swap` · 真搬）----
 		// 依据：`~/.zerg/state/A档18件-收CLI设计稿-20261007.md` 批 1 · A1（★事故面：把最险的手工换件口收进受控正门）。
-		// 底层唯一实现 = `scripts/build/zerg-swap-core.sh`（2026-09-16 事故后固化：三道门禁 ＋ 两道前置闸；
-		// 真换生产 `bin/zerg-core` 并重启 launchd ⇒ **动生产 `bin/` ⇒ 冻结面**）。命令面**不重写脚本任何一段**
-		// （只转发、不翻译；门禁全在脚本侧），递不到脚本退 8（不给结论）。
+		// 底层原件 = `scripts/build/zerg-swap-core.sh`（2026-09-16 事故后固化：三道门禁 ＋ 两道前置闸；
+		// 真换生产 `bin/zerg-core` 并重启 launchd ⇒ **动生产 `bin/` ⇒ 冻结面**）。
+		// ★ 真搬后本件自足（✗ 不再 exec 脚本 · ✗ 无「递不到脚本退 8」档）：旗标 / 退码 / 文案逐档照原件。
 		// ★ 安全线：本族动作真跑会动生产 `bin/` ⇒ ✗ 不在本单真跑（验收只用 `--help`/未知参数/`--self-test-rollback`）。
 		{
 			path:        []string{"swap", "core"},
 			danger:      &dangerSpec{dangerD3, "换件目标", "真换生产件（会动生产 `bin/` 并重启 launchd / UI 进程 —— 不可逆动作的邻居）—— 底层脚本当前**只报告档**（真换件 `--swap` 一律 rc=2 零副作用）", "GAP-20261005-39 · 同族先例 core restart / agent restart（D3）· A档批1 换件面（A2/A3 回执 §四 待 S6 补）", false},
 			opened:      true,
-			summary:     "主控换件（★事故面 · 底层只调 scripts/build/zerg-swap-core.sh —— 命令面不重写逻辑）",
-			usage:       "zerg swap core [--help | --self-test-rollback]",
+			summary:     "主控换件（★事故面 · 真搬 · 行为落 Go —— 不再 exec scripts/build/zerg-swap-core.sh）",
+			usage:       "zerg swap core [--help | --self-test-rollback] [--dry-run | --yes]",
 			arity:       "any",
-			args:        []string{"旗标与退码逐字来自 scripts/build/zerg-swap-core.sh（原样透传）"},
+			args:        []string{"旗标与退码逐档照 scripts/build/zerg-swap-core.sh（真搬 · 原件退役后逐字同）"},
 			endpoint:    "",
 			passthrough: true,
 			run:         cmdSwapCore,
 		},
-		// ---- A 档 批 1（换件面）· A2：子端换件的 **CLI 正门**（`zerg swap agent` · 族 `swap` 扩 action · 壳转账）----
+		// ---- A 档 批 1（换件面）· A2：子端换件的 **CLI 正门**（`zerg swap agent` · 族 `swap` 扩 action · 真搬）----
 		// 依据：`~/.zerg/state/A档18件-收CLI设计稿-20261007.md` 批 1 · A2。
-		// 底层唯一实现 = `scripts/build/zerg-swap-agent.sh`（只报告档：真跑 `git status`/`codesign`/`launchctl`/`curl`
-		// 探针；真换件档未开放 ⇒ `--swap` 一律 rc=2 零副作用）。命令面**不重写脚本任何一段**（只转发、不翻译；
-		// 六闸判决全在脚本侧），递不到脚本退 8（不给结论）。
+		// 底层原件 = `scripts/build/zerg-swap-agent.sh`（只报告档：真跑 `git status`/`codesign`/`launchctl`/`curl`
+		// 探针；真换件档未开放 ⇒ `--swap` 一律 rc=2 零副作用）。
+		// ★ 真搬后本件自足（✗ 不再 exec 脚本 · ✗ 无「递不到脚本退 8」档）：旗标 / 退码 / 文案逐档照原件。
 		// ★ 安全线：本族动作归换件面 ⇒ ✗ 不在本单真跑（验收只用 `--help`/未知参数）。
 		{
 			path:        []string{"swap", "agent"},
 			danger:      &dangerSpec{dangerD3, "换件目标", "真换生产件（会动生产 `bin/` 并重启 launchd / UI 进程 —— 不可逆动作的邻居）—— 底层脚本当前**只报告档**（真换件 `--swap` 一律 rc=2 零副作用）", "GAP-20261005-39 · 同族先例 core restart / agent restart（D3）· A档批1 换件面（A2/A3 回执 §四 待 S6 补）", false},
 			opened:      true,
-			summary:     "子端换件（底层只调 scripts/build/zerg-swap-agent.sh —— 只报告档；命令面不重写逻辑）",
-			usage:       "zerg swap agent [--check | --help | --self-test | --machine <名> [--label <作业名>]]",
+			summary:     "子端换件（真搬 · 行为落 Go —— 不再 exec scripts/build/zerg-swap-agent.sh；只报告档）",
+			usage:       "zerg swap agent [--check | --help | --self-test | --machine <名> [--label <作业名>]] [--dry-run | --yes]",
 			arity:       "any",
-			args:        []string{"旗标与退码逐字来自 scripts/build/zerg-swap-agent.sh（原样透传）"},
+			args:        []string{"旗标与退码逐档照 scripts/build/zerg-swap-agent.sh（真搬 · 原件退役后逐字同）"},
 			endpoint:    "",
 			passthrough: true,
 			run:         cmdSwapAgent,
 		},
-		// ---- A 档 批 1（换件面）· A3：桌面 UI 换件的 **CLI 正门**（`zerg swap ui` · 族 `swap` 扩 action · 壳转账）----
+		// ---- A 档 批 1（换件面）· A3：桌面 UI 换件的 **CLI 正门**（`zerg swap ui` · 族 `swap` 扩 action · 真搬）----
 		// 依据：`~/.zerg/state/A档18件-收CLI设计稿-20261007.md` 批 1 · A3。
-		// 底层唯一实现 = `scripts/build/zerg-swap-ui.sh`（只报告档：真跑 `git status`/`codesign`/进程 inode 对拍；
-		// 真换件档未开放 ⇒ `--swap` 一律 rc=2 零副作用）。命令面**不重写脚本任何一段**（只转发、不翻译；
-		// 六闸判决全在脚本侧），递不到脚本退 8（不给结论）。
+		// 底层原件 = `scripts/build/zerg-swap-ui.sh`（只报告档：真跑 `git status`/`codesign`/进程 inode 对拍；
+		// 真换件档未开放 ⇒ `--swap` 一律 rc=2 零副作用）。
+		// ★ 真搬后本件自足（✗ 不再 exec 脚本 · ✗ 无「递不到脚本退 8」档）：旗标 / 退码 / 文案逐档照原件。
 		// ★ 安全线：本族动作归换件面 ⇒ ✗ 不在本单真跑（验收只用 `--help`/未知参数）。
 		{
 			path:        []string{"swap", "ui"},
 			danger:      &dangerSpec{dangerD3, "换件目标", "真换生产件（会动生产 `bin/` 并重启 launchd / UI 进程 —— 不可逆动作的邻居）—— 底层脚本当前**只报告档**（真换件 `--swap` 一律 rc=2 零副作用）", "GAP-20261005-39 · 同族先例 core restart / agent restart（D3）· A档批1 换件面（A2/A3 回执 §四 待 S6 补）", false},
 			opened:      true,
-			summary:     "桌面 UI 换件（底层只调 scripts/build/zerg-swap-ui.sh —— 只报告档；命令面不重写逻辑）",
-			usage:       "zerg swap ui [--check | --help]",
+			summary:     "桌面 UI 换件（真搬 · 行为落 Go —— 不再 exec scripts/build/zerg-swap-ui.sh；只报告档）",
+			usage:       "zerg swap ui [--check | --help] [--dry-run | --yes]",
 			arity:       "any",
-			args:        []string{"旗标与退码逐字来自 scripts/build/zerg-swap-ui.sh（原样透传）"},
+			args:        []string{"旗标与退码逐档照 scripts/build/zerg-swap-ui.sh（真搬 · 原件退役后逐字同）"},
 			endpoint:    "",
 			passthrough: true,
 			run:         cmdSwapUI,
 		},
-		// ---- ② 类 CLI 工具子命令（壳转账 · 命令树登记 · 2026-10-08）────────────────────────────────
-		// 三条同为「只转发、不翻译」的 CLI 工具子命令（✗ 不是判据 ⇒ ✗ 不进 `gate_inproc_table.go`，
-		// 那会伪造判据名）；形状逐字跟同族先例 `zerg doc kb-sync` / `zerg ui i18n-audit`
-		// （`passthrough: true` + `run` 直调薄壳 · 无 `kind`/`fields`/`danger`/`opened`）。
-		// 落件＝壳转账三薄壳（`deploy_launch.go` / `doc_site_build.go` / `ui_start.go`）：命令面**不重写
-		// 底层脚本任何一段**（只入口 + 转发；递不到脚本退 8），故各条记录「旗标与退码逐字来自底层脚本」。
-		// ---- A 档 批 4（机群/发布面）· A13：机群发布的 **CLI 正门**（`zerg deploy launch` · 新族 `deploy` · 壳转账）----
+		// ---- ② 类 CLI 工具子命令（命令树登记 · 2026-10-08）────────────────────────────────
+		// 三条 CLI 工具子命令（✗ 不是判据 ⇒ ✗ 不进 `gate_inproc_table.go`，那会伪造判据名）；
+		// 形状照同族先例（`passthrough: true` + `run` 直调实现件）。
+		// ★ 三条均已**真搬**（行为落 Go · ✗ 不再 exec 底层脚本）：`deploy_launch.go` / `doc_site_build.go`
+		//   / `ui_start.go` —— 底层脚本退役（移出仓）后两态三面逐字同（✗ 不再退 `8`）。
+		//   ★ `deploy launch` 含**意图件落盘** ⇒ 是**写面** ⇒ 登记 `danger` + `opened`（fail-closed）。
+		// ---- A 档 批 4（机群/发布面）· A13：机群发布的 **CLI 正门**（`zerg deploy launch` · 新族 `deploy` · 真搬）----
 		// 依据：`~/.zerg/state/A档18件-收CLI设计稿-20261007.md` 批 4 · A13。
-		// 底层唯一实现 = `deploy/scripts/deploy-launch.sh`（真跑 `ssh` 到节点跑发布器 · OS 原生/联网面）。
+		// 底层原件 = `deploy/scripts/deploy-launch.sh`（真跑 `ssh` 到节点跑发布器 · OS 原生/联网面）。
+		// ★ 真搬后本件自足（✗ 不再 exec 脚本 · ✗ 无「递不到脚本退 8」档）：旗标 / 退码 / 文案逐档照原件。
+		// 写面（意图件落盘 `~/.zerg/deploy_launch/`）⇒ 默认档 fail-closed（缺 `--yes` 退 2 · 零写）。
 		{
 			path:        []string{"deploy", "launch"},
-			summary:     "机群发布「意图件 + 回读」（底层只调 deploy/scripts/deploy-launch.sh —— 命令面不重写逻辑 · 只转发不翻译）",
-			usage:       "zerg deploy launch [--host <主机> --file <意图件> --expect-sha256 <sha> | --help]",
+			danger:      &dangerSpec{dangerD3, "发布目标主机", "真发布到节点（`ssh` 到节点跑发布器 · 会写主控侧意图件并触发节点侧发布 —— 不可逆动作的邻居）", "GAP-20260927-140 ① · A档批4 A13（真搬后成写面 · 门100 写面登记）", false},
+			opened:      true,
+			summary:     "机群发布「意图件 + 回读」（真搬 · 行为落 Go —— 默认档 fail-closed：缺 --yes 退 2 零写）",
+			usage:       "zerg deploy launch [--host <主机> --file <意图件> --expect-sha256 <sha> | --help] [--dry-run | --yes]",
 			arity:       "any",
-			args:        []string{"旗标与退码逐字来自 deploy/scripts/deploy-launch.sh（原样透传）"},
+			args:        []string{"旗标与退码逐档照 deploy/scripts/deploy-launch.sh（真搬 · 原件退役后逐字同）"},
 			endpoint:    "",
 			passthrough: true,
 			run:         cmdDeployLaunch,
 		},
-		// ---- A 档 批 2（文档面）· A14：文档站「导出 + 构建」的 **CLI 正门**（`zerg doc site build` · 族 `doc` 扩 action · 壳转账）----
+		// ---- A 档 批 2（文档面）· A14：文档站「导出 + 构建」的 **CLI 正门**（`zerg doc site build` · 族 `doc` 扩 action · 真搬）----
 		// 依据：`~/.zerg/state/A档18件-收CLI设计稿-20261007.md` 批 2 · A14。
-		// 底层唯一实现 = `docs/site/export-and-build.sh`（真跑站点工具链 · 联网 + 子进程）。
+		// ★ 真搬（2026-10-08）：`docs/site/export-and-build.sh` 的四段编排落进 `doc_site_build.go`
+		//   （✗ 不再 exec 那个脚本）；只 `mkdocs`/`venv`/`pip` 那四处外部工具仍以子进程直调。
 		{
 			path:        []string{"doc", "site", "build"},
-			summary:     "文档站「导出 + 构建」（底层只调 docs/site/export-and-build.sh —— 命令面不重写逻辑 · 只转发不翻译）",
+			summary:     "文档站「导出 + 构建」（真搬 · 行为落 Go —— 不再 exec docs/site/export-and-build.sh）",
 			usage:       "zerg doc site build [--strict | --serve | --help]",
 			arity:       "any",
-			args:        []string{"旗标与退码逐字来自 docs/site/export-and-build.sh（原样透传）"},
+			args:        []string{"旗标与退码逐档照 docs/site/export-and-build.sh（真搬 · 原件退役后逐字同）"},
 			endpoint:    "",
 			passthrough: true,
 			run:         cmdDocSiteBuild,
 		},
-		// ---- A 档 批 3（运行面）· A6：UI「脱离会话」启动口的 **CLI 正门**（`zerg ui start` · 族 `ui` 扩 action · 壳转账）----
-		// 依据：`~/.zerg/state/A档18件-收CLI设计稿-20261007.md` 批 3 · A6（单一真源 = `scripts/build/start-zerg-ui.sh`）。
-		// 底层唯一实现 = `scripts/build/start-zerg-ui.sh`（`setsid`/逐 PID 点名/日志重定向 · OS 原生面）。
+		// ---- A 档 批 3（运行面）· A6：UI「脱离会话」启动口的 **CLI 正门**（`zerg ui start` · 族 `ui` 扩 action · 真搬）----
+		// 依据：`~/.zerg/state/A档18件-收CLI设计稿-20261007.md` 批 3 · A6（原底层件 = `scripts/build/start-zerg-ui.sh`）。
+		// ★ 真搬（2026-10-08）：底层行为收进 `ui_start.go`（`setsid`/逐 PID 点名/日志重定向 ⇒ 逐档等价复现 ·
+		//   ✗ 不再 exec 那个脚本；只 `ps`/`tail` 这类 OS 工具仍直调）。
 		{
 			path:        []string{"ui", "start"},
-			summary:     "UI 脱离会话启动（底层只调 scripts/build/start-zerg-ui.sh —— 命令面不重写逻辑 · 只转发不翻译）",
+			summary:     "UI 脱离会话启动（真搬 · 行为落 Go —— 不再 exec scripts/build/start-zerg-ui.sh）",
 			usage:       "zerg ui start",
 			arity:       "any",
-			args:        []string{"旗标与退码逐字来自 scripts/build/start-zerg-ui.sh（原样透传）"},
+			args:        []string{"旗标与退码逐档照 scripts/build/start-zerg-ui.sh（真搬 · 原件退役后逐字同）"},
 			endpoint:    "",
 			passthrough: true,
 			run:         cmdUIStart,
@@ -2614,15 +2694,20 @@ func init() {
 		//   `family_impact_cache.go:291/:305/:308`，账 `GAP-20260927-140` 现读坐实）；修前那句
 		//   「只读 ⇒ 不写 danger / 不写缓存」是**自证式反证断言**（件里写着不写、实现却写）。
 		//   定档与执行门**待拍板**（账 `GAP-20260929-31`：登记 ≠ 拦 —— 实测不给 `--yes` 也 rc=0 且真写），
-		//   拍前不挂 `danger`（挂了只会让帮助面计数与真实行为不一致）。
+		//   ★ 2026-10-08：`danger` 已挂（D2 · opened）—— Mr2109 拍「默认档要 fail-closed」（账
+		//   `GAP-20260927-140` ①）。fail-closed 落在**缓存写盘点**（见 `cmdImpact`）。
 		{
-			path:     []string{"impact"},
-			kind:     "Impact",
-			summary:  "改一处会牵动谁（判定只读；默认档会写 impact 缓存件 ⇒人面三行 + 波纹卡片 ≤12 条/≤1.2k token + 六键包封；挂干跑属 `A4`）",
-			usage:    impactUsageLine,
-			arity:    "any",
-			args:     []string{"目标（仓内件路径 · 或在册契约 id，如 S-g）"},
-			fields:   impactFields,
+			path:    []string{"impact"},
+			kind:    "Impact",
+			summary: "改一处会牵动谁（判定只读；默认档写 impact 缓存件要 `--yes` ⇒人面三行 + 波纹卡片 ≤12 条/≤1.2k token + 六键包封）",
+			usage:   impactUsageLine,
+			arity:   "any",
+			args:    []string{"目标（仓内件路径 · 或在册契约 id，如 S-g）"},
+			fields:  impactFields,
+			// 授权侧（`GAP-20260927-140` ①）：默认档 `impactCacheOn` 真写 impact 缓存件（写点现读 =
+			// `impactCacheWritePoints` · owner = `impactCacheStore`）而修前无 `danger`。
+			danger:   &dangerSpec{dangerD2, "（目标）", "默认档写 impact 缓存件（状态目录 `impact-cache/<sha>/`）", "GAP-20260927-140 ① · GAP-20260927-90 · family_impact_cache.go 写点登记表", false},
+			opened:   true,
 			endpoint: "",
 			run:      cmdImpact,
 		},
@@ -3338,6 +3423,55 @@ func init() {
 			summary: "虫族控制面 MCP server（默认 stdio · 8 工具：zerg_help/fleet_status/list_models/get_model_info/fleet_topology/load_model/unload_model/switch_model）—— 真 Go 化（复用仓内 mark3labs/mcp-go · stdout 是 MCP 协议通道 ⇒ 无 --json）",
 			usage:   "zerg mcp serve",
 			run:     cmdMCPServeFamily,
+		},
+		// ---- 接线批（2026-10-08）：四件「已真搬/真壳 · 命令面未接线」接进命令树 ----
+		// 依据：`~/.zerg/state/退役-其余簇-接线复核-20261008.tsv`（`archive-mount` 工具面「未进命令树」）·
+		// `A档18件-收CLI设计稿-20261007.md` A11/A4/A7（archive/build/eval **现役族扩 action** · 在闭集 ✓）·
+		// 缺口 `GAP-20260928-12`（`script inventory` 只读口）。真实现分别在 `archive_mount.go`
+		// （`cmdArchiveMount` · **真搬**）· `eval_run_all.go`（`cmdEvalRunAll` · **真搬**）·
+		// `build_wall.go`（`cmdBuildWall` · 壳转账）· `family_script_inventory.go`（`cmdScriptInventoryVerify` · 只读）。
+		// 入口宿主 = `ui_start.go`（门78 面④ 与 `cmdSandboxProbe` 同规 · 本单禁碰 `公开标记.tsv`）。
+		{
+			path:     []string{"archive", "mount"},
+			kind:     "ArchiveMount",
+			summary:  "归档区**按需挂/卸**（on|off|status · **真搬**：除 `hdiutil`/`mount` 两道系统工具薄壳外零 exec · 脚本移出仓读数逐字同 ⇒ 不退 8）；`status` 未挂 ⇒ 退 1（悬空符号链接不许当正常）· 不给结论 2 · 用法错 64",
+			usage:    "zerg archive mount <on|off|status>",
+			arity:    "any",
+			args:     []string{"动作（on 挂 / off 卸 / status 报挂载态）"},
+			endpoint: "",
+			run:      cmdArchiveMountFamily,
+		},
+		{
+			path:     []string{"eval", "run-all"},
+			kind:     "EvalRunAll",
+			summary:  "评测批跑总入口（三层：层1 `go test ./internal/agent/` · 层2/3 已归档载荷真跑 · **真搬**：批跑逻辑/落档/退码在 Go · ✗ 不再 exec `scripts/build/run_all.sh`）",
+			usage:    "zerg eval run-all [<模型> [版本标签]]",
+			arity:    "any",
+			args:     []string{"模型（缺省 example-35b）", "版本标签（缺省 = 当前时刻 yyyymmdd-HHMM）"},
+			endpoint: "",
+			run:      cmdEvalRunAllFamily,
+		},
+		{
+			path:        []string{"build", "wall"},
+			kind:        "BuildWall",
+			summary:     "茧壁构建（真身 = `scripts/build/cmd/zerg-build/main.go`（330 行）· 只转发、不翻译 · 退码原样转出 0/2 · 递不到真身 ⇒ 8）",
+			usage:       "zerg build wall [--debug|--help]",
+			arity:       "any",
+			args:        []string{"旗标与退码逐字来自 scripts/build/cmd/zerg-build/main.go（原样透传 · 含 --debug / --help）"},
+			endpoint:    "",
+			passthrough: true,
+			run:         cmdBuildWallFamily,
+		},
+		{
+			path:     []string{"script", "inventory", "verify"},
+			kind:     "ScriptInventoryVerify",
+			summary:  "只读核对仓外台账与现跑（新增/消失/格值变化任一非空或声明行不等 ⇒ 1 · 全一致 ⇒ 0 · 读不到 ⇒ 8/2 · ✗ 不写件、不收 `--dry-run`/`--yes` —— 要写用 `sync --yes`）",
+			usage:    "zerg script inventory verify [--json <字段>]",
+			arity:    "none",
+			args:     []string{"（无位置参数）"},
+			fields:   []string{"result", "target", "rows_live", "rows_added", "rows_removed", "rows_unchanged", "rows_changed", "rows_changed_named", "rows_changed_cells", "declared_line", "declared_line_live", "in_sync"},
+			endpoint: "",
+			run:      cmdScriptInventoryVerifyFamily,
 		},
 	}
 	// 群级只读（§十二 `P-066`）：这些命令「无目标 = 读全群」是**定义**，不是遗漏。
@@ -4307,6 +4441,15 @@ func valueFlagName(a string) string {
 	//   （不归本命令的那一枚补回 `inv.unknown`，既有命令一字不动）。
 	switch a {
 	case "--hours":
+		return a
+	}
+	// `agent` 族调度旋钮写面旗标（P0 #232 · 2026-10-08 · 本枚 · **只增**）：
+	//   `agent workers set <机> --max N` 与 `agent scheduler set --poll-interval/--max-retries/--cooldown`。
+	// 与上面各排同一口径 —— 值照收，语义在 `cmdAgentWorkersSetGuarded` / `cmdAgentSchedulerSetGuarded` 里判。
+	// ★ 名字表是本仓「唯一真源」⇒ 不登记就一律退 2「未知旗标」= 新旗标等于不可用；配套 dispatch 收口
+	//   （不归本命令的那一枚补回 `inv.unknown`，既有命令一字不动）。
+	switch a {
+	case "--max", "--poll-interval", "--max-retries", "--cooldown":
 		return a
 	}
 	return ""

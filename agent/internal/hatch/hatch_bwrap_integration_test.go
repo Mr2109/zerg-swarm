@@ -16,7 +16,7 @@
 //	③ 把空间内的 `/proc/self/mountinfo` 原文喂给 `CheckEnclosure`：每个声明文件各有一条只读挂载、
 //	   **没有**落点是 /models 本身（判据与配方同源，纯函数与真机不再各说各话）。
 //
-// macOS 上 `go test ./internal/hatch/` 自动跳过（没有 bwrap）；**真机（EDGE-NODE）上跑它才是这套 argv 的实证**：
+// macOS 上 `go test ./internal/hatch/` 自动跳过（没有 bwrap）；**真机（node-a）上跑它才是这套 argv 的实证**：
 //
 //	GOOS=linux go test -v -run RealBwrap ./internal/hatch/
 package hatch
@@ -39,7 +39,7 @@ const (
 // TestBuildBwrapArgv_RealBwrapRecipe 真 bwrap 跑一遍逐文件权重配方（无 bwrap ⇒ 跳过，如实记一行）。
 func TestBuildBwrapArgv_RealBwrapRecipe(t *testing.T) {
 	if _, err := exec.LookPath("bwrap"); err != nil {
-		t.Skip("本机没有 bwrap（开发机的常态）⇒ 跳过：这份 argv 的**真机**实证在 EDGE-NODE 上跑本用例")
+		t.Skip("本机没有 bwrap（开发机的常态）⇒ 跳过：这份 argv 的**真机**实证在 node-a 上跑本用例")
 	}
 	// 临时权重目录：两个「权重文件」+ 一个同目录的**别的模型**（后者绝不许进空间）
 	dir := t.TempDir()

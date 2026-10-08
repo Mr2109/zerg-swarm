@@ -90,7 +90,7 @@ func TestCheckModelSizeAnchor_AnchorVerdict(t *testing.T) {
 		{"good", with("size_bytes: 1234"), 0},
 		{"bad", with("size_bytes: 9999"), 1},
 		{"badd", with("size_bytes: abc"), 1},
-		{"skip", "models:\n  m1:\n    - { host: edge-node, file: /nope/x.gguf, mem_gb: 1, size_bytes: 42 }\n", 2},
+		{"skip", "models:\n  m1:\n    - { host: node-a, file: /nope/x.gguf, mem_gb: 1, size_bytes: 42 }\n", 2},
 		{"none", with("ctx_window: 8"), 2},
 		{"block", "models:\n  m2:\n    - host: Mr2109\n      file: " + real + "\n      size_bytes: 1234\n", 0},
 	}
@@ -142,7 +142,7 @@ func TestCheckModelSizeAnchor_JSONNilVsEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	extra := string(raw) + "    - { host: edge-node, file: /nope/x.gguf, mem_gb: 1, size_bytes: 42 }\n"
+	extra := string(raw) + "    - { host: node-a, file: /nope/x.gguf, mem_gb: 1, size_bytes: 42 }\n"
 	_ = cmsaWriteFixture(t, filepath.Dir(fleet), "mixed.yaml", extra)
 	rc, out, _ := cmsaRunMain("--fleet", filepath.Join(filepath.Dir(fleet), "mixed.yaml"),
 		"--idmap", idmap, "--registry-dir", regdir, "--json")
@@ -182,7 +182,7 @@ func TestCheckModelSizeAnchor_CLIFaces(t *testing.T) {
 
 // TestCheckModelSizeAnchor_WiringNegative —— ⑦ 判据 E 成对负控（内部分析函数层 + 记录目录不在）。
 func TestCheckModelSizeAnchor_WiringNegative(t *testing.T) {
-	models := cmsaParseModels("models:\n  M:\n    - { host: Mr2109, file: /x.gguf }\n    - { host: edge-node, file: /y.gguf }\n")
+	models := cmsaParseModels("models:\n  M:\n    - { host: Mr2109, file: /x.gguf }\n    - { host: node-a, file: /y.gguf }\n")
 	regIDs := map[string]bool{"R1": true}
 	okF2r := map[string]string{"M": "R1"}
 

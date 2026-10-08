@@ -8,18 +8,21 @@
 //
 // 选它的理由（真未搬清单里**纯静态只读 · 无子进程/联网/TTY** 的一档 · 行数适中）：
 //
-//	✓ 判据是**单件文本扫描** —— 只读**一个仓内件**（默认 `<root>/scripts/build/build-all.sh`，
-//	  可 `--file` 换），四格判「重编脚本自净化」段：K1 三旋钮一条 `unset` / K2 仓外 TMPDIR /
+//	✓ 判据是**单件文本扫描** —— 只读**一个仓内件**（默认 `<root>/scripts/build/build-all.sh`
+//	  —— **将退件**，退役态回落见件尾「退役态回落」节 · DEV-2022；可 `--file` 换），
+//	  四格判「重编脚本自净化」段：K1 三旋钮一条 `unset` / K2 仓外 TMPDIR /
 //	  K3 自净化次序早于参数解析 / K4 fail-closed 拒编话术锚。现读 import 面：`argparse` / `json` /
 //	  `os` / `re` / `sys`；`tempfile` **只在 `--self-test` 内**（且用 `TemporaryDirectory` ⇒ **自动回收**，
 //	  非 A 类泄漏）。**零 `subprocess` / `socket` / `urllib` / `time` / `datetime` / `random`** ·
 //	  默认档**零写面**（只有读 open）。退码仅 0/1/2 三档齐 · `git status` 现读不含它（无人正在改）。
 //
-// 本单边界（照实）：本件**只落码、不接线** ——
+// 边界与现状（照实）：本件原为 M2 的「只落码、不接线」中途态，**现已接线**（登记在
+// `gate_inproc_table.go` 键 `check-build-selfclean`）—— 与件尾「退役态回落」同批收口：
 //
-//	· **不**在 `core/cmd/zerg/main.go` 里注册命令（✗ 不进命令树 · ✗ 不改 add_step 表）；
-//	· **不**删 `scripts/gates/check-build-selfclean.py` 原件（退场规则：对拍通过后才逐件点名退场）；
-//	· 入口 `buildSelfcleanGateMain` 目前**无调用点**（M2 的刻意状态）；
+//	· ✗ 不在 `core/cmd/zerg/main.go` 里注册**顶层命令**（✗ 不进命令树 · ✗ 不改 add_step 表）；
+//	· py 原件 `scripts/gates/check-build-selfclean.py` **已退场**（Go 半为唯一真源）；
+//	· 入口 `buildSelfcleanGateMain` **已有调用点**（inproc 表 · 上）；
+//	· 默认靶件 `scripts/build/build-all.sh` 为**将退件** ⇒ 退役态回落判四格于合成副本（DEV-2022）；
 //	· ✗ 不改登记面六面 · ✗ 不改任何 `family_*.go` / 已落旧件 / `gate_inproc_table.go`。
 //
 // 入口签名（与 py 的 `main()` 对齐）：
@@ -391,12 +394,18 @@ func bscFirstArgparseLine(lines []string) int {
 	return 0
 }
 
-// bscCheck —— 复刻 py `check()`；回 (rc, reds, notes)。
+// bscCheck —— 复刻 py `check()`：读件后交 `bscCheckBody` 判四格；读不到 ⇒ rc=2（不给结论）。
 func bscCheck(scriptPath, repoRoot string) (int, []string, []string) {
 	text, ok := bscReadText(scriptPath)
 	if !ok {
 		return 2, []string{}, []string{"脚本读不到：" + scriptPath}
 	}
+	return bscCheckBody(text, scriptPath, repoRoot)
+}
+
+// bscCheckBody —— 四格判定本体（文本入参）：空转 ⇒ rc=2；否则 K1/K2/K3/K4 四格。
+// ★ 与 py `check()` 逐字同构；退役态的**合成副本**也走这里（判据一格不改）。
+func bscCheckBody(text, scriptPath, repoRoot string) (int, []string, []string) {
 	if !bscHasNonSpace(text) {
 		return 2, []string{}, []string{"脚本为空：" + scriptPath + "（空转不给结论）"}
 	}
@@ -539,9 +548,97 @@ func bscJSON(script string, rc int, reds, notes []string) string {
 
 // ── 运行 / 自检 / argparse ─────────────────────────────────────────────────────
 
-// bscRun —— 复刻 py `run()`。
+// ── 退役态回落（默认靶件 · 同族先例 check_exit_codes.go 的 cecRetireGoHalf）──────────────────
+//
+// 口径（判「能力可用」而非「件在盘」）：默认靶件缺席 ∧ 其 **Go 半**在盘 ⇒ 该件已退役、能力换
+// Go 半承载 ⇒ 本门**照判四格**（在**合成副本**上），✗ 不判缺件、✗ 不静默通过；两半皆缺（真消失）
+// ⇒ 照旧 fail-closed（rc=2 点「脚本读不到」）。
+var bscRetireGoHalf = map[string][]string{
+	bscDefaultFile: {
+		"scripts/build/cmd/zerg-build-all/main.go",
+		"scripts/build/internal/zgb/zgb.go",
+	},
+}
+
+// bscGoHalfInPlace —— 默认靶件的 **Go 半**是否在盘（退役态判据：判「能力可用」）。
+func bscGoHalfInPlace(root, rel string) bool {
+	for _, g := range bscRetireGoHalf[rel] {
+		if st, err := os.Stat(bscPyJoin(root, g)); err == nil && !st.IsDir() {
+			return true
+		}
+	}
+	return false
+}
+
+// bscFirstLineWithAll —— 返回第一处**单行**同时含全部 needle 的行（找不到回空串）。
+func bscFirstLineWithAll(text string, needles []string) string {
+	for _, ln := range bscSplitLines(text) {
+		all := true
+		for _, n := range needles {
+			if !strings.Contains(ln, n) {
+				all = false
+				break
+			}
+		}
+		if all {
+			return ln
+		}
+	}
+	return ""
+}
+
+// bscSyntheticCopy —— 退役态**合成副本**：读 Go 半源码，按其自净化语义合成等价壳段。
+// ★ 四格判据（`bscCheckBody`）逐字不变 —— Go 半少一枚旋钮 / 缺 TMPDIR / 缺 fail-closed 话术
+// ⇒ 合成副本同样缺 ⇒ 照红（✗ 不是恒绿的空壳）。两半皆缺 ⇒ ok=false（交回缺件档 rc=2）。
+func bscSyntheticCopy(root, rel string) (string, bool) {
+	if !bscGoHalfInPlace(root, rel) {
+		return "", false
+	}
+	var b strings.Builder
+	for _, g := range bscRetireGoHalf[rel] {
+		txt, ok := bscReadText(bscPyJoin(root, g))
+		if !ok {
+			continue
+		}
+		b.WriteString(txt)
+		b.WriteString("\n")
+	}
+	src := b.String()
+	lines := []string{
+		"#!/usr/bin/env bash",
+		"# 合成副本（退役态：默认靶件缺席 ∧ Go 半在盘 ⇒ 本段由 Go 半语义合成）",
+	}
+	if bscFirstLineWithAll(src, bscK1Knobs) != "" {
+		lines = append(lines, "unset "+strings.Join(bscK1Knobs, " "))
+	}
+	if strings.Contains(src, `"TMPDIR"`) {
+		lines = append(lines, `export TMPDIR="$ZERG_BUILD_TMP"`)
+	}
+	if bscK4.MatchString(src) {
+		lines = append(lines, `echo "自净化失败：仓外 TMPDIR 建不起来 ⇒ 拒绝在未净化的环境里重编" >&2; exit 1`)
+	}
+	lines = append(lines, `while [ $# -gt 0 ]; do case "$1" in -*) shift;; esac; done`, "")
+	return strings.Join(lines, "\n"), true
+}
+
+// bscRun —— 复刻 py `run()`：读件（缺件 ⇒ rc=2）后交 `bscRender`。
 func bscRun(stdout io.Writer, script, root string, asJSON bool) int {
 	rc, reds, notes := bscCheck(script, root)
+	return bscRender(stdout, script, rc, reds, notes, asJSON)
+}
+
+// bscRunSynth —— 退役态合成副本档：判据仍走 `bscCheckBody`（✗ 不拆断言），只把**文本**换成合成副本；
+// 另**显式**报告退役态（✗ 不静默通过 —— 读面一眼看得出判的是合成副本，而非「壳件读不到」或恒绿空转）。
+func bscRunSynth(stdout io.Writer, script, text, root string, asJSON bool) int {
+	rc, reds, notes := bscCheckBody(text, script, root)
+	// 报告行（退役态固有变 · 即在盘档没有这一行）：点名「默认靶件缺席 ∧ Go 半在盘 ⇒ 判于合成副本」。
+	notes = append([]string{"退役态：默认靶件不在盘 ∧ Go 半在盘（" +
+		strings.Join(bscRetireGoHalf[bscDefaultFile], " ＋ ") + "）⇒ 四格判于**合成副本**（由 Go 半语义合成）"}, notes...)
+	return bscRender(stdout, script, rc, reds, notes, asJSON)
+}
+
+// bscRender —— 输出面（与 py `run()` 逐字节同）：`--json` 走机器面，否则人面四段。
+func bscRender(stdout io.Writer, script string, rc int, reds, notes []string, asJSON bool) int {
 	if asJSON {
 		fmt.Fprint(stdout, bscJSON(script, rc, reds, notes)+"\n")
 		return rc
@@ -727,6 +824,13 @@ func buildSelfcleanGateMain(stdout, stderr io.Writer, argv []string) int {
 	script := fileVal
 	if script == "" {
 		script = bscPyJoin(rootVal, bscDefaultFile)
+		// ★ 退役态回落（默认靶件）：壳件缺席 ∧ 其 Go 半在盘 ⇒ 判四格于**合成副本**（不依赖壳件在盘；
+		//   ✗ 不拆断言 · ✗ 不静默通过 —— 少语义照红；两半皆缺仍 fail-closed rc=2）。
+		if _, ok := bscReadText(script); !ok {
+			if synth, ok2 := bscSyntheticCopy(rootVal, bscDefaultFile); ok2 {
+				return bscRunSynth(stdout, script, synth, rootVal, jsonOut)
+			}
+		}
 	}
 	return bscRun(stdout, script, rootVal, jsonOut)
 }

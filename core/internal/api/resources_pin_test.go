@@ -62,11 +62,11 @@ func machineWithResident(t *testing.T, h *Handlers, machine string, entries ...r
 
 func TestResourcePin_TTLRequired(t *testing.T) {
 	h, _ := newLedgerHandlers(t)
-	machineWithResident(t, h, "edge-node", resources.ResidentEntry{Alias: "example-35b-v2", State: "ready", Managed: true})
+	machineWithResident(t, h, "node-a", resources.ResidentEntry{Alias: "example-35b-v2", State: "ready", Managed: true})
 	r, fake := newPinTestRouterAndFake(h)
 
 	for _, ttl := range []string{"0", "-1", "-600"} {
-		body := `{"host":"edge-node","model":"example-35b-v2","ttl_s":` + ttl + `}`
+		body := `{"host":"node-a","model":"example-35b-v2","ttl_s":` + ttl + `}`
 		w := doResReq(t, r, http.MethodPost, "/api/resources/pin", "test-token", body)
 		if w.Code != http.StatusBadRequest {
 			t.Fatalf("ttl_s=%s 应 400，实得 %d body=%s", ttl, w.Code, w.Body.String())
@@ -84,11 +84,11 @@ func TestResourcePin_TTLRequired(t *testing.T) {
 
 func TestResourcePin_NotResidentRejectedNoAction(t *testing.T) {
 	h, _ := newLedgerHandlers(t)
-	machineWithResident(t, h, "edge-node") // 驻留清单为空
+	machineWithResident(t, h, "node-a") // 驻留清单为空
 	r, fake := newPinTestRouterAndFake(h)
 
 	w := doResReq(t, r, http.MethodPost, "/api/resources/pin", "test-token",
-		`{"host":"edge-node","model":"ghost","ttl_s":600}`)
+		`{"host":"node-a","model":"ghost","ttl_s":600}`)
 	if w.Code != http.StatusConflict {
 		t.Fatalf("非驻留项应 409，实得 %d body=%s", w.Code, w.Body.String())
 	}
@@ -104,11 +104,11 @@ func TestResourcePin_NotResidentRejectedNoAction(t *testing.T) {
 
 func TestResourcePin_UnmanagedRejectedNoAction(t *testing.T) {
 	h, _ := newLedgerHandlers(t)
-	machineWithResident(t, h, "edge-node", resources.ResidentEntry{Alias: "manual", State: "ready", Managed: false})
+	machineWithResident(t, h, "node-a", resources.ResidentEntry{Alias: "manual", State: "ready", Managed: false})
 	r, fake := newPinTestRouterAndFake(h)
 
 	w := doResReq(t, r, http.MethodPost, "/api/resources/pin", "test-token",
-		`{"host":"edge-node","model":"manual","ttl_s":600}`)
+		`{"host":"node-a","model":"manual","ttl_s":600}`)
 	if w.Code != http.StatusConflict {
 		t.Fatalf("未托管项应 409，实得 %d body=%s", w.Code, w.Body.String())
 	}
@@ -124,16 +124,16 @@ func TestResourcePin_UnmanagedRejectedNoAction(t *testing.T) {
 
 func TestResourcePin_SuccessCallsControllerOnce(t *testing.T) {
 	h, _ := newLedgerHandlers(t)
-	machineWithResident(t, h, "edge-node",
+	machineWithResident(t, h, "node-a",
 		resources.ResidentEntry{Digest: "sha256:x", Alias: "example-35b-v2", State: "ready", Managed: true})
 	r, fake := newPinTestRouterAndFake(h)
 
 	w := doResReq(t, r, http.MethodPost, "/api/resources/pin", "test-token",
-		`{"host":"edge-node","model":"example-35b-v2","ttl_s":600}`)
+		`{"host":"node-a","model":"example-35b-v2","ttl_s":600}`)
 	if w.Code != http.StatusOK {
 		t.Fatalf("应 200，实得 %d body=%s", w.Code, w.Body.String())
 	}
-	if len(fake.pinCalls) != 1 || fake.pinCalls[0] != "edge-node/example-35b-v2" {
+	if len(fake.pinCalls) != 1 || fake.pinCalls[0] != "node-a/example-35b-v2" {
 		t.Fatalf("应恰好转发一次且按别名寻址，实得 %v", fake.pinCalls)
 	}
 	var resp map[string]interface{}
@@ -162,10 +162,10 @@ func TestResourcePin_UnknownMachine(t *testing.T) {
 
 func TestResourceUnpin_NotResidentRejectedNoAction(t *testing.T) {
 	h, _ := newLedgerHandlers(t)
-	machineWithResident(t, h, "edge-node")
+	machineWithResident(t, h, "node-a")
 	r, fake := newPinTestRouterAndFake(h)
 	w := doResReq(t, r, http.MethodPost, "/api/resources/unpin", "test-token",
-		`{"host":"edge-node","model":"ghost"}`)
+		`{"host":"node-a","model":"ghost"}`)
 	if w.Code != http.StatusConflict {
 		t.Fatalf("非驻留 unpin 应 409，实得 %d body=%s", w.Code, w.Body.String())
 	}
@@ -176,10 +176,10 @@ func TestResourceUnpin_NotResidentRejectedNoAction(t *testing.T) {
 
 func TestResourceUnpin_UnmanagedRejectedNoAction(t *testing.T) {
 	h, _ := newLedgerHandlers(t)
-	machineWithResident(t, h, "edge-node", resources.ResidentEntry{Alias: "manual", State: "ready", Managed: false})
+	machineWithResident(t, h, "node-a", resources.ResidentEntry{Alias: "manual", State: "ready", Managed: false})
 	r, fake := newPinTestRouterAndFake(h)
 	w := doResReq(t, r, http.MethodPost, "/api/resources/unpin", "test-token",
-		`{"host":"edge-node","model":"manual"}`)
+		`{"host":"node-a","model":"manual"}`)
 	if w.Code != http.StatusConflict {
 		t.Fatalf("未托管 unpin 应 409，实得 %d body=%s", w.Code, w.Body.String())
 	}
@@ -192,10 +192,10 @@ func TestResourceUnpin_UnmanagedRejectedNoAction(t *testing.T) {
 
 func TestResourcePin_NotWiredReturns503(t *testing.T) {
 	h, _ := newLedgerHandlers(t)
-	machineWithResident(t, h, "edge-node", resources.ResidentEntry{Alias: "example-35b-v2", State: "ready", Managed: true})
+	machineWithResident(t, h, "node-a", resources.ResidentEntry{Alias: "example-35b-v2", State: "ready", Managed: true})
 	r := newResourcesTestRouter(h) // ResourcePins 保持 nil
 	w := doResReq(t, r, http.MethodPost, "/api/resources/pin", "test-token",
-		`{"host":"edge-node","model":"example-35b-v2","ttl_s":60}`)
+		`{"host":"node-a","model":"example-35b-v2","ttl_s":60}`)
 	if w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("未接线应 503，实得 %d body=%s", w.Code, w.Body.String())
 	}
@@ -220,7 +220,7 @@ func TestSubEndPinController_ForwardsPin(t *testing.T) {
 	defer srv.Close()
 
 	c := &SubEndPinController{Token: "tok", BaseURL: func(host string) (string, bool) { return srv.URL, true }}
-	if err := c.PinResource("edge-node", "example-35b-v2", 600); err != nil {
+	if err := c.PinResource("node-a", "example-35b-v2", 600); err != nil {
 		t.Fatalf("转发应成功：%v", err)
 	}
 	if gotPath != "/pin" || gotModel != "example-35b-v2" || gotTTL != 600 || gotToken != "tok" {
@@ -235,7 +235,7 @@ func TestSubEndPinController_Non200IsError(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := &SubEndPinController{BaseURL: func(host string) (string, bool) { return srv.URL, true }}
-	if err := c.PinResource("edge-node", "ghost", 60); err == nil {
+	if err := c.PinResource("node-a", "ghost", 60); err == nil {
 		t.Fatal("子端非 200 必须如实报错，不能假装成功")
 	}
 }

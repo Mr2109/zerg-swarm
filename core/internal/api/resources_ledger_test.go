@@ -231,14 +231,14 @@ func TestResourceLedger_RequiresAuth(t *testing.T) {
 	if w := doResReq(t, r, http.MethodGet, "/api/resources/ledger", "wrong", ""); w.Code != http.StatusForbidden {
 		t.Fatalf("GET 错令牌应 403，实得 %d body=%s", w.Code, w.Body.String())
 	}
-	body := `{"host":"edge-node","model":"m","ttl_s":60}`
+	body := `{"host":"node-a","model":"m","ttl_s":60}`
 	if w := doResReq(t, r, http.MethodPost, "/api/resources/pin", "", body); w.Code != http.StatusUnauthorized {
 		t.Fatalf("pin 无令牌应 401，实得 %d", w.Code)
 	}
 	if w := doResReq(t, r, http.MethodPost, "/api/resources/pin", "wrong", body); w.Code != http.StatusForbidden {
 		t.Fatalf("pin 错令牌应 403，实得 %d", w.Code)
 	}
-	if w := doResReq(t, r, http.MethodPost, "/api/resources/unpin", "", `{"host":"edge-node","model":"m"}`); w.Code != http.StatusUnauthorized {
+	if w := doResReq(t, r, http.MethodPost, "/api/resources/unpin", "", `{"host":"node-a","model":"m"}`); w.Code != http.StatusUnauthorized {
 		t.Fatalf("unpin 无令牌应 401，实得 %d", w.Code)
 	}
 }
@@ -265,10 +265,10 @@ func TestResourceLedger_RouteBeatsTypeParam(t *testing.T) {
 
 func TestResourceLedger_MissingDataKeepsKeysAbsent(t *testing.T) {
 	h, _ := newLedgerHandlers(t)
-	// edge-node：内存已知、显存未知、无驻留、无未托管
-	h.Store.ReceiveHeartbeat(store.HeartbeatRequest{Machine: "edge-node", MemTotalGb: 128, MemAvailableGb: 120})
-	// mini-node-1：连内存数据都没有
-	h.Store.ReceiveHeartbeat(store.HeartbeatRequest{Machine: "mini-node-1"})
+	// node-a：内存已知、显存未知、无驻留、无未托管
+	h.Store.ReceiveHeartbeat(store.HeartbeatRequest{Machine: "node-a", MemTotalGb: 128, MemAvailableGb: 120})
+	// node-b：连内存数据都没有
+	h.Store.ReceiveHeartbeat(store.HeartbeatRequest{Machine: "node-b"})
 
 	r := newResourcesTestRouter(h)
 	w := doResReq(t, r, http.MethodGet, "/api/resources/ledger", "test-token", "")
@@ -280,26 +280,26 @@ func TestResourceLedger_MissingDataKeepsKeysAbsent(t *testing.T) {
 		t.Fatalf("应有 2 台机器，实得 %d", len(byName))
 	}
 
-	edge-node := byName["edge-node"]
-	if edge-node["mem_known"] != true {
-		t.Errorf("edge-node 有内存数据，mem_known 应为 true，实得 %v", edge-node["mem_known"])
+	nodeA := byName["node-a"]
+	if nodeA["mem_known"] != true {
+		t.Errorf("node-a 有内存数据，mem_known 应为 true，实得 %v", nodeA["mem_known"])
 	}
-	if edge-node["vram_known"] != false {
-		t.Errorf("edge-node 未提供显存，vram_known 应为 false，实得 %v", edge-node["vram_known"])
+	if nodeA["vram_known"] != false {
+		t.Errorf("node-a 未提供显存，vram_known 应为 false，实得 %v", nodeA["vram_known"])
 	}
 	for _, k := range []string{"resident", "unmanaged", "vram_total_gb", "vram_used_gb", "vram_free_gb", "fit"} {
-		if v, has := edge-node[k]; has {
-			t.Errorf("edge-node 未提供 %s，该键必须整键不出现（不造值），实得 %v", k, v)
+		if v, has := nodeA[k]; has {
+			t.Errorf("node-a 未提供 %s，该键必须整键不出现（不造值），实得 %v", k, v)
 		}
 	}
 
-	mini := byName["mini-node-1"]
+	mini := byName["node-b"]
 	if mini["mem_known"] != false {
-		t.Errorf("mini-node-1 无内存数据，mem_known 应为 false，实得 %v", mini["mem_known"])
+		t.Errorf("node-b 无内存数据，mem_known 应为 false，实得 %v", mini["mem_known"])
 	}
 	for _, k := range []string{"mem_total_gb", "mem_available_gb", "resident"} {
 		if v, has := mini[k]; has {
-			t.Errorf("mini-node-1 未提供 %s，该键必须整键不出现，实得 %v", k, v)
+			t.Errorf("node-b 未提供 %s，该键必须整键不出现，实得 %v", k, v)
 		}
 	}
 }

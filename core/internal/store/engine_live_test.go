@@ -12,7 +12,7 @@ import (
 // TestHeartbeat_DecodeAndCarryEngines —— 子端心跳带 engines[] ⇒ 落库 + 快照可查 + JSON 可出。
 func TestHeartbeat_DecodeAndCarryEngines(t *testing.T) {
 	payload := []byte(`{
-		"machine":"edge-node","backend_state":"ready","model":"example-35b","active_requests":2,"healthy":true,
+		"machine":"node-a","backend_state":"ready","model":"example-35b","active_requests":2,"healthy":true,
 		"engines":[
 			{"egg_id":"example-35b","state":"ready","pid":4242,"inflight":2,"fail_n":1,
 			 "verdict":"extended","reason":"窗口无输出但工时在涨","last_output_ago_s":12.5,"cpu_usage_usec_delta":900000},
@@ -35,7 +35,7 @@ func TestHeartbeat_DecodeAndCarryEngines(t *testing.T) {
 
 	s := NewStore()
 	s.ReceiveHeartbeat(req)
-	snap := s.GetSnapshot("edge-node")
+	snap := s.GetSnapshot("node-a")
 	if snap == nil {
 		t.Fatal("快照未创建")
 	}
@@ -56,8 +56,8 @@ func TestHeartbeat_DecodeAndCarryEngines(t *testing.T) {
 // （缺省 ≠ 空数组撑场；与 active_requests「没来源就不出现」同纪律）。
 func TestHeartbeat_EnginesAbsentWhenNotReported(t *testing.T) {
 	s := NewStore()
-	s.ReceiveHeartbeat(HeartbeatRequest{Machine: "mini-node-1", Healthy: true})
-	snap := s.GetSnapshot("mini-node-1")
+	s.ReceiveHeartbeat(HeartbeatRequest{Machine: "node-b", Healthy: true})
+	snap := s.GetSnapshot("node-b")
 	if snap == nil {
 		t.Fatal("快照未创建")
 	}
@@ -76,9 +76,9 @@ func TestHeartbeat_EnginesAbsentWhenNotReported(t *testing.T) {
 // TestHeartbeat_EnginesOverwrittenOnNextBeat —— 心跳覆盖：上一拍的 engines 不许残留。
 func TestHeartbeat_EnginesOverwrittenOnNextBeat(t *testing.T) {
 	s := NewStore()
-	s.ReceiveHeartbeat(HeartbeatRequest{Machine: "edge-node", Engines: []EngineLive{{EggID: "a", Inflight: 1}}})
-	s.ReceiveHeartbeat(HeartbeatRequest{Machine: "edge-node"}) // 第二拍没带
-	snap := s.GetSnapshot("edge-node")
+	s.ReceiveHeartbeat(HeartbeatRequest{Machine: "node-a", Engines: []EngineLive{{EggID: "a", Inflight: 1}}})
+	s.ReceiveHeartbeat(HeartbeatRequest{Machine: "node-a"}) // 第二拍没带
+	snap := s.GetSnapshot("node-a")
 	if snap.Engines != nil {
 		t.Fatalf("第二拍未带 engines ⇒ 应被覆盖为 nil，实得 %+v", snap.Engines)
 	}

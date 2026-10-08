@@ -54,15 +54,15 @@ func TestCountFleetHealth_PairedControls(t *testing.T) {
 
 	// ② 反例（本条病灶）：2.5.9 / 2.5.10 并存、两台都自报 healthy=true ⇒ 必须至少一台不健康
 	mixed := map[string]*store.FleetSnapshot{
-		"Mr2109": {Machine: "Mr2109", Healthy: true, CodeVersion: "2.5.9", CodeSHA: "fefca220+dirty"},
-		"edge-node":   {Machine: "edge-node", Healthy: true, CodeVersion: "2.5.10", CodeSHA: "213a67c4"},
+		"node-local": {Machine: "node-local", Healthy: true, CodeVersion: "2.5.9", CodeSHA: "fefca220+dirty"},
+		"node-a":     {Machine: "node-a", Healthy: true, CodeVersion: "2.5.10", CodeSHA: "213a67c4"},
 	}
 	fh = CountFleetHealth(master, mixed)
 	if fh.Unhealthy < 1 {
 		t.Fatalf("混版必须判红：unhealthy_count=%d（真值应 ≥1）", fh.Unhealthy)
 	}
-	if !fh.Mixed() || len(fh.MixedMachines) != 1 || fh.MixedMachines[0] != "Mr2109" {
-		t.Errorf("混版机器名单应为 [Mr2109]，得到 %v", fh.MixedMachines)
+	if !fh.Mixed() || len(fh.MixedMachines) != 1 || fh.MixedMachines[0] != "node-local" {
+		t.Errorf("混版机器名单应为 [node-local]，得到 %v", fh.MixedMachines)
 	}
 	if fh.Healthy != 1 {
 		t.Errorf("同版那台仍应计健康：healthy=%d", fh.Healthy)
@@ -122,8 +122,8 @@ func statusOf(t *testing.T, h *Handlers) map[string]interface{} {
 // TestStatusHandler_MixedFleetJudgedUnhealthy —— 开工单 T-23 判据的同形状复跑（HTTP 层）。
 func TestStatusHandler_MixedFleetJudgedUnhealthy(t *testing.T) {
 	h := newTestHandlers()
-	postHeartbeat(t, h, store.HeartbeatRequest{Machine: "Mr2109", Healthy: true, CodeVersion: "2.5.9", CodeSHA: "fefca220+dirty"})
-	postHeartbeat(t, h, store.HeartbeatRequest{Machine: "edge-node", Healthy: true, CodeVersion: "2.5.10", CodeSHA: "213a67c4"})
+	postHeartbeat(t, h, store.HeartbeatRequest{Machine: "node-local", Healthy: true, CodeVersion: "2.5.9", CodeSHA: "fefca220+dirty"})
+	postHeartbeat(t, h, store.HeartbeatRequest{Machine: "node-a", Healthy: true, CodeVersion: "2.5.10", CodeSHA: "213a67c4"})
 
 	resp := statusOf(t, h)
 	unhealthy, _ := resp["unhealthy_count"].(float64)
@@ -137,13 +137,13 @@ func TestStatusHandler_MixedFleetJudgedUnhealthy(t *testing.T) {
 		t.Errorf("master_code_version 应为主控自己那一版 %q，得到 %v", version.Version, resp["master_code_version"])
 	}
 	machines, _ := resp["machines"].(map[string]interface{})
-	Mr2109, _ := machines["Mr2109"].(map[string]interface{})
-	if vm, _ := Mr2109["version_mismatch"].(bool); !vm {
-		t.Errorf("Mr2109（2.5.9）的 version_mismatch 应为 true，得到 %v", Mr2109["version_mismatch"])
+	nodeLocal, _ := machines["node-local"].(map[string]interface{})
+	if vm, _ := nodeLocal["version_mismatch"].(bool); !vm {
+		t.Errorf("node-local（2.5.9）的 version_mismatch 应为 true，得到 %v", nodeLocal["version_mismatch"])
 	}
 	// 旧字段不删（旧消费者零改动）：`healthy` 仍是子端自报值
-	if hv, _ := Mr2109["healthy"].(bool); !hv {
-		t.Errorf("旧字段 healthy 必须原样保留（子端自报 true），得到 %v", Mr2109["healthy"])
+	if hv, _ := nodeLocal["healthy"].(bool); !hv {
+		t.Errorf("旧字段 healthy 必须原样保留（子端自报 true），得到 %v", nodeLocal["healthy"])
 	}
 }
 

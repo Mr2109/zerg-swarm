@@ -264,7 +264,7 @@ fn macos_four_states_match_the_measured_receipt() {
     );
     assert_eq!(field(&got, "write_work"), "ok", "空间内可写必须可用：{out}");
 
-    // ④ 出网：**先证基线可达**（否则这一格没有区分度 —— 这正是 EDGE-NODE 上踩过的测量学坑）
+    // ④ 出网：**先证基线可达**（否则这一格没有区分度 —— 这正是 node-a 上踩过的测量学坑）
     assert_eq!(
         base_egress,
         "OPEN",

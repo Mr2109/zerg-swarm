@@ -48,7 +48,7 @@ func startLockTestManager(t *testing.T, names ...string) *Manager {
 		t.Fatalf("加载测试注册表失败: %v", err)
 	}
 	// NewManager：孵化开关未设 ⇒ 关（既有裸 exec 路径），启动 GC 也不动作。
-	return NewManager(reg, "edge-node")
+	return NewManager(reg, "node-a")
 }
 
 // ① 未知模型：最省事的一条路径，必须秒回 404 —— 自锁死时这里会永久卡住。

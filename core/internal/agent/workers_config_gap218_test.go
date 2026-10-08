@@ -17,7 +17,7 @@ func TestGAP218_WorkersYamlPathSingleConfig(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dir, "config"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	spec := []byte("devices:\n  - hostname: edge-node\n    max_workers: 3\n")
+	spec := []byte("devices:\n  - hostname: node-a\n    max_workers: 3\n")
 	if err := os.WriteFile(filepath.Join(dir, "config", "workers.yaml"), spec, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -25,7 +25,7 @@ func TestGAP218_WorkersYamlPathSingleConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("读 <workDir>/config/workers.yaml 失败（双重 config 路径？）：%v", err)
 	}
-	if len(cfg.Devices) != 1 || cfg.Devices[0].Hostname != "edge-node" {
+	if len(cfg.Devices) != 1 || cfg.Devices[0].Hostname != "node-a" {
 		t.Fatalf("解析结果不符：%+v", cfg.Devices)
 	}
 }

@@ -128,7 +128,7 @@ func (e *ModelEntry) SetEggNameForTest(name string) {
 }
 
 // Declared 这枚卵是否声明了新格式的卵声明字段（三者任一）。
-// 三者全空 = 遗留条目（P1 之前写的注册表，如 EDGE-NODE 本机的 agent_models.yaml）——
+// 三者全空 = 遗留条目（P1 之前写的注册表，如 node-a 本机的 agent_models.yaml）——
 // 按告警处理而不是拒孵：本仓读不到那份文件，清单落地（P7）时才由清单侧强制补齐。
 func (e *ModelEntry) Declared() bool {
 	return e != nil && (e.SchemaVersion != 0 || e.EnvReq != nil || e.IdleUnloadS != 0)

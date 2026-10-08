@@ -965,17 +965,17 @@ func gnrTRunPyHelp(t *testing.T, pyExe, pyFile string, args ...string) (int, str
 }
 
 // gnrHelpGoSha256 = sha256(gnrHelp) —— Go 现行帮助面正文（COLUMNS=80 · 见 gnrHelpBytes）。
-const gnrHelpGoSha256 = "e6b04dba6dc821bf1b88d5a12826761319daee59ba57b5860267c9b2f45aed49"
+const gnrHelpGoSha256 = "f638023e6f41b4d8e3b680c32d9f2d809ef8849dd816a769a5a83cf6bb2c199c"
 
 // gnrHelpPySha256 = 同一正文 —— py 原件 `COLUMNS=80 /usr/bin/python3 <py 件> -h` 的 stdout 全串。
 // ★ 机械拦阻的核心：两者不等即红（py 正文一改 / Go 副本一改，都当场点名）。
 // 重生成正门（现读打印两值 · 不落任何件）：
 //
 //	GNR_REGEN_HELP_SHA=1 go test ./cmd/zerg -run '^TestGnrHelpParityWithPy$' -v
-const gnrHelpPySha256 = "e6b04dba6dc821bf1b88d5a12826761319daee59ba57b5860267c9b2f45aed49"
+const gnrHelpPySha256 = "f638023e6f41b4d8e3b680c32d9f2d809ef8849dd816a769a5a83cf6bb2c199c"
 
-// gnrHelpBytes —— 帮助面正文字节数（2397 · 与 COLUMNS=80 的 py 现跑一致）。
-const gnrHelpBytes = 2397
+// gnrHelpBytes —— 帮助面正文字节数（2420 · 与 COLUMNS=80 的 py 现跑一致）。
+const gnrHelpBytes = 2420
 
 // TestGnrHelpParityWithPy —— ④ 机械拦阻：Go 的 help 输出 == py 的 --help 输出（stdout+stderr+rc 三面）。
 //

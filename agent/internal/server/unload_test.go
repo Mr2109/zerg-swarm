@@ -13,7 +13,7 @@ import (
 // ── 批 3：/unload 支持"定向卸载"（只卸够），无体仍是旧语义（全卸） ─────────────
 
 func unloadServer() *Server {
-	return NewServer(NewAgent("edge-node", "tok", nil, backend.NewManager(nil, "edge-node"), ""))
+	return NewServer(NewAgent("node-a", "tok", nil, backend.NewManager(nil, "node-a"), ""))
 }
 
 func postUnload(t *testing.T, s *Server, token, body string) (int, map[string]interface{}) {

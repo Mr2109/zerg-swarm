@@ -21,14 +21,14 @@ func TestTripMachine_FailSinceNotStampedBeforeThreshold(t *testing.T) {
 	g := breakerTestGateway()
 	// 前 circuitFailThreshold-1 次 trip 全在阈值之下——failSince 必须一直为空。
 	for i := 1; i < circuitFailThreshold; i++ {
-		g.tripMachine("edge-node", "backend edge-node forward failed: dial tcp <worker-ip>:8100: connect: connection refused")
-		if fc := g.failCounts["edge-node"]; fc != i {
+		g.tripMachine("node-a", "backend node-a forward failed: dial tcp <cluster-ip>:8100: connect: connection refused")
+		if fc := g.failCounts["node-a"]; fc != i {
 			t.Fatalf("前置条件：第 %d 次 trip 后 failCounts 应为 %d——实际 %d", i, i, fc)
 		}
-		if since, ok := g.failSince["edge-node"]; ok {
+		if since, ok := g.failSince["node-a"]; ok {
 			t.Fatalf("failCounts=%d < 阈值 %d：failSince 不该被写"+
 				"（旧硬编码 3 会在 failCounts=3 时盖章，使 30s 冷却计时提前起跑）——实际 %v",
-				g.failCounts["edge-node"], circuitFailThreshold, since)
+				g.failCounts["node-a"], circuitFailThreshold, since)
 		}
 	}
 }
@@ -37,23 +37,23 @@ func TestTripMachine_FailSinceNotStampedBeforeThreshold(t *testing.T) {
 func TestTripMachine_FailSinceStampedExactlyAtThreshold(t *testing.T) {
 	g := breakerTestGateway()
 	for i := 0; i < circuitFailThreshold; i++ {
-		g.tripMachine("edge-node", "backend edge-node forward failed: context deadline exceeded")
+		g.tripMachine("node-a", "backend node-a forward failed: context deadline exceeded")
 	}
-	since, ok := g.failSince["edge-node"]
+	since, ok := g.failSince["node-a"]
 	if !ok {
 		t.Fatalf("failCounts=%d 已达 circuitFailThreshold：failSince 应被写"+
-			"（此处为空说明阈位被写成 healthyTripLimit=%d）", g.failCounts["edge-node"], healthyTripLimit)
+			"（此处为空说明阈位被写成 healthyTripLimit=%d）", g.failCounts["node-a"], healthyTripLimit)
 	}
 	if since.IsZero() {
 		t.Fatal("failSince 不应是零值时间")
 	}
 	// 计时起点=真实熔断时刻 ⇒ isTripped 必须判熔断，且剩余冷却为满额区间 (0, circuitCooldown]。
-	if !g.isTripped("edge-node") {
+	if !g.isTripped("node-a") {
 		t.Fatal("failCounts 达阈值且 failSince 刚盖章——isTripped 应为 true")
 	}
-	b := findBreaker(g.BreakerSnapshot(), "edge-node")
+	b := findBreaker(g.BreakerSnapshot(), "node-a")
 	if b == nil {
-		t.Fatal("快照里没有 edge-node")
+		t.Fatal("快照里没有 node-a")
 	}
 	if b.State != "open" {
 		t.Errorf("达阈值后 state 应为 open——实际 %s", b.State)
@@ -72,16 +72,16 @@ func TestTripMachine_FailSinceStampedExactlyAtThreshold(t *testing.T) {
 func TestTripMachine_RepeatedTripRefreshesFailSince(t *testing.T) {
 	g := breakerTestGateway()
 	for i := 0; i < circuitFailThreshold; i++ {
-		g.tripMachine("edge-node", "backend edge-node forward failed: 503")
+		g.tripMachine("node-a", "backend node-a forward failed: 503")
 	}
 	// 模拟「冷却窗口已过」（旧的提前盖章正是把这一状态在达阈值前就制造出来）。
-	g.failSince["edge-node"] = time.Now().Add(-(circuitCooldown + time.Second))
+	g.failSince["node-a"] = time.Now().Add(-(circuitCooldown + time.Second))
 	// 再失败一次（failover 重试）——计时起点应回到现在。
-	g.tripMachine("edge-node", "backend edge-node forward failed: 503")
-	if age := time.Since(g.failSince["edge-node"]); age > circuitCooldown {
+	g.tripMachine("node-a", "backend node-a forward failed: 503")
+	if age := time.Since(g.failSince["node-a"]); age > circuitCooldown {
 		t.Fatalf("已过阈值的机器再失败时应刷新 failSince（保持熔断）——实际已过 %v", age)
 	}
-	if !g.isTripped("edge-node") {
+	if !g.isTripped("node-a") {
 		t.Fatal("刷新计时后仍在阈值之上且未过冷却——isTripped 应为 true")
 	}
 }
@@ -93,15 +93,15 @@ func TestTripMachine_RepeatedTripRefreshesFailSince(t *testing.T) {
 // 首次达阈值时刻」是承重条件，而不是可有可无的时间戳。
 func TestIsTripped_StaleFailSinceBypassesTrip(t *testing.T) {
 	g := breakerTestGateway()
-	g.failCounts["edge-node"] = circuitFailThreshold
-	g.failSince["edge-node"] = time.Now().Add(-(circuitCooldown + time.Second))
-	if g.isTripped("edge-node") {
+	g.failCounts["node-a"] = circuitFailThreshold
+	g.failSince["node-a"] = time.Now().Add(-(circuitCooldown + time.Second))
+	if g.isTripped("node-a") {
 		t.Fatal("前置语义：冷却期已过，isTripped 应放行一次试错（返回 false）而不是熔断")
 	}
-	if n := g.failCounts["edge-node"]; n != 0 {
+	if n := g.failCounts["node-a"]; n != 0 {
 		t.Fatalf("放行时应清零 failCounts——实际 %d", n)
 	}
-	if _, ok := g.failSince["edge-node"]; ok {
+	if _, ok := g.failSince["node-a"]; ok {
 		t.Fatal("放行时应清掉 failSince（冷却计时归零）")
 	}
 }

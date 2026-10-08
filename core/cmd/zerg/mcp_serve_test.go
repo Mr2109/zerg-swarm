@@ -29,18 +29,18 @@ import (
 // mcpTestFleetStatus —— 主控 `/api/fleet/status` 的固定夹具（值刻意含整数与小数）。
 const mcpTestFleetStatus = `{"healthy_count": 2, "available_models": ["m1", "m2"], ` +
 	`"machines": {` +
-	`"edge-node": {"healthy": true, "backend_state": "ok", "model": "m1", "mem_available_gb": 12.3, "active_requests": 1, "models": ["m1"]}, ` +
+	`"node-a": {"healthy": true, "backend_state": "ok", "model": "m1", "mem_available_gb": 12.3, "active_requests": 1, "models": ["m1"]}, ` +
 	`"Mr2109": {"healthy": false, "backend_state": "down", "model": null, "mem_available_gb": 0, "active_requests": 0, "models": ["m2"]}` +
 	`}}`
 
 func mcpTestRoster() *mcpRoster {
 	return &mcpRoster{
-		order: []string{"edge-node", "mini-node-1", "mini-node-2", "Mr2109"},
+		order: []string{"node-a", "node-b", "node-c", "Mr2109"},
 		byName: map[string]mcpRosterNode{
-			"edge-node":    {name: "edge-node", host: "<worker-ip>"},
-			"mini-node-1": {name: "mini-node-1", host: "<worker-ip>"},
-			"mini-node-2": {name: "mini-node-2", host: "<worker-ip>"},
-			"Mr2109":  {name: "Mr2109", host: "127.0.0.1"},
+			"node-a": {name: "node-a", host: "<worker-ip>"},
+			"node-b": {name: "node-b", host: "<worker-ip>"},
+			"node-c": {name: "node-c", host: "<worker-ip>"},
+			"Mr2109":   {name: "Mr2109", host: "127.0.0.1"},
 		},
 	}
 }
@@ -222,7 +222,7 @@ func TestMCPReadToolPayloads(t *testing.T) {
 		t.Fatalf("machines 应 2 台：%v", machines)
 	}
 	first := machines[0].(map[string]any)
-	if first["machine"] != "edge-node" || first["mem_available_gb"].(float64) != 12.3 {
+	if first["machine"] != "node-a" || first["mem_available_gb"].(float64) != 12.3 {
 		t.Fatalf("首台摘要不符：%v", first)
 	}
 
@@ -233,14 +233,14 @@ func TestMCPReadToolPayloads(t *testing.T) {
 		t.Fatalf("list_models 计数不符：%v", data)
 	}
 	mm := data["machine_models"].(map[string]any)
-	if len(mm["edge-node"].([]any)) != 1 {
+	if len(mm["node-a"].([]any)) != 1 {
 		t.Fatalf("machine_models.edge-node 应 1 条：%v", mm)
 	}
 
 	// get_model_info：命中 ⇒ loaded_on/state；未命中 ⇒ success:false。
 	d = mcpDecodeMap(t, zs.getModelInfoJSON("m1"))
 	info := d["data"].(map[string]any)
-	if d["success"] != true || info["loaded_on"] != "edge-node" || info["state"] != "ok" {
+	if d["success"] != true || info["loaded_on"] != "node-a" || info["state"] != "ok" {
 		t.Fatalf("get_model_info(m1) 不符：%v", d)
 	}
 	d = mcpDecodeMap(t, zs.getModelInfoJSON("nope"))
@@ -263,7 +263,7 @@ func TestMCPFleetTopologyRoster(t *testing.T) {
 	zs := &mcpZergServer{c: mcpTestClient(ts.URL), roster: mcpTestRoster()}
 	d := mcpDecodeMap(t, zs.fleetTopologyJSON())
 	conn := d["data"].(map[string]any)["connectivity"].(map[string]any)
-	want := map[string]string{"edge-node": "<worker-ip>", "mini-node-1": "<worker-ip>", "mini-node-2": "<worker-ip>", "Mr2109": "127.0.0.1"}
+	want := map[string]string{"node-a": "<worker-ip>", "node-b": "<worker-ip>", "node-c": "<worker-ip>", "Mr2109": "127.0.0.1"}
 	for k, v := range want {
 		if conn[k] != v {
 			t.Fatalf("connectivity[%s] 应 %s：实得 %v", k, v, conn[k])
@@ -280,23 +280,23 @@ func TestMCPWriteToolBodies(t *testing.T) {
 	ts := mcpMockController(t, &got)
 	zs := &mcpZergServer{c: mcpTestClient(ts.URL), roster: mcpTestRoster()}
 
-	if d := mcpDecodeMap(t, zs.loadModelJSON("edge-node", "m1")); d["success"] != true {
+	if d := mcpDecodeMap(t, zs.loadModelJSON("node-a", "m1")); d["success"] != true {
 		t.Fatalf("load 应成功：%v", d)
 	}
-	d := mcpDecodeMap(t, zs.unloadModelJSON("edge-node", "m1"))
+	d := mcpDecodeMap(t, zs.unloadModelJSON("node-a", "m1"))
 	if d["success"] != true {
 		t.Fatalf("unload 应成功：%v", d)
 	}
-	if d := mcpDecodeMap(t, zs.switchModelJSON("mini-node-1", "m2")); d["success"] != true {
+	if d := mcpDecodeMap(t, zs.switchModelJSON("node-b", "m2")); d["success"] != true {
 		t.Fatalf("switch 应成功：%v", d)
 	}
 	if len(got) != 3 {
 		t.Fatalf("应记录 3 次写面：%v", got)
 	}
-	if got[0] != `load {"machine": "edge-node", "model": "m1"}` {
+	if got[0] != `load {"machine": "node-a", "model": "m1"}` {
 		t.Fatalf("load 体裁不符（Python 空格分隔）：%q", got[0])
 	}
-	if got[1] != `unload {"machine": "edge-node"}` {
+	if got[1] != `unload {"machine": "node-a"}` {
 		t.Fatalf("unload 体裁应为 {machine}（✗ 不带 model）：%q", got[1])
 	}
 }

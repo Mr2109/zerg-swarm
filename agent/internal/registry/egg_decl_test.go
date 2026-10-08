@@ -94,7 +94,7 @@ example-moe-36b:
 }
 
 // TestValidateEggDeclaration_LegacyEntryWarnsNotFatal 遗留条目（P1 之前写的注册表）：
-// **告警但照孵**，绝不静默——本仓读不到 EDGE-NODE 本机那份 yaml，清单落地（P7）时才强制补齐。
+// **告警但照孵**，绝不静默——本仓读不到 node-a 本机那份 yaml，清单落地（P7）时才强制补齐。
 func TestValidateEggDeclaration_LegacyEntryWarnsNotFatal(t *testing.T) {
 	e := &ModelEntry{File: "/data/models/x.gguf", Backend: "llama-server", MemGB: 20}
 	res := ValidateEggDeclaration("老条目", e)

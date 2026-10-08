@@ -239,7 +239,7 @@ func ParseFleetConfig(data []byte) (*FleetConfig, error) {
 
 // parseCandidates 解析单个模型的候选列表。
 // 支持：
-//   - 单 dict: { host: edge-node, backend: ds4-server, ... }
+//   - 单 dict: { host: node-a, backend: ds4-server, ... }
 //   - 多候选数组: [{host, ...}, {host, ...}]
 func parseCandidates(node *yaml.Node) ([]ModelCandidate, error) {
 	if node.Kind == yaml.MappingNode {

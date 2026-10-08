@@ -9,12 +9,12 @@ import (
 	"time"
 )
 
-// TestInferLive — 真网关实测（C4b——工具循环全链路——依赖网关 8082 + EDGE-NODE 模型在线）
+// TestInferLive — 真网关实测（C4b——工具循环全链路——依赖网关 8082 + node-a 模型在线）
 // 不是单元测试——本地集成验证（CI 环境网关不在线时会失败——正常）
-// 2026-09-05: 加 env 开关（EDGE-NODE 熔断/离线时不红 CI——手动 ZERG_LIVE=1 跑）
+// 2026-09-05: 加 env 开关（node-a 熔断/离线时不红 CI——手动 ZERG_LIVE=1 跑）
 func TestInferLive(t *testing.T) {
 	if os.Getenv("ZERG_LIVE") == "" {
-		t.Skip("真网关集成测试——ZERG_LIVE=1 才跑（依赖 EDGE-NODE 在线）")
+		t.Skip("真网关集成测试——ZERG_LIVE=1 才跑（依赖 node-a 在线）")
 	}
 	tok := config.ResolveAuthToken()
 	if tok == "" {
