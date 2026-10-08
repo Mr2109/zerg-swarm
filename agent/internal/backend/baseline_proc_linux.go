@@ -28,7 +28,7 @@ type procInfo struct {
 
 // readProcessMemGb 取一个推理进程的**真实占用**（GB）。
 //
-// 为什么不能用 RSS：权重在 GTT/VRAM 里，RSS 只统计 CPU 侧页。EDGE-NODE 实测——
+// 为什么不能用 RSS：权重在 GTT/VRAM 里，RSS 只统计 CPU 侧页。node-a 实测——
 // Qwen 32.7 GB / K2 24.0 GB 的服务，RSS 只报 1.41 / 0.77 GB（差 20 倍以上）
 // ⇒ 用它做准入扣减几乎失效（M15）。
 // 真源：/proc/<pid>/fdinfo/<fd> 的 drm-memory-gtt + drm-memory-vram（amdgpu 逐进程归因；

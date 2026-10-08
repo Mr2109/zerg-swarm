@@ -25,11 +25,11 @@ const AgentModulePath = "github.com/Mr2109/zerg-swarm/agent/internal/version"
 //
 // core   = 主控（也是将来该机自更新的 CLI 入口）
 // agent  = 子端一次性 CLI（核心模块里的 cmd/zerg-agent）
-// agentd = 子端**常驻守护进程**（agent 模块里的 cmd/zerg-agentd）——EDGE-NODE 上真正在跑的就是它，
+// agentd = 子端**常驻守护进程**（agent 模块里的 cmd/zerg-agentd）——node-a 上真正在跑的就是它，
 //
-//	机群版本矩阵里 edge-node 那一行的 code_sha 来自它的心跳
+//	机群版本矩阵里 node-a 那一行的 code_sha 来自它的心跳
 //
-// ui     = Rust 桌面 UI —— **仅 darwin 编译**（设计 §3：EDGE-NODE 上无 Rust 工具链）
+// ui     = Rust 桌面 UI —— **仅 darwin 编译**（设计 §3：node-a 上无 Rust 工具链）
 const (
 	CompCore   = "core"
 	CompAgent  = "agent"
@@ -51,7 +51,7 @@ func DefaultComponents() []string {
 	return c
 }
 
-// NodeComponents —— 机群节点（如 EDGE-NODE）：core（装上它，该机将来才能自己 `zerg-core update`）
+// NodeComponents —— 机群节点（如 node-a）：core（装上它，该机将来才能自己 `zerg-core update`）
 // + agentd（该机真正在跑的守护进程）。**不含 ui**。
 func NodeComponents() []string { return []string{CompCore, CompAgentd, CompWall} }
 

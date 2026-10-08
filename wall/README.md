@@ -175,14 +175,14 @@ python3 scripts/gates/two-states-gate-mutate.py          # 变异验证：改坏
 ## 制品与构建（任务 2'.6）
 
 ```bash
-bash scripts/build/build-wall.sh                   # release → bin/zerg-wall（本机平台）
-bash scripts/build/build-wall.sh --debug           # debug   → wall/target/debug/zerg-wall（上面那些门禁读它）
-bash scripts/build/negctl-build-wall.sh            # 负例活体控制：C0 真树必绿 · N1/N2/N3 各自真红在 rc=2
-python3 scripts/build/build-wall-mutate.py         # 变异验证：改坏实现 ⇒ 负例控制**必须红在那一条**对照项上
+zerg build wall                                    # release → bin/zerg-wall（本机平台）
+zerg build wall --debug                            # debug   → wall/target/debug/zerg-wall（上面那些门禁读它）
+(cd scripts/build && go test ./cmd/zerg-build -run TestNegctlBuildWall)  # 负例活体控制：C0 真树必绿 · N1/N2/N3 各自真红在 rc=2（Go 测试 · DEV-2107）
+(cd scripts/build && go test ./cmd/zerg-build -run TestBuildWallMutate)   # 变异验证：改坏实现 ⇒ 负控**必须红在那一条**（go test -overlay 免真改仓内源）
 bash scripts/gates/probe-build-all-wall-wiring.sh  # 证 build-all.sh 的接线（桩树里跑原文，不碰生产 bin/）
 ```
 
-- **构建入口只有一个**：`scripts/build/build-wall.sh`（`build-all.sh` 也调它，不复制第二份构造）。
+- **构建入口只有一个**：**Go 真身** `scripts/build/cmd/zerg-build/main.go`（命令面 `zerg build wall` · 现编现跑 `cd scripts/build && go run ./cmd/zerg-build`；旧壳 `scripts/build/build-wall.sh` 已退役 —— DEV-2072 接线 / DEV-2093 退场，`build-all` 的茧壁步也调它，不复制第二份构造）。
   它**不交叉编译** —— 茧壁要在**目标机**上编（与 zerg-agent「该机自编」同一口径）；
 - **只落 `bin/`、不进 dist 制品矩阵**：矩阵 5 件是**发布契约**，要不要加茧壁**待 Mr2109 拍板** ⚠
   （与 `cocoon-docs-service` 同一条边界）。接线已接上、也在桩树里照跑过 —— 但**跑真的 `build-all.sh`
@@ -193,8 +193,8 @@ bash scripts/gates/probe-build-all-wall-wiring.sh  # 证 build-all.sh 的接线�
   R2 守卫另一支（无 cargo ⇒ rc=0、**没有**产物、留痕说明原因）· R3 区分度（把调用行换成 `:` ⇒
   产物**不在**，证明 R1 的产物断言真的会红）；
 - **签名**：落 `bin/` 的件由 `build-all.sh` 的签名环节**统一**施加（稳定身份 + `com.zerg.wall`）——
-  同一件事只有一处实现；`build-wall.sh` 单独跑时**只编不签**（cargo 产出的件自带 ad-hoc 签名，能跑）；
-- **构建脚本永不「跳过」**：`build-wall.sh` 不成功一律 `rc=2`（构建脚本若以「跳过」成功退出，
+  同一件事只有一处实现；构建入口单独跑时**只编不签**（cargo 产出的件自带 ad-hoc 签名，能跑）；
+- **构建入口永不「跳过」**：Go 真身（`go run ./cmd/zerg-build`）不成功一律 `rc=2`（构建脚本若以「跳过」成功退出，
   「没编出茧壁」就会看起来像绿）；要不要跳过由**调用方**决定 —— `build-all.sh` 只在**本机无 cargo**
   这一种情形跳过（环境缺工具），且**打印原因**；`wall/` 源码不在属**仓坏了**，硬失败（不许在这里被吞）。
 - **「Linux 目标机能编」的现状（实测说清）**：`cargo check --target x86_64-unknown-linux-gnu` **rc=0**

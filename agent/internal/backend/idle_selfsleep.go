@@ -4,7 +4,7 @@
 //
 //	受管侧的空闲自退可作为轻量替代：让**引擎自己**在空闲后收敛，而不是子端硬杀。
 //
-// ⚠️ 真机核实（2026-09-14，EDGE-NODE 上 `llama-server --help`，不靠记忆）：
+// ⚠️ 真机核实（2026-09-14，node-a 上 `llama-server --help`，不靠记忆）：
 //
 //	-to, --timeout N              只是 server **read/write timeout**（默认 3600），**不是**空闲退出；
 //	--sleep-idle-seconds SECONDS  "number of seconds of idleness after which the server will sleep" ✅ 这才是真开关。

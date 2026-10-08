@@ -119,7 +119,7 @@ func TestFleetLogsNoExtraSelfTestFlag(t *testing.T) {
 
 func TestFleetLogsQueryParamsAndQuote(t *testing.T) {
 	srv, seen := flgTServe(t, map[string]string{
-		"/api/fleet/logs/query": `[{"ts":"T1","level":"ERROR","machine":"edge-node","component":"agent","model":"M","request_id":"r1","message":"m"}]`,
+		"/api/fleet/logs/query": `[{"ts":"T1","level":"ERROR","machine":"node-a","component":"agent","model":"M","request_id":"r1","message":"m"}]`,
 	})
 	rc, out, errs := flgTRun(t, "--controller", srv.URL, "query", "--machine", "x 3&y=z/7", "--since", "1h")
 	if rc != 0 || errs != "" {
@@ -128,7 +128,7 @@ func TestFleetLogsQueryParamsAndQuote(t *testing.T) {
 	if got := (*seen)[0]; got != "/api/fleet/logs/query?machine=x%203%26y%3Dz/7&since=1h" {
 		t.Errorf("URL 不逐字：%q", got)
 	}
-	want := "T1 [ERROR] [x3/agent] model=M request_id=r1 m\n"
+	want := "T1 [ERROR] [node-a/agent] model=M request_id=r1 m\n"
 	if out != want {
 		t.Errorf("行渲染不逐字：got=%q want=%q", out, want)
 	}

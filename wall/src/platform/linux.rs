@@ -22,7 +22,7 @@ tmpfs /tmp + 空目录 /models（`--dir`，不是挂载点）";
 
 /// 缺省设备：KFD（计算接口）+ 渲染节点（缓冲分配/映射）。
 ///
-/// 注意：**默认 `--dev /dev` 看不到 GPU**（EDGE-NODE 实测），必须显式 `--dev-bind` 这两个。
+/// 注意：**默认 `--dev /dev` 看不到 GPU**（node-a 实测），必须显式 `--dev-bind` 这两个。
 pub fn default_devices() -> Vec<String> {
     vec!["/dev/kfd".to_string(), "/dev/dri/renderD128".to_string()]
 }
@@ -64,7 +64,7 @@ pub fn plan(s: &Spec) -> Result<Plan, Error> {
             "--tmpfs",
             "/tmp",
             // 宿主 /sys **只读**进空间：设备「可不可用」由 /sys 下的拓扑/属性描述（GPU 如此，
-            // 别的加速器同理）；缺它时 EDGE-NODE 真机上引擎报 `no ROCm-capable device is detected`
+            // 别的加速器同理）；缺它时 node-a 真机上引擎报 `no ROCm-capable device is detected`
             // 并**静默降级 CPU**（真机实测，2026-09-15）。只读 ⇒ 不放开写面。
             "--ro-bind",
             "/sys",

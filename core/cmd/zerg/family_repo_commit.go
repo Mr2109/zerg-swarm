@@ -391,12 +391,38 @@ func removeMaterialized(dir string) {
 }
 
 // gateEnv —— 在现环境上叠加 `ZERG_GATE_REPO_ROOT`（物化树）：闸脚本据此**自动改面**（REPO_ROOT）。
+//
+// ★ 2026-10-09（出口② 血证 · 门①/门82 只在提交钩子面假红）：`git commit --only <路径…>` 会把
+//
+//	`GIT_INDEX_FILE` 指到它自己的**临时索引**（`<仓>/.git/next-index-<pid>.lock`）并**泄进 pre-commit
+//	钩子**；钩子物化树 + 跑闸时那段 git 索引面若被继承，门步里凡读 `git ls-files` 的（门① 覆盖 /
+//	门82 hooksPath）就取到**非暂存面**（更糟：那段临时索引还会被本趟 `go test` 的夹具改写）⇒ 假红。
+//	⇒ 闸子进程一律**剥掉** `GIT_INDEX_FILE` / `GIT_DIR` / `GIT_WORK_TREE`（只留本仓默认索引面）。
+//	★ 与 `.githooks/pre-commit` 的同一处剥离**同规同批**（两条出口同规）。
 func gateEnv(matRoot string) []string {
 	env := os.Environ()
 	if matRoot != "" {
 		env = append(env, "ZERG_GATE_REPO_ROOT="+matRoot)
 	}
-	return env
+	return stripGitIndexFace(env)
+}
+
+// stripGitIndexFace —— 从环境里逐条剔掉泄漏的 git 索引面三键（`GIT_INDEX_FILE` / `GIT_DIR` /
+// `GIT_WORK_TREE`）。名字一律**全等**匹配（✗ 不做前缀/模糊），免得连坐别的面。
+func stripGitIndexFace(env []string) []string {
+	drop := map[string]bool{"GIT_INDEX_FILE": true, "GIT_DIR": true, "GIT_WORK_TREE": true}
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		name := kv
+		if i := strings.IndexByte(kv, '='); i >= 0 {
+			name = kv[:i]
+		}
+		if drop[name] {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return out
 }
 
 // resetStagedPaths —— **被拦下时复原索引面**（逐件 `git reset -q -- <路径…>`）：调序后索引面在跑闸前

@@ -97,6 +97,60 @@ func cmdGuarded(inv *invocation, stdout, stderr io.Writer) int {
 	return exitUsage
 }
 
+// writeGuardDryRun —— **已开放**写面命令的 `--dry-run` 计划件（缺口 `GAP-20260927-140` ① ·
+// Mr2109 2026-10-08 拍「默认档要 fail-closed」）。给**没有自己的 `--dry-run` 支**的写面命令用；
+// 计划件与 `cmdGuarded` **同源**（`planFor`）—— 不许两处各拼一份。
+//
+// 返回 (rc, done)：done=true ⇒ 调用方直接 `return rc`（已出计划件 · 零副作用）。
+func writeGuardDryRun(inv *invocation, stdout, stderr io.Writer) (int, bool) {
+	if !inv.dryRun {
+		return 0, false
+	}
+	// `--dry-run` 与 `--yes` 同给 ⇒ 两道确认档自相矛盾 ⇒ 先把共享判定跑了（与 `cmdGuarded` 同口径）。
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc, true
+	}
+	cmd := find(inv.path)
+	if cmd == nil || cmd.danger == nil {
+		return 0, false
+	}
+	target := ""
+	if len(inv.args) > 0 {
+		target = inv.args[0]
+	}
+	fmt.Fprint(stdout, planFor(cmd, cmd.danger, target, inv))
+	fmt.Fprintln(stderr, "（--dry-run：只出计划件 · 零副作用 —— 未执行、未改任何状态）")
+	return exitOK, true
+}
+
+// writeGuardYes —— **已开放**写面命令的 fail-closed **确认档**（唯一一处 · 三态里真跑那一档）。
+// 在命令自己的 `--dry-run` 支**之后**、**唯一写盘点之前**调用（与 `cmdGuarded` 的 ③ 段同口径）：
+//
+//	· `--dry-run`（计划件那一档）⇒ 放行（本函数只管真跑档 —— 干跑不是「要 --yes」）；
+//	· 缺 `--yes` ⇒ 用法错 2（**零副作用 · 不给结论** · 从不提问 · 无 TTY 也一样）；
+//	· `--yes` 齐 ⇒ 放行（调用方照旧写）。
+//
+// 返回 exitOK ⇒ 往下写；否则 `return rc`。`--dry-run` 与 `--yes` 同给 ⇒ 共享判定 `dryRunYesConflict` 退 2。
+func writeGuardYes(inv *invocation, stderr io.Writer) int {
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
+	if inv.dryRun || inv.yes {
+		return exitOK
+	}
+	path := strings.Join(inv.path, " ")
+	lvl := dangerD2
+	if cmd := find(inv.path); cmd != nil && cmd.danger != nil {
+		lvl = cmd.danger.Level
+	}
+	msg := fmt.Sprintf("`%s` 是 %s 档 —— **缺 --yes ⇒ 不执行**", path, lvl)
+	inv.setErr("usage", "yes_required", msg)
+	fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
+	fmt.Fprintf(stderr, "先看计划件：%s %s --dry-run\n", progName, path)
+	fmt.Fprintf(stderr, "error.kind=usage · detail=yes_required · retryable=false · remedy=fix_usage\n")
+	return exitUsage
+}
+
 // probeStateConflict —— 「已在该状态」的只读探测（§九 M4 幂等语义 · §十二 `P-031` 幂等优先）。
 //
 // 为什么在这一层：M4 要的是**先算差再动手**；`agent load <机> <模型>` 的目标机上该模型已在

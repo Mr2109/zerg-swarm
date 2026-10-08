@@ -54,7 +54,7 @@ func eggStubBackends(t *testing.T, byHost map[string]zerg.EggBackendFactForTest)
 	t.Cleanup(zerg.SetEggBackendProbeForTest(byHost))
 }
 
-// eggStubOnMS01 —— 最常用的一份合成回据：`Mr2109` 答得动（`Egg-A` 在跑 · 端口 9001），`edge-node` 答得动但没有卵。
+// eggStubOnMS01 —— 最常用的一份合成回据：`Mr2109` 答得动（`Egg-A` 在跑 · 端口 9001），另一台答得动但没有卵。
 // 名册里没有的机 ⇒ 不在表里 ⇒ 「取不到」（与真路径同形）。
 func eggStubOnMS01(t *testing.T) {
 	t.Helper()
@@ -181,7 +181,7 @@ func TestEggStateFollowsChildBackendNotMasterDeclaration(t *testing.T) {
 		"/api/models/Egg-B": `{"name":"Egg-B","host":"Mr2109","status":"已加载"}`,
 	})
 	defer srv.Close()
-	// 合成子端：Mr2109 答得动、只有 Egg-A 在跑（端口 9001）；edge-node 答得动、没有卵。
+	// 合成子端：Mr2109 答得动、只有 Egg-A 在跑（端口 9001）；另一台答得动、没有卵。
 	eggStubOnMS01(t)
 
 	rc, stdout, stderr := runEggCmd(t, "egg", "ls", "--plain")
@@ -262,7 +262,7 @@ func TestEggThreeStatesDistinguishable(t *testing.T) {
 		"/api/models/Egg-B": `{"name":"Egg-B","host":"Mr2109","status":"已加载"}`,
 	})
 	defer srv.Close()
-	// Mr2109 答得动（Egg-A 在跑）· edge-node **答不动**（⇒ 那枚卵取不到）。
+	// Mr2109 答得动（Egg-A 在跑）· 另一台 **答不动**（⇒ 那枚卵取不到）。
 	eggStubBackends(t, map[string]zerg.EggBackendFactForTest{
 		"Mr2109": {Reachable: true, Running: map[string]int{"Egg-A": 9001}},
 		"edge-node":   {Reachable: false},

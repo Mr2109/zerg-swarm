@@ -83,8 +83,32 @@ const (
 	cecGatesRel           = zergPrecommitGatesRel
 	cecSwapRel            = "scripts/build/zerg-swap-core.sh"
 	cecUpgradeRel         = "scripts/build/zerg-upgrade.sh"
+	cecPackReleaseRel     = "scripts/build/pack-release.sh"
+	cecBuildAllRel        = "scripts/build/build-all.sh"
 	cecSelfExemptBasename = "check-exit-codes.py"
 )
+
+// cecRetireGoHalf —— 声明面件 → 其 **Go 真身**（已真搬那半）的仓内相对路径。
+// ★ 只登记**已真搬**的件（件的行为已逐字搬进 Go 半）—— ✗ 未真搬的件一律不登记：
+// 三段式回退腿只在「件缺席 ∧ Go 真身在盘」时生效，这样 ✗ 不会对**未真搬**的件放行（否则就是拆闸）。
+// 同族先例：check_contract_registry.go R7「退役态跳过」· check_zh_en.go 的 chzeRetiredGoHalfInPlace()
+// · check_private_path_forms.go 的 pvGoHalfRel()/pvGateRetired()（一律判「能力可用」而非「件在盘」）。
+var cecRetireGoHalf = map[string]string{
+	cecSwapRel:        "core/cmd/zerg/family_swap_core.go",        // 换件件已真搬（DEV-2006）：R4 回滚说法 / R3 声明面
+	cecPackReleaseRel: "core/cmd/zerg/pack_release.go",            // 打包器已真搬（批B1 · 壳转账→真搬 · 2026-10-08）：R3 声明面
+	cecBuildAllRel:    "scripts/build/cmd/zerg-build-all/main.go", // 构建器已真搬（批-6 自举链第二步 · Go 化对等体）：R3 声明面
+}
+
+// cecGoHalfInPlace —— 件 rel 的 **Go 真身**是否在盘（退役态判据：判「能力可用」）。
+// ✗ 未登记的件一律 false ⇒ 两半皆缺（真消失）时照旧 fail-closed（点「缺件」）。
+func cecGoHalfInPlace(root, rel string) bool {
+	goRel := cecRetireGoHalf[rel]
+	if goRel == "" {
+		return false
+	}
+	st, err := os.Stat(cecJoin(root, goRel))
+	return err == nil && !st.IsDir()
+}
 
 const cecScanMaxBytes = 2 * 1024 * 1024
 
@@ -604,6 +628,12 @@ func cecCheck(root string) (int, []string, []string, map[string]any) {
 	for _, rel := range sites {
 		p := cecJoin(root, rel)
 		if !cecIsFile(p) {
+			// ★ 三段式回退腿（同族先例 check_contract_registry.go R7 / check_zh_en.go 的
+			//   chzeRetiredGoHalfInPlace()）：声明面件缺席而其 **Go 真身**在盘 ⇒ 该声明面已退役
+			//   （能力换 Go 半承载）⇒ 本规则**不过问**（✗ 不判缺件、✗ 不静默通过 —— 两半皆缺仍红）。
+			if cecGoHalfInPlace(root, rel) {
+				continue
+			}
 			problems = append(problems, "FAIL R3 声明面缺件："+rel)
 			continue
 		}
@@ -625,8 +655,16 @@ func cecCheck(root string) (int, []string, []string, map[string]any) {
 	for _, rel := range []string{cecSwapRel, cecUpgradeRel} {
 		p := cecJoin(root, rel)
 		if !cecIsFile(p) {
-			problems = append(problems, "FAIL R4 缺件："+rel)
-			continue
+			// ★ 三段式回退腿（件在盘优先 · 缺席回退 Go 真身 · 皆无才 fail-closed 点名）：
+			//   件缺席而其 **Go 真身**在盘 ⇒ 回退去读 Go 真身里的同一说法（✗ 不拆断言：
+			//   `ROLLED_BACK` 与「回滚成功写成 2」两条仍逐条判）；两半皆缺（真消失）⇒ 照旧点「缺件」。
+			//   ★ 只有**已真搬**（登记在 cecRetireGoHalf）的件才有回退腿 ⇒ 未真搬的件不放行。
+			if gh, ok := cecRetireGoHalf[rel]; ok && cecIsFile(cecJoin(root, gh)) {
+				p = cecJoin(root, gh)
+			} else {
+				problems = append(problems, "FAIL R4 缺件："+rel)
+				continue
+			}
 		}
 		txt, ok := cecReadText(p)
 		if !ok {

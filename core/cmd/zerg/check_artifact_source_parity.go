@@ -7,7 +7,7 @@
 //     HEAD 取不到 / 输入面空转）。判据各只有一个定义处，都不写死时点读数。
 //
 // 三个面（与 py 逐字同构）：
-//   面A 提交面：制品自报 commit ⟷ `git rev-parse HEAD`（真源 `scripts/build/build-all.sh:111`）。
+//   面A 提交面：制品自报 commit ⟷ `git rev-parse HEAD`（真源 `scripts/build/cmd/zerg-build-all/main.go` · `gitSha()`）。
 //   面B 时点面：制品自报 build_time ⟷ 制品输入面最后一次改动 mtime。
 //   面C 脏标记：只登记不判红（dirty 是建构常态）。
 //   ★ 面A 的「sha 落后」本身不判红 —— 只有面B（建构之后输入面又改过）才是真分离。
@@ -98,7 +98,7 @@ const aspHelpText = aspUsageText + "\n" +
 
 const aspRulesText = "门74 制品↔源码两代分离 · 规则表（check-artifact-source-parity.py v1.0.0）\n" +
 	"判据面A 提交面：制品 `--version` 自报 commit ⟷ `git rev-parse HEAD`\n" +
-	"  · 真源 scripts/build/build-all.sh:111（SHA=$(git rev-parse --short HEAD)）\n" +
+	"  · 真源 scripts/build/cmd/zerg-build-all/main.go（Go 构建器真身 · gitSha() ⇒ git rev-parse --short HEAD[+dirty]）\n" +
 	"判据面B 时点面：制品自报 build_time ⟷ 制品输入面最后一次改动 mtime\n" +
 	"  输入面 = core/shared 下非测试 *.go + go.mod/go.sum + 源码 //go:embed 点到的资产（现读，不写死）\n" +
 	"判据面C 脏标记：只登记不判红（dirty 是常态）\n" +
@@ -998,7 +998,7 @@ func aspJudge(root, art string) (int, []string, aspDict) {
 		if len(lagging) > 10 {
 			lines = append(lines, fmt.Sprintf("    · …另 %d 件（同一判据，此处只列前 10）", len(lagging)-10))
 		}
-		lines = append(lines, "    ⇒ 治法：`bash scripts/build/build-all.sh`（**全量档**）重编（旧件自动留档入 bin/_history/）")
+		lines = append(lines, "    ⇒ 治法：`zerg build all`（**全量档**）重编（旧件自动留档入 bin/_history/）")
 	} else if !known {
 		rc = aspRCBlocked
 		lines = append(lines, "  ✗ 2 不给结论：面A 说「制品那一代不在本仓对象库」⇒ 两代关系判不了（不猜、不当绿）")

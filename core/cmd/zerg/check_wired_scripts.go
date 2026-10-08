@@ -25,6 +25,11 @@
 // 增量为 0（除本件自身作为「引用面文件」+1，这是任何新件都不可避免的）。命中面（断言 A）与候选面
 // （scripts/）与本件无关 ⇒ 判定读数不受影响。受控对照读数见回执。
 //
+// 闭集排除（**目录级** · 读单点真源）：扫描域排除 `vendor/` · `tools/ocr/venv/` ·
+// `scripts/evals/_archive/` —— 前缀表**直读同包单点真源** `scriptRetireClosedSetExcludedPrefixes`
+// （`core/cmd/zerg/family_script_retire.go:98` · 决-12 · 2026-10-08 拍板「来源为归档的件 ≠ 自研面」）；
+// ✗ 本件不另立第二份前缀表。原先「归档件靠逐条下架 `cwsWhitelist` 登记消化」的口径已废（口径混两套）。
+//
 // 有序遍历点（逐处交代 · ✗ 不许只写「碰不到」）：① 非 git 根的 `os.walk` 产出序 = scandir 原序、
 // 先出当前层全部文件再按目录原序下钻（`cwsWalkDir` 逐字复刻 · 用 `File.ReadDir(-1)` 保原序，✗ 不用排
 // 序读法）② `sorted(tops)`（508 行）＝输出行序的**决定者**：候选明细/断言 A 表/断言 B 分档全部按它
@@ -748,11 +753,35 @@ func cwsIsGateFile(p string) bool {
 	return false
 }
 
+// ── 闭集排除（**目录级** · 读单点真源 · ✗ 不另立第二份前缀表）───────────────────
+//
+// cwsExcludedByPrefix —— 「来源为归档的件 ≠ 自研面」的**目录级**判定（2026-10-08 拍板）。
+//
+// ★ 前缀表**不由本件自持**：直读**同包单点真源** `scriptRetireClosedSetExcludedPrefixes`
+// （`core/cmd/zerg/family_script_retire.go:98` · 决-12）——
+//
+//	可机检的判据：全包只此一个 `var …ExcludedPrefixes`。
+//	凡落在这些前缀下的件**不进候选（扫描）域**：既不判断言 A 的「未接线」，也不进候选明细。
+//	★ **不动引用面**（引用面仍 = 已跟踪文本文件 − 自指 2 件 − 记录面 − 候选自身）。
+//	这是把「来源为归档的件 ≠ 自研面」这条本来没写出来的口径写出来 —— ✗ 不是放宽判据（前缀表为空 ⇒
+//	排除更少 ⇒ 判据**更严**，绝不放松）。
+func cwsExcludedByPrefix(rel string) bool {
+	for _, p := range scriptRetireClosedSetExcludedPrefixes {
+		if strings.HasPrefix(rel, p) {
+			return true
+		}
+	}
+	return false
+}
+
 func cwsCandidatePaths(files []string) []string {
 	var out []string
 	for _, p := range files {
 		if !strings.HasPrefix(p, "scripts/") || p == "scripts/" {
 			continue
+		}
+		if cwsExcludedByPrefix(p) {
+			continue // 闭集排除（目录级 · 读单点真源）⇒ 不进扫描域
 		}
 		parts := strings.Split(p, "/")
 		if len(parts) == 2 {
@@ -1382,6 +1411,16 @@ func cwsReport(root string, opts cwsOpts, files []string, mode string, aCands, b
 			out = append(out, fmt.Sprintf("  · 排除域：scripts/%s/（%d 件，分域前就有的工作/实验目录，不进判据）", d, n))
 		}
 	}
+	// 闭集排除（**目录级** · 读单点真源 `scriptRetireClosedSetExcludedPrefixes`）：来源为归档的件 ≠ 自研面
+	for _, d := range scriptRetireClosedSetExcludedPrefixes {
+		n := 0
+		for _, p := range files {
+			if strings.HasPrefix(p, d) {
+				n++
+			}
+		}
+		out = append(out, fmt.Sprintf("  · 闭集排除（目录级 · 读单点真源 `scriptRetireClosedSetExcludedPrefixes`）：%s（%d 件 · 来源为归档 ≠ 自研面 ⇒ 不进扫描域）", d, n))
+	}
 	if cwsIsDir(cwsPyJoin(root, ".git")) {
 		o, _ := cwsGitOut(root, []string{"ls-files", "-o", "--exclude-standard", "-z", "--", "scripts"})
 		var untracked []string
@@ -1474,6 +1513,9 @@ func cwsListRules() string {
 	L = append(L, fmt.Sprintf("  · 排除 ① 本门自指 %s（否则我自己的名单会把零引用写成有引用）", strings.Join(cwsSelfFiles, " · ")))
 	L = append(L, fmt.Sprintf("  · 排除 ② 记录面 glob：%s —— 「记录不能充作引用」", strings.Join(cwsRecordSurfaces, " · ")))
 	L = append(L, "  · 排除 ③ 候选脚本自身")
+	L = append(L, "  · 排除 ④ **闭集排除（目录级 · 读单点真源 `scriptRetireClosedSetExcludedPrefixes`）**："+
+		strings.Join(scriptRetireClosedSetExcludedPrefixes, " · ")+
+		" —— 来源为归档的件 ≠ 自研面（2026-10-08 拍板）；凡落在这些前缀下的件**不进扫描域**（✗ 不另立第二份前缀表）")
 	L = append(L, "")
 	L = append(L, fmt.Sprintf("白名单（%d 条 · 只许减不许增；有引用后提示可下架）：", len(cwsWhitelist)))
 	for _, e := range cwsWhitelist {
@@ -1512,7 +1554,7 @@ var cwsNotGates = []cwsNotGateT{
 }
 
 var cwsSelfFiles = []string{
-	"scripts/gates/check-wired-scripts.py",
+	// ★ 2026-10-08（退役批9-20261008 · DEV-2013）：`check-wired-scripts.py` 已登记退场 ⇒ 本自指条目下架（保留 .md）。
 	"scripts/gates/check-wired-scripts.md",
 }
 
@@ -1525,40 +1567,32 @@ var cwsRecordSurfaces = []string{
 }
 
 var cwsWhitelist = []cwsWLEntry{
-	{"v25_more_classes\u002Epy", "一次性历史评测脚本：v2.5 补充任务类测试（example-35b-v2 · 2026-08-13），结果已并入当版文档；保留作评测口径的可复核原件。", "2026-09-18"},
-	{"v25_more_tasks\u002Epy", "一次性历史评测脚本：v2.5 更多实战任务（2026-08-13），同族口径。", "2026-09-18"},
-	{"v25_real10_v2\u002Epy", "一次性历史评测脚本：v2.5 真实任务集重测（responses 后 · 2026-08-13），同族口径。", "2026-09-18"},
-	{"v25_real10\u002Epy", "一次性历史评测脚本：v2.5 真实任务集（2026-08-13，同族口径见 v25_real10_v2\u002Epy）。它原本唯一的引用 = `docs/issues/live-task2.log`（引擎运行态日志，非跟踪件）——该目录已于 2026-09-19 随开发文档分家整目录迁出工作树（`Zerg-内部文档/issues/`）⇒ 引用面归零，**接线已不可行**（不能为了凑引用去造一个调用方）。登记自证：登记前 断言 B「未登记 1 只」= FAIL(rc=1) ↔ 登记后 白名单 5 条、未登记 0 只 = rc=0（豁免数只增这 1 条，逐条带 reason+date）。", "2026-09-19"},
 	{"v24_full_test\u002Epy", "零引用件（登记，非死件）：v2.4 全量评测脚本（测试存档体系的 v2.4 那一代）。它在**仓内已跟踪引用面**里唯一的点名出自 `docs/项目文档/v2.5.6~v2.5.9/09-模块-Swift壳工具链-20260829.md` 与 `…/12-体系-评测部署运维-20260829.md`——该目录（`docs/项目文档/`，17 套快照）已于 2026-09-19「项目文档」二次分家**整目录移出工作树**（现位置 = 同级 `Zerg-内部文档/项目文档/`，件级 sha256 已核对）⇒ 仓内引用面不再含该点名，**接线已不可行**（不能为了凑引用去造一个调用方）。登记自证：登记前 断言 B「未登记 20 只」= FAIL(rc=1) ↔ 登记后 未登记 0 只 = rc=0（豁免只增这 20 条、逐条带 reason+date，判据一字未改）。", "2026-09-19"},
-	{"v25_agent_tasks\u002Epy", "零引用件（登记，非死件）：v2.5 子端/agent 类任务评测脚本。它在**仓内已跟踪引用面**里唯一的点名出自 `docs/项目文档/v2.5.6~v2.5.10/12-体系-评测部署运维-20260829.md`（另见 `v2.5.0/设计-测试存档体系.md`）——该目录（`docs/项目文档/`，17 套快照）已于 2026-09-19「项目文档」二次分家**整目录移出工作树**（现位置 = 同级 `Zerg-内部文档/项目文档/`，件级 sha256 已核对）⇒ 仓内引用面不再含该点名，**接线已不可行**（不能为了凑引用去造一个调用方）。登记自证：登记前 断言 B「未登记 20 只」= FAIL(rc=1) ↔ 登记后 未登记 0 只 = rc=0（豁免只增这 20 条、逐条带 reason+date，判据一字未改）。", "2026-09-19"},
-	{"v25_benchmark\u002Epy", "零引用件（登记，非死件）：v2.5 基准/对比评测脚本。它在**仓内已跟踪引用面**里唯一的点名出自 `docs/项目文档/v2.5.6~v2.5.10/12-体系-评测部署运维-20260829.md`——该目录（`docs/项目文档/`，17 套快照）已于 2026-09-19「项目文档」二次分家**整目录移出工作树**（现位置 = 同级 `Zerg-内部文档/项目文档/`，件级 sha256 已核对）⇒ 仓内引用面不再含该点名，**接线已不可行**（不能为了凑引用去造一个调用方）。登记自证：登记前 断言 B「未登记 20 只」= FAIL(rc=1) ↔ 登记后 未登记 0 只 = rc=0（豁免只增这 20 条、逐条带 reason+date，判据一字未改）。", "2026-09-19"},
-	{"v25_eval_task\u002Epy", "零引用件（登记，非死件）：v2.5 单任务评测脚本。它在**仓内已跟踪引用面**里唯一的点名出自 `docs/项目文档/v2.5.6~v2.5.10/12-体系-评测部署运维-20260829.md` 与 `v2.5.10/任务表-协作骨架v2.1仓内核对结论-20260918.md`——该目录（`docs/项目文档/`，17 套快照）已于 2026-09-19「项目文档」二次分家**整目录移出工作树**（现位置 = 同级 `Zerg-内部文档/项目文档/`，件级 sha256 已核对）⇒ 仓内引用面不再含该点名，**接线已不可行**（不能为了凑引用去造一个调用方）。登记自证：登记前 断言 B「未登记 20 只」= FAIL(rc=1) ↔ 登记后 未登记 0 只 = rc=0（豁免只增这 20 条、逐条带 reason+date，判据一字未改）。", "2026-09-19"},
-	{"v25_full_test\u002Epy", "零引用件（登记，非死件）：v2.5 全量测试脚本（v2.5.0 时代测试存档体系那一代）。它在**仓内已跟踪引用面**里唯一的点名出自 `docs/项目文档/v2.5.6~v2.5.10/12-体系-评测部署运维-20260829.md` 与 `v2.5.0/测试报告-v2.5.md`、`v2.5.0/INDEX.md`——该目录（`docs/项目文档/`，17 套快照）已于 2026-09-19「项目文档」二次分家**整目录移出工作树**（现位置 = 同级 `Zerg-内部文档/项目文档/`，件级 sha256 已核对）⇒ 仓内引用面不再含该点名，**接线已不可行**（不能为了凑引用去造一个调用方）。登记自证：登记前 断言 B「未登记 20 只」= FAIL(rc=1) ↔ 登记后 未登记 0 只 = rc=0（豁免只增这 20 条、逐条带 reason+date，判据一字未改）。", "2026-09-19"},
-	{"v25_m1_accept\u002Epy", "零引用件（登记，非死件）：v2.5 M1 里程碑验收脚本。它在**仓内已跟踪引用面**里唯一的点名出自 `docs/项目文档/v2.5.6~v2.5.10/12-体系-评测部署运维-20260829.md`——该目录（`docs/项目文档/`，17 套快照）已于 2026-09-19「项目文档」二次分家**整目录移出工作树**（现位置 = 同级 `Zerg-内部文档/项目文档/`，件级 sha256 已核对）⇒ 仓内引用面不再含该点名，**接线已不可行**（不能为了凑引用去造一个调用方）。登记自证：登记前 断言 B「未登记 20 只」= FAIL(rc=1) ↔ 登记后 未登记 0 只 = rc=0（豁免只增这 20 条、逐条带 reason+date，判据一字未改）。", "2026-09-19"},
-	{"v25_real_tasks\u002Epy", "零引用件（登记，非死件）：v2.5 真实任务集评测脚本（同族见 v25_real10\u002Epy / v25_real10_v2\u002Epy）。它在**仓内已跟踪引用面**里唯一的点名出自 `docs/项目文档/v2.5.6~v2.5.10/12-体系-评测部署运维-20260829.md`（另见 `v2.5.0/设计-测试存档体系.md`）——该目录（`docs/项目文档/`，17 套快照）已于 2026-09-19「项目文档」二次分家**整目录移出工作树**（现位置 = 同级 `Zerg-内部文档/项目文档/`，件级 sha256 已核对）⇒ 仓内引用面不再含该点名，**接线已不可行**（不能为了凑引用去造一个调用方）。登记自证：登记前 断言 B「未登记 20 只」= FAIL(rc=1) ↔ 登记后 未登记 0 只 = rc=0（豁免只增这 20 条、逐条带 reason+date，判据一字未改）。", "2026-09-19"},
-	{"v25_realproj\u002Epy", "零引用件（登记，非死件）：v2.5 真实项目集评测脚本（同族口径）。它在**仓内已跟踪引用面**里唯一的点名出自 `docs/项目文档/v2.5.6~v2.5.10/12-体系-评测部署运维-20260829.md`——该目录（`docs/项目文档/`，17 套快照）已于 2026-09-19「项目文档」二次分家**整目录移出工作树**（现位置 = 同级 `Zerg-内部文档/项目文档/`，件级 sha256 已核对）⇒ 仓内引用面不再含该点名，**接线已不可行**（不能为了凑引用去造一个调用方）。登记自证：登记前 断言 B「未登记 20 只」= FAIL(rc=1) ↔ 登记后 未登记 0 只 = rc=0（豁免只增这 20 条、逐条带 reason+date，判据一字未改）。", "2026-09-19"},
-	{"v25_research\u002Epy", "零引用件（登记，非死件）：v2.5 调研类任务评测脚本（同族口径）。它在**仓内已跟踪引用面**里唯一的点名出自 `docs/项目文档/v2.5.6~v2.5.10/12-体系-评测部署运维-20260829.md`——该目录（`docs/项目文档/`，17 套快照）已于 2026-09-19「项目文档」二次分家**整目录移出工作树**（现位置 = 同级 `Zerg-内部文档/项目文档/`，件级 sha256 已核对）⇒ 仓内引用面不再含该点名，**接线已不可行**（不能为了凑引用去造一个调用方）。登记自证：登记前 断言 B「未登记 20 只」= FAIL(rc=1) ↔ 登记后 未登记 0 只 = rc=0（豁免只增这 20 条、逐条带 reason+date，判据一字未改）。", "2026-09-19"},
-	{"run_all\u002Esh", "零引用件（登记，非死件）：v2.4/v2.5 评测批跑总入口。它在**仓内已跟踪引用面**里唯一的点名出自 `docs/项目文档/v2.5.6~v2.5.9/09-模块-Swift壳工具链-20260829.md` 与 `…/12-体系-评测部署运维-20260829.md`——该目录（`docs/项目文档/`，17 套快照）已于 2026-09-19「项目文档」二次分家**整目录移出工作树**（现位置 = 同级 `Zerg-内部文档/项目文档/`，件级 sha256 已核对）⇒ 仓内引用面不再含该点名，**接线已不可行**（不能为了凑引用去造一个调用方）。登记自证：登记前 断言 B「未登记 20 只」= FAIL(rc=1) ↔ 登记后 未登记 0 只 = rc=0（豁免只增这 20 条、逐条带 reason+date，判据一字未改）。", "2026-09-19"},
 	{"calib-x3-model\u002Esh", "零引用件（登记，非死件）：EDGE-NODE 模型标定脚本。它在**仓内已跟踪引用面**里唯一的点名出自 `docs/项目文档/v2.5.9/变更-v2.5.9.md`、`v2.5.9/茧壁-自主作业日志.md`、`v2.5.10/09-模块-Swift壳工具链-20260829.md`、`v2.5.10/12-体系-评测部署运维-20260829.md`——该目录（`docs/项目文档/`，17 套快照）已于 2026-09-19「项目文档」二次分家**整目录移出工作树**（现位置 = 同级 `Zerg-内部文档/项目文档/`，件级 sha256 已核对）⇒ 仓内引用面不再含该点名，**接线已不可行**（不能为了凑引用去造一个调用方）。登记自证：登记前 断言 B「未登记 20 只」= FAIL(rc=1) ↔ 登记后 未登记 0 只 = rc=0（豁免只增这 20 条、逐条带 reason+date，判据一字未改）。", "2026-09-19"},
 	{"test-fleet-sandbox\u002Esh", "零引用件（登记，非死件）：舰队面沙箱端到端夹具脚本。它在**仓内已跟踪引用面**里唯一的点名出自 `docs/项目文档/v2.5.9/变更-v2.5.9.md`——该目录（`docs/项目文档/`，17 套快照）已于 2026-09-19「项目文档」二次分家**整目录移出工作树**（现位置 = 同级 `Zerg-内部文档/项目文档/`，件级 sha256 已核对）⇒ 仓内引用面不再含该点名，**接线已不可行**（不能为了凑引用去造一个调用方）。登记自证：登记前 断言 B「未登记 20 只」= FAIL(rc=1) ↔ 登记后 未登记 0 只 = rc=0（豁免只增这 20 条、逐条带 reason+date，判据一字未改）。", "2026-09-19"},
 	{"test-relay-sandbox\u002Esh", "零引用件（登记，非死件）：中转（relay）沙箱夹具脚本。它在**仓内已跟踪引用面**里唯一的点名出自 `docs/项目文档/v2.5.9/变更-v2.5.9.md`——该目录（`docs/项目文档/`，17 套快照）已于 2026-09-19「项目文档」二次分家**整目录移出工作树**（现位置 = 同级 `Zerg-内部文档/项目文档/`，件级 sha256 已核对）⇒ 仓内引用面不再含该点名，**接线已不可行**（不能为了凑引用去造一个调用方）。登记自证：登记前 断言 B「未登记 20 只」= FAIL(rc=1) ↔ 登记后 未登记 0 只 = rc=0（豁免只增这 20 条、逐条带 reason+date，判据一字未改）。", "2026-09-19"},
 	{"test-setup-sandbox\u002Esh", "零引用件（登记，非死件）：安装/初始化沙箱夹具脚本。它在**仓内已跟踪引用面**里唯一的点名出自 `docs/项目文档/v2.5.9/变更-v2.5.9.md`（唯一一处点名）——该目录（`docs/项目文档/`，17 套快照）已于 2026-09-19「项目文档」二次分家**整目录移出工作树**（现位置 = 同级 `Zerg-内部文档/项目文档/`，件级 sha256 已核对）⇒ 仓内引用面不再含该点名，**接线已不可行**（不能为了凑引用去造一个调用方）。登记自证：登记前 断言 B「未登记 20 只」= FAIL(rc=1) ↔ 登记后 未登记 0 只 = rc=0（豁免只增这 20 条、逐条带 reason+date，判据一字未改）。", "2026-09-19"},
 	{"test-update-sandbox\u002Esh", "零引用件（登记，非死件）：升级/换件沙箱夹具脚本。它在**仓内已跟踪引用面**里唯一的点名出自 `docs/项目文档/v2.5.9/变更-v2.5.9.md`——该目录（`docs/项目文档/`，17 套快照）已于 2026-09-19「项目文档」二次分家**整目录移出工作树**（现位置 = 同级 `Zerg-内部文档/项目文档/`，件级 sha256 已核对）⇒ 仓内引用面不再含该点名，**接线已不可行**（不能为了凑引用去造一个调用方）。登记自证：登记前 断言 B「未登记 20 只」= FAIL(rc=1) ↔ 登记后 未登记 0 只 = rc=0（豁免只增这 20 条、逐条带 reason+date，判据一字未改）。", "2026-09-19"},
-	{"stability-stats\u002Epy", "零引用件（登记，非死件）：稳定性统计脚本。它在**仓内已跟踪引用面**里唯一的点名出自 `docs/项目文档/v2.5.10/任务表-协作骨架v2.1仓内核对结论-20260918.md`——该目录（`docs/项目文档/`，17 套快照）已于 2026-09-19「项目文档」二次分家**整目录移出工作树**（现位置 = 同级 `Zerg-内部文档/项目文档/`，件级 sha256 已核对）⇒ 仓内引用面不再含该点名，**接线已不可行**（不能为了凑引用去造一个调用方）。登记自证：登记前 断言 B「未登记 20 只」= FAIL(rc=1) ↔ 登记后 未登记 0 只 = rc=0（豁免只增这 20 条、逐条带 reason+date，判据一字未改）。", "2026-09-19"},
+	// ★ 2026-10-09（退场批-A1-两件-20261009 · DEV-2081 · GAP-20261008-05）：`stability-stats.py` 已登记退场（Go 真搬
+	//   core/cmd/zerg/eval_stability_stats.go · inproc 键 stability-stats）⇒ 本白名单条目**下架**（件离盘 ⇒ 门自检 ⑧d
+	//   「删件后必须同步下架」）。
 	{"ab-campaigns\u002Epy", "零引用件（登记，非死件）：A/B 活动编排脚本。它在**仓内已跟踪引用面**里唯一的点名出自 `docs/项目文档/v2.5.10/任务表-协作骨架v2.1仓内核对结论-20260918.md`——该目录（`docs/项目文档/`，17 套快照）已于 2026-09-19「项目文档」二次分家**整目录移出工作树**（现位置 = 同级 `Zerg-内部文档/项目文档/`，件级 sha256 已核对）⇒ 仓内引用面不再含该点名，**接线已不可行**（不能为了凑引用去造一个调用方）。登记自证：登记前 断言 B「未登记 20 只」= FAIL(rc=1) ↔ 登记后 未登记 0 只 = rc=0（豁免只增这 20 条、逐条带 reason+date，判据一字未改）。", "2026-09-19"},
-	{"lib-sign.sh", "零命令位引用（登记 · 非死件 · `GAP-20260927-148` 新口径 = 与断言 A 同源的「命令位调用」）：macOS 签名身份公共库；被 `scripts/build/build-all.sh` 与 `scripts/build/pack-release.sh` 以 shell `source` 内建引入（`source` 不在本门启动器表内）+ 读判据件 `[ -f \"$REPO_ROOT/scripts/build/lib-sign.sh\" ]` ⇒ 判零引用；Go 对等体 = `scripts/build/internal/sign`。活件（唯一签名真源），保留。", "2026-10-08"},
+	// ★ 2026-10-08（退役批8-20261008 · DEV-2002/DEV-2004）：`lib-sign.sh` 已登记退场（件离盘 ⇒ 门自检 ⑧d「删件后必须同步下架」）⇒ 本白名单条目**下架**。
 	{"publish-public.sh", "零命令位引用（登记 · 非死件 · 新口径）：压平快照发布器（Q5 已弃用 · 现役 = `publish/mirror-public.sh`）；未被任何闸/脚本按命令位执行，仍作 `EXCLUDES` 单一真源被多件按路径读正文（check-history-secrets / check-public-tree-private / check-registry-vs-disk / family_publish 等 Go 半件）⇒ 零引用。留待 Q5 退役。", "2026-10-08"},
 	{"start-zerg-core.sh", "零命令位引用（登记 · 非死件 · 新口径）：主控启动／按仓根重写 plist 的引导脚本；被 `scripts/build/zerg-upgrade.sh` 以变量 `STARTCORE=\"${ZERG_START_CORE:-…}\"` 赋值引用（变量间接 ⇒ 非命令位字面）⇒ 零引用。活件保留（plist 真源形态）。", "2026-10-08"},
-	{"start-zerg-ui.sh", "零命令位引用（登记 · 非死件 · 新口径）：UI 脱离会话启动的单一真源（CLI `zerg ui start` 壳转账 · `core/cmd/zerg/ui_start.go` 的常量 + exec）；引用为 Go 常量与 shell 变量（`LAUNCHER_REL` / `STARTUI`），非命令位字面 ⇒ 零引用。活件保留。", "2026-10-08"},
-	{"zerg-swap-agent.sh", "零命令位引用（登记 · 非死件 · 新口径）：子端换件脚本（只报告档）；CLI `zerg swap agent` 壳转账（`core/cmd/zerg/swap_agent.go` 的常量 + exec），引用为 Go 常量而非命令位字面 ⇒ 零引用。活件保留（换件三闸形态）。", "2026-10-08"},
-	{"zerg-swap-core.sh", "零命令位引用（登记 · 非死件 · 新口径）：主控换件脚本（事故面固化 · 三道门禁＋两前置闸）；CLI `zerg swap core`（`core/cmd/zerg/family_swap_core.go` 常量）＋ `.githooks/pre-commit` 与步骤表注释点名 ⇒ 无命令位字面引用。活件保留（换件唯一入口）。", "2026-10-08"},
-	{"zerg-swap-ui.sh", "零命令位引用（登记 · 非死件 · 新口径）：桌面 UI 换件脚本（只报告档）；CLI `zerg swap ui`（`core/cmd/zerg/swap_ui.go` 常量 + exec），引用为 Go 常量 ⇒ 零引用。活件保留。", "2026-10-08"},
+	// ★ 2026-10-08（退役批9-20261008 · DEV-2013）：`start-zerg-ui.sh` 已登记退场（Go 真搬 core/cmd/zerg/ui_start.go）
+	//   ⇒ 本白名单条目**下架**（件离盘 ⇒ 门自检 ⑧d「删件后必须同步下架」）。
+	// ★ 2026-10-09（退场批-换件三件-20261009 · DEV-2055/GAP-20261008-16）：`zerg-swap-agent.sh` /
+	//   `zerg-swap-core.sh` / `zerg-swap-ui.sh` 三件均已登记退场（Go 真搬 `swap_agent.go` /
+	//   `family_swap_core.go` / `swap_ui.go`）⇒ 本白名单三条目**下架**（件离盘 ⇒ 门自检 ⑧d「删件后必须同步下架」）。
 	{"zerg-upgrade.sh", "零命令位引用（登记 · 非死件 · 新口径）：六阶段换件内核（自举／发布共用 · Go 与 Rust 两处皆调用方）；被 `core/internal/selfupdate` 与 `scripts/svc/fleet-relay.sh`、各 `scripts/sandbox/*` 以变量 `KERNEL` 赋值调用（变量间接）⇒ 非命令位字面 ⇒ 零引用。活件保留（真源内核）。", "2026-10-08"},
 	{"calib-local-model.sh", "零命令位引用（登记 · 非死件 · 新口径）：模型标定件；CLI `zerg calib local-model`（`core/cmd/zerg/family_calib.go` 数据 `File` + `Run: bash`），引用为 Go 数据结构字段而非命令位字面 ⇒ 零引用。活件保留。", "2026-10-08"},
 	{"calib-task-budget.py", "零命令位引用（登记 · 非死件 · 新口径）：标定件；CLI `zerg calib task-budget`（`core/cmd/zerg/family_calib.go` 数据 `File` + `Run: python3`），引用为 Go 字段 ⇒ 零引用。活件保留（闸门日后只读其档案）。", "2026-10-08"},
 	{"inplace-window.py", "零命令位引用（登记 · 非死件 · 新口径）：就地窗口公共件（`GAP-20260927-112`）；Go 真搬 = `core/cmd/zerg/inplace_window.go`；被 `scripts/gates/two-states-gate-mutate.py` / `scripts/wall/wall-bridge-mutate.py` 以 importlib 载入（路径拼在 Python 字符串／docstring 里，非命令位字面）⇒ 零引用。活件保留。", "2026-10-08"},
 	{"chat-harness.py", "零命令位引用（登记 · 非死件 · 新口径）：评测夹具件；CLI `zerg eval chat-harness`（`core/cmd/zerg/family_eval.go` 数据 `File` + `Run: python3`），引用为 Go 字段 ⇒ 零引用。活件保留。", "2026-10-08"},
-	{"compare.py", "零命令位引用（登记 · 非死件 · 新口径）：评测比较器；CLI `zerg eval compare`（`core/cmd/zerg/family_eval.go` ＋ Go 真搬 `eval_compare.go`），引用为 Go 字段 ⇒ 零引用。活件保留（对拍通过后逐件点名退场）。", "2026-10-08"},
+	// ★ 2026-10-09（退场批-A1-两件-20261009 · DEV-2081 · GAP-20261008-05）：`compare.py` 已登记退场（Go 真搬
+	//   core/cmd/zerg/eval_compare.go · inproc 键 compare · 命令面 zerg eval run compare）⇒ 本白名单条目**下架**
+	//   （件离盘 ⇒ 门自检 ⑧d「删件后必须同步下架」）。
 	{"replay-fidelity.sh", "零命令位引用（登记 · 非死件 · 新口径）：复现保真度验收件；CLI `zerg eval replay-fidelity`（`core/cmd/zerg/family_eval.go` 数据 `File` + `Run: bash`），引用为 Go 字段 ⇒ 零引用。活件保留。", "2026-10-08"},
 	{"accept-no-probe-selftest.sh", "零命令位引用（登记 · 非死件 · 新口径）：验收自证件；由 `scripts/gates/accept-no-probe.sh` 以变量 `SELFTEST` 转交，并在 `scripts/gates/real-gates.sh` 的 `SH_GATES=(…)` 数组项中被循环调用（变量／数组间接）⇒ 非命令位字面 ⇒ 零引用。活件保留。", "2026-10-08"},
 	{"accept-no-probe.sh", "零命令位引用（登记 · 非死件 · 新口径）：验收负控夹具；`scripts/gates/real-gates.sh` 的 `SH_GATES=(…)` 数组成员（循环变量间接调用）⇒ 非命令位字面 ⇒ 零引用。活件保留。", "2026-10-08"},
@@ -1566,16 +1600,13 @@ var cwsWhitelist = []cwsWLEntry{
 	{"overlay-guard.sh", "零命令位引用（登记 · 非死件 · 新口径）：overlay 叠加鉴别器；同上 `scripts/gates/real-gates.sh` 的 `SH_GATES=(…)` 数组成员 ⇒ 非命令位字面 ⇒ 零引用。活件保留。", "2026-10-08"},
 	{"shard-go-test.sh", "零命令位引用（登记 · 非死件 · 新口径）：贵步分片执行器；在 `scripts/gates/precommit-gates.sh` 的 `add_step …` 命令串里被调（命令串内引号被转义 ⇒ 落本门命令位正则的引号识别之外）⇒ 判零引用。活件保留（真接线）。", "2026-10-08"},
 	{"zerg-hello", "零命令位引用（登记 · 非死件 · 新口径）：仓内演示插件（`§6.3 S6` 判据①证据件 · 零副作用）；由插件机制按名调用（CLI `zerg hello`），非 shell 命令位字面 ⇒ 零引用。活件保留。", "2026-10-08"},
-	{"archive-mount.sh", "零命令位引用（登记 · 非死件 · 新口径）：归档区按需挂载命令面（on/off/status）；CLI `zerg archive mount`（`core/cmd/zerg/archive_mount.go` 常量 + exec），引用为 Go 常量 ⇒ 零引用。活件保留。", "2026-10-08"},
+	// ★ 2026-10-08（退场批 · DEV-2031）：`archive-mount.sh` 已登记退场（Go 真搬 core/cmd/zerg/archive_mount.go · 命令面 `zerg archive mount`）
+	//   ⇒ 本白名单条目**下架**（件离盘 ⇒ 门自检 ⑧d「删件后必须同步下架」）。
 	{"fleet-relay.sh", "零命令位引用（登记 · 非死件 · 新口径）：机群镜像中继；被 `scripts/sandbox/test-relay-sandbox.sh` 以变量 `RELAY` 调用（变量间接），其余点名在注释／文案里 ⇒ 非命令位字面 ⇒ 零引用。活件保留。", "2026-10-08"},
 	{"zerg-core-daemon.sh", "零命令位引用（登记 · 非死件 · 新口径）：launchd 托管的启动包装；由 `deploy/服务声明.tsv` 的 `/bin/bash …`（绝对解释器 · TSV 声明列）与 plist 引用（绝对解释器不在本门启动器表＋非命令位文件面）⇒ 零引用。活件保留（com.zerg.core 的被调入口）。", "2026-10-08"},
-	{"zerg-egg.py", "零命令位引用（登记 · 非死件 · 新口径）：.egg 封装工具的 py 原件；Go 真搬 = `core/cmd/zerg/zerg_egg.go`（DEV-1798），原件按退场规则保留待对拍通过后逐件点名退场 ⇒ 无命令位字面引用。活件保留。", "2026-10-08"},
 }
 
 var cwsSuggest = map[string]cwsSuggestT{
-	"check-slice.py":                   {"提交闸 · 新 scope（例 slice，模式 tri-report 起步）", "自带 `--probe` / `--selftest` / `--list-rules` 三档与「自检不过 rc=2」的口径（Zerg-内部文档/01-设计/报告模板-六项成对.md:69-70 —— 该件 2026-09-19 已随开发文档分家迁出工作树，原路径 docs/01-设计/）⇒ 可直接当步骤；但体量大（109 KB + slice-probes.json）⇒ 成本未标定，起步只报告。"},
-	"check-i18n-drift.sh":              {"提交闸 · docs scope（模式 tri-report 起步）", "漂移三件套（配对 / 提交级陈旧 / 源注释），①②阻塞、③告警（docs/en/README.md:99）；用法 `bash scripts/gates/check-i18n-drift.sh`（docs/site/README.md:189）；存量债未清 ⇒ 起步只报告。"},
-	"check-tool-version-sync.sh":       {"提交闸 · 新 scope（例 tools，模式 tri）", "它就是为「发布前勾选」造的（docs/skills/tool-upgrade-checklist.md:52 列在手检清单里：台账 ↔ 工具文档抬头 ↔ 履历）；自带前置自检（缺 tools/versions.json 即 rc=2）⇒ 与 tri 三档一一对应，可直接阻断。"},
 	"check-hardcoded-private-paths.py": {"发布闸 · scripts/build/publish-preflight.sh 新增一道（紧跟闸② 私有面，模式 tri）", "它判私有绝对路径，与 闸②（私有面）/ 闸④（危险路径）同族；今天它只被 scripts/build/publish-public.sh:130 的 EXCLUDES **清单项** 与 precommit-gates.sh:500 的**注释**提到 —— 从没被任何闸按名执行 ⇒ 按本门判据必须报出来（子串口径会漏掉这一只）。"},
 	"edit-assert":                      {"提交闸 · pub scope 增一步 `python3 scripts/docs/edit-assert --self-test`（模式 tri）", "它今天只被 pub scope 的「scripts/*（无后缀 + 首行 #!）按 shebang 语法」步按 **glob** 做语法检查（precommit-gates.sh:521），**没有按名跑过它的自检**；自检自带真命令行 + 真退出码 16 条（scripts/docs/edit-assert.md:34）⇒ 有牙齿。"},
 	"mutate-scan":                      {"提交闸 · pub scope 增一步 `python3 scripts/gates/mutate-scan --self-test`（模式 tri）", "同族：只在 glob 语法检查里被覆盖；自检不过即拒绝跑真目标（scripts/gates/mutate-scan.md:27, 48）⇒ 适合当步骤。"},

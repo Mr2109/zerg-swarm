@@ -1163,8 +1163,8 @@ func (h *Handlers) HeartbeatHandler(w http.ResponseWriter, r *http.Request) {
 //
 // 投影口径（Mr2109 拍板 · 候选 (A)+(ii)）：平台属性判在「知道平台」的那一层 —— 主控用配置
 // fleet: 段的 os（h.Config.Fleet[机器].OS，由 scripts/gates/check-nodes-roster.py 逐字守护）
-// 判 macOS；macOS（含 Apple Silicon mini-node-1）上 gpu_pct 无意义（ioreg「Device Utilization %」
-// 恒在且恒 0）⇒ 剔除该键（✗ 不假造 0）。edge-node（ubuntu）一字不动 ⇒ 路由判据 GpuPct<90 零影响。
+// 判 macOS；macOS（含 Apple Silicon node-b）上 gpu_pct 无意义（ioreg「Device Utilization %」
+// 恒在且恒 0）⇒ 剔除该键（✗ 不假造 0）。node-a（ubuntu）一字不动 ⇒ 路由判据 GpuPct<90 零影响。
 //
 // GpuPct 覆盖内嵌快照的同名字段（encoding/json：浅层同名字段胜出）——指针 + omitempty ⇒
 // macOS 上整键不出现，其余平台原样透出真值。
@@ -1310,7 +1310,7 @@ func (h *Handlers) ModelDetailHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	c := cands[0]
 	// 3c（2026-09-16）：加载状态改读**该机器的心跳快照**（本机角色退役 ⇒ 不再有 LocalBack 可问；
-	// 本机那一台 = 名为 Mr2109 的普通子端，其驻留与 edge-node 一样经心跳上报）。
+	// 本机那一台 = 名为 node-local 的普通子端，其驻留与 node-a 一样经心跳上报）。
 	status := "未加载"
 	loaded := false
 	if h.Store != nil {

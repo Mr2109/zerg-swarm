@@ -176,6 +176,14 @@ func cmdImpact(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s: `--wide` 与 `--strict` 同时给了 ⇒ 文档面口径以**最严档 C**（`--strict`）为准"+
 			"（照实明说，不静默挑一个 · `R23`）\n", progName)
 	}
+	// ★ 授权侧（`GAP-20260927-140` ① · 2026-10-08 拍）：默认档真写 impact 缓存件 ⇒ 默认档 fail-closed
+	//   （`--dry-run` 出计划件、零副作用；缺 `--yes` 退 2、零写 —— 六层取数一个都不跑）。
+	if rc, done := writeGuardDryRun(inv, stdout, stderr); done {
+		return rc
+	}
+	if rc := writeGuardYes(inv, stderr); rc != exitOK {
+		return rc
+	}
 	layers, budget := impactPullLayers(root, tgt, cheap, impactCacheOn, !cheap, docTier)
 	// 接线（`GAP-20260927-140` · 只此一处）：`impact` 在**真发生落盘那一刻**把本跑视为
 	// 「状态已改变」（§九 M4：changed = 本次调用是否改变状态）。取值来自**写点登记表**所辖
@@ -450,7 +458,7 @@ func impactRegistryIDs(root string) ([]string, error) {
 // ★ 占位符**不许含空格**（2026-09-24 现跑坐实）：门⑫ 的 `command_words()` 会把含空格的占位符
 // 拆成两个命令词（`('impact','id')`）⇒ 判「命令不在树里」✗ —— 复现：`check-doc-cmds.py --scope formal`
 // 改前命中 3 处，去空格后 rc=0。（占位符写成单个不含空格的词，判据才只看族名 `impact`。）
-const impactUsageLine = "zerg impact <文件或契约id> [--wide｜--strict] [--deep] [--for-model｜--for-human] [--json <字段>] [--gate-results <那次门禁的结果表｜它的日志目录>]"
+const impactUsageLine = "zerg impact <文件或契约id> [--wide｜--strict] [--deep] [--for-model｜--for-human] [--json <字段>] [--gate-results <那次门禁的结果表｜它的日志目录>] [--dry-run | --yes]"
 
 // impactDocTierOf 文档面口径档（`R23` 已拍的三档 · 不许自造第四档）：
 //

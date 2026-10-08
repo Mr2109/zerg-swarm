@@ -10,7 +10,7 @@
 //   - **只清本子端名下的卵单元**：单元名必须匹配 `zerg-<name>.service`，且必须出现在
 //     `systemctl --user list-units --slice=llm.slice` 的清单里——孵化器是唯一往 llm.slice 里
 //     写 zerg-* 单元的人（hatch.BuildSystemdRunArgv 硬编码 --slice=llm.slice）；
-//   - **绝不碰用户手工服务**：EDGE-NODE 的 :9000（裸进程）与 :9001（screen 会话）根本不是 systemd 单元，
+//   - **绝不碰用户手工服务**：node-a 的 :9000（裸进程）与 :9001（screen 会话）根本不是 systemd 单元，
 //     更不在 llm.slice 里；清单里出现的任何非 `zerg-*.service` 名字一律跳过（下面的解析与过滤
 //     两层都做，见 parseEggUnitNames / gcLeftoverEggs）；
 //   - 清不掉必须留痕（§6.9：命令返回成功 ≠ 真清干净了）——停完再复核一次 ActiveState，还在跑就
@@ -29,14 +29,14 @@ import (
 )
 
 // eggUnitNameRe 孵化器造得出的卵单元名（hatch.UnitName 的产物：`zerg-` + 收敛后的小写名 + `.service`）。
-// 过滤用**白名单形态**而不是黑名单：任何不像卵单元的名字（含用户自己的 edge-node-agent.service /
+// 过滤用**白名单形态**而不是黑名单：任何不像卵单元的名字（含用户自己的 node-a-agent.service /
 // k2.service 之类）一律不动作。
 var eggUnitNameRe = regexp.MustCompile(`^zerg-[a-z0-9][a-z0-9-]*\.service$`)
 
 // parseEggUnitNames 从 `systemctl --user list-units --all --no-legend --plain 'zerg-*'`
 // 的输出里取出单元名（纯函数，便于单测）。
 //
-// ⚠ 为什么**不用** `--slice=<切片>` 过滤（2026-09-15 EDGE-NODE 真机实测）：systemd 259 的
+// ⚠ 为什么**不用** `--slice=<切片>` 过滤（2026-09-15 node-a 真机实测）：systemd 259 的
 // `list-units` 不认识 `--slice=`（`systemctl: 未识别的选项 "--slice=llm.slice"`）⇒ 那条命令在
 // 真机上直接失败、启动 GC 会一次都不生效。改为：先按名字列 `zerg-*`，再对每个候选**逐个核
 // 它的归属**（Slice / ControlGroup 是不是 llm.slice，见 gcLeftoverEggs）——这比过滤参数更强：

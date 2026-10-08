@@ -1,6 +1,6 @@
 // egg_profile_test.go —— 实测档案 + 双闸门测试。
 //
-// 对照锚点（§8.4 / 附录 A.3）：EDGE-NODE 注册表曾声明 Qwen3.8-27B mem_gb=18，
+// 对照锚点（§8.4 / 附录 A.3）：node-a 注册表曾声明 Qwen3.8-27B mem_gb=18，
 // 实测 GTT 32.70 GiB ⇒ 闸门若信声明值就翻车；本批判据函式就是这条错的根治手段。
 package monitor
 
@@ -17,7 +17,7 @@ import (
 // timeAt unix 秒 → UTC 时间（测试辅助）。
 func timeAt(unix int64) time.Time { return time.Unix(unix, 0).UTC() }
 
-// validProfile 返回一份过校验的档案（EDGE-NODE Qwen 实测口径；**v2**：带 enclosure 块）。
+// validProfile 返回一份过校验的档案（node-a Qwen 实测口径；**v2**：带 enclosure 块）。
 func validProfile() EggProfile {
 	p := validProfileV1()
 	p.SchemaVersion = EggProfileSchemaVersion
@@ -40,7 +40,7 @@ func validProfileV1() EggProfile {
 		ThroughputTokS:       35.5,
 		SuggestedIdleUnloadS: 600,
 		SchemaVersion:        EggProfileSchemaVersionV1,
-		Machine:              "edge-node",
+		Machine:              "node-a",
 		MeasuredAt:           timeAt(1700000000),
 		CalibRuns:            3,
 	}
@@ -100,9 +100,9 @@ func TestEggProfileNeedCoeff(t *testing.T) {
 func TestLoadEggProfile_RoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "qwen3.8-27b.profile.yaml")
-	yamlText := `# EDGE-NODE 实测档案（标定铁律：凡数字必实测）
+	yamlText := `# node-a 实测档案（标定铁律：凡数字必实测）
 schema_version: 1
-machine: edge-node
+machine: node-a
 measured_at: 2026-09-15T10:00:00Z
 calib_runs: 3
 weight_size_gb: 54.2
@@ -119,7 +119,7 @@ suggested_idle_unload_s: 600
 	if err != nil {
 		t.Fatalf("读合法档案失败: %v", err)
 	}
-	if !approx(p.PeakGttGb, 32.70) || p.Machine != "edge-node" || p.CalibRuns != 3 {
+	if !approx(p.PeakGttGb, 32.70) || p.Machine != "node-a" || p.CalibRuns != 3 {
 		t.Fatalf("回读内容错: %+v", p)
 	}
 }
@@ -137,7 +137,7 @@ func TestLoadEggProfile_InvalidContent_Refuses(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "bad.yaml")
 	// 声明值冒充实测的典型形态：calib_runs 缺失
-	if err := os.WriteFile(path, []byte("schema_version: 1\nmachine: edge-node\npeak_gtt_gb: 18\npeak_mem_gb: 20\nload_seconds: 30\nthroughput_tok_s: 30\nsuggested_idle_unload_s: 600\nweight_size_gb: 54\nmeasured_at: 2026-09-15T10:00:00Z\n"), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte("schema_version: 1\nmachine: node-a\npeak_gtt_gb: 18\npeak_mem_gb: 20\nload_seconds: 30\nthroughput_tok_s: 30\nsuggested_idle_unload_s: 600\nweight_size_gb: 54\nmeasured_at: 2026-09-15T10:00:00Z\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := LoadEggProfile(path); err == nil {

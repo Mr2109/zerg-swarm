@@ -131,6 +131,32 @@ const gateCheckLockToolKey = "judge-lock"
 // `scripts/gates/check-judge-ledger.py` 的 `LEDGER_DEFAULT` 逐字同源。
 var gateCheckLedgerRel = []string{"gates", "judge-run-ledger.jsonl"}
 
+// gateCheckTrustedRunnerEnv —— ★ 本批（2026-10-08）「受信运行器」旋钮的**唯一**变量名。
+//
+// 病根：危险档那 4 处闸步（isolate-ro / all / real-gates / pack-release）要从 CLI 正门
+// （`zerg gate check <判据名>`）跑，却卡在本壳「缺 `--yes` 一律拒执」（下面 ⑤ 那道盾）——
+// 闸运行器是**程序化、受信、无人在场**的调用者，不应被当成「生人/模型直敲」。
+//
+// 口子（✗ 不放宽 `--yes` 本身）：**只**免「`gate check` 危险档（写工具 / 重编类 / 整套门类）
+// 缺 `--yes` ⇒ 拒执」这**一道**盾；给了 `--yes` 的语义一字不动。
+//
+// ★ 边界（要求 ⓓ）：本旋钮**只**在本件这一处被读、**只**改这一道盾 ——
+// `cmdGuarded` / `writeGuardYes` / `repo commit` / 各判据件的判定面**一律不读它** ⇒
+// 缺它 / 值不对 ⇒ 与今天**逐字同**（裸跑仍 rc=2，✗ 不得变 0）。本批只开这一枚旋钮。
+const gateCheckTrustedRunnerEnv = "ZERG_TRUSTED_RUNNER"
+
+// gateCheckTrustedRunnerValue —— 旋钮**唯一**被认的取值（闭集 · 逐字相等）。
+// 缺省 / 空串 / "true" / "0" / 任意别的串 ⇒ 视为**没设**（fail-closed · 与今天逐字同）。
+const gateCheckTrustedRunnerValue = "1"
+
+// gateCheckTrustedRunner —— 现读「受信运行器」身份（留痕用）。ok=true ⇒ 本轮免盾生效。
+func gateCheckTrustedRunner() (id string, ok bool) {
+	if strings.TrimSpace(os.Getenv(gateCheckTrustedRunnerEnv)) != gateCheckTrustedRunnerValue {
+		return "", false
+	}
+	return gateCheckTrustedRunnerEnv + "=" + gateCheckTrustedRunnerValue, true
+}
+
 // gateCheckRoster —— 现读名录：`{判据名: 件绝对路径}` ＋ 同名歧义列表（保守面）＋ 读不动的原因。
 //
 // 判据名 ＝ 文件名去扩展名（§6）；只收 `.py` / `.sh` 两种扩展名。递归全子树后，同名（含**不同子
@@ -281,6 +307,10 @@ type gateCheckLedgerRow struct {
 	Head          string `json:"head"`
 	JudgeResolved bool   `json:"judge_resolved"`
 	DryRun        bool   `json:"dry_run"`
+	// ★ 本批「受信运行器」免盾留痕（缺省空 ⇒ `omitempty` 令该键**不出现** ⇒ 行字节与今天逐字同）。
+	//   值形态 `trusted-runner:ZERG_TRUSTED_RUNNER=1` —— 谁免的盾；「哪一步」见
+	//   stderr 审计行（`本步=zerg gate check <判据名>`）与闸运行器那一步的日志。
+	Waiver string `json:"waiver,omitempty"`
 }
 
 // gateCheckFileSHA256 —— 判据件内容哈希（读不到 ⇒ `unavailable` · 如实记 · 不猜）。
@@ -315,7 +345,7 @@ func gateCheckHead(root string) string {
 // gateCheckLedgerAppend —— M1-08：往台账**追加**一行（**append-only**：只 `O_APPEND`，
 // ✗ 不改旧行 / ✗ 不删行）。写不进 ⇒ **如实报**（stderr），但**不改**本命令退码
 // （退码只由转发口径定 —— 台账是留痕面、不是判定面）。
-func gateCheckLedgerAppend(root, judgePath string, rawRC int, detail string, resolved, dryRun bool, stderr io.Writer) {
+func gateCheckLedgerAppend(root, judgePath string, rawRC int, detail string, resolved, dryRun bool, waiver string, stderr io.Writer) {
 	row := gateCheckLedgerRow{
 		RawRC:         rawRC,
 		Detail:        detail,
@@ -323,6 +353,7 @@ func gateCheckLedgerAppend(root, judgePath string, rawRC int, detail string, res
 		Head:          gateCheckHead(root),
 		JudgeResolved: resolved,
 		DryRun:        dryRun,
+		Waiver:        waiver,
 	}
 	line, err := json.Marshal(row)
 	if err != nil {
@@ -473,26 +504,27 @@ func gateCheckFullTable(root string, stdout, stderr io.Writer, dry, js bool) int
 	return exitOK
 }
 
-// gateCheckClassRE —— 「件头声明行」的**唯一**正则（与 `scripts/gates/check-writer-guard.py` 的 G0/G1
-// 用**同一串** · 语义逐字同）。形状与命令树的 `danger: &dangerSpec{…}` 同规：分类是**件自带的字段**，
-// ✗ 不引第二份外挂名单（名录是目录派生 ⇒ 硬排除＝造第二真源）。`D0` = 非危险档占位（不新增退码）。
+// gateCheckClassRE —— 件头 `#zerg-class:` 声明行的正则（**派生副本**口径 · 与
+// `scripts/gates/check-writer-guard.py` 的 G0/G1 用**同一串** · 语义逐字同）。`D0` = 非危险档占位。
+//
+// ★ GAP-20261008-11 后它**不再**是壳侧分类真源（真源上移到 `gate_inproc_table.go` 的
+// `gateCheckClassEntry`）—— 只作门禁侧「件头 ↔ 中央表」一致性机检的参照串；保留以免 parity 面断链。
 var gateCheckClassRE = regexp.MustCompile(`^#\s*zerg-class:\s*(read|write)\s+(D0|D2|D3)\s*$`)
 
-// gateCheckClassOf —— 现读该件**头部**（前 80 行）的 `#zerg-class:` 声明行。真源 = 件自己那一行。
-// 缺声明 ⇒ 返回 ("read", "")：**读侧不受闸影响**（既有判据件两态输出逐字节相同 · 未声明的普通判据件
-// 照旧直跑）。会写盘的**漏标**件由**机检**管（check-writer-guard.py 的 G2「命中写形态必须显式标
-// write」⇒ rc=1 点名），不在这里一刀切（否则全仓 190 件未声明判据件会被误挡）。
-func gateCheckClassOf(absPath string) (cls, lvl string) {
-	f, err := os.Open(absPath)
-	if err != nil {
-		return "read", ""
-	}
-	defer f.Close()
-	sc := bufio.NewScanner(f)
-	for i := 0; i < 80 && sc.Scan(); i++ {
-		if m := gateCheckClassRE.FindStringSubmatch(strings.TrimRight(sc.Text(), "\r")); m != nil {
-			return m[1], m[2]
-		}
+// gateCheckClassOf —— 【中央登记】按**判据名**取危险档（真源 = `gate_inproc_table.go` 的
+// `gateCheckClassEntry` · GAP-20261008-11）。
+//
+// ★ 为什么不再读件头：件头随**件离盘**（退役）而消失 ⇒ 分类读空 ⇒ 壳侧「默认档要授权」这道闸
+//
+//	**静默失明**（`--dry-run` 不再出计划件、裸跑直落子件）。中央表与件在不在盘**无关** ⇒ 退役
+//	前后判定**逐字同**（退件流程要判的正是这一格）。件头降级为**派生副本**（check-writer-guard.py
+//	的 G0/G1/G2 仍按件头机检登记面）。
+//
+// 缺登记 ⇒ 返回 ("read", "")：**读侧不受闸影响**（普通只读判据件照旧直跑）。会写盘的**漏登记**件
+// 由门禁侧机检管（check-writer-guard.py 的 G2「命中写形态必须显式标 write」⇒ rc=1 点名）。
+func gateCheckClassOf(name string) (cls, lvl string) {
+	if s, ok := gateCheckClassEntry[name]; ok {
+		return s.Class, s.Level
 	}
 	return "read", ""
 }
@@ -503,7 +535,7 @@ func gateCheckClassOf(absPath string) (cls, lvl string) {
 var gateCheckRebuildDirRel = []string{"scripts", "build"}
 
 // gateCheckRepoBinTok —— 「repo 根下 bin/ 生产制品」路径 token 的现读形态（可带 ./ 或 $REPO_ROOT/ 前缀）。
-// 必须以 bin/ 起 ⇒ ✗ 不误伤 /bin/bash · …/edge-node/bin/… · fakebin/… 这类非仓根 bin 路径。
+// 必须以 bin/ 起 ⇒ ✗ 不误伤 /bin/bash · …/node-a/bin/… · fakebin/… 这类非仓根 bin 路径。
 const gateCheckRepoBinTok = `(?:\$\{REPO_ROOT\}/|\$REPO_ROOT/|\./)?bin/[A-Za-z0-9._-]+`
 
 // gateCheckArtifactWriteREs —— 「写 repo bin/ 生产制品」的**写位形态**族（逐条对应
@@ -705,7 +737,7 @@ func gateCheckWritePlan(name, full, lvl, kind, why string, rest []string) string
 	b.WriteString("计划件（--dry-run · 零副作用 —— 未执行、未改任何状态）\n")
 	fmt.Fprintf(&b, "  动作     : %s gate check %s\n", progName, name)
 	fmt.Fprintf(&b, "  危险档   : %s（%s）\n", lvl, dangerLevelWord(lvl))
-	fmt.Fprintf(&b, "  判据件   : %s\n", filepath.Base(full))
+	fmt.Fprintf(&b, "  判据件   : %s\n", name) // 用**判据名**（✗ 不用件基名）⇒ 件离盘后逐字同
 	fmt.Fprintf(&b, "  执行要   : %s\n", need)
 	fmt.Fprintf(&b, "  子件参数 : %s\n", orDash(strings.Join(rest, " ")))
 	if kind == "重编类" {
@@ -716,7 +748,7 @@ func gateCheckWritePlan(name, full, lvl, kind, why string, rest []string) string
 		fmt.Fprintf(&b, "  来源     : 属性判（GAP-20261005-20）—— 名册执行 或 步命令执行 · ✗ 非点名\n")
 	} else {
 		fmt.Fprintf(&b, "  它会动   : 该**写工具**会真改盘（换件 / 落临时副本 / 落锁）—— 只读件不受影响\n")
-		fmt.Fprintf(&b, "  来源     : 件头 `#zerg-class: write %s` · 同族先例 family_gate_matrix.go:12-15\n", lvl)
+		fmt.Fprintf(&b, "  来源     : 中央分类登记 gateCheckClassEntry（`gate_inproc_table.go` · 判据名 ⇒ 危险档 · GAP-20261008-11）\n")
 	}
 	fmt.Fprintf(&b, "  留痕     : 一行一事件 · 追加只写 · **写失败即拒**（§九 M3 C5）\n")
 	return b.String()
@@ -819,7 +851,12 @@ func gateCheck(inv *invocation, stdout, stderr io.Writer, root string) int {
 	//         `unavailable`，如实记）。
 	//   ✗ 不改「py 件在盘」的任何行为：那一路 byName 命中、full 用真件路径、逐字同旧。
 	if !ok {
-		if _, inproc := gateCheckGoEntry[name]; inproc {
+		_, inproc := gateCheckGoEntry[name]
+		// ★ A 方案（本批）· 名解析并入**中央分类表键**（另一半，改处3）：重编/写档类件（登在
+		//   gate_inproc_table.go 的 gateCheckClassEntry）退役后 py 件离盘，靠此路仍可解析 ⇒ 它的
+		//   D2 确认盾不随件消失（分类真源已上移到中央表；合成路径只喂下游路径边界/台账，✗ 不参与类判）。
+		_, inclass := gateCheckClassEntry[name]
+		if inproc || inclass {
 			full = filepath.Join(root, gateCheckRosterDirRel, "gates", name+".py")
 			ok = true
 		}
@@ -847,7 +884,7 @@ func gateCheck(inv *invocation, stdout, stderr io.Writer, root string) int {
 
 	// ★ M1 批B · **写工具危险档闸**（壳侧 exec 前 · **唯一写盘点之前**）：
 	//   名录收写工具（目录派生 ⇒ 硬排除＝造第二真源），但**壳侧强制危险档 ＋ 非交互拒执**。
-	//   真源 = 件自己头部的 `#zerg-class:` 一行（同 gateCheckClassRE · 与 check-writer-guard.py 同串）。
+	//   真源 = 中央分类登记 gateCheckClassEntry（`gate_inproc_table.go` · 按判据名 · GAP-20261008-11）——
 	//   ★ 主人裁定「按 ② 落」= 只认「缺 `--yes`」才退 2（`--yes` 本身就是命令行上的确认盾）——
 	//   ✗ 不取「无 TTY 一律 2」（本壳**从不提问**，但 `--yes` 到了就放行）。
 	//   退码**零新占号**：全部落在既有「2 = 用法错」这一档（见 guard.go 的三态与 family_gate_matrix.go 先例）。
@@ -857,10 +894,19 @@ func gateCheck(inv *invocation, stdout, stderr io.Writer, root string) int {
 	//   按名名单 / 写死名件路径）—— 属性真源见 gateCheckRebuildClass。
 	// ★ 本刀再半（GAP-20261005-20 另一半）：**整套门类**（会真跑整套门 / 步：遍历名册逐个真跑 或 shell 起 -c
 	//   跑步命令）**同样并入这道盾** —— 属性真源见 gateCheckSuiteClass（属性判 · ✗ 不靠名）。
-	cls, lvl := gateCheckClassOf(full)
+	// ★ 本批「受信运行器」免盾的留痕载体（缺省空 ⇒ 台账行不含该字段 ⇒ 与今天逐字同）。
+	waiver := ""
+	cls, lvl := gateCheckClassOf(name)
 	rebuild, rebuildWhy := gateCheckRebuildClass(full, root)
 	suite, suiteWhy := gateCheckSuiteClass(full)
-	if cls == "write" || rebuild || suite {
+	// ★ A 方案（本批）· 合成式优先级（改处2）：**已登中央表以表为准**（登 read ⇒ 显式降级，压过甲目录判/乙行为判）/
+	//   **未登走「甲‖乙」属性判兜底**（= 现状逐字同）。rebuild/suite 仍算（仅供下方 kind 显示分支用）。
+	_, registered := gateCheckClassEntry[name]
+	shield := rebuild || suite
+	if registered {
+		shield = cls == "write"
+	}
+	if shield {
 		// 无件头声明级的重编类 / 整套门类 ⇒ 取最轻的确认盾档 D2（`--yes` 即可 · ✗ 不是不可逆档）。
 		if (rebuild || suite) && lvl == "" {
 			lvl = dangerD2
@@ -902,7 +948,10 @@ func gateCheck(inv *invocation, stdout, stderr io.Writer, root string) int {
 			return exitUsage
 		}
 		// ⑤ 缺 `--yes`（含**一切非交互**档：脚本 / 管道 / agent —— 本壳从不提问）⇒ 2（fail-closed）。
-		if !inv.yes {
+		// ★ 本批：**受信运行器**（闸运行器 · `ZERG_TRUSTED_RUNNER=1`）从 CLI 正门跑危险档判据件时，
+		//   免**这一道** `--yes` 盾（✗ 不放宽 `--yes` 本身）。身份真源 = gateCheckTrustedRunner()。
+		trustedID, trusted := gateCheckTrustedRunner()
+		if !inv.yes && !trusted {
 			msg := fmt.Sprintf("`%s` 是**%s**（%s 档）—— **缺 --yes ⇒ 不执行**（非交互一律 fail-closed：从不提问）", name, kind, lvl)
 			inv.setErr("usage", "yes_required", msg)
 			fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
@@ -916,6 +965,17 @@ func gateCheck(inv *invocation, stdout, stderr io.Writer, root string) int {
 			fmt.Fprintf(stderr, "先看计划件：%s gate check %s --dry-run\n", progName, name)
 			fmt.Fprintf(stderr, "error.kind=usage · detail=yes_required · retryable=false · remedy=fix_usage\n")
 			return exitUsage
+		}
+		// ★ 本批：受信运行器**免了这一道盾** ⇒ ⓑ 留痕（谁免的盾 · 哪一步 · 免的是哪一档）。
+		//   · 一行审计进 stderr（闸运行器那一步的回执/日志会收它）；
+		//   · 同一枚身份写进本步台账行（waiver 字段）——「哪一步」由 stderr 行的判据名 +
+		//     台账的 sha256/head 共同指认（台账六字段形状不变）。
+		if !inv.yes && trusted {
+			waiver = "trusted-runner:" + trustedID
+			fmt.Fprintf(stderr, "%s: ★ 免盾：受信运行器（%s）⇒ 免「%s（%s 档）」的 --yes 确认盾 · 本步=%s gate check %s\n",
+				progName, trustedID, kind, lvl, progName, name)
+			fmt.Fprintf(stderr, "%s: ★ 留痕 waiver=%s（写进本步台账行）· --yes 本身未放宽（生人/模型直敲仍拒执）\n",
+				progName, waiver)
 		}
 		// ⑥ 过闸：**壳级确认旗标不落给子件**（剔掉 --yes/--dry-run/--confirm*）。
 		rest = gateCheckStripShellFlags(rest)
@@ -939,7 +999,7 @@ func gateCheck(inv *invocation, stdout, stderr io.Writer, root string) int {
 		if rc == 0 {
 			detail = "ok"
 		}
-		gateCheckLedgerAppend(root, full, rc, detail, true, false, stderr)
+		gateCheckLedgerAppend(root, full, rc, detail, true, false, waiver, stderr)
 		return rc
 	}
 
@@ -970,18 +1030,18 @@ func gateCheck(inv *invocation, stdout, stderr io.Writer, root string) int {
 		if ee, ok := err.(*exec.ExitError); ok {
 			// ★ 只转发、不翻译：子件的码原样返回（连异常码也不改写）。
 			// M1-08 · 失败支也落一行台账（`raw_rc` = 子件原样退码 · 与本壳退码**分列**）。
-			gateCheckLedgerAppend(root, full, ee.ExitCode(), "judge_rc", true, false, stderr)
+			gateCheckLedgerAppend(root, full, ee.ExitCode(), "judge_rc", true, false, waiver, stderr)
 			return ee.ExitCode()
 		}
 		// exec 层跑不起来（解释器找不到 / 件不可执行）：**不给结论**（拍定第二条）。
 		// `raw_rc=-1` = **没有进程退码可言**（不是把故障写成 0 —— 硬边「禁用 raw_rc 顶替退码」）；留痕。
-		gateCheckLedgerAppend(root, full, -1, "judge_broken", true, false, stderr)
+		gateCheckLedgerAppend(root, full, -1, "judge_broken", true, false, waiver, stderr)
 		fmt.Fprintf(stderr, "%s: ⛔ 判据件跑不起来（exec 层 · %s）：%v\n", progName, filepath.Base(full), err)
 		fmt.Fprintf(stderr, "%s: detail=judge_broken · raw_rc=-1 · judge_resolved=true\n", progName)
 		fmt.Fprintf(stderr, "%s: ⇒ 不给结论（%d）：壳故障与「件判负」不许同形\n", progName, exitBlocked)
 		return exitBlocked
 	}
 	// M1-08 · 成功支落一行台账。
-	gateCheckLedgerAppend(root, full, 0, "ok", true, false, stderr)
+	gateCheckLedgerAppend(root, full, 0, "ok", true, false, waiver, stderr)
 	return exitOK
 }

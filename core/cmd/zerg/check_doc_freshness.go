@@ -2018,6 +2018,29 @@ func cdfLineAt(text string, n int) string {
 	return ""
 }
 
+// cdfGeneratorCliFace —— 生成器声明的「CLI 面」（inproc 键）→ 本进程内入口。
+//
+// ★ 2026-10-08 拍板④：D4 旧口径硬查 `script`（py 原件）**在盘** ⇒ py 件一退、档 rc 0→2，卡住退役。
+// 新口径：生成器「在」= **CLI 面打得着**（键已入 `core/cmd/zerg/gate_inproc_table.go` 的
+// `gateCheckGoEntry` ⇒ M2 真身已搬、本进程内可调）**或** py 原件在盘；
+// 两半皆不可用仍照报（✗ 断言不放宽到永真 —— 见 cdfGateD4 里的成对判定）。
+//
+// ★ 为什么经 init() 抄一份引用（cdfInprocFaceTable）：`gateCheckGoEntry` 里**含本件入口**
+// （`"check-doc-freshness": checkDocFreshnessGateMain`），若本件在**变量初始化期**直接引用该表，
+// 即构成 initialization cycle（表 → 本件入口 → cdfGateD4 → 本查表）。init 函数体不进「变量初始化
+// 依赖图」，环即断；运行时该表早已建好 ⇒ 读数与直引用逐字同。
+var cdfInprocFaceTable map[string]func(stdout, stderr io.Writer, argv []string) int
+
+func init() { cdfInprocFaceTable = gateCheckGoEntry }
+
+func cdfGeneratorCliFace(key string) (func(io.Writer, io.Writer, []string) int, bool) {
+	if key == "" {
+		return nil, false
+	}
+	fn, ok := cdfInprocFaceTable[key]
+	return fn, ok
+}
+
 func cdfGateD4(t *cdfTree, args *cdfArgs) *cdfResult {
 	r := cdfNewResult("d4", t)
 	cfg := cdfSub(t.cfg, "d4")
@@ -2056,15 +2079,24 @@ func cdfGateD4(t *cdfTree, args *cdfArgs) *cdfResult {
 		}
 		script := cdfAnyStr(g, "script", "")
 		optional := cdfAnyBool(g, "optional", false)
+		cliKey := cdfAnyStr(g, "cli", "")
+		inprocFn, inprocOK := cdfGeneratorCliFace(cliKey)
+		scriptOnDisk := false
 		if script != "" {
-			if _, err := os.Stat(filepath.Join(t.mainRepo, filepath.FromSlash(script))); err != nil {
-				if optional {
-					r.counted(fmt.Sprintf("[%s] 可选生成器缺脚本（单列）", gid), 1)
-					continue
-				}
-				r.errors = append(r.errors, fmt.Sprintf("[%s] 缺生成器脚本 %s ⇒ 不给结论", gid, script))
+			if _, err := os.Stat(filepath.Join(t.mainRepo, filepath.FromSlash(script))); err == nil {
+				scriptOnDisk = true
+			}
+		}
+		// ★ 生成器「在」的判据（2026-10-08 拍板④ · 替换旧「py 件必须在盘」）：**CLI 面打得着**
+		//   （inproc 键已登记 ⇒ 本进程内可调 · M2 真身已搬）**或** py 原件在盘 —— 两半皆不可用仍照报
+		//   （✗ 不放宽到永真）。
+		if (script != "" || cliKey != "") && !inprocOK && !scriptOnDisk {
+			if optional {
+				r.counted(fmt.Sprintf("[%s] 可选生成器缺脚本（单列）", gid), 1)
 				continue
 			}
+			r.errors = append(r.errors, fmt.Sprintf("[%s] 缺生成器脚本 %s（CLI 面 %s 亦未登记）⇒ 不给结论", gid, script, cliKey))
+			continue
 		}
 		if len(targets) == 0 {
 			if optional {
@@ -2087,37 +2119,52 @@ func cdfGateD4(t *cdfTree, args *cdfArgs) *cdfResult {
 			judged++
 			tmpout := filepath.Join(tmp, fmt.Sprintf("%s-%s", gid, cdfSha1Text(tg)[:8]))
 			d := cdfDirPosix(tg)
-			cmds := cdfStrList(g, "cmd")
-			argv := []string{}
-			for _, x := range cmds {
-				argv = append(argv, cdfFill(x, t.repo, map[string]string{
-					"OUT": tmpout, "DIR": filepath.Join(t.repo, filepath.FromSlash(d)), "TARGET": tg,
-				}))
-			}
+			kv := map[string]string{"OUT": tmpout, "DIR": filepath.Join(t.repo, filepath.FromSlash(d)), "TARGET": tg}
 			cwd := cdfFill(cdfAnyStr(g, "cwd", "{REPO}"), t.repo, map[string]string{})
 			timeout := 120
 			if v, ok := g["timeout_s"].(float64); ok {
 				timeout = int(v)
 			}
-			cmd := exec.Command(argv[0], argv[1:]...)
-			cmd.Dir = cwd
 			var so, se []byte
-			so, se, err = cdfRunTimeout(cmd, timeout)
-			if err != nil && len(argv) == 0 {
-				r.errors = append(r.errors, fmt.Sprintf("[%s] 重建失败（%s）⇒ 不给结论", gid, err))
-				continue
+			runRC := 0
+			if inprocOK {
+				// ★ CLI 面优先（2026-10-08 拍板④）：生成器是已登记的 inproc 真搬体 ⇒ 本进程内调，
+				//   py 原件在与不在读数一致（exec 档只留给「无 CLI 面」的生成器作回退）。
+				cliArgv := []string{}
+				for _, x := range cdfStrList(g, "cli_argv") {
+					cliArgv = append(cliArgv, cdfFill(x, t.repo, kv))
+				}
+				var sb, eb strings.Builder
+				runRC = gateCheckRunInproc(inprocFn, cwd, &sb, &eb, cliArgv)
+				so, se = []byte(sb.String()), []byte(eb.String())
+			} else {
+				cmds := cdfStrList(g, "cmd")
+				argv := []string{}
+				for _, x := range cmds {
+					argv = append(argv, cdfFill(x, t.repo, kv))
+				}
+				cmd := exec.Command(argv[0], argv[1:]...)
+				cmd.Dir = cwd
+				so, se, err = cdfRunTimeout(cmd, timeout)
+				if err != nil && len(argv) == 0 {
+					r.errors = append(r.errors, fmt.Sprintf("[%s] 重建失败（%s）⇒ 不给结论", gid, err))
+					continue
+				}
+				if cmd.ProcessState != nil {
+					runRC = cmd.ProcessState.ExitCode()
+				}
 			}
 			var rebuilt string
 			if mode == "stdout" {
 				rebuilt = string(so)
 			} else {
-				if cmd.ProcessState != nil && cmd.ProcessState.ExitCode() != 0 {
+				if runRC != 0 {
 					st := strings.ReplaceAll(string(se), "\n", " ")
 					if len(st) > 200 {
 						st = st[:200]
 					}
 					r.errors = append(r.errors, fmt.Sprintf("[%s] 生成器 rc=%d，stderr 前 200 字：%s ⇒ 不给结论",
-						gid, cmd.ProcessState.ExitCode(), st))
+						gid, runRC, st))
 					continue
 				}
 				b, err := os.ReadFile(tmpout)
@@ -3165,7 +3212,7 @@ optional arguments:
                         devdocs_root()）
   --strict-all          非本地域（外部引用域/冻结归档/镜像）也判红
   --slug-profile {github,docv1.2}
-                        覆盖 config.d3.slug_profile（用于实测 §5.6③④ 的 U+3000 分歧）
+                        覆盖 config.d3.slug_profile（用于实测 §5.6①③④ 的 U+3000 分歧）
   --no-whitelist        D1 关掉软白名单（语法示例/省略号/代码块内）—— 用于实测「不做白名单会有多少假红」
   --report REPORT       结果 JSON 落盘路径（建议 /tmp/…，勿写仓内）
   --print-limit PRINT_LIMIT

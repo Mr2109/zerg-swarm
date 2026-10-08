@@ -1683,7 +1683,7 @@ func cgcPrintBaseline(w io.Writer, rep *cgcReport) {
 	Fprintf("号令字句（每批下调基线时照抄，一次一批，**只许下调、永不上调**）：\n")
 	Fprintf("  「批 〈批次名〉：本批把下列 〈N〉 条从「闸文件查无此名」改成「步骤表里点名」：" +
 		"〈逐条脚本名〉。\n")
-	Fprintf("    依据 = `python3 scripts/gates/check-gate-coverage.py --baseline` 的 ③ 实测命中数" +
+	Fprintf("    依据 = `zerg gate check check-gate-coverage --baseline` 的 ③ 实测命中数" +
 		"（改前/改后各跑一次）；\n")
 	Fprintf("    动作 = 把 `scripts/gates/gate-coverage.config.json` 的 `baseline` 由 %d 改成"+
 		" %d（**只改这一个数字**）；\n", rep.baseline, n)
@@ -1734,7 +1734,7 @@ func cgcPrintListRules(w io.Writer) {
 	fmt.Fprintln(w)
 	Fprintln("与既有门的接口（第二波挂接）：")
 	Fprintln("   add_step cov \"门覆盖自检（构建清单目录 A + 脚本接线 B）\" tri \"${REPO_ROOT}\" \\")
-	Fprintln("            \"python3 scripts/gates/check-gate-coverage.py\"")
+	Fprintln("            \"zerg gate check check-gate-coverage\"")
 }
 
 // ══════════════════════════════════════════════════════════════════

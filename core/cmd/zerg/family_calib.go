@@ -50,17 +50,17 @@ const calibStateAdopted = "① 收编为命令（`zerg calib` 立族 · 2026-09-
 var calibRoster = []calibEntry{
 	{
 		Name: "calib-local-model", File: "scripts/calib/calib-local-model.sh", Run: "bash",
-		Role:  "本机（macOS）模型标定：3 轮取上界 → 产出实测档案（§8.4 标定铁律：容量/预算/阈值必须实测得出）",
+		Role:  "dev-only bootstrap · 不进 CI/门/公开面 —— 本机（macOS）模型标定：3 轮取上界 → 产出实测档案（§8.4 标定铁律：容量/预算/阈值必须实测得出）；本版暂不可化·待 §13 Q18",
 		State: calibStateAdopted,
 	},
 	{
 		Name: "calib-task-budget", File: "scripts/calib/calib-task-budget.py", Run: "python3",
-		Role:  "预算标定：跑 N 次零副作用靶子任务，量出 步数/token/墙钟 上界 → 产出 task-budget-calib.yaml（闸门只读档案）",
+		Role:  "dev-only bootstrap · 不进 CI/门/公开面 —— 预算标定：跑 N 次零副作用靶子任务，量出 步数/token/墙钟 上界 → 产出 task-budget-calib.yaml（闸门只读档案）",
 		State: calibStateAdopted,
 	},
 	{
 		Name: "calib-x3-model", File: "scripts/calib/calib-x3-model.sh", Run: "bash",
-		Role:  "X3（Linux/Radeon · 真 GTT）模型标定：3 轮取上界；端口 9699（刻意避开子端池 9400–9499 与沙箱池）",
+		Role:  "dev-only bootstrap · 不进 CI/门/公开面 —— EDGE-NODE（Linux/Radeon · 真 GTT）模型标定：3 轮取上界；端口 9699（刻意避开子端池 9400–9499 与沙箱池）；本版暂不可化·待 §13 Q18",
 		State: calibStateAdopted,
 	},
 }

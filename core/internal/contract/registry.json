@@ -13,7 +13,7 @@
       "truth": "core/internal/compat/compat.json",
       "truth_shape": "go:embed 读入 + 启动时注册迁移；顶层键：`dirs`（状态目录解析器表）/ `entries`（登记的状态文件清单）/ `excluded`（不适用版本化的排除项）",
       "version_field": "current_schema / min_readable",
-      "gate": "scripts/gates/check-compat-manifest.py",
+      "gate": "core/cmd/zerg/check_compat_manifest.go（CLI 门 check-compat-manifest）",
       "change_class": "B",
       "change_note": "加状态文件要同时登记 entries/excluded；升号要同时加迁移函数"
     },
@@ -53,7 +53,7 @@
       "truth": "core/internal/version/version.go",
       "truth_shape": "编译期身份：Version 为 Go 侧唯一源码字面量（core/internal/version/version.go），Commit/BuildTime 由 -ldflags 注入（未注入为 unknown）+ 仓根 VERSION 只许是指针",
       "version_field": "Version / Commit / BuildTime / Tag",
-      "gate": "scripts/gates/check-version-sources.py",
+      "gate": "core/cmd/zerg/check_version_sources.go（CLI 门 check-version-sources）",
       "change_class": "B",
       "change_note": "四处同版；版本号曾硬编码在 5 处并漂移过（血案）"
     },
@@ -63,7 +63,7 @@
       "truth": "scripts/gates/gate-coverage.config.json",
       "truth_shape": "字符串 id（gate-coverage/1）+ baseline 棘轮；顶层键：`baseline`（棘轮现值 · 只许下调）/ `scan`（候选扫描面 · 脚本 glob）/ `exclude`（硬排除 · 路径分量与前缀）/ `whitelist`（第二档白名单 · reason+date）",
       "version_field": "schema",
-      "gate": "scripts/gates/check-gate-coverage.py",
+      "gate": "core/cmd/zerg/check_gate_coverage.go（CLI 门 check-gate-coverage）",
       "change_class": "B",
       "change_note": "改这个文件 = 改判据 ⇒ 必须同时改 check-gate-coverage.md 的「口径」节；baseline 只许下调"
     },
@@ -73,7 +73,7 @@
       "truth": "core/cmd/zerg/（contract.go 三层版本 + exitcodes.go 退码表 + errors.go kind 闭集 + main.go 命令树）",
       "truth_shape": "代码内 schema；帮助导出与 /api/capabilities 都是导出物",
       "version_field": "client_contract（zerg/v1）",
-      "gate": "scripts/gates/check-error-kinds.py · scripts/gates/check-wall-layer.py · scripts/gates/check-cli-contract.py · scripts/gates/check-doc-cmds.py",
+      "gate": "core/cmd/zerg/check_error_kinds.go（CLI 门 check-error-kinds）· core/cmd/zerg/check_wall_layer.go（CLI 门 check-wall-layer）· core/cmd/zerg/check_cli_contract.go（CLI 门 check-cli-contract）· core/cmd/zerg/check_doc_cmds.go（CLI 门 check-doc-cmds）",
       "change_class": "B",
       "change_note": "§六 的七步流程（V0–V7）：提案成文 ⇒ 判档 ⇒ 只改一处真源 ⇒ 升号 ⇒ 改全部导出物 ⇒ 过门禁 ⇒ 通知+留档"
     },
@@ -91,7 +91,7 @@
       "id": "S-i",
       "name": "变更影响面 · 实测回填闭环（预测 vs 实际）",
       "truth": "core/internal/contract/impact-backfill.json",
-      "truth_shape": "json：`file`（回填件落点文件名，落在**状态目录**下）+ `layout`（落点路径形态 `<状态目录>/impact-backfill.jsonl` · 不在仓内）+ `state_dir`（状态目录链 ZERG_STATE_DIR > ~/.zerg/state，不另写第二份）+ `append_only` + `append_rule`（`O_APPEND|O_CREATE` 一行一枚 · 历史行逐字不改）+ `required_keys`（§5.5 点名的**十键**）+ `missing_key_rule`（缺任一 ⇒ 该行不许写 · 宁缺不猜）+ `counts`（命中/漏报/虚报的口径与 `BLOCKED` 规则）+ `closed_set`（步名闭集两条）+ `slot`（**现成混淆矩阵槽**：`scripts/gates/check-slice.py` 第 7 行「假绿 = 0 · 假红 ≤ 10%」）+ `write_gate`（干跑 / 真写 / 写失败三档）+ `not_input_to`（**不作任何算法的输入**：预测 / 排序 / 裁条 / 退码 / 门禁判据）+ `consumers`（唯一读/写方 = `core/cmd/zerg/family_impact_backfill.go`）+ `not_auto_actions`（自动收窄预测 / 自动删 / 自动回滚 / 自动改判据）；消费方 = `core/cmd/zerg/family_impact_backfill.go`（读这一份，源码里不另写第二份文件名与键表）",
+      "truth_shape": "json：`file`（回填件落点文件名，落在**状态目录**下）+ `layout`（落点路径形态 `<状态目录>/impact-backfill.jsonl` · 不在仓内）+ `state_dir`（状态目录链 ZERG_STATE_DIR > ~/.zerg/state，不另写第二份）+ `append_only` + `append_rule`（`O_APPEND|O_CREATE` 一行一枚 · 历史行逐字不改）+ `required_keys`（§5.5 点名的**十键**）+ `missing_key_rule`（缺任一 ⇒ 该行不许写 · 宁缺不猜）+ `counts`（命中/漏报/虚报的口径与 `BLOCKED` 规则）+ `closed_set`（步名闭集两条）+ `slot`（**现成混淆矩阵槽**：`core/cmd/zerg/check_slice.go`（Go 真搬 · 原 py 件 `scripts/gates/check-slice.py` 第 7 行）「假绿 = 0 · 假红 ≤ 10%」）+ `write_gate`（干跑 / 真写 / 写失败三档）+ `not_input_to`（**不作任何算法的输入**：预测 / 排序 / 裁条 / 退码 / 门禁判据）+ `consumers`（唯一读/写方 = `core/cmd/zerg/family_impact_backfill.go`）+ `not_auto_actions`（自动收窄预测 / 自动删 / 自动回滚 / 自动改判据）；消费方 = `core/cmd/zerg/family_impact_backfill.go`（读这一份，源码里不另写第二份文件名与键表）",
       "version_field": "schema（zerg/impact-backfill/1）",
       "gate": "（由 core: go test 覆盖 —— 判据面在 core/cmd/zerg/cli_impact_backfill_test.go：十键齐 + 缺任一不写 + 追加式（历史行逐字节不变）+ 三数可复算（同一次门禁结果 + 同 head_sha ⇒ 逐字相同）+ BLOCKED 不进漏报 + 干跑不写 + 写失败不改退码 + **回填件只被读**（静态 0 处 + 运行期改值不变））",
       "change_class": "A",
@@ -151,7 +151,7 @@
       "id": "S-o",
       "name": "授权三态映射表（`Q-021` · 命令面三态 ↔ 控制层三态）",
       "truth": "core/internal/contract/authority-map.json",
-      "truth_shape": "json：`命令面闭集`（三枚：`--dry-run` 干跑 / `--confirm=<目标>` 确认 / `--yes` 写旗标）+ `控制层闭集`（三枚：`allow` / `block` / `require_approval`）+ `映射`（**两侧都只许用闭集里的值** · 三枚控制层值必须都有人用；行数以真源 `core/internal/contract/authority-map.json` 现读为准 —— 契约件不自称条数）+ `_两档不变量` + `同判据例`（干跑/真跑逐条现跑）+ `无对应_说明`（逐字说明「无对应」是显式空表、不是漏项）+ `无对应`（空表：命令面八格旗标子集逐条都有对应）+ `授权类闭集`（三枚：`D2` / `D3` / `无闸`）+ `写面登记`（**写面命令**点名自己的授权类；照门100（`scripts/gates/check-write-face-gate.py`）现读「未声明/未白名单」逐条登记，`理由` 里逐字写「无闸」）+ `写面登记_说明`（照「无对应」一格体例：授权类取 `授权类闭集`，「无闸」一档须显式进白名单；✗ 不洗白成已授权）",
+      "truth_shape": "json：`命令面闭集`（三枚：`--dry-run` 干跑 / `--confirm=<目标>` 确认 / `--yes` 写旗标）+ `控制层闭集`（三枚：`allow` / `block` / `require_approval`）+ `映射`（**两侧都只许用闭集里的值** · 三枚控制层值必须都有人用；行数以真源 `core/internal/contract/authority-map.json` 现读为准 —— 契约件不自称条数）+ `_两档不变量` + `同判据例`（干跑/真跑逐条现跑）+ `无对应_说明`（逐字说明「无对应」是显式空表、不是漏项）+ `无对应`（空表：命令面八格旗标子集逐条都有对应）+ `授权类闭集`（三枚：`D2` / `D3` / `无闸`）+ `写面登记`（**写面命令**点名自己的授权类；照门100（`core/cmd/zerg/check_write_face_gate.go`）现读「未声明/未白名单」逐条登记，`理由` 里逐字写「无闸」）+ `写面登记_说明`（照「无对应」一格体例：授权类取 `授权类闭集`，「无闸」一档须显式进白名单；✗ 不洗白成已授权）",
       "version_field": "`schema` = `zerg/authority-map/v1`（加一枚枚举值 ⇒ 主号动 + 同批改本表与命令面）",
       "gate": "（由 core: go test 覆盖 —— core/cmd/zerg/cli_authority_map_test.go：两侧闭集非空且各三枚 · 映射只用闭集值 · 三枚控制层值都有人用 · **干跑与真跑逐条点名同一个词** · **成对负控**三份改坏的表必须判红）",
       "change_class": "B",

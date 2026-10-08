@@ -52,7 +52,7 @@ import (
 //	⇒ 主控心跳快照（`store.GetSnapshot(host)`）⇒ `ModelDetailHandler` 的 `status`
 //
 // **那不是「在跑的引擎」，那是子端注册表的名册**（这台机**认识**哪些模型）⇒ 主控对**每一个**
-// 注册过的模型都报 `已加载`。实测：本机 `Mr2109` 注册表 7 条 ⇒ `egg ls` 报 7 枚「已加载」，
+// 注册过的模型都报 `已加载`。实测：本机 `node-local` 注册表 7 条 ⇒ `egg ls` 报 7 枚「已加载」，
 // 而同一刻 `ps` 上只有 **1** 个 `llama-server`（`example-35b`）、子端 `/eggs` 也只有 1 枚。
 // 即：**拿「声明」当真值**。卸载之后引擎进程已经没了，`egg ls` 照旧报「已加载」✗。
 //
@@ -420,7 +420,7 @@ var eggBackendProbe = eggBackendProbeLive
 
 // ★ 为什么探测口收的是**机器名 + 地址**两件（而不是只收 `agentAddr`）：机器名是名册
 // （`gateway/fleet.yaml` 的 `fleet:` 段）的**键**，而 `agentAddr.Host` 是**网络地址**
-// （`Mr2109` ⇒ `127.0.0.1`）—— 两件不是一回事。对账按机器名归并（行面上那一格就是机器名），
+// （`node-local` ⇒ `127.0.0.1`）—— 两件不是一回事。对账按机器名归并（行面上那一格就是机器名），
 // 探测按地址打；合成子端的替身也按机器名查表（判据件里写不出真地址）。
 
 // eggBackendProbeLive 真探测：`GET /eggs`（只读）⇒ 真后端回据。
@@ -1118,7 +1118,7 @@ func eggCocoonNames() []string {
 
 // ---- A12 归名（决-13）：`cocoon pack|info|verify|xfer` —— 卵的单文件封装（`*.egg`）工具 ----------------
 //
-// 真搬体 = `zerg_egg.go`（`scripts/edge-node/zerg-egg.py` 的 Go 真搬 · DEV-1798）；本函数只做**入口 ＋ 转发**：
+// 真搬体 = `zerg_egg.go`（`scripts/node-a/zerg-egg.py` 的 Go 真搬 · DEV-1798）；本函数只做**入口 ＋ 转发**：
 // 把族动作名（`inv.path[1]` = pack/info/verify/xfer）＋ 其后的一切（位置参数与旗标逐字）原样交给
 // `zergEggGateMain`，连退码也不改写（M2 真搬体与 py 原身逐字对齐）。✗ 不重写 `zerg_egg.go` 里任何一段。
 //

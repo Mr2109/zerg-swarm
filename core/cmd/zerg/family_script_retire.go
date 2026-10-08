@@ -95,7 +95,7 @@ const scriptRetireClosedSetDesc = "自研面全体 py/sh（全仓 − `vendor/**
 // 依据 2026-10-07 决-12（Mr2109「按」）：闭集该跟「自研面」（大目标：272 件）这个**目标定义**一致，
 //
 //	✗ 不跟「退场流程最初扫到的那两棵树」（原 `scripts/**`＋`core/**`）一致。
-var scriptRetireClosedSetExcludedPrefixes = []string{"vendor/", "tools/ocr/venv/"}
+var scriptRetireClosedSetExcludedPrefixes = []string{"vendor/", "tools/ocr/venv/", "scripts/evals/_archive/"}
 
 // scriptRetireInClosedSet —— 目标件闭集判定（决-12）：自研面 py/sh（全仓 − `vendor/**` − `tools/ocr/venv/**`）。
 //
@@ -140,7 +140,7 @@ var scriptRetireExcReasonPrefixes = []string{"生态绑定", "OS胶水", "vendor
 // scriptRetireExcReasonColon —— 首词分隔符 = **全角冒号**（U+FF1A）；✗ 半角 `:` 不算。
 const scriptRetireExcReasonColon = "\uFF1A"
 
-// scriptRetireExcReasonDomainObjects —— **对照/校验**名单（现读 17 件 · ✗ **非判域**）。
+// scriptRetireExcReasonDomainObjects —— **对照/校验**名单（现读 15 件 · ✗ **非判域**）。
 //
 // ★ 名单不再当判域选择子：判域 ≡ `reason` 首词 ∈ 闭集（契约真源）⇒ 名册增删**自动随动**，消掉
 // 「添件忘补名单 ⇒ 漏判」这颗雷。此名单只作回归对照（仅校验「名单内件仍在判域」· ✗ 只许随名册瘦身下调）。
@@ -151,8 +151,6 @@ var scriptRetireExcReasonDomainObjects = []string{
 	"mcp/bench_llmlingua2_v2.py",
 	"mcp/test_compress_models.py",
 	"mcp/test_selective_context.py",
-	"scripts/build/build-wall-mutate.py",
-	"scripts/build/negctl-build-wall.sh",
 	"scripts/gates/mutation-smoke.sh",
 	"scripts/gates/precommit-gates.sh",
 	"scripts/gates/two-states-gate-mutate.py",

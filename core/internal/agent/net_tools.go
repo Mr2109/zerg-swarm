@@ -186,7 +186,7 @@ type SearchParams struct {
 	TimeRange string   // 时间过滤 day/week/month/year（空=不限）
 	Domains   []string // 限定域名（site: 操作符——信任站点）
 	FetchTop  int      // 自动抓取前 N 条正文（0=不抓——默认 1 更实用）
-	Rewrite   bool     // LLM query 重写（EDGE-NODE 9001——失败 fallback 规则）
+	Rewrite   bool     // LLM query 重写（node-a 9001——失败 fallback 规则）
 }
 
 // WebSearchV2 — v1.0.1 完整搜索（query 重写 → 缓存 → 桥 → 格式化 → 自动抓取）
@@ -321,10 +321,10 @@ func buildSiteOp(domains []string) string {
 	return strings.Join(parts, " OR ")
 }
 
-// llmRewriteQuery — LLM query 重写（EDGE-NODE 9001 example-35b-v2——失败 fallback 规则——可选）
-// 通道: ssh g01@<EDGE-NODE IP> → curl 127.0.0.1:9001/v1/chat/completions（llama-server 绑定 127.0.0.1——需 EDGE-NODE 本机调）
-// 取址: EDGE-NODE 的 IP 由 fleet.yaml 的 fleet 段解析（config.NodeAddr——GAP-20260926-71），不再写死。
-// 端口: 9001 是 EDGE-NODE 本机 llama-server 端口（不是 fleet 段字段，故留字面值）。
+// llmRewriteQuery — LLM query 重写（node-a 9001 example-35b-v2——失败 fallback 规则——可选）
+// 通道: ssh g01@<node-a IP> → curl 127.0.0.1:9001/v1/chat/completions（llama-server 绑定 127.0.0.1——需 node-a 本机调）
+// 取址: node-a 的 IP 由 fleet.yaml 的 fleet 段解析（config.NodeAddr——GAP-20260926-71），不再写死。
+// 端口: 9001 是 node-a 本机 llama-server 端口（不是 fleet 段字段，故留字面值）。
 const x3RewritePort = 9001
 
 // sshTargetFor 把机器名编成 ssh 目标（g01@<IP>）——IP 来自 fleet 真源（config.NodeAddr）。
@@ -334,7 +334,7 @@ func sshTargetFor(host string, fleet map[string]config.FleetNode) string {
 	return "g01@" + ip
 }
 
-// x3SSHTarget 取 EDGE-NODE 的 ssh 目标（g01@<IP>）——IP 来自 fleet.yaml 真源（config.NodeAddr）。
+// x3SSHTarget 取 node-a 的 ssh 目标（g01@<IP>）——IP 来自 fleet.yaml 真源（config.NodeAddr）。
 func x3SSHTarget() (string, error) {
 	fleetYAML := filepath.Join(statepath.WorkspaceRoot(), "gateway", "fleet.yaml")
 	cfg, err := config.LoadFleetConfig(fleetYAML)

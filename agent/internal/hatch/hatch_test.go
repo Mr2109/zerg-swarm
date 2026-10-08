@@ -1,6 +1,6 @@
-// hatch_test.go —— 孵化器验收（纯函数部分，跨平台可跑；真执行在 EDGE-NODE 上另验）。
+// hatch_test.go —— 孵化器验收（纯函数部分，跨平台可跑；真执行在 node-a 上另验）。
 //
-// 覆盖：声明 fail-closed（缺字段/版本不认/无档案一律拒孵）· bwrap 命令行配方（含 EDGE-NODE 实测
+// 覆盖：声明 fail-closed（缺字段/版本不认/无档案一律拒孵）· bwrap 命令行配方（含 node-a 实测
 // 三坑）· systemd-run 只负责归属 · 单元名确定性与合法性 · 收卵幂等语义 · 封闭性核验判据。
 package hatch
 
@@ -26,7 +26,7 @@ func goodProfile() monitor.EggProfile {
 		SuggestedIdleUnloadS: 600,
 		SchemaVersion:        1,
 		MeasuredAt:           time.Now(),
-		Machine:              "edge-node",
+		Machine:              "node-a",
 		CalibRuns:            3,
 	}
 }
@@ -201,7 +201,7 @@ func TestSpec_ValidateWeightFilesFailClosed(t *testing.T) {
 	})
 }
 
-// bwrap 配方：EDGE-NODE 实测三坑必须体现（usrmerge 符号链接 / 设备显式绑定 / 权重的挂法）。
+// bwrap 配方：node-a 实测三坑必须体现（usrmerge 符号链接 / 设备显式绑定 / 权重的挂法）。
 func TestBuildBwrapArgv_RecipeFromX3Findings(t *testing.T) {
 	s := goodSpec()
 	argv, err := BuildBwrapArgv(s)
@@ -213,12 +213,12 @@ func TestBuildBwrapArgv_RecipeFromX3Findings(t *testing.T) {
 	// ① usrmerge：缺 /lib64 会 execvp sh: No such file or directory（实测两次复现）
 	for _, link := range []string{"--symlink usr/bin /bin", "--symlink usr/lib /lib", "--symlink usr/lib64 /lib64", "--symlink usr/sbin /sbin"} {
 		if !strings.Contains(joined, link) {
-			t.Errorf("缺 usrmerge 链接 %q（EDGE-NODE 实测坑①）", link)
+			t.Errorf("缺 usrmerge 链接 %q（node-a 实测坑①）", link)
 		}
 	}
 	// ② GPU 必须显式 --dev-bind（默认 --dev 看不到）
 	if !strings.Contains(joined, "--dev-bind /dev/kfd /dev/kfd") {
-		t.Error("缺 /dev/kfd 显式绑定（EDGE-NODE 实测坑②：默认 --dev 看不到 GPU）")
+		t.Error("缺 /dev/kfd 显式绑定（node-a 实测坑②：默认 --dev 看不到 GPU）")
 	}
 	if !strings.Contains(joined, "--dev-bind /dev/dri/renderD128 /dev/dri/renderD128") {
 		t.Error("缺渲染节点显式绑定（坑②）")
@@ -296,7 +296,7 @@ func TestBuildBwrapArgv_RecipeFromX3Findings(t *testing.T) {
 // 逐文件权重的 argv 配方（2026-09-15 收口，缺陷 12）：`--dir /models` 打底**在前**、逐文件只读绑定按
 // 声明顺序落下、**没有任何**绑定的落点是 /models 本身、同一 Spec 逐字可复现。
 //
-// 形态取自 edge-node 报告 §5（第一枚卵真机实测）：真机上挂的是 `--ro-bind /data/models/qwen /models`
+// 形态取自 node-a 报告 §5（第一枚卵真机实测）：真机上挂的是 `--ro-bind /data/models/qwen /models`
 // （整个目录），空间内 `ls /models` 能列出 Qwen2.5-VL / Flash-Next 等**同目录的别的模型** ——
 // 本用例钉住的就是那一刀改成逐文件（真机形态的 mountinfo 侧在 TestCheckEnclosure_RealMachineShape）。
 func TestBuildBwrapArgv_PerFileWeightsLanding(t *testing.T) {
@@ -600,7 +600,7 @@ func TestUnitName_SanitizedAndDeterministic(t *testing.T) {
 	}
 }
 
-// 收卵幂等：rc=0 成功；rc=5 + "could not be found" 也算成功（EDGE-NODE 实测二次 stop）；
+// 收卵幂等：rc=0 成功；rc=5 + "could not be found" 也算成功（node-a 实测二次 stop）；
 // 其它错误必须如实上报（不许把失败当成功）。
 func TestCollectOutcome_IdempotentButHonest(t *testing.T) {
 	if err := collectOutcome(0, ""); err != nil {
@@ -614,7 +614,7 @@ func TestCollectOutcome_IdempotentButHonest(t *testing.T) {
 	}
 }
 
-// 封闭性核验判据（§6.9）：以 EDGE-NODE 实测真值形态为样例。
+// 封闭性核验判据（§6.9）：以 node-a 实测真值形态为样例。
 func TestCheckEnclosure_Verdict(t *testing.T) {
 	// mountinfo 样例（第 6 段 = 每挂载点选项；第 5 段 = 挂载点）
 	const (
@@ -687,7 +687,7 @@ func TestCheckEnclosure_Verdict(t *testing.T) {
 	}
 }
 
-// 真机形态（edge-node 报告 §5「mountinfo 四判据（原文）」，第一枚卵 2026-09-15）：逐文件之后空间里的权重
+// 真机形态（node-a 报告 §5「mountinfo 四判据（原文）」，第一枚卵 2026-09-15）：逐文件之后空间里的权重
 // 应该是**每个声明文件一条只读挂载**，而 **/models 本身没有挂载项**（它只是 `--dir` 造的空目录）。
 //
 // §5 原文（当时是整目录挂法，本用例照它的字段形态改成逐文件）：
@@ -1030,7 +1030,7 @@ func TestEnclosureReport_Failures(t *testing.T) {
 // ── 缺陷 3：配方必须只读挂 /sys（引擎认设备靠它）──────────────────────────────
 
 // 通用需求：设备**可不可用**由 /sys 下的拓扑/属性描述，故 /sys 恒只读进空间。
-// EDGE-NODE 真机 2026-09-15：缺它 ⇒ `ggml_cuda_init: failed to initialize ROCm: no ROCm-capable
+// node-a 真机 2026-09-15：缺它 ⇒ `ggml_cuda_init: failed to initialize ROCm: no ROCm-capable
 // device is detected`，引擎仍起得来但**静默降级 CPU**（设备节点已 --dev-bind 也认不到）。
 func TestBuildBwrapArgv_SysReadOnlyBindPresent(t *testing.T) {
 	s := goodSpec()
@@ -1147,7 +1147,7 @@ func TestBuildBwrapArgv_WrapperExecCarriesEnvAndArgs(t *testing.T) {
 		t.Error("同一 Spec 两次构造 argv 应完全一致（可复现）")
 	}
 
-	// 跨 shell（EDGE-NODE 的 /bin/sh 是 **dash**，macOS 的是 bash）：同一个包装脚本再在别的实现上过一遍。
+	// 跨 shell（node-a 的 /bin/sh 是 **dash**，macOS 的是 bash）：同一个包装脚本再在别的实现上过一遍。
 	// 这一段是为「`--` 当 $0 的语义随实现而异」「单引号转义」这类跨 shell 坑准备的 —— 只有真跑
 	// 才算证明（workdir 上哪个 shell 存在就跑哪个，缺了就如实跳过并记一行）。
 	for _, sh := range []string{"/bin/dash", "/bin/bash"} {
@@ -1239,7 +1239,7 @@ func TestValidate_EnvFailClosed(t *testing.T) {
 
 // ── 缺陷 2：核验对象必须是**空间内进程**，不是 bwrap 父进程 ────────────────────
 
-// 真机形态（EDGE-NODE 2026-09-15）：
+// 真机形态（node-a 2026-09-15）：
 //
 //	pid=1379471 MainPID（bwrap 父进程）在宿主挂载命名空间 → /models 不存在、/data 可见、550 pids
 //	pid=1379473 空间内进程（bwrap 子进程）     → /models=ro、/work=rw、/data 隐藏、2 pids
@@ -1251,14 +1251,14 @@ func TestPickSpacePID_RealMachineShape(t *testing.T) {
 		hostNS  = "mnt:[4026531832]" // MainPID / 宿主的挂载命名空间
 		spaceNS = "mnt:[4026532767]" // 空间内进程的挂载命名空间
 		unitCg  = "0::/user.slice/user-1000.slice/user@1000.service/llm.slice/zerg-qwen38-27b-egg.service"
-		otherCg = "0::/user.slice/user-1000.slice/user@1000.service/edge-node-agent.service"
+		otherCg = "0::/user.slice/user-1000.slice/user@1000.service/node-a-agent.service"
 	)
 	procs := []spaceProc{
 		{PID: 1379471, Cgroup: unitCg, MntNS: hostNS, Comm: "bwrap"},         // MainPID：bwrap 父进程（留在原 ns）
 		{PID: 1379473, Cgroup: unitCg, MntNS: spaceNS, Comm: "bwrap"},        // 空间内 bwrap
 		{PID: 1379474, Cgroup: unitCg, MntNS: spaceNS, Comm: "llama-server"}, // 空间内引擎
 		{PID: 999, Cgroup: otherCg, MntNS: spaceNS, Comm: "llama-server"},    // 别的单元（同 ns 也不许挑）
-		{PID: 5, Cgroup: otherCg, MntNS: hostNS, Comm: "edge-node-agentd"},          // 宿主上的别的进程
+		{PID: 5, Cgroup: otherCg, MntNS: hostNS, Comm: "node-a-agentd"},      // 宿主上的别的进程
 		{PID: 1379470, Cgroup: unitCg, MntNS: hostNS, Comm: "systemd"},       // 同单元但留在宿主 ns
 	}
 	pid, why, err := pickSpacePID(1379471, unitCg, hostNS, procs)

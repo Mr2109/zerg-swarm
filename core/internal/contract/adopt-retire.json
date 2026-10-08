@@ -946,9 +946,9 @@
       "evidence": "GAP-20261008-02 · 死原型（零步零消费者·两态 CLI⟷py3.14.7 rc0/0 stdout 0B stderr 0B 逐字同）· 名册退出 DEV-1887（retire_exceptions 67→65）· 正式工具已是 scripts/edge-node/zerg-egg.py"
     },
     {
-      "object": "start-zerg-ui.sh",
+      "object": "scripts/build/start-zerg-ui.sh",
       "state": "已登记退场（2026-10-08）",
-      "evidence": "GAP-20261007-10 · A17 并入 A6：scripts/build/start-zerg-ui.sh 为单一真源＋正门 zerg ui start（core/cmd/zerg/ui_start.go 已落）· 两态 bash -n rc0（在位）⟷ 缺件不判红（precommit TOP_ENTRIES_RETIRABLE:2171）· 名册退出 DEV-1887（retire_exceptions 67→65）"
+      "evidence": "GAP-20261007-10 · A17 并入 A6：scripts/build/start-zerg-ui.sh 为单一真源＋正门 zerg ui start（core/cmd/zerg/ui_start.go 已落）· 两态 bash -n rc0（在位）⟷ 缺件不判红（precommit TOP_ENTRIES_RETIRABLE:2171）· 名册退出 DEV-1887（retire_exceptions 67→65） ｜ DEV-2013 · 退役批9-20261008 · Go 真搬 core/cmd/zerg/ui_start.go（DEV-1985/1986 两处路径消费者已迁 CLI 面）· 退役态预检 bash -n rc0/0 · 白名单两半下架 · 新制品 /tmp/zerg-b9"
     },
     {
       "object": "scripts/gates/check-exit-codes.py",
@@ -1039,6 +1039,201 @@
       "object": "scripts/svc/zerg-cron-submit.sh",
       "state": "已登记退场（2026-10-08）",
       "evidence": "退场批7-20261008 · 干净候选 · 消费者判定=无（zerg code find zerg-cron-submit 全仓 11 命中 全为登记/排除面：公开标记.tsv:84 · publish-public.sh:330 · mirror-public-lib.py:326 · judge-registry.json:912-914 · lang-freeze-baseline.json:591 · check-wired-scripts.py:236 · check-wired-scripts.go:1542）· 无 import/CI/夹具/文档/launchd 活调用（.github/workflows 0 命中 · deploy/*.plist 不引用）· 两态：在位 zerg script ls 列本件(kind=sh public=no)/bash -n rc=0 ⟷ 缺件态无门判红（start-zerg-ui.sh 同族口径）· 九面摘行"
+    },
+    {
+      "object": "scripts/gates/check-genflag-surface.py",
+      "state": "已登记退场（2026-10-08）",
+      "evidence": "GAP-20260928-59 · 退场批8-20261008 · Go 真搬 core/cmd/zerg/check_genflag_surface.go 在盘（inproc 键 check-genflag-surface@gate_inproc_table.go:68）· 两态三面逐字同（py/Go 各 --self-test rc=0 · 13 行）· 提案 DEV-1951"
+    },
+    {
+      "object": "scripts/edge-node/zerg-egg.py",
+      "state": "已登记退场（2026-10-08）",
+      "evidence": "GAP-20260926-194"
+    },
+    {
+      "object": "ui/scripts/i18n_audit.py",
+      "state": "已登记退场（2026-10-08）",
+      "evidence": "GAP-20261008-05"
+    },
+    {
+      "object": "scripts/dev/writer-lock.sh",
+      "state": "已登记退场（2026-10-08）",
+      "evidence": "GAP-20260926-94"
+    },
+    {
+      "object": "scripts/gates/check-retire-consistency.py",
+      "state": "已登记退场（2026-10-08）",
+      "evidence": "GAP-20261008-05 · 退场批10-20261008 · Go 真搬 core/cmd/zerg/check_retire_consistency.go 在盘 · inproc 键 check-retire-consistency@gate_inproc_table.go:125 · py 独有断言「缺账本⇒报错非空」已搬 Go 自检（DEV-1952）· 退役态预检：件离盘 CLI --check/--self-test rc=0=在盘 · 提案 DEV-1957"
+    },
+    {
+      "object": "scripts/gates/check-face-parity.py",
+      "state": "已登记退场（2026-10-08）",
+      "evidence": "GAP-20260927-79 · 退役续批-20261008 · Go 真搬 core/cmd/zerg/check_face_parity.go 在盘 · inproc 键 check-face-parity@gate_inproc_table.go:57 · 退役态预检：件离盘 CLI/--self-test rc=0=在盘 且 stdout 逐字同 · 提案 DEV-1961"
+    },
+    {
+      "object": "scripts/gates/check-selfcount.py",
+      "state": "已登记退场（2026-10-08）",
+      "evidence": "GAP-20260927-102 · 退役续批-20261008 · Go 真搬 core/cmd/zerg/check_selfcount.go 在盘 · inproc 键 check-selfcount@gate_inproc_table.go · 步 门91 走 zerg gate check check-selfcount · 退役态预检：件离盘 CLI/--self-test rc=0=在盘 且 stdout 逐字同 · 提案 DEV-1961"
+    },
+    {
+      "object": "scripts/gates/check-i18n-drift.sh",
+      "state": "已登记退场（2026-10-08）",
+      "evidence": "DEV-1962"
+    },
+    {
+      "object": "scripts/gates/check-tool-version-sync.sh",
+      "state": "已登记退场（2026-10-08）",
+      "evidence": "DEV-1962"
+    },
+    {
+      "object": "scripts/gates/check-publish-face-sync.py",
+      "state": "已登记退场（2026-10-08）",
+      "evidence": "GAP-20260927-160 · 退役续批3-20261008 · Go 真搬 core/cmd/zerg/check_publish_face_sync.go 在盘 · inproc 键 check-publish-face-sync@gate_inproc_table.go:118 · 步 release: B9 走 zerg gate check · 发布面闸 publish-preflight.sh 闸⓪ 已解耦（优先 Go 半）· 退役态预检：件离盘 CLI/--self-test rc=0=在盘 且 stdout 逐字同"
+    },
+    {
+      "object": "scripts/gates/check-version-sources.py",
+      "state": "已登记退场（2026-10-08）",
+      "evidence": "GAP-20260927-89 · 退役续批3-20261008 · Go 真搬 core/cmd/zerg/check_version_sources.go 在盘 · inproc 键 check-version-sources@gate_inproc_table.go:146 · 步 门②/release B3 走 zerg gate check · 退役态预检：件离盘 CLI/--self-test rc=0=在盘 且 stdout 逐字同"
+    },
+    {
+      "object": "scripts/docs/gen-gap-ledger.py",
+      "state": "已登记退场（2026-10-08）",
+      "evidence": "GAP-20261001-13 · DEV-1773 · DEV-1820 · DEV-1967 · 退役续批4-20261008 · Go 真搬 core/cmd/zerg/gen_gap_ledger.go 在盘 · inproc 键 gen-gap-ledger@gate_inproc_table.go:162 · 步 门64 走 zerg gate check gen-gap-ledger --check · 退役态预检：件离盘 CLI --check/--self-test rc 与 stdout 逐字同"
+    },
+    {
+      "object": "scripts/gates/check-slice.py",
+      "state": "已登记退场（2026-10-08）",
+      "evidence": "GAP-20261001-13 · DEV-0959 · DEV-1967 · 退役续批4-20261008 · Go 真搬 core/cmd/zerg/check_slice.go 在盘 · inproc 键 check-slice@gate_inproc_table.go:133 · 步 slice 走 zerg gate check check-slice --probe · impact 壳 family_impact_timeface.go:316 退役态回落 Go 半 · 退役态预检：件离盘 CLI --probe/--selftest rc 与 stdout 逐字同"
+    },
+    {
+      "object": "scripts/svc/decl-label.sh",
+      "state": "已登记退场（2026-10-08）",
+      "evidence": "GAP-20260927-107"
+    },
+    {
+      "object": "tools/kb_docs_sync.py",
+      "state": "已登记退场（2026-10-08）",
+      "evidence": "GAP-20261001-13 · GAP-20261008-05 · 退役续批6-20261008 · Go 真搬 core/cmd/zerg/kb_docs_sync.go 在盘 · inproc 键 kb-docs-sync@gate_inproc_table.go · 全仓无活 py 调用点（引用皆 usage/注释/登记面）"
+    },
+    {
+      "object": "tools/doc_index_gen.py",
+      "state": "已登记退场（2026-10-08）",
+      "evidence": "GAP-20261001-13"
+    },
+    {
+      "object": "tools/gen_tools_md.py",
+      "state": "已登记退场（2026-10-08）",
+      "evidence": "GAP-20261001-13"
+    },
+    {
+      "object": "scripts/gates/check-ghost-decl-diff.py",
+      "state": "已登记退场（2026-10-08）",
+      "evidence": "GAP-20260927-62 · 退役批6-20261008 · Go 真搬 core/cmd/zerg/check_ghost_decl_diff.go（已不读盘上 py）· inproc 键 check-ghost-decl-diff@gate_inproc_table.go:71 · 步串 precommit-gates.sh:2956 已 CLI · 退役态预检 rc 0/0（两态三面逐字同）"
+    },
+    {
+      "object": "scripts/docs/check-outrepo-dead-refs.py",
+      "state": "已登记退场（2026-10-08）",
+      "evidence": "DEV-1998"
+    },
+    {
+      "object": "scripts/gates/check-help-shape.py",
+      "state": "已登记退场（2026-10-08）",
+      "evidence": "DEV-2002 · 退役批8-20261008 · Go 真搬 core/cmd/zerg/check_help_shape.go（DEV-1997 解读耦合）· inproc 键 check-help-shape@gate_inproc_table.go:77 · 步串 precommit-gates.sh:3410 已 CLI · 退役态预检 rc 1/1 三面逐字同（新制品 /tmp/zerg-cli-b8）"
+    },
+    {
+      "object": "scripts/build/lib-sign.sh",
+      "state": "已登记退场（2026-10-08）",
+      "evidence": "DEV-2002 · 退役批8-20261008 · Go 对等体 scripts/build/internal/sign/sign.go ＋ 构建器 --sign-only（DEV-1996 两处 source 已改走）· 退役态预检 --sign-only rc 0/0 三面逐字同（新制品 /tmp/zerg-cli-b8）"
+    },
+    {
+      "object": "scripts/gates/check-wired-scripts.py",
+      "state": "已登记退场（2026-10-08）",
+      "evidence": "DEV-2013 · 退役批9-20261008 · Go 真搬 core/cmd/zerg/check_wired_scripts.go · inproc 键 check-wired-scripts@gate_inproc_table.go:151 · 步串 precommit-gates.sh:2706 已 CLI · 退役态预检 rc0/0 · 新制品 /tmp/zerg-b9"
+    },
+    {
+      "object": "scripts/svc/archive-mount.sh",
+      "state": "已登记退场（2026-10-08）",
+      "evidence": "DEV-2031"
+    },
+    {
+      "object": "scripts/build/run_all.sh",
+      "state": "已登记退场（2026-10-08）",
+      "evidence": "GAP-20261001-13"
+    },
+    {
+      "object": "scripts/build/pack-release.sh",
+      "state": "已登记退场（2026-10-09）",
+      "evidence": "DEV-2046 · 退场批-pack-release · Go 真身 core/cmd/zerg/pack_release.go（批B1 真搬 · DEV-2005 建键）+ inproc 键 pack-release + 中央写类档表 gateCheckClassEntry 登记（DEV-2039 A方案 ⇒ 退役前后 D2 确认盾逐格同）· 退役态预检合格"
+    },
+    {
+      "object": "scripts/build/zerg-swap-agent.sh",
+      "state": "已登记退场（2026-10-09）",
+      "evidence": "DEV-2055 · GAP-20261008-16 · 退场批-换件三件-20261009 · Go 真身 core/cmd/zerg/swap_agent.go（真搬 · 只报告档 · 退役态预检：件移出仓 rc/stdout/stderr 与在盘逐字同 · 无 rc=2/8）"
+    },
+    {
+      "object": "scripts/build/zerg-swap-ui.sh",
+      "state": "已登记退场（2026-10-09）",
+      "evidence": "DEV-2055 · GAP-20261008-16 · 退场批-换件三件-20261009 · Go 真身 core/cmd/zerg/swap_ui.go（真搬 · 只报告档 · 退役态预检：件移出仓 rc/stdout/stderr 与在盘逐字同 · 无 rc=2/8）"
+    },
+    {
+      "object": "scripts/build/zerg-swap-core.sh",
+      "state": "已登记退场（2026-10-09）",
+      "evidence": "DEV-2055 · GAP-20261008-16 · 退场批-换件三件-20261009 · Go 真身 core/cmd/zerg/family_swap_core.go（真搬 · 事故面 · 退役态预检：件移出仓 rc/stdout/stderr 与在盘逐字同 · 无 rc=2/8）"
+    },
+    {
+      "object": "scripts/docs/gen-cli-reference.py",
+      "state": "已登记退场（2026-10-09）",
+      "evidence": "DEV-2065"
+    },
+    {
+      "object": "scripts/docs/gen-glossary-exports.py",
+      "state": "已登记退场（2026-10-09）",
+      "evidence": "DEV-2065"
+    },
+    {
+      "object": "scripts/dev/atomic-write.sh",
+      "state": "已登记退场（2026-10-09）",
+      "evidence": "DEV-2071 · GAP-20261008-11 · 退场批②-两件-20261009 · Go 真身 core/cmd/zerg/atomic_write.go（inproc 键 atomic-write）· 中央分类表 gateCheckClassEntry 登记 write/D2 ⇒ 退役前后 D2 确认盾逐格同 · 退役态预检：件移出仓 rc/stdout/stderr 与在盘逐字同（dry/bare/--self-test/--yes/--yes--self-test 五档）"
+    },
+    {
+      "object": "scripts/dev/isolate-ro.sh",
+      "state": "已登记退场（2026-10-09）",
+      "evidence": "DEV-2071 · GAP-20261008-11 · 退场批②-两件-20261009 · Go 真身 core/cmd/zerg/isolate_ro.go（inproc 键 isolate-ro · 命令面 zerg isolate-ro）· 中央分类表 gateCheckClassEntry 登记 write/D2 ⇒ 退役前后 D2 确认盾逐格同 · 退役态预检：件移出仓 rc/stdout/stderr 与在盘逐字同（门路 dry/bare/--self-test/--yes/--yes--self-test ＋ 命令面 self-test/bare/new-bad-repo 八档）"
+    },
+    {
+      "object": "scripts/build/build-all.sh",
+      "state": "已登记退场（2026-10-09）",
+      "evidence": "DEV-2078 · GAP-20261008-12 · 退场批-build-all-20261009 · Go 真身 scripts/build/cmd/zerg-build-all/main.go · 调用面 Makefile:12/setup-zerg.sh:275/pack_release.go:140 已改指 go run · 中央分类表 build-all 在册（DEV-2039 盾随登记存续）· 退役态预检 rc 逐字同"
+    },
+    {
+      "object": "scripts/evals/stability-stats.py",
+      "state": "已登记退场（2026-10-09）",
+      "evidence": "DEV-2081 · GAP-20261001-13 · GAP-20261008-05 · 退场批-A1-两件-20261009 · Go 真身 core/cmd/zerg/eval_stability_stats.go（inproc 键 stability-stats · 命令面 zerg eval run stability-stats）· 退役态预检：件移出仓 rc/stdout/stderr 与在盘逐字同（--self-test/无参/--help/未知参/真输入 五档 · 无 rc=2 新增）"
+    },
+    {
+      "object": "scripts/evals/compare.py",
+      "state": "已登记退场（2026-10-09）",
+      "evidence": "DEV-2081 · GAP-20261001-13 · GAP-20261008-05 · 退场批-A1-两件-20261009 · Go 真身 core/cmd/zerg/eval_compare.go（inproc 键 compare · 命令面 zerg eval run compare）· 退役态预检：件移出仓 rc/stdout/stderr 与在盘逐字同（无参/两参/--help 三档 · 无 rc=2 新增）"
+    },
+    {
+      "object": "ui/scripts/check-i18n.py",
+      "state": "已登记退场（2026-10-09）",
+      "evidence": "GAP-20261001-52"
+    },
+    {
+      "object": "scripts/build/build-wall.sh",
+      "state": "已登记退场（2026-10-09）",
+      "evidence": "GAP-20261008-12（同族真跑档前置闸口径）· DEV-2072（接线收尾）"
+    },
+    {
+      "object": "scripts/build/negctl-build-wall.sh",
+      "state": "已登记退场（2026-10-09）",
+      "evidence": "GAP-20261001-13 · DEV-2107 · 退场批-negctl-mutate-20261009 · 牙搬 Go 测试（scripts/build/cmd/zerg-build/{negctl_build_wall_test.go,build_wall_mutate_test.go} · go test -overlay 免真改仓内源）· 两态逐字同：Go 四牙 C0绿/N1N2N3 rc=2 ⟷ sh 版 PASS4/0；变异 M1→N2·M2→N1·M3→N3 ⟷ py 版逐项同；go test rc=0"
+    },
+    {
+      "object": "scripts/build/build-wall-mutate.py",
+      "state": "已登记退场（2026-10-09）",
+      "evidence": "GAP-20261001-13 · DEV-2107 · 退场批-negctl-mutate-20261009 · 牙搬 Go 测试（scripts/build/cmd/zerg-build/{negctl_build_wall_test.go,build_wall_mutate_test.go} · go test -overlay 免真改仓内源）· 两态逐字同：Go 四牙 C0绿/N1N2N3 rc=2 ⟷ sh 版 PASS4/0；变异 M1→N2·M2→N1·M3→N3 ⟷ py 版逐项同；go test rc=0"
     }
  ],
  "retire_exceptions": [
@@ -1145,20 +1340,6 @@
    "category": "门跑基建·结构性例外（探针·脱敏活体）",
    "reason": "脱敏活体探针·真跑",
    "keep_cost": "随脱敏面同步",
-   "review_date": "2026-10-07"
-  },
-  {
-   "object": "scripts/build/build-wall-mutate.py",
-   "category": "测试面·变异器",
-   "reason": "硬线：变异器——本体是把仓内 `scripts/build/build-wall.sh` 真改坏（:3-19 三条锚点 `exit 2`→`exit 0`）＋真跑＋还原；Go 化=写一个改仓内源文件的程序。",
-   "keep_cost": "随茧壁构建面同步",
-   "review_date": "2026-10-07"
-  },
-  {
-   "object": "scripts/build/negctl-build-wall.sh",
-   "category": "测试面·负例活体控制",
-   "reason": "硬线：变异器族负控——其合法性由 build-wall-mutate 的硬线定义（判 build-wall.sh 在非法态必红）；Go 化该负控=把变异面搬进 Go，与变异器同命。",
-   "keep_cost": "随负控面同步",
    "review_date": "2026-10-07"
   },
   {
@@ -1496,8 +1677,42 @@
    "reason": "硬线：变异器——本体＝真改仓内 scripts/sandbox-probes/verify-two-states.py（G1/G2/G3 三条锚点各恰命中一次后原地写盘 · mutate() :134）＋真起茧壁自检子进程（--self-test --wall :143）＋ finally 逐字节还原；缺省档两态不可合同（现读）：py 真跑档 rc=0「变异验证全绿」⟷ Go 按「✗ 不改仓内件」硬线只做只读结构断言 rc=2「真跑档未搬」⇒ Go 化该真跑档＝写一个改仓内件的程序 ⇒ 命硬线·物理不可化 ⇒ ✗ 不可退。",
    "keep_cost": "随两态面同步",
    "review_date": "2026-10-08"
-  }
- ],
+  },
+  {
+   "object": "scripts/docs/inplace-window.py",
+   "category": "测试面·变异器公共件（就地窗口）",
+   "reason": "硬线：被两枚硬线变异器**同进程 import**（`scripts/gates/two-states-gate-mutate.py` :97-102 · `scripts/wall/wall-bridge-mutate.py` :38-43 用 importlib 载入）——变异器须先 `arm` 落前像、`install_handlers` 装**同进程信号面**（SIGINT/SIGTERM handler ＋ finally 复原，信号必须落在变异器自己的进程里）；Go 半 `core/cmd/zerg/inplace_window.go` 是**子进程 CLI**，给不了「同进程装 handler」这一面 ⇒ 迁 Go 后两枚变异器仍须直接 import 本件，✗ 不可退。",
+   "keep_cost": "随两态/茧壁变异面同步；本件是两枚变异器**唯一**的复原口径 ⇒ 与变异器族同命（要退须先解「同进程信号面」这一条）",
+   "review_date": "2026-10-08"
+  },
+  {
+   "object": "scripts/sandbox-probes/writeout-probe.py",
+   "category": "沙箱探针·茧壁取证物",
+   "reason": "硬线：被茧壁取证面**硬拷贝真件**进靶子（`scripts/wall/wall-macos-evidence.py` :237 跑「靶子/probe/writeout-probe.py」· `wall/tests/macos_seatbelt.rs` :292/:310 同）——本件**源码 sha256 本身即取证物**（`wall/evidence-macos-seatbelt.txt` :15 现读 `4cbf47a8…`），靶子里跑的必须是逐字节真件；Go 半 `core/cmd/zerg/writeout_probe.go` 是 `gate check` **子命令**、✗ 不是可拷进靶子的独立制品 ⇒ 不可退。",
+   "keep_cost": "随茧壁取证面（seatbelt 判据 7 写空间外实测组）同步；退场需先把「可拷进靶子的独立制品」做出来（✗ 不是「不做」）",
+   "review_date": "2026-10-08"
+  },
+  {
+   "object": "scripts/svc/zerg-core-daemon.sh",
+   "category": "物理不可化",
+   "reason": "OS胶水：主控的 launchd 托管包装——`com.zerg.core.plist` 的 ProgramArguments 逐字=`/bin/bash scripts/svc/zerg-core-daemon.sh`（`deploy/服务声明.tsv:26` 程序列同值·声明↔现值对账的门⑧/门㉒ 盯它），职责=launchd 极简环境下定位仓根→源 .env→补 PATH→exec bin/zerg-core；全仓无 Go 半、键 ∉ inproc ⇒ 迁 Go＝改掉平台服务集成形态本身。",
+   "keep_cost": "随 launchd/plist 形态与机型差异维护；退场需先把 launchd 环境桥等价搬进 Go 并保住 `deploy/服务声明.tsv` 的声明↔现值对账（✗ 不是「不做」）",
+   "review_date": "2026-10-08"
+  },
+  {
+   "object": "scripts/build/start-zerg-core.sh",
+   "category": "物理不可化",
+   "reason": "OS胶水：主控的 launchd 托管管理器——本体是平台原生的服务单元生成/装载/卸载（按当前仓根重写 `~/Library/LaunchAgents/com.zerg.core.plist`·`launchctl bootstrap/bootout/kickstart -k`），其生成的 plist 形态即真源（`core/cmd/zerg/family_swap_core.go:659` · `scripts/build/zerg-swap-core.sh:369` 逐字同）；全仓无 Go 半、键 ∉ inproc，且 `zerg core restart`（Go）按设计只走 kickstart-k 一支、明令不在 Go 里重写 bootout/bootstrap/plist ⇒ 平台集成面留在本件。",
+   "keep_cost": "随 launchd plist 形态与仓根位置维护；退场需先把 plist 生成/装载/卸载等价搬进 Go 并与现形态逐字节对拍（✗ 不是「不做」）",
+   "review_date": "2026-10-08"
+  },
+  {
+   "object": "start-zerg-core.sh",
+   "category": "物理不可化",
+   "reason": "OS胶水：主控的本机前台启动入口——真起进程并接管其端（`cd 仓根`→透传 `ZERG_EXTRA_ALLOW_DIR`→`exec ./bin/zerg-core 2>&1 | tee /tmp/zerg-core.log`），是 launchd 不适用时（launchd 起的无签名件访问局域网被拦）唯一的前台启动面；全仓无 Go 半、键 ∉ inproc（`zerg core start` 为未开放的 cmdGuarded 桩）⇒ 无 Go 命令面可承接，且 precommit TOP_ENTRIES 硬点名它存在（缺件即红）。",
+   "keep_cost": "随主控启动语义与日志落点维护；退场需先落等价 Go 命令面（前台起进程＋双写 /tmp/zerg-core.log）并改 precommit TOP_ENTRIES（✗ 不是「不做」）",
+   "review_date": "2026-10-08"
+  } ],
  "pending_items": [
   {
    "object": "入口 7 件（agent · api · compat · model · review · scheduler · trace）",
@@ -1529,7 +1744,7 @@
   }
  ],
  "seams": {
-  "E2": "术语表导出器真接表（scripts/docs/gen-glossary-exports.py 与 scripts/公开标记.tsv）—— 本表只登记归属（②），**不重复立项**",
+  "E2": "术语表导出器真接表（scripts/docs/gen-glossary-exports.py 与 scripts/公开标记.tsv）—— 本表只登记归属（②），**不重复立项**（2026-10-09 已退场：scripts/docs/gen-glossary-exports.py ⇒ Go 半 core/cmd/zerg/gen_glossary_exports.go · inproc 键 gen-glossary-exports · 退场批①-两件 · DEV-2065）",
   "D3": "开发文档门禁把 `Zerg-内部文档` 纳入管辖（T-51 的一部分）—— 与门禁 2 步的换根同源，**不重复立项**",
   "E4": "术语表 ROOT 写死 + 假红未清 —— 门禁步 39 的落点，与本表 ④ 那 2 步同一条，**不重复立项**",
   "E6": "i18n `rc=2` 语义错位 —— 门禁步 40 的落点，同上"
@@ -1549,7 +1764,7 @@
   "本表不含 273 条的**逐对象枚举**：逐对象落回写在 `Zerg-内部文档/项目文档/v2.5.10/归属-收编与退役-20260920.md`（导出物），两边的四个总数与五个面分布**逐格相同**（机检断言）。",
   "例外类名册（`retire_exceptions`）**只收闭集内件**（决-12：**自研面** ＝ 全仓 − `vendor/**` − `tools/ocr/venv/**` 的 py/sh）：每条须**四列齐**（category / reason / keep_cost / review_date）＋ `object` 在闭集 ＋ `review_date` 可解析（`2006-01-02`）。机检 = `core/cmd/zerg/family_script_retire.go` 的 `scriptRetireExceptionErrors`（`zerg script retire` 每跑一次先自检名册；外部测试出口 `ScriptRetireExceptionErrorsForTest` · GAP-20261007-03）。",
   "★ 闭集外件**不作退场例外登记**：`.githooks/pre-commit`（提交钩子 · 待 `批-8` 形态落地，见 `设计-退场正门-retire-20261006.md`）原在名册里，但 `zerg script retire` 的闭集闸**先于**例外档 ⇒ 该条对该路径**无牙**，已移出名册（2026-10-07 · GAP-20261007-03）。",
-  "★ 例外名册**随动纠正**（2026-10-07 · 该件**已落 Go 半（M2 真搬）** ⇒ 不再是例外类 · 迁出 8 件 · Go 半均在 `core/cmd/zerg/`）：`scripts/gates/check-i18n-drift.sh`＝`check_i18n_drift.go` · `scripts/gates/check-tool-version-sync.sh`＝`check_tool_version_sync.go` · `scripts/sandbox-probes/writeout-probe.py`＝`writeout_probe.go` · `tools/kb_docs_sync.py`＝`kb_docs_sync.go` · `ui/scripts/check-i18n.py`＝`check_i18n.go` · `ui/scripts/i18n_audit.py`＝`i18n_audit.go` · `tools/doc_index_gen.py`＝`doc_index_gen.go` · `tools/gen_tools_md.py`＝`gen_tools_md.go`（名册 76 → 68）。保留件（含 `scripts/gates/check-gate-bootstrap.sh`）的判定依据＝**真跑子进程 ／ 自举面 ／ 无 Go 半**。",
+  "★ 例外名册**随动纠正**（2026-10-07 · 该件**已落 Go 半（M2 真搬）** ⇒ 不再是例外类 · 迁出 8 件 · Go 半均在 `core/cmd/zerg/`）：`scripts/gates/check-i18n-drift.sh`＝`check_i18n_drift.go` · `scripts/gates/check-tool-version-sync.sh`＝`check_tool_version_sync.go` · `scripts/sandbox-probes/writeout-probe.py`＝`writeout_probe.go` · `tools/kb_docs_sync.py`＝`kb_docs_sync.go` · `ui/scripts/check-i18n.py`＝`check_i18n.go` · `ui/scripts/i18n_audit.py`＝`i18n_audit.go` · `tools/doc_index_gen.py`＝`doc_index_gen.go` · `tools/gen_tools_md.py`＝`gen_tools_md.go`（名册 76 → 68）。**★ 2026-10-08 更正（DEV-2019 · 回登记）**：上列 `scripts/sandbox-probes/writeout-probe.py` 已**回登记**入 `retire_exceptions`（category『沙箱探针·茧壁取证物』· reason 首词『硬线』）—— 茧壁取证面（`scripts/wall/wall-macos-evidence.py`）把真件**硬拷贝**进靶子跑、源码 sha256 本身即取证物；Go 半 `core/cmd/zerg/writeout_probe.go` 是 `gate check` **子命令**、✗ 不是可拷进靶子的独立制品 ⇒ **不可退**（同批还回登记 `scripts/docs/inplace-window.py` · 名册 64→66）⇒ 本项「不再是例外类」对**该件**不再成立（实迁出 **7 件**）。保留件（含 `scripts/gates/check-gate-bootstrap.sh`）的判定依据＝**真跑子进程 ／ 自举面 ／ 无 Go 半**。",
   "★ 例外名册 `reason` 的**首词闭集**（与闭集内件是两个面 · ✗ 别混）：`reason` 须写成 `<首词>：<为什么物理上不能 Go 化>`，首词 = **全角 `：`（U+FF1A）之前**那段；首词须 ∈ 闭集 = `生态绑定` / `OS胶水` / `vendor` / `硬线` / `自举`（**5 档**）。**第 5 档 `自举：`（2026-10-08 补 · Mr2109「按建议走」）**收「门禁自举件／步表宿主」一类：本体＝门禁执行内核，改它＝改门禁本体 ⇒ 物理上不能 Go 化；现读唯一条目 `scripts/gates/precommit-gates.sh`。★ 机检（门 `check-retire-roster` · 拟扩同包纯函数 `scriptRetireExceptionErrors` 第④格 ＋ 前缀常量 `scriptRetireExcReasonPrefixes`）**待落** —— 本档先落真源声明与名册，判据体另批（实施单 `~/.zerg/state/实施单-check-retire-roster-20261008.md`）。"
  ]
 }

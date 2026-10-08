@@ -1,10 +1,10 @@
 //go:build linux
 
-// hatch_linux.go —— 孵化器在 Linux 上的真正执行路径（EDGE-NODE 用）。
+// hatch_linux.go —— 孵化器在 Linux 上的真正执行路径（node-a 用）。
 //
 // 分工（§6.1）：
 //
-//	systemd-run --user  ⇒ 建瞬态单元 + 独立 slice（归属：不被 edge-node-agent.service 的 KillMode 带走）
+//	systemd-run --user  ⇒ 建瞬态单元 + 独立 slice（归属：不被 node-a-agent.service 的 KillMode 带走）
 //	bwrap              ⇒ 建封闭空间（文件系统视图 + 进程视图 + 只读）
 //
 // 收卵 = 停那个单元（幂等：二次停 rc=5 视为成功）；停完整棵树一起收（KillMode=control-group）。
@@ -28,7 +28,7 @@ type Hatcher struct {
 
 // ── 用户总线可达性（2026-09-15 真机踩到，缺陷 15）──────────────────────────────
 //
-// 现象：生产子端跑在 **系统服务** 里（`/system.slice/edge-node-agent.service`），它的环境里既没有
+// 现象：生产子端跑在 **系统服务** 里（`/system.slice/node-a-agent.service`），它的环境里既没有
 // `XDG_RUNTIME_DIR` 也没有 `DBUS_SESSION_BUS_ADDRESS` ⇒ 一切 `systemd-run --user` /
 // `systemctl --user` 都会当场失败：
 //
@@ -153,7 +153,7 @@ func (h Hatcher) Active(ctx context.Context, unit string) (bool, error) {
 	}
 }
 
-// UnitCgroup 单元的 cgroup 路径（观测面：核"它确实不在 edge-node-agent.service 里"）。
+// UnitCgroup 单元的 cgroup 路径（观测面：核"它确实不在 node-a-agent.service 里"）。
 func (h Hatcher) UnitCgroup(ctx context.Context, unit string) (string, error) {
 	cmd, cerr := userScoped(ctx, "systemctl", "--user", "show", unit, "-p", "ControlGroup", "--value")
 	if cerr != nil {
@@ -168,7 +168,7 @@ func (h Hatcher) UnitCgroup(ctx context.Context, unit string) (string, error) {
 
 // MainPID 单元主进程 pid（**注意：它是 bwrap 的父进程，留在原命名空间，不是空间内进程**）。
 //
-// 真机事实（EDGE-NODE，2026-09-15）：MainPID=1379471 的 mnt-ns=mnt:[4026531832]（宿主视图：/models
+// 真机事实（node-a，2026-09-15）：MainPID=1379471 的 mnt-ns=mnt:[4026531832]（宿主视图：/models
 // 不存在、/data 可见、550 pids），空间内进程是它的子进程 mnt-ns=mnt:[4026532767]。
 // ⇒ **不要拿它去读 mountinfo 做封闭性核验**（读到宿主视图 ⇒ 每枚卵都会被判"不符"而收掉，
 // 缺陷 2 的形态）。要核验请用 SpacePID / VerifyEnclosureForUnit / VerifyEnclosure

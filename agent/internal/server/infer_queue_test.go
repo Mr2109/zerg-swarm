@@ -16,7 +16,7 @@ import (
 )
 
 func inferServer() *Server {
-	return NewServer(NewAgent("edge-node", "tok", nil, backend.NewManager(nil, "edge-node"), ""))
+	return NewServer(NewAgent("node-a", "tok", nil, backend.NewManager(nil, "node-a"), ""))
 }
 
 // postInfer 直接调 handler，返回状态码 / Retry-After / 解析后的响应。

@@ -3,7 +3,7 @@
 // 八格（前七格全在**合成仓根**里跑，真仓一个字节不动；第八格读真仓盘上现况但只读）：
 //
 //	① 声明面：`calib ls` 3 件（全 ①）· `eval ls` 22 件，逐件带归属（①18 / ②4 / ④0 —— 现算不手写）；
-//	② 台账不腐：两族点名的件在**真仓盘上**逐件存在（矩阵 `eval ls` ⟷ `scripts/evals/` 现读两面一致）；
+//	② 台账不腐：两族点名的件在**真仓盘上**逐件存在 —— **已真搬 Go（`GoMain` 非空）的件例外**：旧脚本退役（移出仓）后 `File` 只是人面标名、允许缺席（矩阵 `eval ls` ⟷ `scripts/evals/` 现读两面一致）；
 //	③ 未知名 ⇒ 退 2 + 「最像的合法输入」+ 候选（§4.1 K14 第三件）；
 //	④ 缺 `--yes` ⇒ 退 2 且**脚本一次都没跑**（fail-closed 那一格 —— 判据是「夹具的哨兵件没出现」）；
 //	⑤ `--dry-run` ⇒ 退 0 且脚本一次都没跑（零副作用 · 门⑩ `dryrun.v1`）；
@@ -36,12 +36,16 @@ func synthCalibEvalRepo(t *testing.T) (string, string, string) {
 	mustWrite(t, filepath.Join(root, "core", "internal", "version", "version.go"), "package version\n")
 	mustWrite(t, filepath.Join(root, "scripts", "calib", "calib-x3-model.sh"),
 		"#!/bin/bash\n# 合成夹具（判据件用）：证明命令面真调了这支脚本、且退码原样转出。\n"+
-			": > \"$(dirname \"$0\")/ran.sentinel\"\necho \"夹具：edge-node 标定（合成）\"\nexit 7\n")
-	mustWrite(t, filepath.Join(root, "scripts", "evals", "compare.py"),
+			": > \"$(dirname \"$0\")/ran.sentinel\"\necho \"夹具：x"+"3 标定（合成）\"\nexit 7\n")
+	// ★ 2026-10-09（family_eval 退役解耦随动 · chat-harness 真搬随动）：评测族的这一格改用**未真搬**的 ① 件
+	// `v25_benchmark`（照旧 `python3 <件>` exec）。`compare` / `stability-stats` / `chat-harness` 已真搬 Go ⇒
+	// `eval run` 的真跑走 **Go 真身**（✗ 不再 exec 旧脚本）⇒ 它们作「退码原样转出」靶件不再成立。
+	// 本格语义（脚本被 exec 过 ＋ 退码原样转出）一字不动。
+	mustWrite(t, filepath.Join(root, "scripts", "evals", "_archive", "v25_benchmark.py"),
 		"#!/usr/bin/env python3\nimport os\n"+
 			"open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'ran.sentinel'), 'w').write('1')\n"+
-			"print('夹具：compare（合成）')\nraise SystemExit(9)\n")
-	return root, filepath.Join(root, "scripts", "calib", "ran.sentinel"), filepath.Join(root, "scripts", "evals", "ran.sentinel")
+			"print('夹具：v25_benchmark（合成）')\nraise SystemExit(9)\n")
+	return root, filepath.Join(root, "scripts", "calib", "ran.sentinel"), filepath.Join(root, "scripts", "evals", "_archive", "ran.sentinel")
 }
 
 // runZergRepo 进程内跑一条命令，仓根指到**合成仓**（env 只走 `ZERG_REPO` 这一枚）。
@@ -138,8 +142,38 @@ func TestCalibEval_LsRoster(t *testing.T) {
 
 // ── ② 台账不腐（真仓现读 · 只读）────────────────────────────────────────────────────
 
+// judgeRosterVsDisk —— 「台账不腐」这一格的**唯一判定口**（参数一律显式传入 ⇒ 负控能喂改错的期望值进来）。
+//
+// 双向：
+//
+//	① 点名而盘上没这件 ⇒ 幽灵条目 —— **仅当该件已真搬 Go（`goBacked[rel]`）时豁免**：真跑走进程内
+//	   Go 真身，旧脚本退役（移出仓）后 `File` 只是人面标名（`family_eval.go:22-23`）；**未真搬的件
+//	   缺席照样红** —— 这一支不放宽。
+//	② 盘上有而命令面没点名 ⇒ 漏登记 ⇒ 一律红。
+func judgeRosterVsDisk(family string, named, disk, goBacked map[string]bool) []error {
+	var errs []error
+	for rel := range named {
+		if disk[rel] || goBacked[rel] {
+			continue
+		}
+		errs = append(errs, fmt.Errorf("%s 族：幽灵条目：%s 在命令面的声明里，盘上却没有这一件（且它未真搬 Go ⇒ 不许缺席）", family, rel))
+	}
+	for rel := range disk {
+		if !named[rel] {
+			errs = append(errs, fmt.Errorf("%s 族：漏登记：盘上有 %s，命令面的声明里没有它", family, rel))
+		}
+	}
+	return errs
+}
+
 func TestCalibEval_RosterMatchesDisk(t *testing.T) {
 	root := repoRootFromCLI(t)
+	// 已真搬 Go 的件（`GoMain` 非空）⇒ 旧脚本退役（移出仓）后 `File` 只是人面标名、允许缺席
+	// （与 `family_eval.go:22-23` 的退役解耦口径同源 · 从名册真源取，别在测试里另抄一份）。
+	goBacked := map[string]bool{}
+	for _, rel := range zerg.EvalGoBackedFilesForTest() {
+		goBacked[rel] = true
+	}
 	cases := []struct {
 		family, dir string
 		want        int
@@ -159,27 +193,61 @@ func TestCalibEval_RosterMatchesDisk(t *testing.T) {
 		if len(named) != c.want {
 			t.Errorf("%s 族应点名 %d 件，得到 %d 件", c.family, c.want, len(named))
 		}
-		des, err := os.ReadDir(filepath.Join(root, c.dir))
-		if err != nil {
-			t.Fatalf("读不到 %s：%v", c.dir, err)
-		}
+		// 现读盘面：**递归**收 c.dir 下全部件（含归档子目录 —— 2026-10-08 拍板：evals 历史评测载荷
+		// 归档进 `scripts/evals/_archive/`，命令面仍点名它们 ⇒ 台账不腐这一格要跟着看进去）。
 		disk := map[string]bool{}
-		for _, de := range des {
-			if de.IsDir() || strings.HasPrefix(de.Name(), ".") {
-				continue
+		if werr := filepath.WalkDir(filepath.Join(root, c.dir), func(p string, de os.DirEntry, err error) error {
+			if err != nil {
+				return err
 			}
-			disk[c.dir+"/"+de.Name()] = true
-		}
-		for rel := range named {
-			if !disk[rel] {
-				t.Errorf("幽灵条目：%s 在命令面的声明里，盘上却没有这一件", rel)
+			if de.IsDir() {
+				if strings.HasPrefix(de.Name(), ".") || de.Name() == "__pycache__" {
+					return filepath.SkipDir
+				}
+				return nil
 			}
-		}
-		for rel := range disk {
-			if !named[rel] {
-				t.Errorf("漏登记：盘上有 %s，命令面的声明里没有它（台账不腐这一格）", rel)
+			if strings.HasPrefix(de.Name(), ".") {
+				return nil
 			}
+			rel, rerr := filepath.Rel(root, p)
+			if rerr != nil {
+				return rerr
+			}
+			disk[filepath.ToSlash(rel)] = true
+			return nil
+		}); werr != nil {
+			t.Fatalf("读不到 %s：%v", c.dir, werr)
 		}
+		for _, e := range judgeRosterVsDisk(c.family, named, disk, goBacked) {
+			t.Error(e)
+		}
+	}
+}
+
+// TestCalibEval_RosterJudgeHasTeeth —— 成对负控：上面的判定口必须**带牙**（✗ 不是恒绿装置）。
+// 双向都要能红：未真搬的件缺席 ⇒ 红；漏登记 ⇒ 红；已真搬 Go 的件缺席 ⇒ 放行。
+func TestCalibEval_RosterJudgeHasTeeth(t *testing.T) {
+	// ① 未真搬 Go 的件缺席 ⇒ **必须红** —— 这是「不放宽存在性检查」的那颗牙
+	if len(judgeRosterVsDisk("eval",
+		map[string]bool{"scripts/evals/x.py": true}, nil, nil)) == 0 {
+		t.Error("负控①：未真搬的件缺席却没报幽灵条目（存在性检查被放宽了）")
+	}
+	// ② 已真搬 Go 的件缺席 ⇒ **必须放行**（退役后 `File` 只是人面标名）
+	if errs := judgeRosterVsDisk("eval",
+		map[string]bool{"scripts/evals/x.py": true}, nil,
+		map[string]bool{"scripts/evals/x.py": true}); len(errs) != 0 {
+		t.Errorf("负控②：已真搬 Go 的件缺席被误判为幽灵条目：%v", errs)
+	}
+	// ③ 盘上有而命令面没点名 ⇒ **必须红**（另一方向同样不放宽）
+	if len(judgeRosterVsDisk("eval",
+		nil, map[string]bool{"scripts/evals/y.py": true}, nil)) == 0 {
+		t.Error("负控③：漏登记没报红")
+	}
+	// ④ 正控：两面一致 ⇒ 不报
+	same := map[string]bool{"scripts/evals/z.py": true}
+	if errs := judgeRosterVsDisk("eval", same,
+		map[string]bool{"scripts/evals/z.py": true}, nil); len(errs) != 0 {
+		t.Errorf("正控：两面一致却报红：%v", errs)
 	}
 }
 
@@ -251,12 +319,14 @@ func TestCalibEval_ThreeStatesAndExitForwarding(t *testing.T) {
 	if errs := judgeRun(7, true, rc, exists(calibSentinel)); len(errs) > 0 {
 		t.Errorf("真跑那一格（标定）：%v · stderr=%s", errs, errb)
 	}
-	if !strings.Contains(out, "夹具：edge-node 标定（合成）") {
+	if !strings.Contains(out, "夹具：x"+"3 标定（合成）") {
 		t.Errorf("真跑 ⇒ 脚本自己的输出原样进 stdout：%q", out)
 	}
 
 	// 同一套三态在评测族上再走一遍（夹具退 9 ⇒ 命令面返 9）
-	rc, _, errb = runZergRepo(t, repo, "eval", "run", "compare", "--yes")
+	// ★ 靶件 = `v25_benchmark`（未真搬的 ① 件）—— `compare`/`stability-stats`/`chat-harness`
+	//   已真搬 Go，其真跑走 Go 真身（✗ 不 exec 旧脚本）⇒ 拆到此格不再成立；本格判据一字不动。
+	rc, _, errb = runZergRepo(t, repo, "eval", "run", "v25_benchmark", "--yes")
 	if errs := judgeRun(9, true, rc, exists(evalSentinel)); len(errs) > 0 {
 		t.Errorf("真跑那一格（评测）：%v · stderr=%s", errs, errb)
 	}
@@ -382,5 +452,50 @@ func TestCalibEval_JudgeHasTeeth(t *testing.T) {
 	}
 	if rcNo != 2 || !strings.Contains(errbNo, "保留为内部实现") {
 		t.Errorf("负控④：② 的件那一格要给「保留为内部实现」逐字：rc=%d stderr=%q", rcNo, errbNo)
+	}
+}
+
+// ── ⑨ 干跑文案跟真身：GoMain 非空 ⇒ 打印现役真身（✗ 不再写 `bash|python3 <脚本>`）；为空 ⇒ 维持脚本形 ──
+
+// TestCalibEval_PlanReflectsGoMain —— 计划件的「执行面」一行必须跟**真跑走哪条路**一致：
+//
+//	· GoMain 非空（真搬 Go）⇒ 真跑走进程内真身 ⇒ 计划件要打印真身形、**不许**再打印 `python3 <脚本>`；
+//	· GoMain 为空（旧脚本仍是唯一真源）⇒ 维持 `bash|python3 <脚本>`（✗ 别把未搬的也写成 Go）。
+//
+// 成对负控：哪一支被哑化（一律写 Go / 一律写脚本）本件都会红。
+func TestCalibEval_PlanReflectsGoMain(t *testing.T) {
+	repo, _, _ := synthCalibEvalRepo(t)
+
+	// GoMain 非空的件：真跑走 Go 真身 ⇒ 计划件要打印真身形（✗ 不再留 `python3 <脚本>`）
+	rc, out, errb := runZergRepo(t, repo, "eval", "run", "compare", "--dry-run")
+	if rc != 0 {
+		t.Fatalf("`eval run compare --dry-run` ⇒ 退 0，得到 %d · stderr=%s", rc, errb)
+	}
+	if !strings.Contains(out, "Go 真身（进程内入口") {
+		t.Errorf("GoMain 非空 ⇒ 计划件要打印现役真身形，得到：\n%s", out)
+	}
+	if !strings.Contains(out, "✗ 不再 exec 旧脚本 scripts/evals/compare.py") {
+		t.Errorf("GoMain 非空 ⇒ 计划件要点明不走旧脚本，得到：\n%s", out)
+	}
+	if strings.Contains(out, "python3 ") {
+		t.Errorf("GoMain 非空 ⇒ 计划件**不许**再打印 `python3 <脚本>`（干跑与实跑不一致）：\n%s", out)
+	}
+	if strings.Contains(out, "脚本本体是唯一真源") {
+		t.Errorf("GoMain 非空 ⇒ 计划件**不许**再写「脚本本体是唯一真源」（那是未搬件的形）：\n%s", out)
+	}
+
+	// GoMain 为空的件：旧脚本仍是唯一真源 ⇒ 维持脚本形
+	rc, out, errb = runZergRepo(t, repo, "eval", "run", "v25_benchmark", "--dry-run")
+	if rc != 0 {
+		t.Fatalf("`eval run v25_benchmark --dry-run` ⇒ 退 0，得到 %d · stderr=%s", rc, errb)
+	}
+	if !strings.Contains(out, "脚本本体是唯一真源") {
+		t.Errorf("GoMain 为空 ⇒ 计划件要维持脚本形（✗ 别写成 Go 真身）：\n%s", out)
+	}
+	if !strings.Contains(out, "/scripts/evals/_archive/v25_benchmark.py") {
+		t.Errorf("GoMain 为空 ⇒ 执行面仍要打印 `python3 <脚本>`：\n%s", out)
+	}
+	if strings.Contains(out, "Go 真身（进程内入口") {
+		t.Errorf("GoMain 为空 ⇒ 计划件**不许**写成 Go 真身（✗ 别把未搬的也写成 Go）：\n%s", out)
 	}
 }

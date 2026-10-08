@@ -17,7 +17,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # label 单一真源：现读 deploy/服务声明.tsv（GAP-20260927-107 步④ · 禁第二份硬编码名单）。
 # 声明件取不到 ⇒ **硬失败**（不猜、不回落硬编码——回落就是又造一份名单）。
-LABEL="${ZERG_LABEL:-$(bash "$REPO_ROOT/scripts/svc/decl-label.sh" bin/zerg-core 2>/dev/null || true)}"
+LABEL="${ZERG_LABEL:-$("$REPO_ROOT/bin/zerg" gate check decl-label bin/zerg-core 2>/dev/null || true)}"
 [ -n "$LABEL" ] || { echo "❌ 取不到主控 label：声明件缺 bin/zerg-core 行（scripts/svc/decl-label.sh）" >&2; exit 2; }
 PLIST="$HOME/Library/LaunchAgents/${LABEL}.plist"
 UID_NUM="$(id -u)"

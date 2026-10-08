@@ -1,6 +1,6 @@
 package main
 
-// zerg_egg_test.go —— `zerg_egg.go`（`scripts/edge-node/zerg-egg.py` 的 Go 真搬）的**成对负控测试件**。
+// zerg_egg_test.go —— `zerg_egg.go`（`scripts/node-a/zerg-egg.py` 的 Go 真搬）的**成对负控测试件**。
 //
 // 四组牙：
 //  ① 格式契约（golden）：固定树 + 固定 `created_at` ⇒ pack 产物的 **sha256 与索引 JSON 逐字节**必须命中常量

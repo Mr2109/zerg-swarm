@@ -2,7 +2,7 @@ package modelreg
 
 // integrity_test.go — 待修补 #13 的另一半（--integrity）的单元测试。
 //
-// 反例优先，全部用 t.TempDir()，绝不触碰 ~/.zerg 或 ~/models 等真实目录。
+// 反例优先，全部用 t.TempDir()，绝不触碰 ~/.zerg 或 /Users/<user>/models 等真实目录。
 
 import (
 	"crypto/sha256"

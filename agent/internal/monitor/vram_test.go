@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// TestParseRocmVram —— rocm-smi --showmeminfo vram 输出解析（EDGE-NODE/AMD 路径）。
+// TestParseRocmVram —— rocm-smi --showmeminfo vram 输出解析（node-a/AMD 路径）。
 func TestParseRocmVram(t *testing.T) {
 	out := "" +
 		"======================= ROCm System Management Interface =======================\n" +

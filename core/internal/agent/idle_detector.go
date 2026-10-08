@@ -137,7 +137,7 @@ type IdleDetector struct {
 	issueDir      string                                   // 任务单目录（docs/issues/）
 	lastTriggered map[string]time.Time                     // 任务类型 → 上次触发时间（冷却）
 	externalQueue func() int                               // 外部任务队列长度（注入——测试用）
-	resourceIdle  func() bool                              // 资源是否空闲（注入——EDGE-NODE GPU idle）
+	resourceIdle  func() bool                              // 资源是否空闲（注入——node-a GPU idle）
 	onTrigger     func(def InternalTask, issuePath string) // 触发回调（v2.5.5 测试6——触发后调总调度器 Submit——闭环；P1-3 带任务单路径）
 	autoCheck     func(defID string) bool                  // 运行模式检查（注入——api.IsInternalAuto——手动任务不自动触发——2026-08-28 Mr2109）
 	enabled       bool
@@ -197,7 +197,7 @@ func (d *IdleDetector) checkAndTrigger() {
 		log.Printf("🕐 External tasks running (%d) — internal tasks yielding", d.externalQueue())
 		return
 	}
-	// 资源空闲（EDGE-NODE/本机 GPU idle）
+	// 资源空闲（node-a/本机 GPU idle）
 	if d.resourceIdle != nil && !d.resourceIdle() {
 		log.Printf("🕐 Resources busy — internal tasks waiting for idle")
 		return

@@ -537,6 +537,11 @@ func checkGenflagSurfaceGateMain(stdout, stderr io.Writer, argv []string) int {
 		fmt.Fprintf(stderr, "档 : tri-report · ✗ 取数面拿不到 ⇒ 不给结论（rc=2）\n")
 		return gfsRCBlock
 	}
+	// ★ 域级空集守卫（GAP-20260927-108）：本族取数面 0 件 ⇒ fail-closed（✗ 不许空域当绿）
+	if len(rows) == 0 {
+		fmt.Fprintf(stderr, "%s: 空域 —— 本族取数面 0 件（tools/*.py ＋ scripts/docs/gen-*.py）⇒ 不给结论（rc=2）\n", gfsTool)
+		return gfsRCBlock
+	}
 	hits, stock := gfsAudit(rows, nil)
 	if asJSON {
 		out := []string{}

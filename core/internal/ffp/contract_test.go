@@ -95,8 +95,8 @@ func TestFormatMarkers(t *testing.T) {
 	if len(vs) != 1 || vs[0].Rule != RuleLangMismatch {
 		t.Errorf("machine=本机 应命中 %q，实得 %+v", RuleLangMismatch, vs)
 	}
-	if vs := CheckContract("spawn_agent", schema, map[string]any{"machine": "edge-node"}); len(vs) != 0 {
-		t.Errorf("machine=edge-node 应放行，实得 %+v", vs)
+	if vs := CheckContract("spawn_agent", schema, map[string]any{"machine": "node-a"}); len(vs) != 0 {
+		t.Errorf("machine=node-a 应放行，实得 %+v", vs)
 	}
 	// iso-date：口语日期 → 日期格式非法
 	vs = CheckContract("t", schema, map[string]any{"date": "今天"})

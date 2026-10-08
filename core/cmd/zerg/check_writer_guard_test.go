@@ -63,7 +63,7 @@ func TestCwgSelfTest(t *testing.T) {
 		"✓ ① 负控 bad-cp.sh 必须命中（命中 1）",
 		"✓ ③ 负控 bad-py.py 必须命中（命中 1）",
 		"✓ ⑦ 区别力：命中件集 == 3 个负控件（命中件 = bad-cp.sh,bad-py.py,bad-redirect.sh）",
-		"✓ ⑬ 台账空集 ⇒ rc=2 不给结论（rc=2）",
+		"✓ ⑬ 台账空集两态（无旁证 rc=2 · 有旁证 rc=0 留痕 · 拿掉旁证回 rc=2）（无旁证=2 有旁证=0 反证=2）",
 		"── 自检 13 格全过（3 负控必命中 · 2 正控不得命中 · 空转必 2 · 干跑档同计数）──",
 	} {
 		if !strings.Contains(out, want) {
@@ -177,6 +177,63 @@ func TestCwgMissingLedger(t *testing.T) {
 	}
 	if !strings.Contains(errs, "台账读不到/解析失败") || !strings.Contains(errs, "gate-check-write-tools.json") {
 		t.Fatalf("stderr 不符: %q", errs)
+	}
+}
+
+// ⑦b 台账空集容态（★ 2026-10-09 已批口径 · 退场台账旁证）：三态 ＋ 一条反证 ＋ 一条成对负控。
+//
+//	态① 账空 ＋ 无旁证 ⇒ rc=2（逐字同旧行为）；态② 账空 ＋ 退场台账登记写档类工具（Go 半在盘）⇒ rc=0 且留痕；
+//	反证：拿掉旁证 ⇒ 必须回 rc=2（证「未放宽」）；负控：账空但件头仍有 write 声明（非终态）⇒ 仍 rc=2。
+func TestCwgEmptyLedgerRetireCorroboration(t *testing.T) {
+	fx := t.TempDir()
+	cwgTmpWrite(t, filepath.Join(fx, "scripts/gates/demo.sh"), "OLD\n")
+	// 显式空账（items 空集 · count=0）。
+	cwgTmpWrite(t, filepath.Join(fx, "scripts/gates/gate-check-write-tools.json"),
+		`{"schema":"gate-check-write-tools/1","head":"x","count":0,`+
+			`"regex":"^#\\s*zerg-class:\\s*(read|write)\\s+(D0|D2|D3)\\s*$","items":[]}`)
+
+	// 态①：无旁证 ⇒ rc=2 逐字同。
+	if rc, _, errs := cwgRun("--root", fx); rc != 2 || !strings.Contains(errs, "台账 items 空集（空转不当绿）") {
+		t.Fatalf("态① 无旁证 rc=%d want 2; stderr=%q", rc, errs)
+	}
+
+	// 态②：补退场台账旁证（写档类工具 atomic-write 已登记退场）＋ 其 Go 半在盘 ⇒ rc=0 且 stderr 留痕。
+	cwgTmpWrite(t, filepath.Join(fx, "core/internal/contract/adopt-retire.json"),
+		`{"retire_ledger":[{"object":"scripts/dev/atomic-write.sh","state":"已登记退场（夹具）",`+
+			`"evidence":"Go 真身 core/cmd/zerg/atomic_write.go（夹具）"}]}`)
+	cwgTmpWrite(t, filepath.Join(fx, "core/cmd/zerg/atomic_write.go"), "package main\n")
+	rc2, out2, err2 := cwgRun("--root", fx)
+	if rc2 != 0 {
+		t.Fatalf("态② 有旁证 rc=%d want 0; stderr=%q", rc2, err2)
+	}
+	if !strings.Contains(err2, "退场台账") || !strings.Contains(err2, "atomic-write") {
+		t.Fatalf("态② 缺留痕句: %q", err2)
+	}
+	if !strings.Contains(out2, "零命中 ✓") {
+		t.Fatalf("态② stdout 不符: %q", out2)
+	}
+
+	// 反证①：退场台账**在册但只含非写类条目** ⇒ 仍 rc=2（証「不是**只要有条目就绿**」——「写档类工具」才是条件）。
+	cwgTmpWrite(t, filepath.Join(fx, "core/internal/contract/adopt-retire.json"),
+		`{"retire_ledger":[{"object":"scripts/gates/check-writer-guard.py","state":"已登记退场（夹具）",`+
+			`"evidence":"DEV-x"}]}`)
+	if rc, _, _ := cwgRun("--root", fx); rc != 2 {
+		t.Fatalf("反证①（非写类条目）rc=%d want 2（条目不合「写档类」条件不得绿）", rc)
+	}
+
+	// 反证②：拿掉旁证件 ⇒ 必须回 rc=2（不许「只有退场台账条目就绿」）。
+	if err := os.Remove(filepath.Join(fx, "core/internal/contract/adopt-retire.json")); err != nil {
+		t.Fatal(err)
+	}
+	if rc, _, _ := cwgRun("--root", fx); rc != 2 {
+		t.Fatalf("反证② rc=%d want 2（旁证拿掉不得仍绿）", rc)
+	}
+
+	// 成对负控：账空但件头仍声明 write（= 非终态空转）⇒ 仍 rc=2（旁证不得掩盖漏登记）。
+	cwgTmpWrite(t, filepath.Join(fx, "scripts/dev/leak.sh"),
+		"#!/usr/bin/env bash\n#zerg-class: write D2\necho hi\n")
+	if rc, _, errs := cwgRun("--root", fx); rc != 2 || !strings.Contains(errs, "台账 items 空集（空转不当绿）") {
+		t.Fatalf("负控（件头声明 write ＋ 账空）rc=%d want 2; stderr=%q", rc, errs)
 	}
 }
 

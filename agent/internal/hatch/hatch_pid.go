@@ -1,6 +1,6 @@
 // hatch_pid.go —— 「核验对象是不是**空间内进程**」的判据（缺陷 2 的根因与解法）。
 //
-// 真机事实（EDGE-NODE，2026-09-15，第一枚卵孵化时的两条 /proc 读数）：
+// 真机事实（node-a，2026-09-15，第一枚卵孵化时的两条 /proc 读数）：
 //
 //	pid=1379471  systemd MainPID   mnt-ns=mnt:[4026531832]  → /models 不存在、/data 可见、可见 550 pids（宿主视图）
 //	pid=1379473  MainPID 的子进程   mnt-ns=mnt:[4026532767]  → /models=ro、/work=rw、/data 隐藏、2 pids（空间视图）

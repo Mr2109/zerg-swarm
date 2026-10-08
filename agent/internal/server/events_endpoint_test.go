@@ -14,7 +14,7 @@ import (
 )
 
 func eventsServer() *Server {
-	return NewServer(NewAgent("edge-node", "tok", nil, backend.NewManager(nil, "edge-node"), ""))
+	return NewServer(NewAgent("node-a", "tok", nil, backend.NewManager(nil, "node-a"), ""))
 }
 
 // 无令牌 ⇒ 401（只读面不开口子）。

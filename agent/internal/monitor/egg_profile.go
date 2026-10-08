@@ -61,7 +61,7 @@ type EggProfile struct {
 
 	// Ctx 标定时的上下文长度（tokens）——缺口 GAP-20260925-41：65536 与 131072 两次标定的档案
 	// 除数值外无法区分 ⇒ 闸门按档案判内存预算时不知该模型在何 ctx 下可跑
-	//（mini-node-2 在 128K 必 `00 Compute error`，在 64K 正常）。
+	//（node-c 在 128K 必 `00 Compute error`，在 64K 正常）。
 	// 0 = 未申报（兼容老档案，不据此判拒 —— 与 gpu_mem_kind / cache_gb 同一条兼容纪律）。
 	Ctx int `yaml:"ctx,omitempty"`
 
@@ -79,7 +79,7 @@ type EggProfile struct {
 	SchemaVersion int `yaml:"schema_version"`
 	// MeasuredAt 实测时间（RFC3339）。
 	MeasuredAt time.Time `yaml:"measured_at"`
-	// Machine 实测机型标识（如 "edge-node"）——档案绑定机型，跨机不得互抄（§1.5 多设备）。
+	// Machine 实测机型标识（如 "node-a"）——档案绑定机型，跨机不得互抄（§1.5 多设备）。
 	Machine string `yaml:"machine"`
 	// CalibRuns 标定轮数（§11 P3：反复三次取上界 ⇒ 有效值 ≥3）。
 	CalibRuns int `yaml:"calib_runs"`

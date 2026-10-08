@@ -18,7 +18,7 @@ import (
 )
 
 func eggsServer() *Server {
-	return NewServer(NewAgent("edge-node", "tok", nil, backend.NewManager(nil, "edge-node"), ""))
+	return NewServer(NewAgent("node-a", "tok", nil, backend.NewManager(nil, "node-a"), ""))
 }
 
 // callEggs 直接调 handler（与 pin_test.go 同风格）。

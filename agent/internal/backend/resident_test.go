@@ -16,7 +16,7 @@ import (
 
 // TestResidentDetail_ManagedFields —— 托管项如实带 状态/最后使用/在飞/实测RSS/声明内存/上下文/来源。
 func TestResidentDetail_ManagedFields(t *testing.T) {
-	mgr := NewManager(nil, "edge-node")
+	mgr := NewManager(nil, "node-a")
 	entry := &registry.ModelEntry{
 		File:  "/data/models/example-35b-v2.gguf",
 		MemGB: 22,
@@ -63,7 +63,7 @@ func TestResidentDetail_ManagedFields(t *testing.T) {
 
 // TestResidentDetail_NoFabrication —— 注册条目缺摘要/上下文时如实缺席（不编造）。
 func TestResidentDetail_NoFabrication(t *testing.T) {
-	mgr := NewManager(nil, "edge-node")
+	mgr := NewManager(nil, "node-a")
 	mgr.procs["plain"] = &subproc{
 		model:    "plain",
 		entry:    &registry.ModelEntry{File: "/x.gguf"},
@@ -87,7 +87,7 @@ func TestResidentDetail_NoFabrication(t *testing.T) {
 
 // TestResidentDetail_SortedAndEmpty —— 多驻留项按别名排序；无驻留返回空。
 func TestResidentDetail_SortedAndEmpty(t *testing.T) {
-	mgr := NewManager(nil, "edge-node")
+	mgr := NewManager(nil, "node-a")
 	if got := mgr.ResidentDetail(); len(got) != 0 {
 		t.Fatalf("无驻留应为空，实得 %v", got)
 	}

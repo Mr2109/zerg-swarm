@@ -116,12 +116,12 @@ func main() {
 	validateModels(cfg)
 
 	// 3c（2026-09-16）：本机后端（localback）初始化与"自收养本机已跑模型"已删 —— 本机角色退役后
-	// 本机 = 名为 Mr2109 的普通子端，由 launchd 托管、经心跳上报；主控不再自己起/接管引擎。
+	// 本机 = 名为 node-local 的普通子端，由 launchd 托管、经心跳上报；主控不再自己起/接管引擎。
 	// 初始化存储和处理器
 	fleetStore := store.NewStore()
 	// 3a（2026-09-16 Mr2109 拍：所有可推理的计算机都是子端）：**本机角色退役** ⇒
 	// 不再维护 store 的 local 行（原先靠 startLocalSnapshotRefresh 首写+周期刷）。
-	// 本机 = 名字叫 Mr2109 的普通子端，它的资源与身份**经心跳上报**，与 edge-node 同形。
+	// 本机 = 名字叫 node-local 的普通子端，它的资源与身份**经心跳上报**，与 node-a 同形。
 	handlers := &api.Handlers{
 		Config:          cfg,
 		ConfigPath:      fleetYAML, // B11: 热加载用
@@ -212,8 +212,8 @@ func main() {
 		"Nemotron-3.5-Lightning":     adapters.NewNemotronAdapter(),
 		"Qwen3.8-27B":                adapters.NewQwen38Adapter(),
 		"Qwen3.8-Flash-Next":         adapters.NewQwen38FlashAdapter(), // 2026-08-29 接入——125B MoE qwen4架构
-		"Qwen3.8-Flash-Next-IQ4_XS":  adapters.NewQwen38FlashAdapter(), // 2026-08-30 EDGE-NODE 三档量化——IQ4_XS 93.7GB（内存更宽）
-		"Qwen3.8-Flash-Next-Q3_K_XL": adapters.NewQwen38FlashAdapter(), // 2026-08-30 EDGE-NODE 三档量化——Q3_K_XL 89.9GB（内存最宽）
+		"Qwen3.8-Flash-Next-IQ4_XS":  adapters.NewQwen38FlashAdapter(), // 2026-08-30 node-a 三档量化——IQ4_XS 93.7GB（内存更宽）
+		"Qwen3.8-Flash-Next-Q3_K_XL": adapters.NewQwen38FlashAdapter(), // 2026-08-30 node-a 三档量化——Q3_K_XL 89.9GB（内存最宽）
 		"example-8b-quant":           adapters.NewQwableAdapter(),
 		"example-8b-quant.Q5_K_M":           adapters.NewQwableAdapter(),
 		"gemma-4-26B":                adapters.NewGemmaAdapter(),
@@ -423,7 +423,7 @@ func main() {
 	idleDetector.SetAutoCheck(api.IsInternalAuto) // v2.5.6: 运行模式开关——手动任务不自动触发（空闲检测跳过）
 	idleDetector.SetExternalQueue(func() int { return masterSched.RunningCount() })
 	idleDetector.SetResourceIdle(func() bool {
-		// 资源空闲: EDGE-NODE GPU idle（快照 active 请求 0）
+		// 资源空闲: node-a GPU idle（快照 active 请求 0）
 		if snap := gw.Snapshot("edge-node"); snap != nil && snap.ActiveRequests == 0 {
 			return true
 		}

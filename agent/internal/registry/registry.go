@@ -40,7 +40,7 @@ type ModelEntry struct {
 	// 版本"（§6.8）表达不出来、第二台设备也可能静默退回主线。
 	//
 	// 写法 = 「可辨识的短名」，例：
-	//   build-hip-flash/llama-server    EDGE-NODE 的统一库（支持 qwen4exp/PLE）
+	//   build-hip-flash/llama-server    node-a 的统一库（支持 qwen4exp/PLE）
 	//   build-k2/llama-server           example-moe-36b 的 IFM fork
 	//   run-k2.sh                       wrapper 脚本（清 LD_LIBRARY_PATH 那类）
 	// 留空 ⇒ 按「实际会执行的可执行文件」自动推（backend.shortEngineName；见 EngineImplOf），

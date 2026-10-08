@@ -1489,7 +1489,7 @@ func cnsfMain(stdout, stderr io.Writer, argv []string) (int, *cnsfPayload) {
 		fmt.Fprintf(stdout, "    … 另有 %d 条\n", len(hits)-a.maxExamples)
 	}
 	fmt.Fprintln(stdout, "⇒ rc=1：**禁止**在临时目录里建指向真仓的符号链接后再删它下面的东西 ——")
-	fmt.Fprintln(stdout, "   改用只读隔离工具：bash scripts/dev/isolate-ro.sh new \"<真仓>\" --dst <目录>（硬拷贝，删的是副本）")
+	fmt.Fprintln(stdout, "   改用只读隔离工具：zerg isolate-ro new \"<真仓>\" --dst <目录>（硬拷贝，删的是副本）")
 	return cnsfExitFail, &cnsfPayload{hits, notes}
 }
 

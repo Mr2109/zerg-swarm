@@ -1,20 +1,15 @@
-// doc_site_build_test.go —— A14 薄壳（`zerg doc site build` · `cmdDocSiteBuild`）的**两态对拍**与**哑化负控**。
+// doc_site_build_test.go —— 真搬后（`zerg doc site build` · 行为落 Go）的**两态三面**逐字对拍 + 「不 exec 原脚本」的牙。
 //
-// 为什么这么测（照 M2 口径 · 与 `build_wall_test.go` 同型）：进程内直调 `cmdDocSiteBuild`（不引真二进制、
-// 不依赖构建），用**仓外合成夹具**给一个可控退码/可控输出的 stub 脚本，验三面：
+// 本件对应 `doc_site_build.go` 已从「壳转账」改成**真搬**：命令面**不再 exec** `docs/site/export-and-build.sh`。
 //
-//	① **退码只转发不翻译**：脚本退 0/2 ⇒ 命令面退 0/2（不许吞成 0，也不许翻成 1）；
-//	② **stdout 逐字同**（两态）：走命令面拿到的 stdout == 脚本直跑同一参数的 stdout（逐字节）；
-//	③ **递不到脚本 ⇒ 8**（不给结论），**不拿脚本的 2 冒充**。
+// 测试口径：态1 = 原脚本直跑（`bash <脚本> <tail>`）⟷ 态2 = 走 Go 正门（`cmdDocSiteBuild` / `docSiteBuildGateMain`）；
+// 三面 = rc / stdout / stderr **逐字**比。只在**不需要 venv/pip/mkdocs/联网**的可跑面（`--help` / `-h` / 未知参数 /
+// 缺件）做逐字 —— 重活面（真建站）要外部工具链与网络，不属单测面（见件头「未覆盖面」）。
 //
-// 哑化负控（"牙"）：把 `cmdDocSiteBuild` 改成「一律 return 0 / 吞 stdout」⇒ 上面 ①② 当场 FAIL 并给出
-// 本件行号（负控只在**仓外副本**做，✗ 不在落仓件上做 —— 见 `zerg-m2-parallel-go-migration` 技能）。
+// 「不 exec」的牙：合成仓放一枚**毒脚本**（打印 POISON、退 7）⇒ 走 Go 正门必须**看都不看它**（照真搬行为走）；
+// 谁若把实现退回壳转账，这几条用例当场红。
 //
-// 另有一条**真件两态**（`docs/site/export-and-build.sh` 现读在位才跑，否则 Skip）：`--help`（rc=0）
-// 与未知参数（rc=2）各跑「脚本直跑 ⟷ 走 `cmdDocSiteBuild`」，断言 stdout/rc 逐字同、stderr 只多命令面
-// 那行**转发宣言**（banner 固定前缀 + 尾部「退 N」行 ⇒ 剥掉后与脚本 stderr 逐字同 ⇒ 证明「不改原件行为」）。
-//
-// 再加一条**包装入口栅格**（`docSiteBuildGateMain` · inproc 同签名）：两态三面逐格对拍 ≥8 格。
+// 两态「脚本在盘 ⟷ 移出仓」：合成仓里「有脚本」与「无脚本」两态，Go 侧三面**必须逐字同**（✗ 不得 rc=2）。
 package main
 
 import (
@@ -22,35 +17,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 )
 
-// dsbSyntheticRepo 建最小合成仓根：仓根判据件 ＋ 一个可控退码/可控 stdout 的 stub `export-and-build.sh`。
-func dsbSyntheticRepo(t *testing.T, rc int, stdoutBody string) string {
-	t.Helper()
-	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, "core", "internal", "version"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "core", "internal", "version", "version.go"),
-		[]byte("package version\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	scriptPath := filepath.Join(root, docSiteBuildScriptRel)
-	if err := os.MkdirAll(filepath.Dir(scriptPath), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	body := "#!/usr/bin/env bash\nset -u\n" + stdoutBody + "exit " + strconv.Itoa(rc) + "\n"
-	if err := os.WriteFile(scriptPath, []byte(body), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	return root
-}
+const dsbScriptRel = "docs/site/export-and-build.sh"
 
-// dsbRun 走正门（进程内直调 `cmdDocSiteBuild`）：给合成仓根，返回 rc / stdout / stderr。
-func dsbRun(t *testing.T, root string, tail ...string) (int, string, string) {
+// dsbRunGo —— 走正门（进程内直调 `cmdDocSiteBuild`）：给仓根，返回 rc / stdout / stderr。
+func dsbRunGo(t *testing.T, root string, tail ...string) (int, string, string) {
 	t.Helper()
 	t.Setenv("ZERG_REPO", root)
 	var out, errb bytes.Buffer
@@ -62,101 +36,8 @@ func dsbRun(t *testing.T, root string, tail ...string) (int, string, string) {
 	return rc, out.String(), errb.String()
 }
 
-// TestDocSiteBuildPassthroughCarriesScriptExitCode —— **只转发、不翻译**：脚本退 0/2 ⇒ 命令面退 0/2（不是 1）。
-func TestDocSiteBuildPassthroughCarriesScriptExitCode(t *testing.T) {
-	for _, want := range []int{0, 2} {
-		root := dsbSyntheticRepo(t, want, "echo 'stub 文档站：导了'\n")
-		rc, _, errb := dsbRun(t, root)
-		if rc != want {
-			t.Fatalf("脚本退 %d ⇒ 命令面退 %d（薄壳只转发、不翻译：两值必须相等）· stderr=%s", want, rc, errb)
-		}
-	}
-}
-
-// TestDocSiteBuildStdoutVerbatimTwoStates —— **两态 stdout 逐字同**：命令面的 stdout **就是**脚本直跑的 stdout。
-func TestDocSiteBuildStdoutVerbatimTwoStates(t *testing.T) {
-	root := dsbSyntheticRepo(t, 0, "echo '── 文档站导出+构建 ──'\necho '   ✅ site/ 128 页'\n")
-	_, out, _ := dsbRun(t, root)
-	direct, err := exec.Command("bash", filepath.Join(root, docSiteBuildScriptRel)).Output()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if out != string(direct) {
-		t.Errorf("`cmdDocSiteBuild` 与脚本直跑 stdout **逐字节不同**：\n命令面=%q\n脚本  =%q", out, string(direct))
-	}
-}
-
-// TestDocSiteBuildScriptAbsentIsBlocked8 —— 递不到脚本 ⇒ 退 8（不给结论）· ✗ 不拿脚本的 2 冒充。
-func TestDocSiteBuildScriptAbsentIsBlocked8(t *testing.T) {
-	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, "core", "internal", "version"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "core", "internal", "version", "version.go"),
-		[]byte("package version\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	rc, _, errb := dsbRun(t, root)
-	if rc != exitBlocked {
-		t.Fatalf("脚本不在 ⇒ 命令面退 %d（要 %d）· stderr=%s", rc, exitBlocked, errb)
-	}
-}
-
-// TestDocSiteBuildRealScriptTwoStatesVerbatim —— **真件两态**（`export-and-build.sh` 现读在位才跑，否则 Skip）：
-// `--help`（rc=0）与未知参数（rc=2）各跑「脚本直跑 ⟷ 走 `cmdDocSiteBuild`」，断言 rc/stdout 逐字同、
-// stderr 剥掉命令面那行转发宣言后逐字同（证明命令面**不改原件行为**）。
-func TestDocSiteBuildRealScriptTwoStatesVerbatim(t *testing.T) {
-	root := repoRoot()
-	if root == "" {
-		t.Skip("解析不到仓根（合成环境）⇒ 跳真件两态（合成夹具已覆盖三面）")
-	}
-	script := filepath.Join(root, docSiteBuildScriptRel)
-	if _, err := os.Stat(script); err != nil {
-		t.Skipf("真件不在（仅公开快照/桩树会走到这里）：%v", err)
-	}
-	// 命令面固定加在 stderr 顶部的那行转发宣言（banner）—— 只在对比时剥掉，不改本件行为。
-	banner := progName + ": 底层 = " + docSiteBuildScriptRel + "（**唯一真源** · 命令面只转发、不翻译）\n"
-	for _, tc := range []struct {
-		name string
-		tail []string
-	}{
-		{"help", []string{"--help"}},
-		{"unknown-flag", []string{"--nope-not-a-flag"}},
-	} {
-		// 态1：脚本直跑。
-		var o1, e1 bytes.Buffer
-		c1 := exec.Command("bash", append([]string{script}, tc.tail...)...)
-		c1.Stdin = strings.NewReader("")
-		c1.Stdout, c1.Stderr = &o1, &e1
-		rc1 := 0
-		if err := c1.Run(); err != nil {
-			if ee, ok := err.(*exec.ExitError); ok {
-				rc1 = ee.ExitCode()
-			} else {
-				t.Fatalf("[%s] 脚本直跑起不来：%v", tc.name, err)
-			}
-		}
-		// 态2：走命令面。
-		rc2, out2, err2 := dsbRun(t, root, tc.tail...)
-		if rc1 != rc2 {
-			t.Errorf("[%s] 两态 rc 不同：脚本=%d 命令面=%d", tc.name, rc1, rc2)
-		}
-		if o1.String() != out2 {
-			t.Errorf("[%s] 两态 stdout 不同：\n脚本  =%q\n命令面=%q", tc.name, o1.String(), out2)
-		}
-		if !strings.HasPrefix(err2, banner) {
-			t.Errorf("[%s] 命令面 stderr 缺转发宣言（期待前缀 %q）：%q", tc.name, banner, err2)
-		}
-		got := strings.TrimPrefix(err2, banner)
-		got = strings.TrimSuffix(got, progName+": 文档站导出+构建脚本退 "+strconv.Itoa(rc2)+"（原样转发，不翻译）\n")
-		if e1.String() != got {
-			t.Errorf("[%s] 剥掉命令面宣言后 stderr 与脚本不同（改了原件行为）：\n脚本  =%q\n命令面=%q", tc.name, e1.String(), got)
-		}
-	}
-}
-
-// dsbGateMainRun 走**包装入口**（inproc 同签名 `docSiteBuildGateMain`）：给合成仓根，返回 rc / stdout / stderr。
-func dsbGateMainRun(t *testing.T, root string, tail ...string) (int, string, string) {
+// dsbRunGoGate —— 走**包装入口**（inproc 同签名 `docSiteBuildGateMain`）：给仓根，返回 rc / stdout / stderr。
+func dsbRunGoGate(t *testing.T, root string, tail ...string) (int, string, string) {
 	t.Helper()
 	t.Setenv("ZERG_REPO", root)
 	var out, errb bytes.Buffer
@@ -164,10 +45,10 @@ func dsbGateMainRun(t *testing.T, root string, tail ...string) (int, string, str
 	return rc, out.String(), errb.String()
 }
 
-// dsbRunScriptDirect 直跑底层脚本（「仓外候选 ⟷ 直跑原 .sh」里的对照态）：返回 rc / stdout / stderr。
-func dsbRunScriptDirect(t *testing.T, root string, tail ...string) (int, string, string) {
+// dsbRunSh —— 直跑原脚本（态1）。
+func dsbRunSh(t *testing.T, root string, tail ...string) (int, string, string) {
 	t.Helper()
-	script := filepath.Join(root, docSiteBuildScriptRel)
+	script := filepath.Join(root, dsbScriptRel)
 	var o, e bytes.Buffer
 	c := exec.Command("bash", append([]string{script}, tail...)...)
 	c.Dir = root
@@ -184,50 +65,201 @@ func dsbRunScriptDirect(t *testing.T, root string, tail ...string) (int, string,
 	return rc, o.String(), e.String()
 }
 
-// TestDocSiteBuildGateMainGridTwoStatesThreeFaces —— **包装入口栅格**（`docSiteBuildGateMain` · inproc 同签名）：
-// 态1 = 仓外候选包装入口 `docSiteBuildGateMain(&out,&errb,tail)`；态2 = 直跑原脚本 `bash <script> <tail>`。
-// 三面 = rc / stdout / stderr（stderr 剥命令面 banner ＋ 退码行 ⇒ **噪声归一**）。逐格对拍 ≥8 格（旗标面 × 退码面）。
-// 另断言包装入口与 `cmdDocSiteBuild` 三面**逐字同**（= 包装入口只转发、零新增语义）。
-func TestDocSiteBuildGateMainGridTwoStatesThreeFaces(t *testing.T) {
+// dsbRealRoot —— 真仓根（合成环境解析不到就跳过）。
+func dsbRealRoot(t *testing.T) string {
+	t.Helper()
+	root := repoRoot()
+	if root == "" {
+		t.Skip("解析不到仓根（合成环境）⇒ 跳真件两态")
+	}
+	if _, err := os.Stat(filepath.Join(root, dsbScriptRel)); err != nil {
+		t.Skipf("真脚本不在（仅公开快照/桩树会走到这里）：%v", err)
+	}
+	return root
+}
+
+// ── 1) 真件两态三面栅格（只含「参数面就退出」的格 · 不触 venv/pip/mkdocs/联网）────────────────────
+func TestDocSiteBuildArgGridTwoStatesThreeFaces(t *testing.T) {
+	root := dsbRealRoot(t)
 	cells := []struct {
 		name string
 		tail []string
-		rc   int
 	}{
-		{"help", []string{"--help"}, 0},
-		{"unknown", []string{"--nope-not-a-flag"}, 2},
-		{"strict", []string{"--strict"}, 1},
-		{"serve", []string{"--serve"}, 0},
-		{"strict-serve", []string{"--strict", "--serve"}, 2},
-		{"out-dir", []string{"--out", "/tmp/site"}, 0},
-		{"strict-out", []string{"--strict", "--out", "/tmp/site"}, 1},
-		{"two-unknown", []string{"--aaa", "--bbb"}, 2},
+		{"help", []string{"--help"}},
+		{"help-short", []string{"-h"}},
+		{"unknown", []string{"--nope-not-a-flag"}},
+		{"strict-then-unknown", []string{"--strict", "--nope"}},
+		{"unknown-first", []string{"--nope", "--strict"}},
+		{"two-unknown", []string{"--aaa", "--bbb"}},
+		{"serve-then-unknown", []string{"--serve", "--nope"}},
+		{"strict-serve-unknown", []string{"--strict", "--serve", "--nope"}},
 	}
-	banner := progName + ": 底层 = " + docSiteBuildScriptRel + "（**唯一真源** · 命令面只转发、不翻译）\n"
 	for _, c := range cells {
-		// stub 把 `$*`（argv 逐字）打进 stdout ⇒ 旗标面 passthrough 可观测。
-		root := dsbSyntheticRepo(t, c.rc, "printf 'ARGS:%s\\n' \"$*\"\n")
-		rcS, outS, errS := dsbRunScriptDirect(t, root, c.tail...)
-		rcW, outW, errW := dsbGateMainRun(t, root, c.tail...)
-		rcC, outC, errC := dsbRun(t, root, c.tail...)
-		if rcW != rcS || rcC != rcS {
-			t.Errorf("[%s] rc 三态不同：脚本=%d 包装=%d cmd=%d", c.name, rcS, rcW, rcC)
+		rcS, outS, errS := dsbRunSh(t, root, c.tail...)
+		rcC, outC, errC := dsbRunGo(t, root, c.tail...)
+		rcW, outW, errW := dsbRunGoGate(t, root, c.tail...)
+		if rcS != rcC || rcC != rcW {
+			t.Errorf("[%s] rc 三态不同：脚本=%d cmd=%d 包装=%d", c.name, rcS, rcC, rcW)
 		}
-		if outW != outS || outC != outS {
-			t.Errorf("[%s] stdout 三态不同：\n脚本=%q\n包装=%q\ncmd =%q", c.name, outS, outW, outC)
+		if outS != outC || outC != outW {
+			t.Errorf("[%s] stdout 三态不同：\n脚本=%q\ncmd =%q\n包装=%q", c.name, outS, outC, outW)
 		}
-		if !strings.HasPrefix(errW, banner) {
-			t.Errorf("[%s] 包装 stderr 缺 banner：%q", c.name, errW)
-		}
-		got := strings.TrimPrefix(errW, banner)
-		if rcW != 0 {
-			got = strings.TrimSuffix(got, progName+": 文档站导出+构建脚本退 "+strconv.Itoa(rcW)+"（原样转发，不翻译）\n")
-		}
-		if got != errS {
-			t.Errorf("[%s] 剥噪声后 stderr 与脚本不同：\n脚本=%q\n包装=%q", c.name, errS, got)
-		}
-		if errW != errC {
-			t.Errorf("[%s] 包装 stderr 与 cmd 不同：\n包装=%q\ncmd =%q", c.name, errW, errC)
+		if errS != errC || errC != errW {
+			t.Errorf("[%s] stderr 三态不同（真搬后不许再有「我转发自…」宣言）：\n脚本=%q\ncmd =%q\n包装=%q",
+				c.name, errS, errC, errW)
 		}
 	}
+}
+
+// ── 2) 帮助面常量 == 原脚本第 2–20 行（漂移牙：谁改原脚本那几行而没同批改常量，这里当场红）────────
+func TestDocSiteBuildHelpConstantMatchesLiveScript(t *testing.T) {
+	root := dsbRealRoot(t)
+	b, err := os.ReadFile(filepath.Join(root, dsbScriptRel))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(string(b), "\n")
+	if len(lines) < 20 {
+		t.Fatalf("原脚本不足 20 行（%d）", len(lines))
+	}
+	want := strings.Join(lines[1:20], "\n") + "\n"
+	_, out, _ := dsbRunGo(t, root, "--help")
+	if out != want {
+		t.Errorf("`--help` 正文与原脚本第 2–20 行**逐字不同**：\n常量 =%q\n脚本 =%q", out, want)
+	}
+}
+
+// ── 3) 「不 exec 原脚本」的牙：合成仓放毒脚本（POISON · 退 7）⇒ 走 Go 正门必须看都不看它 ─────────────
+func TestDocSiteBuildDoesNotExecScript(t *testing.T) {
+	root := dsbPoisonRepo(t, "#!/usr/bin/env bash\necho POISON\nexit 7\n")
+	// 缺 mkdocs.yml ⇒ 真搬行为退 2「缺配置」，✗ 不是毒脚本的 7、✗ 不打印 POISON。
+	rc, out, errb := dsbRunGo(t, root)
+	if rc != exitUsage {
+		t.Fatalf("缺配置应退 %d，得 %d（若退 7 = 又走回了壳转账）· stderr=%s", exitUsage, rc, errb)
+	}
+	if strings.Contains(out, "POISON") || strings.Contains(errb, "POISON") {
+		t.Fatalf("命令面 exec 了原脚本（出现 POISON）：out=%q err=%q", out, errb)
+	}
+	if !strings.Contains(errb, "✗ 缺配置：") {
+		t.Fatalf("缺配置的 stderr 正文不对：%q", errb)
+	}
+	// --help 同样不许碰毒脚本（退 0 · 打帮助常量）。
+	rc, out, _ = dsbRunGo(t, root, "--help")
+	if rc != exitOK {
+		t.Fatalf("--help 应退 0，得 %d（若退 7 = 又走回了壳转账）", rc)
+	}
+	if !strings.HasPrefix(out, "# =============================================================================\n") || strings.Contains(out, "POISON") {
+		t.Fatalf("--help 正文不对：%q", out)
+	}
+}
+
+// ── 4) 两态「脚本在盘 ⟷ 移出仓」：Go 侧三面逐字同（✗ 不得 rc=2）───────────────────────────────
+func TestDocSiteBuildScriptAbsentSameAsPresent(t *testing.T) {
+	withSh := dsbRepoWithRealScript(t) // 有脚本（真件副本）
+	noSh := dsbVersionOnlyRepo(t)      // 无脚本
+	cells := [][]string{{"--help"}, {"-h"}, {"--nope"}}
+	for _, tail := range cells {
+		// 只用「参数面就退出」的格（不打印任何路径）⇒ 两态输出逐字应同，与仓根字符串无关。
+		rcP, outP, errP := dsbRunGoZ(t, withSh, tail...)
+		rcA, outA, errA := dsbRunGoZ(t, noSh, tail...)
+		if rcP != rcA || outP != outA || errP != errA {
+			t.Errorf("[%v] 「脚本在盘 ⟷ 移出仓」三面不同：\n在盘 rc=%d out=%q err=%q\n无脚本 rc=%d out=%q err=%q",
+				tail, rcP, outP, errP, rcA, outA, errA)
+		}
+		if rcA == exitUsage && strings.Contains(errA, "脚本不在") {
+			t.Errorf("[%v] 移出仓后走了「脚本不在」的旧壳口径（真搬后不该再有这一档）", tail)
+		}
+	}
+}
+
+// ── 5) 缺配置两态逐字（真脚本副本的合成仓 · 无 mkdocs.yml）：脚本直跑 ⟷ 走 Go 正门 ───────────────
+func TestDocSiteBuildMissingConfigTwoStates(t *testing.T) {
+	withSh := dsbRepoWithRealScript(t)
+	zr := dsbShDerivedRoot(t, filepath.Join(withSh, dsbScriptRel))
+	rcS, outS, errS := dsbRunSh(t, withSh)
+	rcC, outC, errC := dsbRunGoZ(t, zr)
+	if rcS != rcC {
+		t.Fatalf("缺配置两态 rc 不同：脚本=%d cmd=%d", rcS, rcC)
+	}
+	if rcS != exitUsage {
+		t.Fatalf("缺配置应退 2，得 %d", rcS)
+	}
+	if outS != outC {
+		t.Errorf("缺配置两态 stdout 不同：脚本=%q cmd=%q", outS, outC)
+	}
+	if errS != errC {
+		t.Errorf("缺配置两态 stderr 不同：\n脚本=%q\ncmd =%q", errS, errC)
+	}
+}
+
+// ── 夹具 ────────────────────────────────────────────────────────────────────────────────────────
+
+// dsbVersionOnlyRepo —— 只放仓根判据件的合成仓（无脚本 · 无 mkdocs.yml）。
+func dsbVersionOnlyRepo(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "core", "internal", "version"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "core", "internal", "version", "version.go"),
+		[]byte("package version\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+// dsbPoisonRepo —— 合成仓 + 一枚自带行为的「毒脚本」。
+func dsbPoisonRepo(t *testing.T, body string) string {
+	t.Helper()
+	root := dsbVersionOnlyRepo(t)
+	sp := filepath.Join(root, dsbScriptRel)
+	if err := os.MkdirAll(filepath.Dir(sp), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sp, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+// dsbRepoWithRealScript —— 合成仓 + **真脚本副本**（无 mkdocs.yml ⇒ 两侧都停在「缺配置」档）。
+func dsbRepoWithRealScript(t *testing.T) string {
+	t.Helper()
+	real := dsbRealRoot(t)
+	root := dsbVersionOnlyRepo(t)
+	b, err := os.ReadFile(filepath.Join(real, dsbScriptRel))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sp := filepath.Join(root, dsbScriptRel)
+	if err := os.MkdirAll(filepath.Dir(sp), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sp, b, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+// dsbShDerivedRoot —— 用 bash 现读脚本推导出的仓根（= 原脚本的 REPO_ROOT），供 ZERG_REPO 对齐用。
+func dsbShDerivedRoot(t *testing.T, scriptPath string) string {
+	t.Helper()
+	out, err := exec.Command("bash", "-c", `cd "$(dirname "$1")/../.." && pwd`, "_", scriptPath).Output()
+	if err != nil {
+		t.Fatalf("bash 推导仓根失败：%v", err)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// dsbRunGoZ —— 走正门，但 ZERG_REPO 显式给「脚本推导仓根」（两态对齐路径文案用）。
+func dsbRunGoZ(t *testing.T, zergRepo string, tail ...string) (int, string, string) {
+	t.Helper()
+	t.Setenv("ZERG_REPO", zergRepo)
+	var out, errb bytes.Buffer
+	inv := &invocation{
+		path: []string{"doc", "site", "build"},
+		orig: append([]string{"doc", "site", "build"}, tail...),
+	}
+	rc := cmdDocSiteBuild(inv, &out, &errb)
+	return rc, out.String(), errb.String()
 }

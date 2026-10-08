@@ -565,11 +565,16 @@ func edgStructuralScan(root string) (int, []string, int, bool) {
 }
 
 // edgRegistryStale —— py `registry_stale`：回**现读为扫面型**的登记项名（登记过期 ⇒ rc=1）。
+// ★ GAP-20260927-108：登记项现为**仓相对** Go 真身名（`core/cmd/zerg/check_*.go`）；本门扫面根 = <仓根>/scripts/gates
+//
+//	⇒ 仓根 = root 上溯两级（`os.path.join(root, "..", "..")` 同构 · `..` 段由 OS 归一）。
+//
 // ✗ 不查「登记项不在盘」（`--root` 可指合成根 ⇒ 自检必须 hermetic）。
 func edgRegistryStale(root string) []string {
+	repoRoot := edgPyJoin(root, "..", "..")
 	stale := []string{}
 	for _, name := range edgNonScanReviewedNames {
-		p := edgPyJoin(root, name)
+		p := edgPyJoin(repoRoot, name)
 		st, err := os.Stat(p)
 		if err != nil || !st.Mode().IsRegular() { // py `os.path.isfile`
 			continue
@@ -592,18 +597,19 @@ type edgReviewed struct {
 	reason string
 }
 
+// ★ GAP-20260927-108：登记项已改指 **Go 真身**（仓相对路径 `core/cmd/zerg/check_*.go`；py 原件已退役）。
 var edgNonScanReviewed = []edgReviewed{
-	{"check-placeholder-residue.py",
+	{"core/cmd/zerg/check_placeholder_residue.go",
 		"已 fail-closed：scan() 取不到（git grep 退码 ≥2）⇒ rc=2，不再把「取不到」读成「零命中」（GAP-20260927-105）"},
-	{"check-manifest-freshness.py",
+	{"core/cmd/zerg/check_manifest_freshness.go",
 		"已 fail-closed：judge() 取不到树 ⇒ EXIT_BLOCKED（rc=2），不与「无告警」混（GAP-20260927-105 同族）"},
-	{"check-gotoolchain.py",
+	{"core/cmd/zerg/check_gotoolchain.go",
 		"已补件内 fail-closed：trip() 取不到可解析版本 ⇒ rc=2，不静默跳过比较（GAP-20260927-108）"},
-	{"check-doc-section-numbers.py",
+	{"core/cmd/zerg/check_doc_section_numbers.go",
 		"已 fail-closed：缺件 / 读不到 ⇒ rc=2 不给结论"},
-	{"check-public-tree-hazards.py",
+	{"core/cmd/zerg/check_public_tree_hazards.go",
 		"已 fail-closed：域取不到（git rev-list 非零退出）⇒ rc=2 不给结论"},
-	{"check_version.py",
+	{"core/cmd/zerg/check_version.go",
 		"已补件内 fail-closed：版本真源取不到（None）⇒ rc=2，不与「两处不一致」混（GAP-20260927-108）"},
 }
 
@@ -806,8 +812,9 @@ func edgTmpBase() string {
 // edgPut —— py 自检内 `put(sub, name, body)`（回夹具目录）。
 func edgPut(tmp, sub, name, body string) string {
 	d := edgPyJoin(tmp, sub)
-	_ = os.MkdirAll(d, 0o755)
-	_ = os.WriteFile(edgPyJoin(d, name), []byte(body), 0o644)
+	p := edgPyJoin(d, name)
+	_ = os.MkdirAll(filepath.Dir(p), 0o755) // 登记项现为仓相对路径（含子目录）⇒ 建到件所在目录
+	_ = os.WriteFile(p, []byte(body), 0o644)
 	return d
 }
 
@@ -867,7 +874,9 @@ func edgSelfTest(stdout, stderr io.Writer) int {
 
 	dOK := edgPut(tmp, "ok", "guarded.py", edgFixtureGuarded())
 	dBad := edgPut(tmp, "bad", "unguarded.py", edgFixtureUnguarded())
-	dStale := edgPut(tmp, "regstale", "check_version.py", edgFixtureUnguarded())
+	// 登记项现为仓相对 Go 真身名 ⇒ 扫面根 = <合成仓根>/scripts/gates（本门据 root 上溯两级定仓根）。
+	dStale := edgPut(tmp, edgPyJoin("regstale", "scripts", "gates"), "a_scan.py", edgFixtureUnguarded())
+	_ = edgPut(tmp, edgPyJoin("regstale", "core", "cmd", "zerg"), "check_version.go", edgFixtureUnguarded())
 
 	// ③ 元门正控：扫面型 + 有守卫 ⇒ rc=0
 	rc3, out3 := edgRunCapture([]string{"--root", dOK, "--baseline", "0"})

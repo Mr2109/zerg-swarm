@@ -38,7 +38,7 @@ func writeGGUFWithKV(t *testing.T, name string, withKeyLength bool, withHeads bo
 
 func fitMachine() resources.MachineLedger {
 	return resources.MachineLedger{
-		Machine:          "edge-node",
+		Machine:          "node-a",
 		MemTotalGb:       128,
 		MemAvailGb:       120,
 		EngineOverheadGb: 2,  // 机器提供开销 → 不因开销缺失而标 estimated

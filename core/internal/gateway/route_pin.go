@@ -1,8 +1,8 @@
 // route_pin.go —— 选机前那道**「查显式指定」的门**（单独定制 > 路由默认规则 · 2026-09-24）。
 //
 // 病灶（现读可证的现场）：子代理没法把模型钉到指定机器 —— 网关择优**默认挑本机**，
-// 请求落在 Mr2109 的 `llama-server`（物证 `ps`：`llama-server -m ~/models/example-35b-v2-Q4_K_M.gguf`），
-// 而人要的是 edge-node 那枚；当时只有「手工 `POST /api/control/unload {"machine":"Mr2109"}` 绕路」这一条路。
+// 请求落在 node-local 的 `llama-server`（物证 `ps`：`llama-server -m /Users/<user>/models/example-35b-v2-Q4_K_M.gguf`），
+// 而人要的是 node-a 那枚；当时只有「手工 `POST /api/control/unload {"machine":"node-local"}` 绕路」这一条路。
 //
 // 本件落地的是**优先级写死的四级**（评审铁律，逐条可测）：
 //

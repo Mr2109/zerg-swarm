@@ -11,7 +11,7 @@ import (
 
 // parseDrmMemoryGb 从一段 fdinfo 文本里解析 drm-memory-gtt/vram 合计（GB）。
 //
-// 形如（EDGE-NODE 实测原文，注意冒号后是 `空格+制表符` 混排）：
+// 形如（node-a 实测原文，注意冒号后是 `空格+制表符` 混排）：
 //
 //	drm-memory-vram:	2208 KiB
 //	drm-memory-gtt: 	34286572 KiB

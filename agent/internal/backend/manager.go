@@ -407,7 +407,7 @@ func (m *Manager) doStart(modelName string, entry *registry.ModelEntry) (map[str
 	var hatchProfile monitor.EggProfile
 	// 甲（Mr2109 2026-09-16 拍）：**实测档案闸门不分路径** —— 裸 exec 也必须过。
 	// 缺口现场（探针 + 日志双证）：此前闸门被包在 `if hatchMode` 内 ⇒ 未开 ZERG_HATCH 的机器
-	// （本机 Mr2109）会在没有实测档案的情况下把引擎拉起来（挪走档案后 /load 仍 200，且日志无闸门记录）。
+	// （本机 node-local）会在没有实测档案的情况下把引擎拉起来（挪走档案后 /load 仍 200，且日志无闸门记录）。
 	if _, reject := m.profileGateLocked(modelName, entry); reject != nil {
 		return reject, nil
 	}
@@ -629,7 +629,7 @@ func (m *Manager) IsModelHealthy(model string) bool {
 
 // InferForward 转发推理请求到指定模型的后端。
 // 若后端处于 crashed 状态，自动重置熔断，由上层 Load 流程重新启动。
-// v2.5.6 治本（2026-08-28——edge-node 幽灵请求）: ctx 参数——客户端断开时取消后端请求——释放单槽
+// v2.5.6 治本（2026-08-28——node-a 幽灵请求）: ctx 参数——客户端断开时取消后端请求——释放单槽
 func (m *Manager) InferForward(ctx context.Context, model string, path string, body []byte) (*http.Response, error) {
 	m.mu.Lock()
 	sp, ok := m.procs[model]
@@ -1266,7 +1266,7 @@ func detectLlamaServerPath() string {
 	candidates := []string{
 		"/opt/homebrew/bin/llama-server", // macOS homebrew
 		"/usr/local/bin/llama-server",    // Linux
-		// EDGE-NODE——2026-08-30 统一单一库（build-hip-flash：支持 qwen4exp/PLE——旧 build-hip 已退役）
+		// node-a——2026-08-30 统一单一库（build-hip-flash：支持 qwen4exp/PLE——旧 build-hip 已退役）
 		"/home/<user>/llama.cpp-src/build-hip-flash/bin/llama-server",
 	}
 	for _, c := range candidates {

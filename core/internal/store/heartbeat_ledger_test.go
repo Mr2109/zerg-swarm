@@ -12,7 +12,7 @@ import (
 func TestHeartbeat_DecodeLedgerFields(t *testing.T) {
 	// 形状对齐 agent 侧 heartbeat.buildBody 的真实输出
 	payload := []byte(`{
-		"machine":"edge-node","backend_state":"ready","model":"example-35b",
+		"machine":"node-a","backend_state":"ready","model":"example-35b",
 		"mem_available_gb":40.5,"mem_total_gb":128,"backend_rss_gb":22.3,
 		"active_requests":3,"healthy":true,
 		"vram_known":true,"gpu_used_gb":20.4,"vram_used_gb":20.4,"vram_total_gb":24,"vram_free_gb":3.6,
@@ -58,7 +58,7 @@ func TestHeartbeat_DecodeLedgerFields(t *testing.T) {
 	// 落库
 	s := NewStore()
 	s.ReceiveHeartbeat(req)
-	snap := s.GetSnapshot("edge-node")
+	snap := s.GetSnapshot("node-a")
 	if snap == nil {
 		t.Fatal("快照未创建")
 	}
@@ -77,7 +77,7 @@ func TestHeartbeat_DecodeLedgerFields(t *testing.T) {
 func TestHeartbeat_UnmanagedResidentVisible(t *testing.T) {
 	s := NewStore()
 	s.ReceiveHeartbeat(HeartbeatRequest{
-		Machine: "edge-node",
+		Machine: "node-a",
 		Resident: []resources.ResidentEntry{
 			{Digest: "d-managed", State: "ready", Managed: true},
 			{Digest: "d-manual", State: "ready", Managed: false, Source: "manual"},
@@ -86,7 +86,7 @@ func TestHeartbeat_UnmanagedResidentVisible(t *testing.T) {
 			{Port: 9001, Managed: false, Note: "手工 screen 起，只绑 127.0.0.1"},
 		},
 	})
-	snap := s.GetSnapshot("edge-node")
+	snap := s.GetSnapshot("node-a")
 	if len(snap.Resident) != 2 {
 		t.Fatalf("应有 2 项驻留，实得 %d", len(snap.Resident))
 	}
@@ -106,7 +106,7 @@ func TestHeartbeat_UnmanagedResidentVisible(t *testing.T) {
 
 // TestHeartbeat_BackwardCompat_OldPayload —— 反例：旧子端心跳体（无任何新增字段）照常落库，旧字段语义不变。
 func TestHeartbeat_BackwardCompat_OldPayload(t *testing.T) {
-	old := []byte(`{"machine":"edge-node","model":"gemma-4-26B","mem_available_gb":40.0,"mem_total_gb":128,"gpu_used_gb":12.5,"backend_rss_gb":12.5,"active_requests":0,"healthy":true,"backend_state":"ready"}`)
+	old := []byte(`{"machine":"node-a","model":"gemma-4-26B","mem_available_gb":40.0,"mem_total_gb":128,"gpu_used_gb":12.5,"backend_rss_gb":12.5,"active_requests":0,"healthy":true,"backend_state":"ready"}`)
 
 	var req HeartbeatRequest
 	if err := json.Unmarshal(old, &req); err != nil {
@@ -114,7 +114,7 @@ func TestHeartbeat_BackwardCompat_OldPayload(t *testing.T) {
 	}
 	s := NewStore()
 	s.ReceiveHeartbeat(req)
-	snap := s.GetSnapshot("edge-node")
+	snap := s.GetSnapshot("node-a")
 	if snap == nil || snap.GpuUsedGb != 12.5 || snap.BackendRssGb != 12.5 || !snap.Healthy {
 		t.Fatalf("旧字段语义被破坏: %+v", snap)
 	}
@@ -150,7 +150,7 @@ func TestHeartbeat_VramUnknownZeroIsHonest(t *testing.T) {
 // TestHeartbeat_JSONShape_ManagedFalseVisible —— 账本对外 JSON 里未托管项必须字面出现 "managed":false。
 func TestHeartbeat_JSONShape_ManagedFalseVisible(t *testing.T) {
 	snap := FleetSnapshot{
-		Machine: "edge-node",
+		Machine: "node-a",
 		Resident: []resources.ResidentEntry{
 			{Digest: "d-managed", State: "ready", Managed: true, Source: "managed"},
 			{Digest: "d-manual", State: "ready", Managed: false, Source: "manual"},

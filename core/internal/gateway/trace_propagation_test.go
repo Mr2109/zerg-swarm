@@ -74,16 +74,16 @@ func hostPort(t *testing.T, raw string) (string, int) {
 	return u.Hostname(), p
 }
 
-// newTraceTestGateway —— 建一个把 edge-node 指向假子端的网关（不加载真实 fleet.yaml）。
+// newTraceTestGateway —— 建一个把 node-a 指向假子端的网关（不加载真实 fleet.yaml）。
 func newTraceTestGateway(t *testing.T, srv *httptest.Server) *Gateway {
 	t.Helper()
 	host, port := hostPort(t, srv.URL)
 	cfg := &config.FleetConfig{
 		Models: map[string][]config.ModelCandidate{
-			traceTestModel: {{Host: "edge-node", File: "/data/trace-echo-test.gguf"}},
+			traceTestModel: {{Host: "node-a", File: "/data/trace-echo-test.gguf"}},
 		},
 		Fleet: map[string]config.FleetNode{
-			"edge-node": {Host: host, Port: port},
+			"node-a": {Host: host, Port: port},
 		},
 	}
 	return NewGateway("tok", cfg, store.NewStore(), nil)
@@ -198,7 +198,7 @@ func TestTracePropagationMainToSubEndSameTrace(t *testing.T) {
 	if in.ParentSpanID != "00f067aa0ba902b7" || in.ParentSource != tracectx.ParentFromHeader {
 		t.Errorf("入站事件的父 span 应指上游那一跳：%+v", in)
 	}
-	if out.PeerHost != "edge-node" || out.PeerPath != "/infer" {
+	if out.PeerHost != "node-a" || out.PeerPath != "/infer" {
 		t.Errorf("出站事件应写明对端：%+v", out)
 	}
 	if out.Session != session {

@@ -1390,7 +1390,7 @@ pub fn fetch_available_models_async() -> SharedResult<Vec<String>> {
                     vec![]
                 };
                 for m in arr {
-                    // P4-33 fleet/models 字段是 id 非 name（ormith-1.0-35b local/edge-node 双条——去重）
+                    // P4-33 fleet/models 字段是 id 非 name（ormith-1.0-35b local/node-a 双条——去重）
                     if let Some(n) = m
                         .get("name")
                         .and_then(|x| x.as_str())

@@ -100,7 +100,7 @@ func NeedsEngineImpl(c ModelCandidate) bool {
 }
 
 // knownHostsBuiltin — 编译期回落名单（仅在读不到投影 fleet.yaml 时使用）。
-// 3c（2026-09-16）：本机角色（localback）退役 ⇒ 本机 = 名为 Mr2109 的普通子端（与 edge-node 同形）。
+// 3c（2026-09-16）：本机角色（localback）退役 ⇒ 本机 = 名为 node-local 的普通子端（与 node-a 同形）。
 var knownHostsBuiltin = []string{"Mr2109", "edge-node", "mini-node-1", "mini-node-2"}
 
 var (
@@ -247,7 +247,7 @@ func Validate(name string, candidate ModelCandidate) ValidationResult {
 		})
 	}
 
-	// ===== V006: file 本地存在性（仅本机子端时检查；3c：host 名 local → Mr2109）=====
+	// ===== V006: file 本地存在性（仅本机子端时检查；3c：host 名 local → node-local）=====
 	// 口径不变：只有"跑在主控这台机器上"的候选才能由主控直接 stat；远程机由子端自己核。
 	if candidate.File != "" && candidate.Host == "Mr2109" {
 		if _, err := os.Stat(candidate.File); os.IsNotExist(err) {

@@ -1636,8 +1636,8 @@ func cnfEmitBaseline(stdout, stderr io.Writer, root string) int {
 	return 0
 }
 
-const cnfEmitNote = "冻结的 path 全集（= `zerg gate`-facing 命令树逐条 path 以空格连接）· 单一真源 = core/cmd/zerg/main.go 的 commands 块（与 check-cli-contract.py 同一组正则）。" +
-	"新增命令 ⇒ 本件必须**同批重冻**（否则 check-newcmd-followup.py 会把新 path 当「新增」逐面点名）。"
+const cnfEmitNote = "冻结的 path 全集（= `zerg gate`-facing 命令树逐条 path 以空格连接）· 单一真源 = core/cmd/zerg/main.go 的 commands 块（与 check_cli_contract.go 同一组正则）。" +
+	"新增命令 ⇒ 本件必须**同批重冻**（否则 zerg gate check check-newcmd-followup 会把新 path 当「新增」逐面点名）。"
 
 // ── JSON 编码（复刻 py json.dumps(ensure_ascii=False, indent=1)）─────────────────
 type cnfJval interface{}

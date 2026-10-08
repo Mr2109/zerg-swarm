@@ -88,7 +88,7 @@ func TestReceiptRoundTripThenResumeReadsItBack(t *testing.T) {
 	}
 
 	// 写一页（判据①：五格 + trace_id）
-	rc, out, errb = fusionRun(t, "dev", "receipt", "new",
+	rc, out, errb = fusionRun(t, "dev", "receipt", "new", "--yes",
 		"--what", "做了 A 与 B", "--next", "下一步做 C",
 		"--evidence", "zerg gate run --fast", "--blockers", "等通道",
 		"--commit", "deadbee")

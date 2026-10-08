@@ -72,7 +72,7 @@ func cmdGateMatrix(inv *invocation, stdout, stderr io.Writer) int {
 	if err != nil {
 		inv.setErr("blocked", "matrix_absent", "矩阵读不到")
 		fmt.Fprintf(stderr, "%s: 矩阵真源读不到（%s）⇒ 不给结论（退码 8）\n", progName, path)
-		fmt.Fprintf(stderr, "真源是 `python3 scripts/gates/check-cli-contract.py --emit-matrix` 写的那一件。\n")
+		fmt.Fprintf(stderr, "真源是 `zerg gate check check-cli-contract --emit-matrix` 写的那一件。\n")
 		return exitBlocked
 	}
 	var mf cliMatrixFile

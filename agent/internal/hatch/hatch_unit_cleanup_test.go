@@ -153,7 +153,7 @@ func TestPrepareHatchUnit_StopsActiveUnit(t *testing.T) {
 // ④ 清理失败不许阻塞孵化，也不许假装清过：benign 错误算成功，非 benign 如实标出。
 func TestPrepareHatchUnit_ErrorsDoNotBlockHatch(t *testing.T) {
 	unit := UnitName("example-moe-36b")
-	// ④a：stop 报「not loaded」（benign，EDGE-NODE 实测二次 stop rc=5 就是这种）⇒ 仍算 stop 成功。
+	// ④a：stop 报「not loaded」（benign，node-a 实测二次 stop rc=5 就是这种）⇒ 仍算 stop 成功。
 	benign := &fakeUnitRunner{
 		out: func(name string, args []string) string {
 			switch {

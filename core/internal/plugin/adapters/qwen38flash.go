@@ -2,9 +2,9 @@ package adapters
 
 // Qwen38FlashAdapter — Qwen3.8-Flash-Next 模型适配器（2026-08-29 注册）
 // 特性: 125B MoE(6B激活) / qwen4架构(GDN+QSA+PLE 51B n-gram) / 262K上下文 / 多模态 / 思考模型
-// 实测(EDGE-NODE 2026-08-29): UD-Q4_K_XL 111GB / 21.7 t/s / reasoning_content+content 正常
+// 实测(node-a 2026-08-29): UD-Q4_K_XL 111GB / 21.7 t/s / reasoning_content+content 正常
 // 思考: 默认开——reasoning_effort 控制——content空时reasoning兜底（同 Qwen3.8-27B）
-// 注意: 运行 ctx 受内存限制（EDGE-NODE 122G 装 111GB 模型后 KV 空间小）——实际 -c 32768（agent 适配器控制）
+// 注意: 运行 ctx 受内存限制（node-a 122G 装 111GB 模型后 KV 空间小）——实际 -c 32768（agent 适配器控制）
 
 import (
 	"fmt"

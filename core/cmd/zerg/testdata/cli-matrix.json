@@ -1,6 +1,6 @@
 {
  "id": "cli-contract.v1",
- "note": "命令面自身的 must-fail 矩阵（§九 M17 `T2` · 开工单 T-42 判据①）。\n口径：这不是「猜的期望值」，是**冻结的现行为（棘轮）** —— 每条口令逐条现跑两遍、退码一致、且与判据语义相符才入矩阵；改行为就必须改这一格（改不动就是回归）。\n候选口令按命令形状给（危险档 / 字段面 / 说明面 / 透传型），执行前判的那两条（未知旗标 · 不认的主号）**每条命令都有**；透传型只留执行前判那条 —— 别的会把被包的脚本真跑一遍。\n重生成：`python3 scripts/gates/check-cli-contract.py --emit-matrix`（先用 `bash scripts/build/build-all.sh --only-cli` 出**新**制品）。\n★ 生成是**增量合并**（不是整表重写）：只刷新机器可派生列（`want_rc` / `want_stdout_bytes` = **现跑字节数** `len(stdout.encode())` —— 不是字符数），既有格的 id/command/argv/why 与顺序逐字保留（手写格不会被重写吃掉），只有「一格都没有的新命令」才追加候选格。\n覆盖与空白由 T1/T5 判（空白受 baseline 棘轮约束）。",
+ "note": "命令面自身的 must-fail 矩阵（§九 M17 `T2` · 开工单 T-42 判据①）。\n口径：这不是「猜的期望值」，是**冻结的现行为（棘轮）** —— 每条口令逐条现跑两遍、退码一致、且与判据语义相符才入矩阵；改行为就必须改这一格（改不动就是回归）。\n候选口令按命令形状给（危险档 / 字段面 / 说明面 / 透传型），执行前判的那两条（未知旗标 · 不认的主号）**每条命令都有**；透传型只留执行前判那条 —— 别的会把被包的脚本真跑一遍。\n重生成：`zerg gate check check-cli-contract --emit-matrix`（先用 `zerg build all --only cli` 出**新**制品）。\n★ 生成是**增量合并**（不是整表重写）：只刷新机器可派生列（`want_rc` / `want_stdout_bytes` = **现跑字节数** `len(stdout.encode())` —— 不是字符数），既有格的 id/command/argv/why 与顺序逐字保留（手写格不会被重写吃掉），只有「一格都没有的新命令」才追加候选格。\n覆盖与空白由 T1/T5 判（空白受 baseline 棘轮约束）。",
  "exemptions": [],
  "cases": [
   {
@@ -3143,7 +3143,7 @@
    "command": "plan",
    "id": "plan#--json 不给字段",
    "want_rc": 2,
-   "want_stdout_bytes": 284,
+   "want_stdout_bytes": 309,
    "why": "给了 --json 不给字段 ⇒ 2 + **错误面包封走 stdout**（本批起 `inv.err != nil` 也发射 ⇒ **非危险档命令同样有机器面**：`items` 空 + `error.kind=usage`；★ 本 why **不记绝对字节数** —— 逐字形态见 `want_stdout_bytes` 那一格，手写的时点读数会烂）（§4.1 K2 甲档 · `K2` 归一后码**取自退码表** `usage` = 2；改前退 1；落点显式给 /tmp，不写状态目录）"
   },
   {
@@ -4458,6 +4458,31 @@
    "want_rc": 2,
    "want_stdout_bytes": 0,
    "why": "D2 缺 --yes ⇒ fail-closed 2（§九 M3 C2）"
+  },
+  {
+   "argv": [
+    "doc",
+    "consumers",
+    "--nosuchflag-zz"
+   ],
+   "command": "doc consumers",
+   "id": "doc/consumers#未知旗标",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "argv": [
+    "doc",
+    "consumers",
+    "--schema",
+    "zerg/v9"
+   ],
+   "command": "doc consumers",
+   "id": "doc/consumers#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
   },
   {
    "argv": [
@@ -8948,7 +8973,6 @@
    "want_stdout_bytes": 0,
    "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标（`mcp serve` 非透传型 ⇒ 全局解析面收口 · 实现体 ui_start.go:cmdMCPServeFamily 转发 mcp_serve.go:cmdMCPServe）"
   },
-
   {
    "argv": [
     "mcp",
@@ -8962,7 +8986,6 @@
    "want_stdout_bytes": 0,
    "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
   },
-
   {
    "argv": [
     "wall",
@@ -9048,6 +9071,338 @@
    "want_rc": 2,
    "want_stdout_bytes": 0,
    "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "argv": [
+    "agent",
+    "workers",
+    "set",
+    "--nosuchflag-zz"
+   ],
+   "command": "agent workers set",
+   "id": "agent/workers/set#未知旗标",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "argv": [
+    "agent",
+    "workers",
+    "set",
+    "--schema",
+    "zerg/v9"
+   ],
+   "command": "agent workers set",
+   "id": "agent/workers/set#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "argv": [
+    "agent",
+    "scheduler",
+    "set",
+    "--nosuchflag-zz"
+   ],
+   "command": "agent scheduler set",
+   "id": "agent/scheduler/set#未知旗标",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "argv": [
+    "agent",
+    "scheduler",
+    "set",
+    "--schema",
+    "zerg/v9"
+   ],
+   "command": "agent scheduler set",
+   "id": "agent/scheduler/set#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "argv": [
+    "dev",
+    "receipt",
+    "--nosuchflag-zz"
+   ],
+   "command": "dev receipt",
+   "id": "dev receipt#未知旗标",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标；本格补上 `dev receipt` 唯一缺的候选面（与同族既有格同形）"
+  },
+  {
+   "argv": [
+    "impact",
+    "core/cmd/zerg/main.go"
+   ],
+   "command": "impact",
+   "id": "impact#缺 --yes（D2）",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "`impact` 默认档真写 impact 缓存件（`GAP-20260927-140` ① · 2026-10-08 拍「默认档要 fail-closed」）⇒ 缺 `--yes` **fail-closed 退 2 · 零写 · 六层取数一个都不跑**；判定位 = `cmdImpact` 的 `writeGuardYes`（在取数之前）"
+  },
+  {
+   "argv": [
+    "plan",
+    "model",
+    "start",
+    "x",
+    "--out",
+    "/tmp/zerg-matrix-plan.json"
+   ],
+   "command": "plan",
+   "id": "plan#缺 --yes（D2）",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "`plan` 默认档真写意图件（`--out` 或 `$ZERG_PLAN_DIR` · `GAP-20260927-140` ①）⇒ 缺 `--yes` **fail-closed 退 2 · 零写**；落点显式给 /tmp（不写状态目录）"
+  },
+  {
+   "argv": [
+    "dev",
+    "receipt",
+    "new",
+    "--what",
+    "x",
+    "--next",
+    "y"
+   ],
+   "command": "dev receipt",
+   "id": "dev receipt#缺 --yes（D2）",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "`dev receipt new` 真写回执（状态目录 `receipts/<R-…>.json` · `GAP-20260927-140` ①）⇒ 缺 `--yes` **fail-closed 退 2 · 零写**；`--what`/`--next` 齐（缺必需旗标那一格另有其格）"
+  },
+  {
+   "argv": [
+    "swap",
+    "core"
+   ],
+   "command": "swap core",
+   "id": "swap/core#缺 --yes（D3）",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "`swap core` 的**写盘档**（裸跑）走本层 fail-closed 授权门（`guard.go` 的 `writeGuardYes`）⇒ 缺 `--yes` **退 2 · 零写**、底层脚本一次都不 exec（`GAP-20260927-140` ① · Mr2109 2026-10-08 拍「默认档要 fail-closed」）。"
+  },
+  {
+   "argv": [
+    "swap",
+    "core",
+    "--dry-run",
+    "--yes"
+   ],
+   "command": "swap core",
+   "id": "swap/core#--dry-run 与 --yes 同给",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "两道确认档自相矛盾 ⇒ 共享判定 `dryRunYesConflict` 退 2 · stdout 0 字节（与 `cmdGuarded` 同口径；只读档 `--check`/`--machine`/`--label`/`--self-test*` 原样透传、不进门）。"
+  },
+  {
+   "argv": [
+    "swap",
+    "agent"
+   ],
+   "command": "swap agent",
+   "id": "swap/agent#缺 --yes（D3）",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "`swap agent` 的**写盘档**（裸跑）走本层 fail-closed 授权门（`guard.go` 的 `writeGuardYes`）⇒ 缺 `--yes` **退 2 · 零写**、底层脚本一次都不 exec（`GAP-20260927-140` ① · Mr2109 2026-10-08 拍「默认档要 fail-closed」）。"
+  },
+  {
+   "argv": [
+    "swap",
+    "agent",
+    "--dry-run",
+    "--yes"
+   ],
+   "command": "swap agent",
+   "id": "swap/agent#--dry-run 与 --yes 同给",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "两道确认档自相矛盾 ⇒ 共享判定 `dryRunYesConflict` 退 2 · stdout 0 字节（与 `cmdGuarded` 同口径；只读档 `--check`/`--machine`/`--label`/`--self-test*` 原样透传、不进门）。"
+  },
+  {
+   "argv": [
+    "swap",
+    "ui"
+   ],
+   "command": "swap ui",
+   "id": "swap/ui#缺 --yes（D3）",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "`swap ui` 的**写盘档**（裸跑）走本层 fail-closed 授权门（`guard.go` 的 `writeGuardYes`）⇒ 缺 `--yes` **退 2 · 零写**、底层脚本一次都不 exec（`GAP-20260927-140` ① · Mr2109 2026-10-08 拍「默认档要 fail-closed」）。"
+  },
+  {
+   "argv": [
+    "swap",
+    "ui",
+    "--dry-run",
+    "--yes"
+   ],
+   "command": "swap ui",
+   "id": "swap/ui#--dry-run 与 --yes 同给",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "两道确认档自相矛盾 ⇒ 共享判定 `dryRunYesConflict` 退 2 · stdout 0 字节（与 `cmdGuarded` 同口径；只读档 `--check`/`--machine`/`--label`/`--self-test*` 原样透传、不进门）。"
+  },
+  {
+   "argv": [
+    "deploy",
+    "launch",
+    "--host",
+    "x",
+    "--file",
+    "/tmp/f",
+    "--expect-sha256",
+    "abc"
+   ],
+   "command": "deploy launch",
+   "id": "deploy/launch#缺 --yes（D3）",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "`deploy launch` 真落**意图件**（`~/.zerg/deploy_launch/` · `deploy_launch.go` 的 `dplWriteIntent`）⇒ 是写面 ⇒ 默认档 fail-closed：缺 `--yes` **退 2 · 零写**（✗ 不建目录、✗ 不落意图件、✗ 不起 ssh）；判定位 = `cmdDeployLaunch` 的 `writeGuardYes`（在唯一写盘点之前 · `GAP-20260927-140` ① · 门100 写面登记同批）；读数由仓外新制品现跑两遍派生 —— rc=2 / stdout 0 字节。"
+  },
+  {
+   "argv": [
+    "deploy",
+    "launch",
+    "--host",
+    "x",
+    "--file",
+    "/tmp/f",
+    "--expect-sha256",
+    "abc",
+    "--dry-run",
+    "--yes"
+   ],
+   "command": "deploy launch",
+   "id": "deploy/launch#--dry-run 与 --yes 同给",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "两道确认档自相矛盾 ⇒ 共享判定 `dryRunYesConflict` 退 2 · stdout 0 字节（判在唯一写盘点之前 —— ✗ 不建目录、✗ 不落意图件、✗ 不起 ssh；与 `cmdGuarded`/`swap *` 同口径 · `GAP-20260927-376`）；读数由仓外新制品现跑两遍派生 —— rc=2 / stdout 0 字节。"
+  },
+  {
+   "argv": [
+    "archive",
+    "mount",
+    "--nosuchflag-zz"
+   ],
+   "command": "archive mount",
+   "id": "archive/mount#未知旗标",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判、不碰任何目标 ⇒ 退 2 · stdout 0 字节。"
+  },
+  {
+   "argv": [
+    "archive",
+    "mount",
+    "--schema",
+    "zerg/v9"
+   ],
+   "command": "archive mount",
+   "id": "archive/mount#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判 ⇒ 退 2 · stdout 0 字节。"
+  },
+  {
+   "argv": [
+    "eval",
+    "run-all",
+    "--nosuchflag-zz"
+   ],
+   "command": "eval run-all",
+   "id": "eval/run-all#未知旗标",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判、不碰任何目标 ⇒ 退 2 · stdout 0 字节。"
+  },
+  {
+   "argv": [
+    "eval",
+    "run-all",
+    "--schema",
+    "zerg/v9"
+   ],
+   "command": "eval run-all",
+   "id": "eval/run-all#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判 ⇒ 退 2 · stdout 0 字节。"
+  },
+  {
+   "argv": [
+    "build",
+    "wall",
+    "--schema",
+    "zerg/v9"
+   ],
+   "command": "build wall",
+   "id": "build/wall#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "透传型命令按矩阵口径只留**执行前判**这一条（别的会把被包的 `scripts/build/build-wall.sh` 真跑一遍）· 不认的契约主号 ⇒ 退 2 · stdout 0 字节。"
+  },
+  {
+   "argv": [
+    "script",
+    "inventory",
+    "verify",
+    "--nosuchflag-zz"
+   ],
+   "command": "script inventory verify",
+   "id": "script/inventory/verify#未知旗标",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判、不碰任何目标 ⇒ 退 2 · stdout 0 字节。"
+  },
+  {
+   "argv": [
+    "script",
+    "inventory",
+    "verify",
+    "--schema",
+    "zerg/v9"
+   ],
+   "command": "script inventory verify",
+   "id": "script/inventory/verify#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判 ⇒ 退 2 · stdout 0 字节。"
+  },
+  {
+   "argv": [
+    "script",
+    "inventory",
+    "verify",
+    "--json"
+   ],
+   "command": "script inventory verify",
+   "id": "script/inventory/verify#--json 不给字段",
+   "want_rc": 2,
+   "want_stdout_bytes": 301,
+   "why": "给了 `--json` 不给字段 ⇒ 用法错（§4.1 K2 甲档 · 码取自退码表 `usage`）· 错误包封走 stdout · 301 字节。"
+  },
+  {
+   "argv": [
+    "script",
+    "inventory",
+    "verify",
+    "--dry-run"
+   ],
+   "command": "script inventory verify",
+   "id": "script/inventory/verify#只读面不收确认档",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "只读命令不收 `--dry-run`/`--yes`（要看计划件用 `sync --dry-run` · 要写台账用 `sync --yes`）⇒ 退 2 · stdout 0 字节。"
   }
  ],
  "tiers": {

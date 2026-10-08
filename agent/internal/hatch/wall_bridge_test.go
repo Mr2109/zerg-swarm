@@ -95,7 +95,7 @@ func bridgeProfile() monitor.EggProfile {
 		SuggestedIdleUnloadS: 900,
 		SchemaVersion:        monitor.EggProfileSchemaVersionV1,
 		MeasuredAt:           time.Date(2026, 9, 15, 0, 0, 0, 0, time.UTC),
-		Machine:              "edge-node",
+		Machine:              "node-a",
 		CalibRuns:            3,
 	}
 }

@@ -708,6 +708,10 @@ func crcSelfTest(stdout io.Writer) int {
 	report("selftest·absent 只 GONE.py", strings.Join(rep.absent, ","), "scripts/x/GONE.py")
 	report("selftest·新悬空行数（含 DROP_PREFIX 前缀命中）", fmt.Sprint(len(rep.dangling)), "5")
 	report("selftest·例外行数", fmt.Sprint(len(rep.exempt)), "0")
+	// ★ py 独有断言搬入（2026-10-08 分叉普查）：取数面拿不到（缺账本）⇒ 错误串非空
+	//   （rc=2 档 · 防「静默当空账」）。判据在 crcLoadLedger：账本不在盘 ⇒ 返回非空错误串。
+	_, _, lerr2 := crcLoadLedger(filepath.Join(base, "不存在的根"))
+	report("selftest·缺账本 ⇒ 报错非空", fmt.Sprint(lerr2 != ""), "true")
 	// ★ 九面（切源 2026-10-08 · `GAP-20260926-223` 账[3]）：行式排除表面进覆盖面（八面→九面）。
 	report("selftest·九面（含 publish/excludes.txt 面）", fmt.Sprint(len(rep.perSurface)), "9")
 	// ★ 九面有牙：往排除表塞一条**已退且不在盘**的件 ⇒ 该面出新悬空（GONE.py 此时仍不在盘）。

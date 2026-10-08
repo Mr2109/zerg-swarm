@@ -73,7 +73,7 @@ func loadRoster(profile string) (roster, bool) {
 		if !inNodes {
 			continue
 		}
-		// `nodes:` 块里的条目：`  edge-node:` 或 `  edge-node:` 后跟缩进字段；只取**键**，值一律不看。
+		// `nodes:` 块里的条目：`  node-a:` 或 `  node-a:` 后跟缩进字段；只取**键**，值一律不看。
 		key := strings.TrimSuffix(trimmed, ":")
 		if key == trimmed {
 			continue

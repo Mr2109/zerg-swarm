@@ -12,8 +12,8 @@ import (
 //
 // 路由（注册在 cmd/zerg-core/main.go，与既有 /api/* 同一套 AuthMiddleware 鉴权）：
 //
-//	GET  /api/gateway/breakers        → {"breakers":[{"host":"edge-node","state":"open","last_error":"...","cooldown_remaining_s":21.3,...}]}
-//	POST /api/gateway/breakers/reset  → 请求体可选 {"host":"edge-node"}（缺省/空 = 全部复位）→ {"reset":N}
+//	GET  /api/gateway/breakers        → {"breakers":[{"host":"node-a","state":"open","last_error":"...","cooldown_remaining_s":21.3,...}]}
+//	POST /api/gateway/breakers/reset  → 请求体可选 {"host":"node-a"}（缺省/空 = 全部复位）→ {"reset":N}
 //
 // 动机：熔断后客户端只见「无可用候选（全部熔断或排除）」——看不到原因/恢复时间/怎么复位。
 // 这两个接口把网关内存态 breaker 状态只读暴露出来，并提供与 chat 包 compact-reset 同风格的手动复位入口。
@@ -33,7 +33,7 @@ func (h *Handlers) BreakersHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // BreakersResetHandler — POST /api/gateway/breakers/reset（手动复位熔断状态）
-// 请求体可选 JSON {"host":"edge-node"}；host 缺省/空串 = 全部复位。返回 {"reset":N}（被清掉的机器数）。
+// 请求体可选 JSON {"host":"node-a"}；host 缺省/空串 = 全部复位。返回 {"reset":N}（被清掉的机器数）。
 func (h *Handlers) BreakersResetHandler(w http.ResponseWriter, r *http.Request) {
 	if h.Gateway == nil {
 		writeErrorCode(w, http.StatusServiceUnavailable, "GATEWAY_NOT_READY", "网关未就绪（未注入 Gateway 实例）")

@@ -6,14 +6,14 @@ import "testing"
 //
 // 心跳里 `vram_free_gb` 就是 `vram_total_gb − vram_used_gb`（`heartbeat.go` 同一段、同一次取样），
 // 所以「used 与 free/total 不同源」这个形状一旦真出现，这条恒等式必然先断 ⇒ 在此钉死。
-// 取值用 edge-node 2026-09-26 现跑 `/api/resources/ledger` 的真读数（total 125 / used 45.7 / free 79.3）。
+// 取值用 node-a 2026-09-26 现跑 `/api/resources/ledger` 的真读数（total 125 / used 45.7 / free 79.3）。
 func TestBuildBody_VramFreeEqualsTotalMinusUsed(t *testing.T) {
 	cases := []struct {
 		name              string
 		used, total       float64
 		wantFree, wantSum float64
 	}{
-		{"edge-node 现跑真读数（含 GTT）", 45.7, 125, 79.3, 125},
+		{"node-a 现跑真读数（含 GTT）", 45.7, 125, 79.3, 125},
 		{"GTT 未计入会断的形状（旧缺陷形态）", 0.2, 125, 124.8, 125},
 		{"小机器整值", 7.5, 24, 16.5, 24},
 	}

@@ -11,7 +11,7 @@ package backend
 //     孵化后调 VerifyEnclosure（拿不到 pid 记为「未核验」）；
 //   - 收卵：sp.Unit 非空 ⇒ 走 Hatcher.Collect（Stop / ReapIdle 两条路都验）；空 ⇒ 走既有句柄路径。
 //
-// 假孵化器（fakeHatcher）替代真实 systemd：开发机上没有 systemd/bwrap，真实依赖只在 EDGE-NODE 上存在；
+// 假孵化器（fakeHatcher）替代真实 systemd：开发机上没有 systemd/bwrap，真实依赖只在 node-a 上存在；
 // 假孵化器按 spec 里的 --port 起一个只会应答 /health 与 /v1/chat/completions 的本地假引擎，
 // 这样「就绪判据」（waitForReady + 功能预检）走的是**真实代码**，不是替身。
 
@@ -672,7 +672,7 @@ throughput_tok_s: 4.8
 suggested_idle_unload_s: 600
 schema_version: 1
 measured_at: 2026-09-15T10:00:00+08:00
-machine: edge-node
+machine: node-a
 calib_runs: 3
 `, peakGtt, peakMem)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -700,7 +700,7 @@ throughput_tok_s: 4.8
 suggested_idle_unload_s: 600
 schema_version: 2
 measured_at: 2026-09-15T10:00:00+08:00
-machine: edge-node
+machine: node-a
 calib_runs: 3
 enclosure:
   expected: %s

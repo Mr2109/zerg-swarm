@@ -163,6 +163,11 @@ func cmdDevVerify(inv *invocation, stdout, stderr io.Writer) int {
 		sheet.Totals[e.Verdict]++
 	}
 	sheetPath := evidenceSheetPath(root, id)
+	// ★ 授权侧（`GAP-20260927-140` ① · 2026-10-08 拍）：真写 evidence.json ⇒ 默认档 fail-closed
+	//   （缺 `--yes` 退 2、零写）；`--dry-run` 支在下行（`if !inv.dryRun`）→ 本门对干跑放行。
+	if rc := writeGuardYes(inv, stderr); rc != exitOK {
+		return rc
+	}
 	if !inv.dryRun {
 		if err := os.MkdirAll(candidateDir(root, id), 0o755); err != nil {
 			inv.setErr("failed", "candidate_dir_unwritable", err.Error())

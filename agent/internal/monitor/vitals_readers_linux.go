@@ -1,14 +1,14 @@
 //go:build linux
 
-// vitals_readers_linux.go —— 虫须的 Linux 实读层（EDGE-NODE 的真机路径）。
+// vitals_readers_linux.go —— 虫须的 Linux 实读层（node-a 的真机路径）。
 //
 // 真源（全部只读）：
 //   - 全局 GTT：/sys/class/drm/card*/device/mem_info_gtt_used（配套 mem_info_gtt_total）。
-//     EDGE-NODE 实测（2026-09-14）：card1 上 used=60880695296（空载）/ total=133143986176（÷1024³ ≈ 123.96 GiB）。
+//     node-a 实测（2026-09-14）：card1 上 used=60880695296（空载）/ total=133143986176（÷1024³ ≈ 123.96 GiB）。
 //     多卡取和（设计 §8.2：全局 GTT 是账的主口径）。
 //   - CPU：/proc/stat 首行 cpu 聚合行，差分算忙闲。
 //   - GPU 忙：/sys/class/drm/card*/device/gpu_busy_percent（amdgpu 标准接口，多卡取最大）。
-//   - 盘空间：statfs(dataDir)（EDGE-NODE 权重与 KV 盘所在 /data）。
+//   - 盘空间：statfs(dataDir)（node-a 权重与 KV 盘所在 /data）。
 //   - 逐进程归因：/proc/<pid>/fdinfo/* 的 drm-memory-gtt（交叉校验口径，§8.2）。
 package monitor
 
@@ -118,7 +118,7 @@ func readGpuBusy() GpuBusySample {
 	return GpuBusySample{Pct: maxPct, Ok: true}
 }
 
-// readDataDisk statfs 数据盘（EDGE-NODE = /data：权重与 KV 盘所在）。
+// readDataDisk statfs 数据盘（node-a = /data：权重与 KV 盘所在）。
 func readDataDisk(dir string) DiskSample {
 	var st syscall.Statfs_t
 	if err := syscall.Statfs(dir, &st); err != nil {
@@ -171,7 +171,7 @@ func readProcAttribution() AttribSample {
 }
 
 // parseDrmGttKib 从一段 fdinfo 文本解析 drm-memory-gtt 的 KiB 合计。
-// EDGE-NODE 实测格式（冒号后空格/制表符混排）：
+// node-a 实测格式（冒号后空格/制表符混排）：
 //
 //	drm-memory-vram:	2208 KiB
 //	drm-memory-gtt: 	34286572 KiB

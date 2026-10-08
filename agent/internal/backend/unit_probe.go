@@ -27,7 +27,7 @@ import (
 )
 
 // unitCmdRunnerFunc 执行一条只读单元命令（systemctl / journalctl）并回原文。
-// 抽成类型 + 注入点只为单测：开发机上没有 systemd 用户实例（macOS），真依赖只在 EDGE-NODE 上。
+// 抽成类型 + 注入点只为单测：开发机上没有 systemd 用户实例（macOS），真依赖只在 node-a 上。
 type unitCmdRunnerFunc func(timeout time.Duration, name string, args ...string) (string, error)
 
 // unitCmdRunner 生产实现：跑一条命令，带超时，超时/失败都把原文回给调用方（不许吞）。

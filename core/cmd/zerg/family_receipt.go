@@ -126,6 +126,15 @@ func cmdReceiptNew(inv *invocation, stdout, stderr io.Writer) int {
 	rec.RoundID = "R-" + time.Now().Format("20060102T150405")
 	rec.CreatedAt = time.Now().Format(time.RFC3339)
 
+	// ★ 授权侧（`GAP-20260927-140` ① · 2026-10-08 拍）：`new` 真写回执 ⇒ 默认档 fail-closed
+	//   （`--dry-run` 出计划件；缺 `--yes` 退 2、零写）—— `ls`/`show`（只读）不走这条。
+	if rc, done := writeGuardDryRun(inv, stdout, stderr); done {
+		return rc
+	}
+	if rc := writeGuardYes(inv, stderr); rc != exitOK {
+		return rc
+	}
+
 	dir := receiptDir()
 	if dir == "" {
 		inv.setErr("failed", "no_receipt_dir", "回执落点解析不出来")

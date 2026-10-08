@@ -701,7 +701,7 @@ func gpuStatus() (string, error) {
 		out, _ := exec.Command("sh", "-c", "ioreg -l | grep -i gpu-perf-tgt-utilization | head -3").Output()
 		return "macOS GPU 采样:\n" + string(out), nil
 	}
-	// EDGE-NODE/Linux: rocm-smi
+	// node-a/Linux: rocm-smi
 	out, err := exec.Command("sh", "-c", "rocm-smi --showuse 2>/dev/null || nvidia-smi 2>/dev/null || echo 无 GPU 工具").Output()
 	return string(out), err
 }

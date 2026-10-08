@@ -1,11 +1,11 @@
 // vitals_test.go —— 虫须测试。
 //
-// 样例纪律：sysfs 解析用例**逐字照抄 EDGE-NODE 实测字节**（2026-09-14 真机取证）：
+// 样例纪律：sysfs 解析用例**逐字照抄 node-a 实测字节**（2026-09-14 真机取证）：
 //
 //	/sys/class/drm/card1/device/mem_info_gtt_used  = 60880695296（空载收卵后）
 //	/sys/class/drm/card1/device/mem_info_gtt_total = 133143986176
 //
-// fdinfo 样例与 backend/baseline_mem_test.go 同源（EDGE-NODE 两条真服务实测）。
+// fdinfo 样例与 backend/baseline_mem_test.go 同源（node-a 两条真服务实测）。
 package monitor
 
 import (
@@ -17,34 +17,34 @@ import (
 
 func approx(a, b float64) bool { return math.Abs(a-b) < 0.05 }
 
-// ══════════════ EDGE-NODE 真实格式解析 ══════════════
+// ══════════════ node-a 真实格式解析 ══════════════
 
-// TestParseGlobalGtt —— EDGE-NODE 真机 sysfs 文件逐字样例（多卡取和的输入形状）。
+// TestParseGlobalGtt —— node-a 真机 sysfs 文件逐字样例（多卡取和的输入形状）。
 func TestParseGlobalGtt(t *testing.T) {
 	usedB, ok := parseSysfsUintSample("60880695296\n")
 	if !ok || usedB != 60880695296 {
-		t.Fatalf("used 解析错: %d ok=%v（EDGE-NODE 实测 60880695296）", usedB, ok)
+		t.Fatalf("used 解析错: %d ok=%v（node-a 实测 60880695296）", usedB, ok)
 	}
 	totalB, ok := parseSysfsUintSample("133143986176")
 	if !ok || totalB != 133143986176 {
-		t.Fatalf("total 解析错: %d ok=%v（EDGE-NODE 实测 133143986176）", totalB, ok)
+		t.Fatalf("total 解析错: %d ok=%v（node-a 实测 133143986176）", totalB, ok)
 	}
-	// EDGE-NODE 原文字节 → GiB：used ≈ 56.70（与 §8.2 实测对照 56.70 GiB 吻合）、total ≈ 123.96
+	// node-a 原文字节 → GiB：used ≈ 56.70（与 §8.2 实测对照 56.70 GiB 吻合）、total ≈ 123.96
 	g := GttSample{UsedBytes: usedB, TotalBytes: totalB, Ok: true}
 	if !approx(g.UsedGb(), 56.70) || !approx(g.TotalGb(), 123.96) {
 		t.Fatalf("换算错: used=%.2f total=%.2f", g.UsedGb(), g.TotalGb())
 	}
 }
 
-// TestParseDrmGttKib —— fdinfo EDGE-NODE 实测样例（照抄 baseline_mem_test.go 的字节）。
+// TestParseDrmGttKib —— fdinfo node-a 实测样例（照抄 baseline_mem_test.go 的字节）。
 func TestParseDrmGttKib(t *testing.T) {
 	cases := []struct {
 		name    string
 		text    string
 		wantKib float64
 	}{
-		{"X3 Qwen（KiB，空格+制表符混排）", "pos:\t0\nflags:\t0100002\ndrm-memory-vram:\t2208 KiB\ndrm-memory-gtt: \t34286572 KiB\ndrm-memory-cpu: \t0 KiB\n", 34286572},
-		{"X3 K2", "drm-memory-gtt:\t25144840 KiB\n", 25144840},
+		{"node-a Qwen（KiB，空格+制表符混排）", "pos:\t0\nflags:\t0100002\ndrm-memory-vram:\t2208 KiB\ndrm-memory-gtt: \t34286572 KiB\ndrm-memory-cpu: \t0 KiB\n", 34286572},
+		{"node-a K2", "drm-memory-gtt:\t25144840 KiB\n", 25144840},
 		{"两项 gtt 相加（多 fd）", "drm-memory-gtt: \t1000 KiB\ndrm-memory-gtt:\t2000 KiB\n", 3000},
 		{"GiB 单位", "drm-memory-gtt: 2 GiB\n", 2 * 1024 * 1024},
 		{"MiB 单位", "drm-memory-gtt: 1024 MiB\n", 1024 * 1024},

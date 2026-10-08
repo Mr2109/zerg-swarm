@@ -275,6 +275,12 @@ func TestGateCheckLockContentionIsBlocked(t *testing.T) {
 // ★ 2026-10-08 接线批（M2真搬簇·本单）：接线 writeout-probe（writeoutProbeGateMain）⇒ 158→159。★ rc/stdout 面逐字同（rc 1⟷1 崩溃档 · env 齐时 JSON 逐字同）；stderr 面 = 已声明的门侧掩码缺口（回溯帧 vs 具名文案）。
 // ★ 2026-10-08 接线批（本单 · check-retire 族）：接线 check-retire-consistency（checkRetireConsistencyGateMain）· check-retire-roster（retireRosterGateMain）⇒ 159→161。
 // ★ 2026-10-08 接线批（本单 · GAP-20260928-59）：接线 check-genflag-surface（checkGenflagSurfaceGateMain）⇒ 161→162。
+// ★ 2026-10-08 接线批（M2真搬簇·本单）：真搬并接线 check-face-parity（checkFaceParityGateMain · 判据件 check-face-parity.py 的 Go 半 · 承接 GAP-20261001-13）⇒ 162→163。
+// ★ 2026-10-08 接线批（DEV-1960 · GAP-20260927-129 ④）：接线 check-doc-consumers（checkDocConsumersGateMain · 公告 consumers 只读判据）⇒ 163→164。
+// ★ 2026-10-08 建键批（本单）：入表 10 枚已搬 Go 半（atomic-write · check-i18n · deploy-launch · doc-index-gen · doc-site-build · fleet-logs · gen-tools-md · i18n-audit · kb-docs-sync · ui-start）⇒ 164→174。
+// ★ 2026-10-08 建键批（本单 · pack-release · DEV-2005）：接线 pack-release（packReleaseMain · scripts/build/pack-release.sh 的 Go 真身）⇒ 175→176。
+// ★ 2026-10-08 接线批（GAP-20260927-347 · check-danger-guard-parity）：接线 check-danger-guard-parity（dangerGuardParityMain · 危险档↔执行门对账闸的 Go 真身 · 无 py 半）⇒ 176→177。
+// ★ 2026-10-09（隐私面口径 B+A · 本单）：入表 check-public-marks-deep（checkPublicMarksDeepGateMain · 「真实出树面 ⨯ 私有面模式表」只报告档 · Go 半无 py 半 · 接既有 cptp* 出树面件族）⇒ 177→178。
 func TestGateCheckGoEntryTableComplete(t *testing.T) {
 	root := filepath.Join("..", "..", "..")
 	byName, dupes, err := gateCheckRoster(root)
@@ -284,8 +290,8 @@ func TestGateCheckGoEntryTableComplete(t *testing.T) {
 	if len(dupes) != 0 {
 		t.Fatalf("真实名录有同名多件 ⇒ 前置不成立：%v", dupes)
 	}
-	if got := len(gateCheckGoEntry); got != 162 {
-		t.Fatalf("进程内 Go 表项数要 == 162，得到 %d", got)
+	if got := len(gateCheckGoEntry); got != 178 {
+		t.Fatalf("进程内 Go 表项数要 == 178，得到 %d", got)
 	}
 	// ★ 放宽（2026-10-07 退役批）：旧不变量「表键必在名录」⇒「表键 ⇒ 名录 **或** inproc 键 二者其一」。
 	//   退役件（py 已 `git rm`）只余 inproc 那一路（family_gate_check.go 的 inproc 兜底 ⇒ rc=0）；
@@ -748,5 +754,295 @@ func TestGateCheckAcquireLockToolRetiredSilent(t *testing.T) {
 	}
 	if !strings.Contains(errb2.String(), "件级锁件不在盘") {
 		t.Fatalf("负控（无 Go 半）该保留「如实报」档：stderr=%q", errb2.String())
+	}
+}
+
+// ⒏ ★ 本批（2026-10-08 拍板⑤）· **受信运行器「闸内免盾」机制**（单旋钮 `ZERG_TRUSTED_RUNNER=1`）。
+//
+//	只免「`gate check` 危险档（写工具 / 重编类 / 整套门类）缺 `--yes` ⇒ 拒执」这**一道**盾；
+//	✗ 不放宽 `--yes` 本身；缺旋钮 / 值不对 ⇒ 与今天**逐字同**（裸跑仍 rc=2 · 零写）。
+//	ⓑ 留痕：免盾时 stderr 出审计行（受信身份 · 哪一步 · 免的哪一档）＋台账行带 `waiver` 字段（六字段形状不变）。
+func TestGateCheckTrustedRunnerWaiver(t *testing.T) {
+	root := t.TempDir()
+	marker := filepath.Join(root, "RAN")
+	// 危险档夹具：分类**走中央登记**（GAP-20261008-11 后 ✗ 不再靠件头）⇒ 注入一格 gateCheckClassEntry
+	// （跑完删回 · 只动本进程内存 · ✗ 不碰 gate_inproc_table.go）。真跑时落 marker（代表「真写」）。
+	gctWrite(t, root, "scripts/gates/trusted-fixture.sh",
+		"#!/usr/bin/env bash\n"+
+			"printf x > \"$GCT_MARKER\"\n"+
+			"echo gct-trusted-fixture\n")
+	gateCheckClassEntry["trusted-fixture"] = gateCheckClassSpec{"write", dangerD2}
+	defer delete(gateCheckClassEntry, "trusted-fixture")
+	t.Setenv("GCT_MARKER", marker)
+	t.Setenv("ZERG_GATE_FORWARD", "on")
+	t.Setenv("ZERG_TRUSTED_RUNNER", "")
+	led := filepath.Join(root, "scripts", "gates", "judge-run-ledger.jsonl")
+	_ = os.Remove(marker)
+
+	// (a) 缺旋钮 + 缺 `--yes` ⇒ 危险档拒执（退 2 · **不 exec** · 零写 —— 与今天逐字同）。
+	rc, out, errb := gctRun(gctInv("trusted-fixture"), root)
+	if rc != exitUsage {
+		t.Fatalf("缺旋钮缺 --yes ⇒ 退 %d，得到 %d · stderr=%s", exitUsage, rc, errb)
+	}
+	if strings.Contains(out, "gct-trusted-fixture") {
+		t.Errorf("缺 --yes ⇒ **不 exec**：out=%q", out)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Errorf("缺旋钮 ⇒ 零写（marker 不该在）：%v", err)
+	}
+
+	// (b) 旋钮值**不对**（"true" · 非闭集）⇒ 视为没设 ⇒ 与 (a) 同（退 2 · 不 exec · 零写）。
+	t.Setenv("ZERG_TRUSTED_RUNNER", "true")
+	rc2, out2, _ := gctRun(gctInv("trusted-fixture"), root)
+	if rc2 != exitUsage || strings.Contains(out2, "gct-trusted-fixture") {
+		t.Fatalf("旋钮值不对 ⇒ 视为没设（退 %d · 不 exec），得到 rc=%d out=%q", exitUsage, rc2, out2)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Errorf("旋钮值不对 ⇒ 零写：%v", err)
+	}
+
+	// (c) 受信运行器（=1）+ 缺 `--yes` ⇒ **免这一道盾**：真跑（退 0）+ 真写 + ⓑ 留痕。
+	t.Setenv("ZERG_TRUSTED_RUNNER", "1")
+	rc3, out3, errb3 := gctRun(gctInv("trusted-fixture"), root)
+	if rc3 != 0 || !strings.Contains(out3, "gct-trusted-fixture") {
+		t.Fatalf("受信运行器 ⇒ 危险档真跑（退 0 · 子件 stdout 透传）：rc=%d out=%q stderr=%q", rc3, out3, errb3)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Errorf("受信运行器 ⇒ 真跑（marker 应在）：%v", err)
+	}
+	if !strings.Contains(errb3, "免盾") || !strings.Contains(errb3, "ZERG_TRUSTED_RUNNER=1") ||
+		!strings.Contains(errb3, "gate check trusted-fixture") {
+		t.Errorf("ⓑ 留痕：要明说「免盾」· 身份（ZERG_TRUSTED_RUNNER=1）· 哪一步（gate check trusted-fixture）：%q", errb3)
+	}
+	// 台账行带 waiver 字段（可查证的审计面）。
+	b, err := os.ReadFile(led)
+	if err != nil {
+		t.Fatalf("免盾那一步应落台账：%v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
+	last := strings.TrimSpace(lines[len(lines)-1])
+	var row map[string]any
+	if err := json.Unmarshal([]byte(last), &row); err != nil {
+		t.Fatalf("台账行不是合法 JSON：%v · %q", err, last)
+	}
+	if row["waiver"] != "trusted-runner:ZERG_TRUSTED_RUNNER=1" {
+		t.Errorf("台账 waiver 字段应记「谁免的盾」：%q", last)
+	}
+	for _, k := range []string{"raw_rc", "detail", "sha256", "head", "judge_resolved", "dry_run"} {
+		if _, ok := row[k]; !ok {
+			t.Errorf("台账行仍须齐六字段：缺 %s · %q", k, last)
+		}
+	}
+
+	// (d) `--dry-run` ⇒ 退 0 · 出计划件 · 零写（与旋钮无关）。
+	_ = os.Remove(marker)
+	invDry := gctInv("trusted-fixture", "--dry-run")
+	invDry.dryRun = true
+	rc4, out4, _ := gctRun(invDry, root)
+	if rc4 != 0 || !strings.Contains(out4, "计划件") {
+		t.Fatalf("--dry-run ⇒ 退 0 出计划件，得到 rc=%d out=%q", rc4, out4)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Errorf("--dry-run ⇒ 零写：%v", err)
+	}
+
+	// (e) `--dry-run --yes` ⇒ 自相矛盾 ⇒ 退 2（与旋钮无关）。
+	invDY := gctInv("trusted-fixture", "--dry-run", "--yes")
+	invDY.dryRun = true
+	invDY.yes = true
+	rc5, _, errb5 := gctRun(invDY, root)
+	if rc5 != exitUsage {
+		t.Fatalf("--dry-run --yes ⇒ 退 %d（自相矛盾），得到 %d · stderr=%s", exitUsage, rc5, errb5)
+	}
+
+	// (f) 旋钮**不放宽 `--yes` 本身**：无旋钮 + `--yes` ⇒ 照旧真跑（退 0 · 真写）。
+	t.Setenv("ZERG_TRUSTED_RUNNER", "")
+	_ = os.Remove(marker)
+	invYes := gctInv("trusted-fixture", "--yes")
+	invYes.yes = true
+	rc6, out6, errb6 := gctRun(invYes, root)
+	if rc6 != 0 || !strings.Contains(out6, "gct-trusted-fixture") {
+		t.Fatalf("无旋钮 + --yes ⇒ 照旧真跑：rc=%d out=%q stderr=%q", rc6, out6, errb6)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Errorf("无旋钮 + --yes ⇒ 真写：%v", err)
+	}
+}
+
+// ㉑ ★ GAP-20261008-11 · **退件流程那一格**：写工具件**在盘 ⟷ 离盘（退役）**，
+//
+//	`zerg gate check <判据名> --dry-run` 的 **rc 与 stdout 逐字相同**（✗ 静默失明）。
+//
+//	破口（件头方案）：件一离盘 ⇒ 件头随之消失 ⇒ 分类读空 ⇒ 写工具闸消失 ⇒ `--dry-run` 泄漏给子件
+//	（退 rc=2、stdout 空）—— 与在盘的 rc=0/计划件**不同形**。本格断言：分类改中央登记后，
+//	退件前后**逐字同**。成对负控：件离盘后**裸跑**仍退 2（缺 --yes 的盾不随件消失）。
+//
+//	与 TestGateCheckInprocKeyResolvesWithoutPyFile 的配套：那格证「键在 inproc ⇒ 名可解析」；
+//	本格证「**在册名的档位**不随件离盘而变」（分类真源 = gateCheckClassEntry，与件在不在盘无关）。
+func TestGateCheckDryRunStableAcrossRetire(t *testing.T) {
+	const name = "gct-class-probe" // 合成名（✗ 避免污染真表）
+	if _, hit := gateCheckClassEntry[name]; hit {
+		t.Fatalf("前置不成立：%q 竟已在中央分类表里", name)
+	}
+	if _, hit := gateCheckGoEntry[name]; hit {
+		t.Fatalf("前置不成立：%q 竟已在 Go 表里", name)
+	}
+	// 中央登记：判据名 ⇒ 写工具 D2；inproc 键（退役态名解析的兜底，与 gateCheckClassOf 分属两件事）。
+	gateCheckClassEntry[name] = gateCheckClassSpec{"write", dangerD2}
+	gateCheckGoEntry[name] = func(stdout, stderr io.Writer, argv []string) int { return 0 }
+	defer func() { delete(gateCheckClassEntry, name); delete(gateCheckGoEntry, name) }()
+
+	root := t.TempDir()
+	sh := gctWrite(t, root, "scripts/gates/"+name+".sh", "#!/usr/bin/env bash\necho gct-class-probe\n")
+	t.Setenv("ZERG_GATE_FORWARD", "on")
+
+	dry := func() (int, string, string) {
+		inv := gctInv(name, "--dry-run")
+		inv.dryRun = true
+		return gctRun(inv, root)
+	}
+
+	// 态①（件在盘）：写工具档 ⇒ --dry-run 出计划件、退 0。
+	rcA, outA, errA := dry()
+	if rcA != exitOK || !strings.Contains(outA, "计划件") {
+		t.Fatalf("件在盘：--dry-run 应退 %d 出计划件，得到 rc=%d out=%q stderr=%q", exitOK, rcA, outA, errA)
+	}
+
+	// 态②（件离盘 · 退役）：分类走中央表 ⇒ rc 与 stdout **逐字同**（件头方案下此格会红）。
+	if err := os.Remove(sh); err != nil {
+		t.Fatal(err)
+	}
+	rcB, outB, errB := dry()
+	if rcB != rcA || outB != outA {
+		t.Fatalf("件离盘后 --dry-run 与在盘**逐字同**（✗ 静默失明）：\n  在盘 rc=%d out=%q\n  离盘 rc=%d out=%q stderr=%q",
+			rcA, outA, rcB, outB, errB)
+	}
+
+	// 成对负控：件离盘后**裸跑**（缺 --yes）仍退 2 —— 写工具闸不随件消失。
+	rcC, _, errC := gctRun(gctInv(name), root)
+	if rcC != exitUsage || !strings.Contains(errC, "--yes") {
+		t.Fatalf("件离盘后裸跑仍须退 %d（缺 --yes ⇒ 拒执），得到 rc=%d stderr=%q", exitUsage, rcC, errC)
+	}
+}
+
+// ㉒ ★ A 方案（2026-10-08）· **重编/写档类退役不失效**（件缺席而盾仍在）＝ T1。
+//
+//	合成名登记为中央表 `write`（判据名 ⇒ 危险档 · 与件在不在盘无关）⇒ 件在盘 ⟷ 件离盘两态：
+//	`--dry-run` 均退 0 且**计划件 stdout 逐字同**；裸跑两态均退 2（缺 `--yes` 的盾不随件消失）。
+//	破口（不登中央表 · 仅靠目录判/行为判）：件一离盘 ⇒ 甲/乙读空 ⇒ 盾静默消失 ⇒ 在盘态无计划件、
+//	子件照跑，与离盘态不同形 ⇒ 本格红。件落 `scripts/gates/`（非构建目录）⇒ kind 两态均「写工具」。
+//	负控：删本用例里那行 `gateCheckClassEntry[name] = …` ⇒ 态①即红（证本格有牙）。
+func TestGateCheckRebuildClassShieldStableAcrossRetire(t *testing.T) {
+	const name = "gct-rebuild-probe" // 合成名（✗ 避免污染真表）
+	if _, hit := gateCheckClassEntry[name]; hit {
+		t.Fatalf("前置不成立：%q 竟已在中央分类表里", name)
+	}
+	gateCheckClassEntry[name] = gateCheckClassSpec{"write", dangerD2}
+	defer delete(gateCheckClassEntry, name)
+
+	root := t.TempDir()
+	sh := gctWrite(t, root, "scripts/gates/"+name+".sh", "#!/usr/bin/env bash\necho gct-rebuild-probe\n")
+	t.Setenv("ZERG_GATE_FORWARD", "on")
+
+	dry := func() (int, string, string) {
+		inv := gctInv(name, "--dry-run")
+		inv.dryRun = true
+		return gctRun(inv, root)
+	}
+
+	// 态①（件在盘）：登记 write ⇒ --dry-run 出计划件、退 0。
+	rcA, outA, errA := dry()
+	if rcA != exitOK || !strings.Contains(outA, "计划件") {
+		t.Fatalf("件在盘：--dry-run 应退 %d 出计划件，得到 rc=%d out=%q stderr=%q", exitOK, rcA, outA, errA)
+	}
+	// 态①裸跑（缺 --yes）：登记 write ⇒ 拒执退 2 · **不 exec**。
+	rcA2, outA2, errA2 := gctRun(gctInv(name), root)
+	if rcA2 != exitUsage || strings.Contains(outA2, "gct-rebuild-probe") || !strings.Contains(errA2, "--yes") {
+		t.Fatalf("件在盘裸跑：缺 --yes ⇒ 退 %d · 不 exec，得到 rc=%d out=%q stderr=%q", exitUsage, rcA2, outA2, errA2)
+	}
+
+	// 态②（件离盘 · 退役）：分类走中央表 ⇒ --dry-run rc 与 stdout **逐字同**（不登表则此格红）。
+	if err := os.Remove(sh); err != nil {
+		t.Fatal(err)
+	}
+	rcB, outB, errB := dry()
+	if rcB != rcA || outB != outA {
+		t.Fatalf("件离盘后 --dry-run 与在盘**逐字同**（件缺席而盾仍在）：\n  在盘 rc=%d out=%q\n  离盘 rc=%d out=%q stderr=%q",
+			rcA, outA, rcB, outB, errB)
+	}
+	// 态②裸跑：缺 --yes 的盾**不随件消失** ⇒ 仍退 2。
+	rcB2, outB2, errB2 := gctRun(gctInv(name), root)
+	if rcB2 != exitUsage || strings.Contains(outB2, "gct-rebuild-probe") || !strings.Contains(errB2, "--yes") {
+		t.Fatalf("件离盘后裸跑仍须退 %d（缺 --yes ⇒ 拒执 · 不 exec），得到 rc=%d out=%q stderr=%q", exitUsage, rcB2, outB2, errB2)
+	}
+}
+
+// ㉓ ★ A 方案 · **登 `read` 能压过目录判**＝ T2（今日 OR 下做不到的那一格）。
+//
+//	合成名登记为中央表 `read` 且件落 `scripts/build/`（否则必命中甲目录判）⇒ **无盾**：裸跑照 exec
+//	子件（退 0 · 子件 stdout 透传）。成对负控：同件、同盘，把该登记删掉 ⇒ 退回「未登走甲兜底」⇒
+//	目录判命中 ⇒ 有盾（退 2 · 不 exec）—— 证 `read` 登记正是「压过目录判」的那一步。
+func TestGateCheckRegisteredReadOverridesDirClass(t *testing.T) {
+	const name = "gct-read-override-probe" // 合成名
+	if _, hit := gateCheckClassEntry[name]; hit {
+		t.Fatalf("前置不成立：%q 竟已在中央分类表里", name)
+	}
+	if _, hit := gateCheckGoEntry[name]; hit {
+		t.Fatalf("前置不成立：%q 竟已在 Go 表里", name)
+	}
+	root := t.TempDir()
+	gctWrite(t, root, "scripts/build/"+name+".sh", "#!/usr/bin/env bash\necho gct-read-override\n")
+	t.Setenv("ZERG_GATE_FORWARD", "on")
+
+	// 态①（登 read）：压过目录判 ⇒ 无盾 ⇒ 裸跑照 exec（退 0 · stdout 透传）。
+	gateCheckClassEntry[name] = gateCheckClassSpec{"read", ""}
+	rc, out, errb := gctRun(gctInv(name), root)
+	delete(gateCheckClassEntry, name)
+	if rc != 0 || !strings.Contains(out, "gct-read-override") {
+		t.Fatalf("登 read 应压过目录判（无盾 · 照 exec 退 0），得到 rc=%d out=%q stderr=%q", rc, out, errb)
+	}
+
+	// 态②（成对负控 · 删该登记）：未登 ⇒ 走甲兜底 ⇒ 目录判命中 ⇒ 有盾（退 2 · 不 exec）。
+	if _, hit := gateCheckClassEntry[name]; hit {
+		t.Fatalf("态②前置：登记应已删")
+	}
+	rc2, out2, errb2 := gctRun(gctInv(name), root)
+	if rc2 != exitUsage || strings.Contains(out2, "gct-read-override") || !strings.Contains(errb2, "--yes") {
+		t.Fatalf("未登 ⇒ 目录判兜底应给盾（退 %d · 不 exec），得到 rc=%d out=%q stderr=%q", exitUsage, rc2, out2, errb2)
+	}
+}
+
+// ㉔ ★ A 方案 · **未登名兜底逐字同旧**＝ T3：件落 `scripts/build/`（甲目录判）而中央表未登 ⇒
+//
+//	在盘有盾（退 2 · 不 exec）；件离盘 ⇒ 名解析兜底两条（inproc 键/中央表键）皆不中 ⇒ 退 2「不在册」
+//	（与今日同 · 防 A 误碰兜底路）。与 T2 成对：T2 证「登 read 压过目录判」，本格证「未登仍走甲」。
+func TestGateCheckUnregisteredBuildDirStillShields(t *testing.T) {
+	const name = "gct-unreg-dir-probe"
+	if _, hit := gateCheckClassEntry[name]; hit {
+		t.Fatalf("前置不成立：%q 竟已在中央分类表里", name)
+	}
+	if _, hit := gateCheckGoEntry[name]; hit {
+		t.Fatalf("前置不成立：%q 竟已在 Go 表里", name)
+	}
+	root := t.TempDir()
+	sh := gctWrite(t, root, "scripts/build/"+name+".sh", "#!/usr/bin/env bash\necho gct-unreg-dir\n")
+	t.Setenv("ZERG_GATE_FORWARD", "on")
+
+	// 态①（件在盘）：未登 ⇒ 甲目录判兜底 ⇒ 有盾（退 2 · 不 exec）。
+	rc, out, errb := gctRun(gctInv(name), root)
+	if rc != exitUsage || strings.Contains(out, "gct-unreg-dir") {
+		t.Fatalf("未登件在盘：目录判兜底应给盾（退 %d · 不 exec），得到 rc=%d out=%q stderr=%q", exitUsage, rc, out, errb)
+	}
+	if !strings.Contains(errb, "--yes") || !strings.Contains(errb, "重编类") {
+		t.Fatalf("未登件在盘：要明说「重编类」并指 --yes：%q", errb)
+	}
+
+	// 态②（件离盘）：既不在 inproc、又未登中央表 ⇒ 名解析不中 ⇒ 退 2「不在册」（与今日同）。
+	if err := os.Remove(sh); err != nil {
+		t.Fatal(err)
+	}
+	rc2, _, errb2 := gctRun(gctInv(name), root)
+	if rc2 != exitUsage || !strings.Contains(errb2, "不在册") {
+		t.Fatalf("未登件离盘：仍应退 %d「不在册」（兜底两路皆不中 · 与今日同），得到 rc=%d stderr=%q", exitUsage, rc2, errb2)
 	}
 }

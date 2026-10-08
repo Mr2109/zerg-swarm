@@ -465,7 +465,7 @@ func HashFile(path string) (File, error) {
 // mmproj"两者在这些字段上逐字节相同，故还要一条"投影器建材在不在本地"才能把
 // mmproj_missing 与 no_vision 分开。
 //
-// 为什么还要比对名字（而不是"目录里有 mmproj 就算数"）：实测本机 ~/models
+// 为什么还要比对名字（而不是"目录里有 mmproj 就算数"）：实测本机 /Users/<user>/models
 // 同一目录里混放着 gemma-4-26B 的权重与 mmproj-example-35b-v2 的投影器——只看存在性
 // 会把别人的投影器算到本模型头上，把纯文本模型误判成 mmproj_missing。故按文件名约定
 // （llama.cpp/HF：<模型名>-<量化>.gguf 与 mmproj-<模型名>-<类型>.gguf）要求两者共享

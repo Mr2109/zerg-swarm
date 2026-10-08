@@ -78,17 +78,17 @@ func TestLoadFleetConfig(t *testing.T) {
 // fleet.yaml 的 fleet 段逐字对拍。哑化 NodeAddr（忽略 fleet）即本用例红。
 func TestNodeAddr(t *testing.T) {
 	fleet := map[string]FleetNode{
-		"edge-node":    {Host: "<worker-ip>", Port: 8100},
-		"mini-node-1": {Host: "<worker-ip>"}, // 未给端口 → 回退默认端口
-		"bare":  {},                 // 未给 host → 回退机器名
+		"node-a": {Host: "<cluster-ip>", Port: 8100},
+		"node-b": {Host: "<cluster-ip>"}, // 未给端口 → 回退默认端口
+		"bare":   {},                     // 未给 host → 回退机器名
 	}
 	cases := []struct {
 		host     string
 		wantIP   string
 		wantPort int
 	}{
-		{"edge-node", "<worker-ip>", 8100},
-		{"mini-node-1", "<worker-ip>", DefaultAgentPort},
+		{"node-a", "<cluster-ip>", 8100},
+		{"node-b", "<cluster-ip>", DefaultAgentPort},
 		{"bare", "bare", DefaultAgentPort},
 		{"missing", "missing", DefaultAgentPort},
 	}
@@ -99,8 +99,8 @@ func TestNodeAddr(t *testing.T) {
 		}
 	}
 	// nil map：不得 panic，走回退支。
-	if ip, port := NodeAddr(nil, "edge-node"); ip != "edge-node" || port != DefaultAgentPort {
-		t.Errorf("NodeAddr(nil,edge-node) = (%q,%d)，want (edge-node,%d)", ip, port, DefaultAgentPort)
+	if ip, port := NodeAddr(nil, "node-a"); ip != "node-a" || port != DefaultAgentPort {
+		t.Errorf("NodeAddr(nil,node-a) = (%q,%d)，want (node-a,%d)", ip, port, DefaultAgentPort)
 	}
 	// 真源对拍（仅私有真表形态）。
 	if p := fleetPath(t); p != "" && filepath.Base(p) == "fleet.yaml" {
@@ -108,9 +108,9 @@ func TestNodeAddr(t *testing.T) {
 		if err != nil {
 			t.Fatalf("加载 %s: %v", p, err)
 		}
-		if node, ok := cfg.Fleet["edge-node"]; ok && node.Host != "" {
-			if ip, port := NodeAddr(cfg.Fleet, "edge-node"); ip != node.Host || port != node.Port {
-				t.Errorf("edge-node 与真源不符：NodeAddr=(%q,%d) fleet.yaml=(%q,%d)", ip, port, node.Host, node.Port)
+		if node, ok := cfg.Fleet["node-a"]; ok && node.Host != "" {
+			if ip, port := NodeAddr(cfg.Fleet, "node-a"); ip != node.Host || port != node.Port {
+				t.Errorf("node-a 与真源不符：NodeAddr=(%q,%d) fleet.yaml=(%q,%d)", ip, port, node.Host, node.Port)
 			}
 		}
 	}

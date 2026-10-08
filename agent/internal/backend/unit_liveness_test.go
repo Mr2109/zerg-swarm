@@ -23,7 +23,7 @@ func TestUnitLiveness_FailedUnitIsDead(t *testing.T) {
 		}
 		return unitState{ActiveState: "failed", SubState: "failed", Result: "oom-kill", ExecMainStatus: 0}, nil
 	})
-	m := NewManager(nil, "edge-node")
+	m := NewManager(nil, "node-a")
 	lv := m.UnitLiveness("zerg-deepseek-v4-flash")
 	if lv.Alive || lv.State != "failed" || !lv.Dead() {
 		t.Fatalf("failed 单元必须判死：%+v", lv)
@@ -53,7 +53,7 @@ func TestUnitLiveness_StateMatrix(t *testing.T) {
 		withUnitStateProbe(t, func(string) (unitState, error) {
 			return unitState{ActiveState: c.active, SubState: "running"}, nil
 		})
-		m := NewManager(nil, "edge-node")
+		m := NewManager(nil, "node-a")
 		lv := m.UnitLiveness("zerg-x")
 		if lv.Dead() != c.dead || lv.Alive == c.dead {
 			t.Errorf("ActiveState=%q：应 dead=%v，实得 %+v", c.active, c.dead, lv)
@@ -66,7 +66,7 @@ func TestUnitLiveness_MissingWhenUnreadable(t *testing.T) {
 	withUnitStateProbe(t, func(string) (unitState, error) {
 		return unitState{}, errors.New("本机没有 systemctl（非 Linux）")
 	})
-	m := NewManager(nil, "edge-node")
+	m := NewManager(nil, "node-a")
 	lv := m.UnitLiveness("zerg-x")
 	if lv.State != "missing" || lv.Alive || !lv.Dead() {
 		t.Fatalf("核不到单元时应落 missing（不许当活着）：%+v", lv)
@@ -83,7 +83,7 @@ func TestUnitLiveness_NoUnitNameSkipsProbe(t *testing.T) {
 		called = true
 		return unitState{ActiveState: "active"}, nil
 	})
-	m := NewManager(nil, "edge-node")
+	m := NewManager(nil, "node-a")
 	lv := m.UnitLiveness("")
 	if called {
 		t.Fatal("没有单元名时不该去问 systemd")

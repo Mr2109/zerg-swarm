@@ -5,7 +5,7 @@ package registry
 //   - 装载下限 = 权重体积 ÷ 实测顺序读带宽（物理下限，不是估计值）；
 //   - 缺输入（体积 / 带宽任一缺失或非正）⇒ ok=false，**不猜**（§8.4 标定铁律）；
 //   - 档位枚举只有 NVMe / SATA SSD / HDD 三个接口类别；**档位缺失不猜**
-//     （EDGE-NODE = NVMe 是 2026-09-14 的实测结论，别的机器没实测就没有档位）。
+//     （node-a = NVMe 是 2026-09-14 的实测结论，别的机器没实测就没有档位）。
 
 import (
 	"math"
@@ -28,7 +28,7 @@ func TestStorageTier_Valid(t *testing.T) {
 }
 
 // TestLoadTimeFloor_Conventional 常规值：90 GiB 权重 @ 实测 3.5 GB/s
-// ⇒ 27.610504045s（向下取整到纳秒；EDGE-NODE 量级——NVMe ⇒ 几秒~几十秒，§9.6）。
+// ⇒ 27.610504045s（向下取整到纳秒；node-a 量级——NVMe ⇒ 几秒~几十秒，§9.6）。
 func TestLoadTimeFloor_Conventional(t *testing.T) {
 	const weight = int64(90) * (1 << 30) // 96636764160 B
 	const bw = int64(3_500_000_000)      // 实测 3.5 GB/s

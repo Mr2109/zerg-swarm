@@ -2,7 +2,7 @@ package agent
 
 // workers_config.go — v2.5.2 设备感知并发配置
 // 设计：config/workers.yaml 按 hostname 匹配设备 → 自动选择 max_workers
-// 内置默认：EDGE-NODE=3, local=2, mini-node-1=1, mini-node-2=1
+// 内置默认：node-a=3, local=2, node-b=1, node-c=1
 
 import (
 	"fmt"
@@ -23,7 +23,17 @@ type DeviceConfig struct {
 
 // DeviceAwareConfig — config/workers.yaml 完整结构
 type DeviceAwareConfig struct {
-	Devices []DeviceConfig `yaml:"devices"`
+	Devices   []DeviceConfig    `yaml:"devices"`
+	Scheduler *SchedulerSection `yaml:"scheduler"`
+}
+
+// SchedulerSection — config/workers.yaml 顶层 `scheduler:` 段（P0 #232 · 2026-10-08）。
+// 三枚运行旋钮的可选落点：给值 ⇒ 覆盖编译期常量；缺省(nil / 空串) ⇒ 回退常量（见 scheduler.go 的
+// LoadSchedulerConfig —— 常量即缺省值，✗ 不删常量）。
+type SchedulerSection struct {
+	PollInterval string `yaml:"poll_interval"` // 轮询间隔（时长串，如 5s / 1m）
+	MaxRetries   *int   `yaml:"max_retries"`   // 死信阈值（nil = 未给 ⇒ 回退常量）
+	Cooldown     string `yaml:"cooldown"`      // 失败冷却（时长串，如 30s）
 }
 
 // ─── 内置设备映射（文件不存在时的回退）──────────────────────

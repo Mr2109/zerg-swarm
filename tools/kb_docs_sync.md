@@ -2,18 +2,18 @@
 
 **版本**：v1.0.0（2026-09-03——v2.5.8 文档体系 t6）
 ★ **2026-09-19「项目文档」二次分家批2：行为已改、版本值待拍**（按铁律 4「改工具要升版本」本该升；
-但 `scripts/gates/check-tool-version-sync.sh` 的抬头明写「**改抬头前先由 Mr2109 定版本值，勿自动顺延**」
+但 `core/cmd/zerg/check_tool_version_sync.go`（Go 半 · 原 `scripts/gates/check-tool-version-sync.sh`）的抬头明写「**改抬头前先由 Mr2109 定版本值，勿自动顺延**」
 ⇒ 本条**不动版本**、登记在此，等父代/用户定值后由同一条命令三处（`tools/versions.json` · 本抬头 · 履历首行）一起改）。
-**入口**：tools/kb_docs_sync.py（python3——无三方依赖）
+**入口**：`zerg doc kb-sync`（Go 半 `core/cmd/zerg/kb_docs_sync.go` · 原 `tools/kb_docs_sync.py`）
 
 ## 作用
 版本定稿时把当前版关键文档同步进知识库（kb）——元数据注册表 + content_hash 变更检测——只处理新增/变更——候选条目+核验门控（不直连 knowledge.db——入库走 MCP kb_*）。
 
 ## 用法
 ```bash
-python3 tools/kb_docs_sync.py               # dry-run: 检测 → 打印候选清单
+zerg doc kb-sync                            # dry-run: 检测 → 打印候选清单
 # 核验者按候选清单逐条 kb_add（domain=虫族 file_path=来源路径——含版本号）
-python3 tools/kb_docs_sync.py --mark 全部   # 全部入库后标记注册表（下次只检测真变更）
+zerg doc kb-sync --mark 全部                # 全部入库后标记注册表（下次只检测真变更）
 ```
 
 ## 注册表

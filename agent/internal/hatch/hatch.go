@@ -2,9 +2,9 @@
 //
 // 设计真源：设计-子端沙箱化.md
 //
-//	§6.1 孵化形态（**已由 EDGE-NODE 真机实测修正**）：`bubblewrap` 管**封闭空间**（文件系统视图 +
+//	§6.1 孵化形态（**已由 node-a 真机实测修正**）：`bubblewrap` 管**封闭空间**（文件系统视图 +
 //	     进程视图 + 只读），`systemd-run --user` 管**归属**（独立 slice/瞬态单元 ⇒ 不被
-//	     `edge-node-agent.service` 的 KillMode 带走 = E1 的正面解法）。单用任一个都不完整。
+//	     `node-a-agent.service` 的 KillMode 带走 = E1 的正面解法）。单用任一个都不完整。
 //	§6.9 **静默失效不得当凭据**：隔离是否生效必须运行时核（读 `/proc/<pid>/mountinfo`），
 //	     不得以单元状态为凭 —— 实测遇到过 `Result=success` 却零约束的挂载类选项。
 //	§6.6 孵化边界（目录二分）：**一次性**（工作目录）随收卵销毁、**跨孵化保留**（KV 盘、
@@ -15,13 +15,13 @@
 //	§4.3 第八项：`schema_version` 认不得就**明确报错**，不许静默按新格式跑错。
 //	§8.4 标定铁律：**无有效实测档案不许孵**（闸门只读实测档案）。
 //
-// 配方三坑（EDGE-NODE 实测，务必照抄）：
+// 配方三坑（node-a 实测，务必照抄）：
 //
 //	① Ubuntu usrmerge ⇒ **必须自补 `/bin` `/lib` `/lib64` `/sbin` 符号链接**；
 //	   `bwrap: execvp sh: No such file or directory` 是**缺链接，不是 userns 被拒**。
 //	② 默认 `--dev /dev` **看不到 GPU** ⇒ 必须显式 `--dev-bind /dev/kfd` + `/dev/dri`。
 //	③ `--unshare-user` 写不写行为一致（非 setuid ⇒ 总会自建 userns）。
-//	④ **本机 `bwrap --setenv` 必失败**（bubblewrap 0.11.1，EDGE-NODE 真机 2026-09-15 实测：
+//	④ **本机 `bwrap --setenv` 必失败**（bubblewrap 0.11.1，node-a 真机 2026-09-15 实测：
 //	   `bwrap … --setenv FOO=bar -- /bin/sh -c 'echo ok'` → `bwrap: setenv failed`，rc=1；
 //	   照原样孵出来的单元 status=1 秒死）⇒ 凡声明了 env 的卵当场孵不出来 ⇒ 按卵环境变量
 //	   改走**包装 exec**（`/bin/sh -c 'export …; exec "$@"'`，见 execWrapperScript）。
@@ -56,7 +56,7 @@ import (
 	"github.com/Mr2109/zerg-swarm/agent/internal/registry"
 )
 
-// SliceName 归属切片：孵化单元一律落这里（与 `edge-node-agent.service` 的 `/system.slice` 分离）。
+// SliceName 归属切片：孵化单元一律落这里（与 `node-a-agent.service` 的 `/system.slice` 分离）。
 const SliceName = "llm.slice"
 
 // Spec 一次孵化的全部输入（**声明式**：孵化器不推断、不补默认值，缺就报错）。
@@ -122,7 +122,7 @@ type Spec struct {
 }
 
 // defaultDevices 缺省设备：KFD（计算接口）+ 渲染节点（缓冲分配/映射）。
-// 注意：**默认 `--dev /dev` 看不到 GPU**（EDGE-NODE 实测），必须显式绑定这两个。
+// 注意：**默认 `--dev /dev` 看不到 GPU**（node-a 实测），必须显式绑定这两个。
 func defaultDevices() []string { return []string{"/dev/kfd", "/dev/dri/renderD128"} }
 
 // Validate 声明校验（fail-closed：缺一律报错，绝不静默补默认值）。
@@ -377,7 +377,7 @@ func UnitName(eggID string) string {
 }
 
 // BuildBwrapArgv 构造 bwrap 命令行（**纯函数**，可在任意平台单测）。
-// 顺序遵循 EDGE-NODE 实测配方：先造根与链接，再挂权重/引擎/设备，最后降权进入。
+// 顺序遵循 node-a 实测配方：先造根与链接，再挂权重/引擎/设备，最后降权进入。
 func BuildBwrapArgv(s Spec) ([]string, error) {
 	if err := s.Validate(); err != nil {
 		return nil, err
@@ -395,7 +395,7 @@ func BuildBwrapArgv(s Spec) ([]string, error) {
 		"--tmpfs", "/tmp",
 		// ②b 宿主 `/sys` **只读**进空间 —— 通用需求，不是某引擎的特性。
 		//
-		// EDGE-NODE 真机 2026-09-15：缺它时引擎报 `ggml_cuda_init: failed to initialize ROCm:
+		// node-a 真机 2026-09-15：缺它时引擎报 `ggml_cuda_init: failed to initialize ROCm:
 		// no ROCm-capable device is detected` 并**静默降级 CPU**（即便 /dev/kfd 与
 		// /dev/dri/renderD128 已显式 --dev-bind）；补上后该错误消失，空间内
 		// `/sys/class/kfd/kfd/topology/nodes/1/properties` 可读（simd_count 80）。
@@ -480,7 +480,7 @@ const wrapperArg0 = "zerg-egg"
 
 // execWrapperScript 把按卵环境变量编成包装脚本：`export K=V …; exec "$@"`。
 //
-// **为什么不用 bwrap `--setenv`（EDGE-NODE 真机 2026-09-15）**：本机 bubblewrap 0.11.1 上
+// **为什么不用 bwrap `--setenv`（node-a 真机 2026-09-15）**：本机 bubblewrap 0.11.1 上
 // `bwrap … --setenv K=V -- /bin/true` 直接失败（`bwrap: setenv failed`，rc=1）⇒ 凡声明了
 // env 的卵当场秒死，`LD_LIBRARY_PATH` 这类**必需**通路全断。包装 exec 用同一份卵声明面
 // （Spec.Env 不改）把变量送进空间，且不依赖 bwrap 的 setenv。
@@ -537,7 +537,7 @@ func BuildSystemdRunArgv(s Spec, unit string) ([]string, error) {
 		"systemd-run", "--user",
 		"--unit=" + unit,
 		"--slice=" + SliceName,
-		// ── --collect（2026-09-19 ③，EDGE-NODE 真机实测）：单元退出/失败后**自动收走**，不留在 systemd
+		// ── --collect（2026-09-19 ③，node-a 真机实测）：单元退出/失败后**自动收走**，不留在 systemd
 		// 里占名字。没有它：卵被 OOM 杀掉后单元以 failed 常驻 ⇒ 下一次同名 /load 直接
 		// `Failed to start transient service unit: Unit zerg-<名>.service was already loaded
 		// or has a fragment file.`（HTTP 500）⇒ **这枚卵再也孵不起来**（手工 reset-failed 后
@@ -559,7 +559,7 @@ func BuildSystemdRunArgv(s Spec, unit string) ([]string, error) {
 
 // ═══ 2026-09-19 ③：孵化前的同名单元定点清理（OOM 后 unit 残留把孵化堵死）══════════
 //
-// 现象（EDGE-NODE 真机逐字）：OOM 之后 transient unit 以 failed 常驻 systemd（`Active: failed
+// 现象（node-a 真机逐字）：OOM 之后 transient unit 以 failed 常驻 systemd（`Active: failed
 // (Result: oom-kill)`）⇒ `POST /api/control/load` 直接
 //
 //	孵化单元创建失败（zerg-deepseek-v4-flash）：exit status 1：
@@ -580,7 +580,7 @@ func BuildSystemdRunArgv(s Spec, unit string) ([]string, error) {
 // UnitCmdRunner 跑一条 `systemctl --user …` 命令并回原文（错误也回）。
 //
 // 抽成参数而不是直接 exec 的理由与 backend.unitCmdRunner 同源：**开发机（macOS）上没有 systemd
-// 用户实例**，真依赖只在 EDGE-NODE/生产上存在 ⇒ 清理逻辑必须能用假 runner 逐条钉住（判据：argv 逐个
+// 用户实例**，真依赖只在 node-a/生产上存在 ⇒ 清理逻辑必须能用假 runner 逐条钉住（判据：argv 逐个
 // 比对 + 调用顺序）。生产实现见 hatch_linux.go 的 realUnitCmdRunner。
 type UnitCmdRunner func(timeout time.Duration, name string, args ...string) (string, error)
 
@@ -672,7 +672,7 @@ func PrepareHatchUnit(unit string, spec Spec, run UnitCmdRunner) ([]string, erro
 }
 
 // collectOutcome 把 `systemctl --user stop <unit>` 的结果翻译成结论（**纯函数**，便于单测）。
-// EDGE-NODE 实测：二次 stop 返回 rc=5（单元已不存在）——这是**幂等成功**，不是错误。
+// node-a 实测：二次 stop 返回 rc=5（单元已不存在）——这是**幂等成功**，不是错误。
 func collectOutcome(rc int, stderr string) error {
 	if rc == 0 {
 		return nil

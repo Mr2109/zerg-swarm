@@ -17,7 +17,7 @@ import (
 )
 
 func pinServer() *Server {
-	return NewServer(NewAgent("edge-node", "tok", nil, backend.NewManager(nil, "edge-node"), ""))
+	return NewServer(NewAgent("node-a", "tok", nil, backend.NewManager(nil, "node-a"), ""))
 }
 
 // postPin 直接调 handler（与既有 unload_test.go 同风格），返回状态码 + 解析后的响应。
@@ -63,7 +63,7 @@ func TestHandlePin_TTLRequired(t *testing.T) {
 
 // 红线：非驻留项一律拒绝，且拒绝路径**绝不产生驻留项**（不启动、不接管）。
 func TestHandlePin_NotResidentNeverAdopts(t *testing.T) {
-	agent := NewAgent("edge-node", "tok", nil, backend.NewManager(nil, "edge-node"), "")
+	agent := NewAgent("node-a", "tok", nil, backend.NewManager(nil, "node-a"), "")
 	s := NewServer(agent)
 	code, out := postPin(t, s, "tok", "/pin", `{"model":"ghost","ttl_s":600}`)
 	if code != http.StatusConflict {
@@ -95,7 +95,7 @@ func TestHandlePin_MissingModel(t *testing.T) {
 
 // /unpin 同理：非驻留 → 409，且不产生驻留项。
 func TestHandleUnpin_NotResident(t *testing.T) {
-	agent := NewAgent("edge-node", "tok", nil, backend.NewManager(nil, "edge-node"), "")
+	agent := NewAgent("node-a", "tok", nil, backend.NewManager(nil, "node-a"), "")
 	s := NewServer(agent)
 	code, out := postPin(t, s, "tok", "/unpin", `{"model":"ghost"}`)
 	if code != http.StatusConflict {

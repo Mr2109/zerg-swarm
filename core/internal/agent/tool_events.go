@@ -3,7 +3,7 @@ package agent
 // tool_events.go — v2.5.8 工具事件流水（2026-09-06 Mr2109——未来虫族区块链工作量账本雏形）
 // 定位: 工具使用 = 未来开源/虫币经济的贡献度凭证——账本要求可审计(时间)/可汇总(节点)/可回溯
 // 架构: 事件流水(源——按天 JSONL 追加) + 计数器(派生——flock JSON 顺带更新——读路径不变)
-// 记录: {"ts":秒,"node":"local/edge-node","tool":"bash","dur_ms":120}——不记参数内容(隐私——够审计不泄活)
+// 记录: {"ts":秒,"node":"local/node-a","tool":"bash","dur_ms":120}——不记参数内容(隐私——够审计不泄活)
 //
 // 2026-09-06 升级（Mr2109: 计数器只是转正依据太窄——是所有人使用汇总数据的源）:
 //   RecordToolUse → ①写事件流(按天轮转) ②flock 更新计数——两者皆原子追加
@@ -33,7 +33,7 @@ var toolEventsMu sync.Mutex
 // ToolEvent — 单条工具事件（账本单元——未来节点上报聚合）
 type ToolEvent struct {
 	Ts    int64  `json:"ts"`     // Unix 秒（时间维度——按天/月聚合）
-	Node  string `json:"node"`   // 执行节点（local/edge-node/...——未来多节点汇总）
+	Node  string `json:"node"`   // 执行节点（local/node-a/...——未来多节点汇总）
 	Tool  string `json:"tool"`   // 工具名
 	DurMs int64  `json:"dur_ms"` // 执行耗时（毫秒——工作量参考）
 }

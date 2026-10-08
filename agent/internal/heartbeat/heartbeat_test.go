@@ -54,7 +54,7 @@ func withEngineLive(r *Runner, src engineLiveSource) *Runner {
 // （第 7 参数 UnmanagedSource 已随 P4 退场清理删除——附录 C·C7。）
 func newTestRunner(b *fakeBackend, v vramSource, a ActiveCounter) *Runner {
 	return &Runner{
-		machine:   "edge-node",
+		machine:   "node-a",
 		backend:   b,
 		sampler:   &monitor.Sampler{},
 		vram:      v,
@@ -206,7 +206,7 @@ func TestBuildBody_OldFieldsStillPresent(t *testing.T) {
 			t.Fatalf("旧字段 %q 不应消失（向后兼容）", k)
 		}
 	}
-	if body["machine"] != "edge-node" || body["backend_state"] != "ready" || body["model"] != "example-35b" {
+	if body["machine"] != "node-a" || body["backend_state"] != "ready" || body["model"] != "example-35b" {
 		t.Fatalf("旧字段语义被改动: %v", body)
 	}
 }
@@ -237,7 +237,7 @@ func TestBuildBody_JSON_OldReaderIgnoresNewFields(t *testing.T) {
 	if err := json.Unmarshal(raw, &legacy); err != nil {
 		t.Fatalf("旧读者解析新心跳体失败（新增字段必须可选）: %v", err)
 	}
-	if legacy.Machine != "edge-node" || legacy.Model != "example-35b" || legacy.BackendRssGb != 12.5 {
+	if legacy.Machine != "node-a" || legacy.Model != "example-35b" || legacy.BackendRssGb != 12.5 {
 		t.Fatalf("旧读者读到的旧字段语义不对: %+v", legacy)
 	}
 	if legacy.ActiveRequests != 2 {

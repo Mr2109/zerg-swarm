@@ -79,16 +79,16 @@ type Gateway struct {
 	failSince       map[string]time.Time // host → 首次熔断时间（自动恢复用）
 
 	// v2.5.5 重启窗口期治本: 主控启动时间——宽限期内（startupGrace 秒）忽略 unhealthy 快照
-	// 根因: 主控重启瞬间 EDGE-NODE 心跳失败（主控 API 未就绪窗口期）→ 快照 unhealthy → 路由拒绝
+	// 根因: 主控重启瞬间 node-a 心跳失败（主控 API 未就绪窗口期）→ 快照 unhealthy → 路由拒绝
 	// 治本: 启动后宽限期——机器还没机会心跳——不应因启动窗口失败被拒
 	startupTime time.Time
 
 	// 阶段 B：动作级路由表
 	actionRouter *ActionModelRouter // 动作→模型映射（代码常量，后续迁移到 fleet.yaml）
 
-	// B13: 负载均衡轮询（压力均分——本机/EDGE-NODE 交替接活）
+	// B13: 负载均衡轮询（压力均分——本机/node-a 交替接活）
 	roundRobinMu sync.Mutex
-	roundRobin   map[string]int // model → 轮询计数器（0=本机先, 1=EDGE-NODE先, 交替）
+	roundRobin   map[string]int // model → 轮询计数器（0=本机先, 1=node-a先, 交替）
 	tripMu       sync.Mutex
 	tripCounts   map[string]int // v2.5.4.9 C failover——机器失败计数（熔断用）
 
@@ -155,7 +155,7 @@ func (g *Gateway) getRequestTimeout(model string) int {
 	}
 	// 首 token 闸「只放宽、不收窄」——按卵给足（2026-09-17 Mr2109 指方向后调研定）：
 	//   业界不主张写死时限：时限应**按 provider/model 可配**、且本地模型（思考型/大上下文/冷启动）要更宽。
-	//   实测病象：EDGE-NODE 的 Qwen3.8-27B（思考型，256k 上下文）撞 120s 首 token 闸 ⇒ net/http: timeout awaiting
+	//   实测病象：node-a 的 Qwen3.8-27B（思考型，256k 上下文）撞 120s 首 token 闸 ⇒ net/http: timeout awaiting
 	//   response headers ⇒ failover 回落 ⇒ 缓存失效 ⇒ 更慢 ⇒ 恶性循环（v2.5.6 已定性过一次同款病）。
 	//   依据顺序：思考型下限（离线表，保守）⇒ 档案实测值（事实，优先）⇒ 适配器声明（意图）⇒ 取最大。
 	eff := base
@@ -226,15 +226,15 @@ func (g *Gateway) ExcludeLocal() bool {
 const CompositeModelName = "zerg-baiyan"
 
 // circuitCooldown 熔断自动恢复时间（熔断后过冷却期自动重新尝试）。
-// v2.5.5 #9: 60s→30s（瞬时失败快速恢复——EDGE-NODE healthy 但超时误熔断后能快速半开试错）
+// v2.5.5 #9: 60s→30s（瞬时失败快速恢复——node-a healthy 但超时误熔断后能快速半开试错）
 const circuitCooldown = 30 * time.Second
 
 // circuitFailThreshold 熔断阈值（连续失败次数——达到才熔断）。
-// v2.5.5 #9: 3→5→8（EDGE-NODE 偶发转发失败（连接层——infer 实际 200）——阈值提高——心跳清零兜底）
+// v2.5.5 #9: 3→5→8（node-a 偶发转发失败（连接层——infer 实际 200）——阈值提高——心跳清零兜底）
 const circuitFailThreshold = 8
 
 // healthyTripLimit healthy 机器的熔断上限（失败数 >= 此值即使 healthy 也熔断）。
-// v2.5.5 #9 补充3: EDGE-NODE 偶发转发失败——healthy 保护（失败<10 不熔断——只降权）
+// v2.5.5 #9 补充3: node-a 偶发转发失败——healthy 保护（失败<10 不熔断——只降权）
 const healthyTripLimit = 10
 
 // breakerReasonUnspecified 兜底原因的前缀：计数点没能给出原因时用它开头，而不是留空串。
@@ -247,12 +247,12 @@ const breakerReasonUnspecified = "unspecified"
 const breakerNoReasonText = "not recorded by this failure path"
 
 // startupGrace 主控启动宽限期（秒）——宽限期内忽略 unhealthy 快照（防重启窗口期误拒）
-// v2.5.5 #9 补充2 治本: 主控重启瞬间 EDGE-NODE 心跳失败（API 未就绪窗口）→ 快照 unhealthy → 路由拒绝
+// v2.5.5 #9 补充2 治本: 主控重启瞬间 node-a 心跳失败（API 未就绪窗口）→ 快照 unhealthy → 路由拒绝
 const startupGrace = 30 * time.Second
 
 // sessionBinding 会话绑定记录。
 type sessionBinding struct {
-	host     string    // 绑定的机器（如 "edge-node"）
+	host     string    // 绑定的机器（如 "node-a"）
 	model    string    // 绑定时请求的模型
 	lastUsed time.Time // 最近使用时间（过期清理）
 	tokens   int       // 会话累计 token（V22 上下文预算）
@@ -271,8 +271,8 @@ const maxSessionBindings = 512
 const maxSessionTokens = 131072
 
 // NewGateway 创建网关实例。
-// 3c（2026-09-16）：本机后端（localBack）参数已删 —— 本机角色退役后本机 = 名为 Mr2109 的普通子端，
-// 它的模型与 edge-node 一样经通用转发到达，网关不再需要"自己起/直连本机引擎"的能力。
+// 3c（2026-09-16）：本机后端（localBack）参数已删 —— 本机角色退役后本机 = 名为 node-local 的普通子端，
+// 它的模型与 node-a 一样经通用转发到达，网关不再需要"自己起/直连本机引擎"的能力。
 // adapters v2.5.4.10：模型适配器注册表（模型名→插件）——可为 nil（回退旧路由）。
 func NewGateway(authToken string, cfg *config.FleetConfig, st *store.Store, adapters map[string]plugin.Plugin) *Gateway {
 	// v2.5.4.10 适配器注册表（nil→空 map——回退旧路由）
@@ -316,7 +316,7 @@ func NewGateway(authToken string, cfg *config.FleetConfig, st *store.Store, adap
 			// 导致局域网 10.0.x 请求被发给代理 → no route to host）
 			Transport: &http.Transport{
 				Proxy: nil,
-				// 治本（2026-08-12）：禁 keep-alive——EDGE-NODE agent Keep-Alive: timeout=5
+				// 治本（2026-08-12）：禁 keep-alive——node-a agent Keep-Alive: timeout=5
 				// 连接 5s 空闲被 agent 关——网关复用断连接 → IncompleteRead（EOF 根因）
 				DisableKeepAlives: true,
 				// v2.5.4.9 C failover：首 token 超时（等响应头 90s——卡死检测）
@@ -498,9 +498,9 @@ func (g *Gateway) handleCompact(w http.ResponseWriter, r *http.Request) {
 
 	// 内部转发（不走外部 HTTP，直接路由到机器）
 	model := compactModel
-	// 3c（2026-09-16）：原先"压缩模型优先走 local（本机）"是为绕过 EDGE-NODE agent 的响应截断 bug 的**历史绕行**，
-	// 本机角色退役后本机 = 名为 Mr2109 的普通子端 ⇒ 压缩也走**通用路由**（按账本/快照打分）。
-	// ⚠ 验收项：改完必须实测一次压缩（若 EDGE-NODE 那个截断 bug 仍在，压缩可能重新踩上）。
+	// 3c（2026-09-16）：原先"压缩模型优先走 local（本机）"是为绕过 node-a agent 的响应截断 bug 的**历史绕行**，
+	// 本机角色退役后本机 = 名为 node-local 的普通子端 ⇒ 压缩也走**通用路由**（按账本/快照打分）。
+	// ⚠ 验收项：改完必须实测一次压缩（若 node-a 那个截断 bug 仍在，压缩可能重新踩上）。
 	route, err := g.pickRoute(model, "", "")
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":"routing failed: %v"}`, err), http.StatusServiceUnavailable)
@@ -510,12 +510,12 @@ func (g *Gateway) handleCompact(w http.ResponseWriter, r *http.Request) {
 
 	var resp *http.Response
 	var respBody []byte
-	// 压缩模型可能忙（gemma 单槽）+ EDGE-NODE agent 响应偶发截断（issue-3889字节）——重试 5 次
+	// 压缩模型可能忙（gemma 单槽）+ node-a agent 响应偶发截断（issue-3889字节）——重试 5 次
 	// 注意：截断是"成功返回但 body 不完整"（err=nil），必须解析失败也重试
 	for attempt := 0; attempt < 5; attempt++ {
 		// 3c（2026-09-16）：原 `if route.Host == "local"` 分支已删 —— 本机角色退役后 fleet 里
 		// 不可能再有 host=="local" 的候选 ⇒ 该分支恒不成立（它曾负责"本机直接装载 + Infer"）。
-		// 所有机器（含本机那一台，名为 Mr2109）一律走通用转发，与 edge-node 同形。
+		// 所有机器（含本机那一台，名为 node-local）一律走通用转发，与 node-a 同形。
 		resp, err = g.forwardToBackend(r.Context(), route, "/v1/chat/completions", compactBodyJSON, r.Header, nil)
 		if err != nil {
 			log.Printf("⚠️ compaction attempt %d failed: %v (retrying)", attempt+1, err)
@@ -800,7 +800,7 @@ func (g *Gateway) handleRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 3c（2026-09-16）：原 `if route.Host == "local"` 分支已删（本机角色退役 ⇒ 不可能有该候选）。
-	// 本机那一台（名为 Mr2109）与 edge-node 同形，一律走下面的通用转发（子端负责装载与推理）。
+	// 本机那一台（名为 node-local）与 node-a 同形，一律走下面的通用转发（子端负责装载与推理）。
 
 	log.Printf("📍 routed to: %s:%d", route.Host, route.Port)
 
@@ -871,7 +871,7 @@ func (g *Gateway) handleRequest(w http.ResponseWriter, r *http.Request) {
 			}
 			// v2.5.6 错误码设计（2026-08-29）: 读取子端错误体——透传真实错误消息（调试关键）
 			// 子端错误如 {"error":"queue full"}(429) / {"error":"inference timeout"}(504)——
-			// 不读 body 则客户端只见"后端 edge-node 返回 500"——根因丢失
+			// 不读 body 则客户端只见"后端 node-a 返回 500"——根因丢失
 			bodyMsg := ""
 			if b, rerr := io.ReadAll(resp.Body); rerr == nil && len(b) > 0 {
 				bodyMsg = strings.TrimSpace(string(b))
@@ -1056,7 +1056,7 @@ func (g *Gateway) markFailure(host string, reason string) {
 //	「上游不可达/连接失败 ⇒ 计入熔断；引擎 5xx（模型级：rocm prefill failed、
 //	  insufficient memory）⇒ 记错 + 有限重试，不计熔断。」
 //
-// 2026-09-14 实测教训：DS4@1M 遭遇 rocm prefill failed，被记成 machine edge-node forward failed (8/8)
+// 2026-09-14 实测教训：DS4@1M 遭遇 rocm prefill failed，被记成 machine node-a forward failed (8/8)
 // 并 demote（随后靠心跳复位）——而问题只在"该模型 + 该上下文"，不该牵连整机。
 func (g *Gateway) markModelFailure(host string, reason string) {
 	g.failMu.Lock()
@@ -1223,7 +1223,7 @@ func (g *Gateway) pickRoute(model string, sessionID string, prompt string, requi
 	}
 
 	// v2.5.6 DS4 让位机制（2026-08-23 Mr2109——Hermes 调 DS4 熔断——81G 超大）
-	// 1. 目标模型 = DS4 → EDGE-NODE 清场（卸载其他只留 DS4）
+	// 1. 目标模型 = DS4 → node-a 清场（卸载其他只留 DS4）
 	// 2. 其他模型请求 → 按 DS4 状态三分支（未加载→正常 / 闲置→卸 DS4 / 繁忙→local）
 	if model == ds4ModelName {
 		if !g.ensureDS4Room() {
@@ -1233,7 +1233,7 @@ func (g *Gateway) pickRoute(model string, sessionID string, prompt string, requi
 		forceLocal, reason := g.ds4RouteDecision()
 		if forceLocal {
 			log.Printf("🎯 %s — other models %s go local", reason, model)
-			// 强制走本机那一台（3c：原 "local" ⇒ 名为 Mr2109 的子端；排除 EDGE-NODE）
+			// 强制走本机那一台（3c：原 "local" ⇒ 名为 node-local 的子端；排除 node-a）
 			if r, err := g.pickRouteHost(model, "Mr2109"); err == nil {
 				// 能力硬门槛（待修补 #11）：强制 local 也要按**目标引擎**判必需能力——
 				// 目标引擎没被证过支持就不放行，绝不因"让位"而静默降级。
@@ -1243,9 +1243,9 @@ func (g *Gateway) pickRoute(model string, sessionID string, prompt string, requi
 					return r, nil
 				}
 			}
-			// local 不可用——回退正常路由（pickRouteExcluding edge-node）
+			// local 不可用——回退正常路由（pickRouteExcluding node-a）
 			log.Printf("⚠️ local unavailable — falling back (excluding EDGE-NODE — don't disturb DS4)")
-			// 这条路径也会强制熔断（若选回 edge-node → failCounts[x3]=11）——给原因，别让快照出现空原因
+			// 这条路径也会强制熔断（若选回 node-a → failCounts[node-a]=11）——给原因，别让快照出现空原因
 			if r, err := g.pickRouteExcluding(model, "edge-node", "DS4 quiesce: local unavailable, EDGE-NODE temporarily excluded to avoid disturbing DS4", required...); err == nil {
 				return r, nil
 			}
@@ -1292,7 +1292,7 @@ func (g *Gateway) pickRoute(model string, sessionID string, prompt string, requi
 		}
 	}
 
-	// 如果有多个候选 host，选择最优的（B13: 负载均衡轮询——本机/EDGE-NODE 压力均分）
+	// 如果有多个候选 host，选择最优的（B13: 负载均衡轮询——本机/node-a 压力均分）
 	if len(models) > 1 {
 		// B13 策略：所有候选（含 local）参与打分 + 轮询权重（压力均分）
 		//   1. 轮询：roundRobin[model] 计数器 → 上次选的机器下次减权（轮流）
@@ -1333,8 +1333,8 @@ func (g *Gateway) pickRoute(model string, sessionID string, prompt string, requi
 				continue
 			}
 			// 活性过滤（2026-09-16）：**没有心跳快照的机器不参与路由** —— 配置里的预留机位
-			// （mini-node-1/2/3 等）尚未部署时表现为"快照为 nil"，此前会被选中并撞连接超时。
-			// 实测：压缩兜底挑了 <worker-ip>:8100（fleet.yaml 的 mini-node-1；该机端口 2026-09-25 起为 8101，此处 8100 = 当时实测值）⇒ 超时 ⇒ 整次压缩失败。
+			// （node-b/c/d 等）尚未部署时表现为"快照为 nil"，此前会被选中并撞连接超时。
+			// 实测：压缩兜底挑了 <cluster-ip>:8100（fleet.yaml 的 node-b；该机端口 2026-09-25 起为 8101，此处 8100 = 当时实测值）⇒ 超时 ⇒ 整次压缩失败。
 			// 策略：按心跳**动态**判定——预留机哪天起来心跳，就自动成为候选（无需改配置）。
 			if anyAlive {
 				if snap := g.snapshotFor(candidate.Host); snap == nil {
@@ -1367,7 +1367,7 @@ func (g *Gateway) pickRoute(model string, sessionID string, prompt string, requi
 			tier := g.kindTier(candidate.Host)
 			// 「忙」= 在跑的请求已达该机并行度（槽满）。按设计 v1.7 §一「全不可用四类」之「忙」处理：
 			// 给它 **+10 档序惩罚** ⇒ 忙碌的 `ai` 机让位给空闲的 `mini`/`work`（Mr2109 定：
-			// 「EDGE-NODE 忙的时候，才会选本机」✓）；若大家都忙 ⇒ 惩罚同加、相对序不变 ⇒
+			// 「node-a 忙的时候，才会选本机」✓）；若大家都忙 ⇒ 惩罚同加、相对序不变 ⇒
 			// 退回按种类 + 原有打分择优（**不会出现「谁也不选」的死路** ✓）。
 			if snap := g.snapshotFor(candidate.Host); snap != nil && snap.ActiveRequests >= g.parallelSlots(candidate.Host) {
 				log.Printf("🏷 kind tier: %s (kind=%s) 槽满(active=%d/%d) ⇒ 按「忙不可用」降档",
@@ -1399,7 +1399,7 @@ func (g *Gateway) pickRoute(model string, sessionID string, prompt string, requi
 			}
 			if snap := g.snapshotFor(candidate.Host); snap != nil {
 				// v2.5.5 重启窗口期治本: 宽限期内 unhealthy 快照不算降权（机器还没机会心跳）
-				// 主控重启瞬间 EDGE-NODE 心跳失败（API 未就绪窗口）→ 快照 unhealthy → 之前路由拒绝
+				// 主控重启瞬间 node-a 心跳失败（API 未就绪窗口）→ 快照 unhealthy → 之前路由拒绝
 				isHealthy := snap.Healthy
 				if !isHealthy && time.Since(g.startupTime) < startupGrace {
 					isHealthy = true // 宽限期内视为健康（等心跳恢复）
@@ -1407,15 +1407,15 @@ func (g *Gateway) pickRoute(model string, sessionID string, prompt string, requi
 				if isHealthy {
 					score++
 				}
-				// 已加载目标模型 → 高分（+8——从+10降——让轮询/负载能打破"永远选X3"）
+				// 已加载目标模型 → 高分（+8——从+10降——让轮询/负载能打破"永远选node-a"）
 				// v2.5.6 修复（Mr2109 2026-08-28）: 精确相等改为文件名匹配——
 				// local 快照 Model="Qwen3.8-27B-Q4_K_M-vcruz305"（文件名形式）≠ 请求逻辑名 "Qwen3.8-27B"
-				// → local 永远拿不到 +8 → edge-node 恒赢 → 任务永远走 edge-node → edge-node 故障反复挂起死循环
+				// → local 永远拿不到 +8 → node-a 恒赢 → 任务永远走 node-a → node-a 故障反复挂起死循环
 				if modelFileLoaded(snap, candidate.File) {
 					score += 8
 				}
 				// v2.5.4.9 分配改进A：active 降权（最少连接思想——按机器并行度）
-				//   并行度: EDGE-NODE/本机都单槽执行（GPU 全负荷——active>=1 即忙——降权转走）
+				//   并行度: node-a/本机都单槽执行（GPU 全负荷——active>=1 即忙——降权转走）
 				//   单槽机器（本机）active>=1 忙——扣分转走
 				parallel := g.parallelSlots(candidate.Host)
 				if snap.ActiveRequests == 0 {
@@ -1437,7 +1437,7 @@ func (g *Gateway) pickRoute(model string, sessionID string, prompt string, requi
 				}
 			}
 			// 3c（2026-09-16）：原 B13 分支已删 —— 它给 host=="local" 的候选按 LocalBackend 状态打分，
-			// 注释原话是"local 无快照（本机不心跳）"。本机角色退役后本机 = 名为 Mr2109 的普通子端，
+			// 注释原话是"local 无快照（本机不心跳）"。本机角色退役后本机 = 名为 node-local 的普通子端，
 			// **它是心跳上报的**（resident/vram_known 实测都在）⇒ 该特例的前提已反转：
 			// 现在所有机器一律靠账本与快照打分（即上面那条 if），不再有"本机不心跳"的例外。
 			// cache-aware（T5）：该机器处理过相似 prompt → 加分
@@ -1515,7 +1515,7 @@ func (g *Gateway) pickRoute(model string, sessionID string, prompt string, requi
 		g.roundRobinMu.Lock()
 		g.roundRobin[model]++
 		g.roundRobinMu.Unlock()
-		// 2026-09-09 通用让位: EDGE-NODE 内存不足时先清场(防多实例堆积挂死)
+		// 2026-09-09 通用让位: node-a 内存不足时先清场(防多实例堆积挂死)
 		if best.Host == "edge-node" {
 			g.ensureX3RoomForFile(best.File, bestMemGB)
 		}
@@ -1897,7 +1897,7 @@ func (g *Gateway) applyReasoningFallback(resp *http.Response) *http.Response {
 
 // parallelSlots — 机器执行并行度（分配改进A——active 降权按执行能力）
 //
-//	Mr2109认知纠正（2026-08-15）：EDGE-NODE -np 4 ≠ 能并行 4 任务
+//	Mr2109认知纠正（2026-08-15）：node-a -np 4 ≠ 能并行 4 任务
 //	  = 显存大能同时加载 4 个模型（切换快——选择多）
 //	  但执行 1 个模型 = GPU 全负荷（单任务推理）
 //	→ 执行层面并行度都是 1——active>=1 即忙（GPU 满）——应降权转走
@@ -1951,7 +1951,7 @@ func (g *Gateway) boundSession(sessionID, model string) string {
 //
 // 为什么保留这个函数（而不是删掉）：DS4 让位策略要用它 —— "为 DS4 让位 ⇒ 其他模型强制走本机那一台"
 // 是有意设计的功能（见 ds4RouteDecision 调用处），不是残留 ⇒ 所以是**改名 + 改指**：
-// 本机角色退役后"本机"= 名为 Mr2109 的普通子端，硬编码的 "local" 改为**传参**（部署选择，不是代码分支）。
+// 本机角色退役后"本机"= 名为 node-local 的普通子端，硬编码的 "local" 改为**传参**（部署选择，不是代码分支）。
 func (g *Gateway) pickRouteHost(model, host string) (*RouteResult, error) {
 	candidates, ok := g.config.Models[model]
 	if !ok || len(candidates) == 0 {
@@ -2053,7 +2053,7 @@ func (g *Gateway) compactThreshold(model string) int {
 	if candidates, ok := g.config.Models[model]; ok && len(candidates) > 0 {
 		ctx := candidates[0].CtxWindow
 		if ctx > 0 {
-			perSlot := ctx            // 单槽执行（v2.5.5: EDGE-NODE/本机都单槽——取消 4 槽假设）
+			perSlot := ctx            // 单槽执行（v2.5.5: node-a/本机都单槽——取消 4 槽假设）
 			return perSlot * 85 / 100 // 85% 安全网兜底
 		}
 	}
@@ -2093,8 +2093,8 @@ func (g *Gateway) autoCompact(sessionID, model string, body []byte) {
 
 	// 兜底：gemma 摘要（重写式，结构化 prompt 保针）
 	// 3c-补（2026-09-16）：首选压缩模型必须**真能路由到**才用 —— 光『在配置里』不够：
-	// gemma-4-12B 的唯一候选是预留机位 mini-node-1（未部署），活性过滤排掉幽灵机后它无候选，
-	// 压缩整次失败（实测 16:14:40 "only candidate mini-node-1 has no heartbeat"）、会话 token 不复位。
+	// gemma-4-12B 的唯一候选是预留机位 node-b（未部署），活性过滤排掉幽灵机后它无候选，
+	// 压缩整次失败（实测 16:14:40 "only candidate node-b has no heartbeat"）、会话 token 不复位。
 	// 口径：首选不可用 ⇒ 回退用本次请求的原模型（它必然有可用候选，否则请求自己也走不通）。
 	compactModel := "gemma-4-12B"
 	if _, ok := g.config.Models[compactModel]; !ok {
@@ -2122,7 +2122,7 @@ func (g *Gateway) autoCompact(sessionID, model string, body []byte) {
 	var resp *http.Response
 	// 3c（2026-09-16）：原 `if route.Host == "local"` 分支已删（恒不成立）⇒ 一律走通用转发。
 	// 3c-补（2026-09-16）：**必须带子端认证头** —— 原实现 headers 传 nil ⇒ 没有 token ⇒ 子端回 401
-	// unauthorized（实测 16:34:08 "autoCompact upstream edge-node returned 401"）。以前不暴露是因为压缩
+	// unauthorized（实测 16:34:08 "autoCompact upstream node-a returned 401"）。以前不暴露是因为压缩
 	// 走主控内置本机后端（不经 HTTP、不要 token）；本机角色退役后一律走真子端 ⇒ 必须带认证。
 	// 下游 forwardToBackend 会用 adapter.ExtractAuthToken 从这里取 token 并转成子端认的 X-Auth-Token。
 	compactHeaders := http.Header{}
@@ -2269,7 +2269,7 @@ func (g *Gateway) recordPrefix(host, prompt string) {
 
 // RouteResult 路由选择结果。
 type RouteResult struct {
-	Host  string // 目标机器名（edge-node, mini-node-1 等）
+	Host  string // 目标机器名（node-a, node-b 等）
 	Port  int    // 目标端口（默认 8100）
 	URL   string // 完整转发 URL（http://{host}:{port}/infer）
 	File  string // 模型文件路径（本机直供时代使用；3c 后仅作路由信息保留）

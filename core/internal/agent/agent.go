@@ -227,7 +227,7 @@ func (a *Agent) callModel(ctx context.Context, sysPrompt string, tools []ToolDef
 		return a.adapter.Call(ctx, sysPrompt, a.history, tools)
 	}
 	// 2026-09-05 CA Hermes 化: ZERG_HERMES_TOOLS=1 走 Hermes 协议（不带 tools 字段——
-	// 提示注入 <tools> schema——模型输出 <tool_call>XML——治 EDGE-NODE 长 prompt 下畸形 arguments）
+	// 提示注入 <tools> schema——模型输出 <tool_call>XML——治 node-a 长 prompt 下畸形 arguments）
 	if os.Getenv("ZERG_HERMES_TOOLS") == "1" {
 		return a.callModelHermes(ctx, sysPrompt, tools)
 	}
@@ -489,7 +489,7 @@ func streamReadChat(body io.Reader) ([]byte, error) {
 	return json.Marshal(out)
 }
 
-// callModelHermes — CA Hermes 模式（2026-09-05——治 EDGE-NODE 长 prompt 下 tools 字段畸形 arguments）
+// callModelHermes — CA Hermes 模式（2026-09-05——治 node-a 长 prompt 下 tools 字段畸形 arguments）
 // 与对话系统 P4-46 同模式: 不带 tools 字段 → sysPrompt 注入 <tools> schema → 模型输出 <tool_call>XML
 // 工具结果回传: assistant content=<tool_call> 原文 + user content=<tool_response>（模型训练见过的格式）
 func (a *Agent) callModelHermes(ctx context.Context, sysPrompt string, tools []ToolDef) (*ModelResponse, error) {

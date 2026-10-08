@@ -103,7 +103,7 @@ func routeDecode(t *testing.T, out string) routeEnvelope {
 func TestRoutePin_PinThenTableLands(t *testing.T) {
 	p := routeTablePath(t)
 	rc, out, errb := routeRun(t, "route", "pin",
-		"--model", "example-35b-v2", "--machine", "edge-node", "--ttl", "2h", "--yes")
+		"--model", "example-35b-v2", "--machine", "node-a", "--ttl", "2h", "--yes")
 	if rc != 0 {
 		t.Fatalf("钉一条该 rc=0，得到 %d · stderr=%s", rc, errb)
 	}
@@ -112,7 +112,7 @@ func TestRoutePin_PinThenTableLands(t *testing.T) {
 		t.Fatalf("盘面上该**恰好一行**，实得 %d 行：%+v", len(rows), rows)
 	}
 	r := rows[0]
-	if r.Model != "example-35b-v2" || r.Machine != "edge-node" {
+	if r.Model != "example-35b-v2" || r.Machine != "node-a" {
 		t.Fatalf("钉下来的不是点名那一行：%+v", r)
 	}
 	exp, err := time.Parse(time.RFC3339, r.ExpiresAt)
@@ -140,12 +140,12 @@ func TestRoutePin_RequiresTTL(t *testing.T) {
 		name string
 		argv []string
 	}{
-		{"不给 --ttl", []string{"route", "pin", "--model", "m", "--machine", "edge-node", "--yes"}},
-		{"--ttl 裸给", []string{"route", "pin", "--model", "m", "--machine", "edge-node", "--ttl", "--yes"}},
-		{"--ttl 0", []string{"route", "pin", "--model", "m", "--machine", "edge-node", "--ttl", "0", "--yes"}},
-		{"--ttl 坏形状", []string{"route", "pin", "--model", "m", "--machine", "edge-node", "--ttl", "好久", "--yes"}},
+		{"不给 --ttl", []string{"route", "pin", "--model", "m", "--machine", "node-a", "--yes"}},
+		{"--ttl 裸给", []string{"route", "pin", "--model", "m", "--machine", "node-a", "--ttl", "--yes"}},
+		{"--ttl 0", []string{"route", "pin", "--model", "m", "--machine", "node-a", "--ttl", "0", "--yes"}},
+		{"--ttl 坏形状", []string{"route", "pin", "--model", "m", "--machine", "node-a", "--ttl", "好久", "--yes"}},
 		{"缺 --machine", []string{"route", "pin", "--model", "m", "--ttl", "2h", "--yes"}},
-		{"缺 --model", []string{"route", "pin", "--machine", "edge-node", "--ttl", "2h", "--yes"}},
+		{"缺 --model", []string{"route", "pin", "--machine", "node-a", "--ttl", "2h", "--yes"}},
 	} {
 		rc, out, _ := routeRun(t, c.argv...)
 		if rc != 2 {
@@ -164,14 +164,14 @@ func TestRoutePin_RequiresTTL(t *testing.T) {
 func TestRoutePin_RequiresYes(t *testing.T) {
 	p := routeTablePath(t)
 	before := routeTableDigest(t, p)
-	rc, out, errb := routeRun(t, "route", "pin", "--model", "m", "--machine", "edge-node", "--ttl", "2h")
+	rc, out, errb := routeRun(t, "route", "pin", "--model", "m", "--machine", "node-a", "--ttl", "2h")
 	if rc != 2 {
 		t.Fatalf("缺 --yes ⇒ rc=2，得到 %d", rc)
 	}
 	if out != "" {
 		t.Fatalf("缺 --yes ⇒ stdout 要 0 字节（现读 %d）：%q", len(out), out)
 	}
-	if !strings.Contains(errb, "2h") && !strings.Contains(errb, "edge-node") {
+	if !strings.Contains(errb, "2h") && !strings.Contains(errb, "node-a") {
 		t.Errorf("计划件该走 stderr 并写出要做什么，实得：%q", errb)
 	}
 	if after := routeTableDigest(t, p); after != before {
@@ -188,11 +188,11 @@ func TestRoutePin_RequiresYes(t *testing.T) {
 func TestRoutePin_DryRunZeroSideEffect(t *testing.T) {
 	p := routeTablePath(t)
 	before := routeTableDigest(t, p)
-	rc, out, _ := routeRun(t, "route", "pin", "--model", "m", "--machine", "edge-node", "--ttl", "30m", "--dry-run")
+	rc, out, _ := routeRun(t, "route", "pin", "--model", "m", "--machine", "node-a", "--ttl", "30m", "--dry-run")
 	if rc != 0 {
 		t.Fatalf("干跑该 rc=0，得到 %d", rc)
 	}
-	if !strings.Contains(out, "edge-node") || !strings.Contains(out, "route pins") && !strings.Contains(out, routepin.FileName) {
+	if !strings.Contains(out, "node-a") || !strings.Contains(out, "route pins") && !strings.Contains(out, routepin.FileName) {
 		t.Errorf("干跑的计划件该点名机器与落点，实得：%q", out)
 	}
 	if after := routeTableDigest(t, p); after != before {
@@ -203,11 +203,11 @@ func TestRoutePin_DryRunZeroSideEffect(t *testing.T) {
 // TestRoutePin_Idempotent —— 幂等：同一条钉两次 ⇒ 第二次 rc=0 且**一个字都不写**（盘面指纹不变）。
 func TestRoutePin_Idempotent(t *testing.T) {
 	p := routeTablePath(t)
-	if rc, _, e := routeRun(t, "route", "pin", "--model", "m", "--machine", "edge-node", "--ttl", "2h", "--yes"); rc != 0 {
+	if rc, _, e := routeRun(t, "route", "pin", "--model", "m", "--machine", "node-a", "--ttl", "2h", "--yes"); rc != 0 {
 		t.Fatalf("第一次钉该 rc=0，得到 %d · %s", rc, e)
 	}
 	d1 := routeTableDigest(t, p)
-	rc, out, errb := routeRun(t, "route", "pin", "--model", "m", "--machine", "edge-node", "--ttl", "2h", "--yes")
+	rc, out, errb := routeRun(t, "route", "pin", "--model", "m", "--machine", "node-a", "--ttl", "2h", "--yes")
 	if rc != 0 {
 		t.Fatalf("重跑该 rc=0（幂等不许变错），得到 %d · %s", rc, errb)
 	}
@@ -233,7 +233,7 @@ func TestRouteLs_JSONFiveFields(t *testing.T) {
 		t.Fatalf("空表该 0 条，实得 count=%d items=%d", e.Meta.Count, len(e.Items))
 	}
 	// 钉一条再查：五格齐、值对得上。
-	if rc, _, errb := routeRun(t, "route", "pin", "--model", "m1", "--machine", "edge-node", "--ttl", "90m", "--yes"); rc != 0 {
+	if rc, _, errb := routeRun(t, "route", "pin", "--model", "m1", "--machine", "node-a", "--ttl", "90m", "--yes"); rc != 0 {
 		t.Fatalf("夹具钉一条失败：%d · %s", rc, errb)
 	}
 	rc, out, errb = routeRun(t, "route", "ls", "--json", strings.Join(routeFieldsWant, ","))
@@ -250,7 +250,7 @@ func TestRouteLs_JSONFiveFields(t *testing.T) {
 			t.Errorf("五格里缺 %q：%v", f, row)
 		}
 	}
-	if row["model"] != "m1" || row["machine"] != "edge-node" {
+	if row["model"] != "m1" || row["machine"] != "node-a" {
 		t.Errorf("查面那一行的模型/机器不对：%v", row)
 	}
 	if row["state"] == "" || row["remaining_s"] == "" || row["expires_at"] == "" {
@@ -367,7 +367,7 @@ func TestRouteLs_BrokenTableIsBlocked(t *testing.T) {
 // TestRouteUnpin_OneLineRevoke —— 正控：撒 ⇒ 一行撤回（查面随即 0 条）；重跑仍 rc=0（幂等）。
 func TestRouteUnpin_OneLineRevoke(t *testing.T) {
 	routeTablePath(t)
-	if rc, _, e := routeRun(t, "route", "pin", "--model", "m1", "--machine", "edge-node", "--ttl", "2h", "--yes"); rc != 0 {
+	if rc, _, e := routeRun(t, "route", "pin", "--model", "m1", "--machine", "node-a", "--ttl", "2h", "--yes"); rc != 0 {
 		t.Fatalf("夹具钉一条失败：%d · %s", rc, e)
 	}
 	rc, _, errb := routeRun(t, "route", "unpin", "--model", "m1", "--yes")
@@ -392,7 +392,7 @@ func TestRouteUnpin_OneLineRevoke(t *testing.T) {
 func TestRouteUnpin_AllAndScope(t *testing.T) {
 	p := routeTablePath(t)
 	for _, m := range []string{"m1", "m2"} {
-		if rc, _, e := routeRun(t, "route", "pin", "--model", m, "--machine", "edge-node", "--ttl", "2h", "--yes"); rc != 0 {
+		if rc, _, e := routeRun(t, "route", "pin", "--model", m, "--machine", "node-a", "--ttl", "2h", "--yes"); rc != 0 {
 			t.Fatalf("夹具钉 %s 失败：%d · %s", m, rc, e)
 		}
 	}
@@ -449,9 +449,9 @@ func TestRouteFamily_Frame(t *testing.T) {
 func TestRoute_HeaderIsNotAFlag(t *testing.T) {
 	p := routeTablePath(t)
 	_, base, _ := routeRun(t, "route", "ls", "--json", "model,machine,expires_at,remaining_s,state")
-	rc, out, _ := routeRun(t, "route", "ls", "--machine", "edge-node", "--json", "model,machine,expires_at,remaining_s,state")
+	rc, out, _ := routeRun(t, "route", "ls", "--machine", "node-a", "--json", "model,machine,expires_at,remaining_s,state")
 	if rc != 0 {
-		t.Fatalf("`route ls --machine edge-node` ⇒ 值照收、语义各判（rc=0），得到 %d", rc)
+		t.Fatalf("`route ls --machine node-a` ⇒ 值照收、语义各判（rc=0），得到 %d", rc)
 	}
 	if out != base {
 		t.Errorf("多给一枚本命令不用的旗标不该改变行为：\n  不带：%q\n  带了：%q", base, out)

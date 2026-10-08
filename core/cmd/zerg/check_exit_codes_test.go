@@ -235,3 +235,123 @@ func TestCheckExitCodesGatePort(t *testing.T) {
 }
 
 func cecTPtr(s string) *string { return &s }
+
+// TestCheckExitCodesRetireFallback —— 三段式回退腿（R3/R4 判「能力可用」而非「件在盘」）的成对负控：
+//
+//	① 件缺席 ∧ Go 真身在盘 ⇒ 退役态：R3/R4 **不过问**（rc=0 · ✗ 不判缺件）；
+//	② 两半皆缺（真消失）⇒ fail-closed（R3/R4 各点「缺件」· rc=1）；
+//	③ 未真搬的件缺席（zerg-upgrade.sh 无 Go 真身）⇒ 照旧「缺件」（✗ 回退腿不得放行未真搬的件）。
+func TestCheckExitCodesRetireFallback(t *testing.T) {
+	// Go 真身夹具内容：带 `ROLLED_BACK`（R4 说法落点）且不含「回滚成功 = 2」的老说法。
+	presentGoHalf := func(t *testing.T, d string) {
+		t.Helper()
+		cecTWrite(t, d, "core/cmd/zerg/family_swap_core.go",
+			"// 回滚成功 = 1 + error.kind=ROLLED_BACK（不是 0、也不是 2）\n")
+	}
+
+	t.Run("退役态_件缺席Go真身在盘_不过问_rc0", func(t *testing.T) {
+		d := t.TempDir()
+		cecFixture(d, cecOver{})
+		if err := os.Remove(filepath.Join(d, cecSwapRel)); err != nil {
+			t.Fatal(err)
+		}
+		presentGoHalf(t, d)
+		rc, out, _ := cecTRun(t, d)
+		if rc != 0 {
+			t.Fatalf("退役态 rc=%d 应 0（R3/R4 判能力可用）\n%s", rc, out)
+		}
+		if strings.Contains(out, "FAIL R3") || strings.Contains(out, "FAIL R4") {
+			t.Fatalf("退役态仍判缺件（✗ 应为不过问）：%s", out)
+		}
+	})
+
+	t.Run("两半皆缺_真消失_fail_closed_rc1", func(t *testing.T) {
+		d := t.TempDir()
+		cecFixture(d, cecOver{})
+		if err := os.Remove(filepath.Join(d, cecSwapRel)); err != nil {
+			t.Fatal(err)
+		}
+		rc, out, _ := cecTRun(t, d)
+		if rc != 1 || !strings.Contains(out, "FAIL R3 声明面缺件：scripts/build/zerg-swap-core.sh") ||
+			!strings.Contains(out, "FAIL R4 缺件：scripts/build/zerg-swap-core.sh") {
+			t.Fatalf("两半皆缺 rc=%d 应 1 且 R3/R4 各点缺件（✗ 不许静默通过）\n%s", rc, out)
+		}
+	})
+
+	t.Run("未真搬件缺席_不放行_rc1", func(t *testing.T) {
+		d := t.TempDir()
+		cecFixture(d, cecOver{})
+		// zerg-upgrade.sh **未真搬**（无 Go 真身）⇒ 缺席即判缺件。
+		if err := os.Remove(filepath.Join(d, cecUpgradeRel)); err != nil {
+			t.Fatal(err)
+		}
+		presentGoHalf(t, d)
+		rc, out, _ := cecTRun(t, d)
+		if rc != 1 || !strings.Contains(out, "FAIL R4 缺件：scripts/build/zerg-upgrade.sh") {
+			t.Fatalf("未真搬件缺席 rc=%d 应 1 且点缺件（✗ 回退腿不得放行未真搬的件）\n%s", rc, out)
+		}
+	})
+}
+
+// TestCheckExitCodesRetireFallbackB1 —— R3 声明面回退腿的**新增已真搬件**（DEV-2008 同型口径）成对负控：
+//
+//	pack-release.sh（Go 真身 core/cmd/zerg/pack_release.go · 批B1 真搬）
+//	build-all.sh（Go 真身 scripts/build/cmd/zerg-build-all/main.go · 批-6 真搬）
+//
+// ★ 鉴别口径同 DEV-2008：只有**已真搬登记在册**的件才有回退腿 ⇒ 未真搬的件不放行。
+func TestCheckExitCodesRetireFallbackB1(t *testing.T) {
+	rosterPlus := func(rel, id string) map[string]any {
+		r := cecGoodRoster()
+		nss, _ := r["namespaces"].([]any)
+		r["namespaces"] = append(nss, map[string]any{
+			"id": id, "owner": rel, "scan": "sh",
+			"declared": map[string]any{"0": "成功", "1": "失败", "2": "用法错"},
+		})
+		sites, _ := r["sites"].([]any)
+		r["sites"] = append(sites, rel)
+		return r
+	}
+
+	cases := []struct {
+		name  string
+		rel   string
+		id    string
+		goRel string
+	}{
+		{"pack-release", "scripts/build/pack-release.sh", "pack-release", "core/cmd/zerg/pack_release.go"},
+		{"build-all", "scripts/build/build-all.sh", "build-all", "scripts/build/cmd/zerg-build-all/main.go"},
+	}
+
+	for _, c := range cases {
+		c := c
+		t.Run("退役态_"+c.name+"_件缺席Go真身在盘_不过问_rc0", func(t *testing.T) {
+			d := t.TempDir()
+			cecFixture(d, cecOver{roster: rosterPlus(c.rel, c.id)})
+			cecTWrite(t, d, c.rel, "# 夹具\n")
+			if err := os.Remove(filepath.Join(d, c.rel)); err != nil {
+				t.Fatal(err)
+			}
+			cecTWrite(t, d, c.goRel, "package main\n")
+			rc, out, _ := cecTRun(t, d)
+			if rc != 0 {
+				t.Fatalf("退役态 rc=%d 应 0（R3 判能力可用）\n%s", rc, out)
+			}
+			if strings.Contains(out, "FAIL R3 声明面缺件："+c.rel) {
+				t.Fatalf("退役态仍判缺件（✗ 应为不过问）：%s", out)
+			}
+		})
+
+		t.Run("两半皆缺_"+c.name+"_真消失_fail_closed_rc1", func(t *testing.T) {
+			d := t.TempDir()
+			cecFixture(d, cecOver{roster: rosterPlus(c.rel, c.id)})
+			cecTWrite(t, d, c.rel, "# 夹具\n")
+			if err := os.Remove(filepath.Join(d, c.rel)); err != nil {
+				t.Fatal(err)
+			}
+			rc, out, _ := cecTRun(t, d)
+			if rc != 1 || !strings.Contains(out, "FAIL R3 声明面缺件："+c.rel) {
+				t.Fatalf("两半皆缺 rc=%d 应 1 且点缺件（✗ 不许静默通过）\n%s", rc, out)
+			}
+		})
+	}
+}

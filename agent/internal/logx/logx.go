@@ -8,7 +8,7 @@
 //
 // 用法：
 //
-//	logx.Infof("heartbeat", "心跳上报成功", "machine", "mini-node-1")
+//	logx.Infof("heartbeat", "心跳上报成功", "machine", "node-b")
 //	logx.Errorf("server", "请求失败", "error", err, "path", "/infer")
 package logx
 

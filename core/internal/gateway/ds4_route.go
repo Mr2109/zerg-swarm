@@ -1,15 +1,15 @@
 package gateway
 
 // ds4_route.go — DS4 大模型让位机制（2026-08-23 Mr2109）
-// Hermes 调 DS4 熔断（81G 超大——EDGE-NODE 内存不够）——路由 DS4 时自动清场（卸载其他模型只留 DS4）
-// 其他模型请求时——按 DS4 状态三分支（未加载→EDGE-NODE / 闲置→卸 DS4 / 繁忙→local）
+// Hermes 调 DS4 熔断（81G 超大——node-a 内存不够）——路由 DS4 时自动清场（卸载其他模型只留 DS4）
+// 其他模型请求时——按 DS4 状态三分支（未加载→node-a / 闲置→卸 DS4 / 繁忙→local）
 // 对齐 llama.cpp router models-memory-margin（动态卸载——业界标准）
 //
 // 批 3 改动（《设计-资源管理器》§3.3d / §4.3 / §八 Q2）：
-//   1. **只卸够**：不再"把 EDGE-NODE 上别的全卸掉"，而是由共享裁决（resources.EvictPlanForAction）
+//   1. **只卸够**：不再"把 node-a 上别的全卸掉"，而是由共享裁决（resources.EvictPlanForAction）
 //      给出"按五档顺序、刚好腾出缺口的那几个"，逐个点名让子端卸载；卸一个够就只卸一个。
 //   2. **去硬编码 URL**：地址从 fleet.yaml 的 fleet 段解析（fleetNode/agentURLFor），
-//      不再写死 `http://<worker-ip>:8100/unload`。
+//      不再写死 `http://<cluster-ip>:8100/unload`。
 //   3. **红线**：有在飞请求时绝不强卸（既有铁律，保留并加注释）；未托管项（子端如实报
 //      managed=false，如手工 screen 起的服务）绝不出现在让位计划里——只报告，不接管不杀（Q6）。
 //
@@ -55,19 +55,19 @@ func (g *Gateway) ds4RouteMemGB() float64 {
 type ds4State int
 
 const (
-	ds4NotLoaded ds4State = iota // DS4 未加载（EDGE-NODE 自由）
+	ds4NotLoaded ds4State = iota // DS4 未加载（node-a 自由）
 	ds4Idle                      // DS4 已加载 + 无请求（可卸载让位）
 	ds4Busy                      // DS4 已加载 + 有请求（繁忙——其他走 local）
 )
 
 // ds4Status 判断 DS4 状态（加载/闲置/繁忙）
-// 信号: EDGE-NODE 快照 Model（加载）+ ActiveRequests（请求）
+// 信号: node-a 快照 Model（加载）+ ActiveRequests（请求）
 func (g *Gateway) ds4Status() ds4State {
 	snap := g.snapshotFor("edge-node")
 	if snap == nil {
 		return ds4NotLoaded
 	}
-	// DS4 是否加载（EDGE-NODE 快照 model == DS4）
+	// DS4 是否加载（node-a 快照 model == DS4）
 	loaded := snap.Model != nil && *snap.Model == ds4ModelName
 	if !loaded {
 		return ds4NotLoaded
@@ -79,7 +79,7 @@ func (g *Gateway) ds4Status() ds4State {
 	return ds4Idle
 }
 
-// ensureDS4Room 确保 DS4 可加载（路由目标=DS4 时——EDGE-NODE 让位）
+// ensureDS4Room 确保 DS4 可加载（路由目标=DS4 时——node-a 让位）
 // 只卸够：算出"还差多少内存"，再按五档裁决只卸需要的那些（见 yieldX3To）。
 // 返回: 让位是否成功（可继续路由）
 func (g *Gateway) ensureDS4Room() bool {
@@ -91,14 +91,14 @@ func (g *Gateway) ensureDS4Room() bool {
 	if snap.Model != nil && *snap.Model == ds4ModelName {
 		return true
 	}
-	// EDGE-NODE 有其他模型占用（或内存不够）——需要让位
+	// node-a 有其他模型占用（或内存不够）——需要让位
 	want := g.ds4RouteMemGB()
 	if snap.Model != nil || snap.MemAvailableGb < want {
 		needGb := want - snap.MemAvailableGb
 		if needGb < 0 {
 			needGb = 0
 		}
-		// 单槽现实：EDGE-NODE 上已有别的模型驻留时也要腾出那个占用者（两个模型不能同时占 EDGE-NODE）
+		// 单槽现实：node-a 上已有别的模型驻留时也要腾出那个占用者（两个模型不能同时占 node-a）
 		if used := x3UsedGb(snap); used > needGb {
 			needGb = used
 		}
@@ -107,7 +107,7 @@ func (g *Gateway) ensureDS4Room() bool {
 	return true
 }
 
-// x3UsedGb 快照口径下 EDGE-NODE 当前被占用的内存（GiB）；快照缺总量时返回 0（不编造）。
+// x3UsedGb 快照口径下 node-a 当前被占用的内存（GiB）；快照缺总量时返回 0（不编造）。
 func x3UsedGb(snap *store.FleetSnapshot) float64 {
 	if snap == nil || snap.MemTotalGb <= 0 {
 		return 0
@@ -158,17 +158,17 @@ func (g *Gateway) yieldX3To(snap *store.FleetSnapshot, needGb float64, why strin
 	return g.postX3Unload(plan)
 }
 
-// unloadX3Models 调 EDGE-NODE agent 卸载模型（全卸——旧口径）。
+// unloadX3Models 调 node-a agent 卸载模型（全卸——旧口径）。
 // 保留给两条路径：① 驻留账本缺席时的兼容回退；② 任何仍需要"清场"的显式调用。
 // 地址来自配置（不硬编码）；认证 X-Auth-Token。
 func (g *Gateway) unloadX3Models() bool {
 	return g.postX3Unload(nil)
 }
 
-// postX3Unload 向 EDGE-NODE agent 发卸载请求：targets 非空 = 只卸这几项；为空 = 全卸（旧语义）。
+// postX3Unload 向 node-a agent 发卸载请求：targets 非空 = 只卸这几项；为空 = 全卸（旧语义）。
 // 子端 POST /unload 带 {"models":[...]} 即定向卸载；不带体即全卸（老子端忽略体，行为不变）。
 func (g *Gateway) postX3Unload(targets []string) bool {
-	// EDGE-NODE agent 卸载接口——地址取自 fleet.yaml 的 fleet 段（批 3 去掉硬编码 IP）
+	// node-a agent 卸载接口——地址取自 fleet.yaml 的 fleet 段（批 3 去掉硬编码 IP）
 	url := g.agentURLFor("edge-node", "/unload")
 	if url == "" {
 		log.Printf("⚠️ DS4 quiesce skipped: no fleet node configured for edge-node")
@@ -210,8 +210,8 @@ func (g *Gateway) postX3Unload(targets []string) bool {
 	return false
 }
 
-// ensureX3RoomForFile — 2026-09-09(诊断 R2/R4): EDGE-NODE 模型驻留无回收→内存打满→实例挂死
-// 通用让位(DS4 机制推广): 路由目标=EDGE-NODE 且目标模型未加载 + EDGE-NODE 可用内存 < 所需 → 先只卸够(agent 再按需载)
+// ensureX3RoomForFile — 2026-09-09(诊断 R2/R4): node-a 模型驻留无回收→内存打满→实例挂死
+// 通用让位(DS4 机制推广): 路由目标=node-a 且目标模型未加载 + node-a 可用内存 < 所需 → 先只卸够(agent 再按需载)
 // 幂等: 已加载/内存够 → no-op(agent 自行按需加载);DS4 场景其专用分支已先让位——此处二次进入自动 no-op
 func (g *Gateway) ensureX3RoomForFile(file string, memGB int) {
 	if file == "" || memGB <= 0 {
@@ -228,11 +228,11 @@ func (g *Gateway) ensureX3RoomForFile(file string, memGB int) {
 	if snap.Model != nil && modelFileLoaded(snap, file) {
 		return // 目标已加载——无需让位
 	}
-	// 2026-09-09(诊断 R2 深化): GPU 也是单资源——EDGE-NODE 单卡,多实例常驻→gpu_pct=100→
+	// 2026-09-09(诊断 R2 深化): GPU 也是单资源——node-a 单卡,多实例常驻→gpu_pct=100→
 	// 新加载模型推理被饿(实例 0% CPU 假健康)。内存够但 GPU 忙(≥90%)→同样让位到单驻留
 	needGb := float64(memGB) - snap.MemAvailableGb
 	if snap.MemAvailableGb >= float64(memGB) && snap.GpuPct < 90 {
-		return // 内存+GPU 都够——EDGE-NODE agent 按需加载
+		return // 内存+GPU 都够——node-a agent 按需加载
 	}
 	if snap.GpuPct >= 90 {
 		// GPU 忙：要腾出的是"当前占用者"（不是全清）——用实测占用做缺口下限
@@ -250,9 +250,9 @@ func (g *Gateway) ds4RouteDecision() (forceLocal bool, reason string) {
 	case ds4Busy:
 		return true, "DS4 繁忙（EDGE-NODE 推理中——其他模型走本机）"
 	case ds4Idle:
-		// DS4 闲置——调用其他模型 = 卸 DS4 让位（EDGE-NODE 跑其他——不空置）
+		// DS4 闲置——调用其他模型 = 卸 DS4 让位（node-a 跑其他——不空置）
 		// 批 3：只卸够——让位目标由五档裁决给出（闲置的 DS4 自己就是最该走的那一个），
-		// 不是把 EDGE-NODE 上所有驻留一把全清。
+		// 不是把 node-a 上所有驻留一把全清。
 		snap := g.snapshotFor("edge-node")
 		needGb := x3UsedGb(snap)
 		if needGb <= 0 {

@@ -77,7 +77,7 @@ func probeIdentity(port int, timeout time.Duration) string {
 
 // deductOccupancyFromAvail 判定"驻留项的占用"是否要从**系统可用内存**里再扣一次。
 //
-// 默认 **false**，理由（2026-09-14 EDGE-NODE 真机实测，教训原样保留）：
+// 默认 **false**，理由（2026-09-14 node-a 真机实测，教训原样保留）：
 //
 //	MemTotal 122.2 GB、MemAvailable 61.0 GB，而两条外部推理服务实测占用 56.68 GB ——
 //	61.0 正是"122.2 减去（含这 56.68 在内的）已用"的结果 ⇒ **采样口径已经把 GTT/权重算进去了**。

@@ -5,7 +5,7 @@
 //   - 拿不到就返回 ok=false（"未知"），**绝不用进程 RSS 冒充显存**。
 //
 // 平台口径：
-//   - Linux + AMD ROCm：rocm-smi --showmeminfo vram（EDGE-NODE 的情形）
+//   - Linux + AMD ROCm：rocm-smi --showmeminfo vram（node-a 的情形）
 //   - Linux + NVIDIA：  nvidia-smi --query-gpu=memory.used,memory.total
 //   - macOS Apple Silicon：统一内存、无独立显存额度 → 一律 ok=false（不编造）
 package monitor
@@ -57,7 +57,7 @@ func sampleVram() (float64, float64, bool) {
 	return 0, 0, false
 }
 
-// readRocmVram 通过 rocm-smi 读 AMD 显存（EDGE-NODE 的 ROCm 情形）。
+// readRocmVram 通过 rocm-smi 读 AMD 显存（node-a 的 ROCm 情形）。
 // 输出形如：
 //
 //	GPU[0] : VRAM Total Memory (B): 25753026560
@@ -91,7 +91,7 @@ func rocmVramFrom(rocmOut string, gttRoot string) (float64, float64, bool) {
 	if totalB <= 0 {
 		return 0, 0, false
 	}
-	// 统一内存（核显/APU）补正：BIOS 给「专用显存」的切块可能很小（实测 EDGE-NODE/Strix Halo
+	// 统一内存（核显/APU）补正：BIOS 给「专用显存」的切块可能很小（实测 node-a/Strix Halo
 	// 只有 1 GiB），模型其实驻留在 GTT（统一内存可寻址池）里跑。只看 VRAM 会把「装得下」
 	// 误判成 no_fit ⇒ 这里把 GTT 一并计入，口径 = **该 GPU 可寻址的内存**（VRAM + GTT）。
 	// 拿不到 GTT（独显机器）时行为与原来完全一致。

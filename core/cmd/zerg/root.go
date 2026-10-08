@@ -1,7 +1,7 @@
 // root.go —— 仓根解析（供门禁直通与帮助导出用）。
 //
 // 红线（scripts/gates/check-hardcoded-private-paths.py）：代码里**不许写死私有绝对路径**
-// （`<volume-path>` / `~…`）—— 公开快照会把它们替换成占位符，机群上的二进制
+// （`<volume-path>…` / `/Users/<user>…`）—— 公开快照会把它们替换成占位符，机群上的二进制
 // 就指向不存在的目录。故这里只按三条**可推导**的路走：环境变量 → 可执行文件所在目录上溯 →
 // 当前目录上溯；判据是「仓根有 core/internal/version/version.go」。
 //

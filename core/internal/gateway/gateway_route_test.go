@@ -11,18 +11,18 @@ import (
 // TestModelFileLoaded_LocalFileName 关键修复验证:
 // local 快照 Model="Qwen3.8-27B-Q4_K_M-vcruz305"（文件名形式）
 // 候选 File=".../Qwen3.8-27B-Q4_K_M-vcruz305.gguf"
-// → 应匹配（之前精确相等不匹配——local 拿不到 +8——edge-node 恒赢——反复挂起死循环）
+// → 应匹配（之前精确相等不匹配——local 拿不到 +8——node-a 恒赢——反复挂起死循环）
 func TestModelFileLoaded_LocalFileName(t *testing.T) {
 	snap := &store.FleetSnapshot{
 		Model: strPtr("Qwen3.8-27B-Q4_K_M-vcruz305"),
 	}
-	file := "~/models/Qwen3.8-27B-Q4_K_M-vcruz305.gguf"
+	file := "/Users/<user>/models/Qwen3.8-27B-Q4_K_M-vcruz305.gguf"
 	if !modelFileLoaded(snap, file) {
 		t.Fatalf("文件名形式快照应匹配候选 File（修复核心——之前不匹配）")
 	}
 }
 
-// TestModelFileLoaded_LogicalName edge-node 快照 Model="Qwen3.8-27B"（逻辑名）——与 File basename 不同——也应匹配
+// TestModelFileLoaded_LogicalName node-a 快照 Model="Qwen3.8-27B"（逻辑名）——与 File basename 不同——也应匹配
 func TestModelFileLoaded_LogicalName(t *testing.T) {
 	snap := &store.FleetSnapshot{
 		Model: strPtr("Qwen3.8-27B"),

@@ -195,6 +195,16 @@ func cmdDevProposalNew(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s: 缺退点（`--rollback <方式>`）—— **没退点的件不许提**（§17.3 铁律③③：每个写动作必须能指回一条回滚路径）\n", progName)
 		return exitUsage
 	}
+	// ③a 退点**现读可得**（`GAP-20261009-01` · fail-closed）：非空之外再判「退点现读拿不拿得到」——
+	//   路径形的退点（绝对 / 带目录分隔符）必须**现读得到**（退建议照它核 sha256 取改前态；
+	//   读不到的裸名如 `/core__cmd__zerg__family_build.go` 到真回退时取不到任何东西 ⇒ 在这里就拒执）。
+	//   ★ 非路径形 = schema 已认的「方式」文本（`--rollback <方式>`）⇒ 按其本义收（✗ 别把合法形态一并拒）。
+	if why := rollbackUsableWhy(rec.Rollback); why != "" {
+		inv.setErr("usage", "rollback_unusable", why)
+		fmt.Fprintf(stderr, "%s: %s\n", progName, why)
+		fmt.Fprintf(stderr, "口径（`GAP-20261009-01` · §17.3 铁律③③）：退点要**现读可得** —— 一条**读得到的路径**（退建议照它核 sha256 取改前态）才叫退点；读不到的路径形退点 = 真回退时取不到东西 ⇒ 不给提（退码 2）\n")
+		return exitUsage
+	}
 	if len(rec.Evidence) == 0 {
 		inv.setErr("usage", "evidence_required", "缺出处（--evidence）")
 		fmt.Fprintf(stderr, "%s: 缺出处（`--evidence <出处>` 至少一条）—— 证据为空的件**不给结论**（§17.3 铁律②③：证据为空 ⇒ 不给结论）\n", progName)
@@ -255,6 +265,11 @@ func cmdDevProposalNew(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "  状态   : %s\n", rec.State)
 		fmt.Fprintf(stderr, "（--dry-run：只出件 · 零副作用 —— 未写任何文件、未触主控）\n")
 		return exitOK
+	}
+	// ★ 授权侧（`GAP-20260927-140` ① · 2026-10-08 拍）：`new` 真写提案件 ⇒ 默认档 fail-closed
+	//   （缺 `--yes` ⇒ 退 2、零写）—— `list`/`show`/`check`（只读）不走这条。
+	if rc := writeGuardYes(inv, stderr); rc != exitOK {
+		return rc
 	}
 	rec.ID = nextProposalID(dir)
 	rec.Path = filepath.Join(dir, rec.ID+".json")
@@ -682,6 +697,43 @@ func declaredFilesWhy(files []string) string {
 		case strings.Contains(f, ".."):
 			return fmt.Sprintf("`--file %s` 里有 `..` —— 不许越出仓根（越界写 ⇒ 退码 2）", f)
 		}
+	}
+	return ""
+}
+
+// rollbackUsableWhy —— 退点「现读可得」判定（**fail-closed** · `GAP-20261009-01`）。
+//
+// 病灶：`--rollback` 此前只判**非空** ⇒ 一个**读不到的裸名**（如 `/core__cmd__zerg__family_build.go`：
+// 既非仓内相对路径、也非可执行命令）也满足「没退点的件不许提」并落地，而 `dev edit` 的退建议照它核
+// sha256 取改前态时**取不到任何东西**（`rollback_cmd=""` · 档 2）⇒ 退点在**提出这一步**就该判死。
+//
+// 判法（✗ 不新创形态）：只看「现读拿不拿得到」——
+//
+//	① **路径形**退点（`filepath.IsAbs` 或含目录分隔符 `/`）：按 `devEditReturnPointOf` 同一口径解析
+//	   （绝对按原样、相对按仓根拼）⇒ 必须是**现读得到的普通件**（不是读不到、也不是目录）；
+//	② 其余 = schema 已认的**「方式」**文本（`--rollback <方式>`，如 `git revert …`）⇒ 按其本义收
+//	   （✗ 不把合法形态一并拒）。
+//
+// 返回空串 = 现读可得；非空 = **逐字**的「退点不可得」理由（调用方据此拒执 rc=2）。
+func rollbackUsableWhy(v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return "" // 非空那一档由上游 `rollback_required` 单独判
+	}
+	if !filepath.IsAbs(v) && !strings.Contains(v, "/") {
+		// 非路径形 = 「方式」文本（schema 认的形态）⇒ 按其本义收。
+		return ""
+	}
+	p := v
+	if !filepath.IsAbs(p) {
+		p = filepath.Join(repoRoot(), filepath.FromSlash(p))
+	}
+	st, err := os.Stat(p)
+	if err != nil {
+		return fmt.Sprintf("退点不可得：%s 是路径形却读不到（%s：%v）—— 退建议照它核 sha256 取改前态，读不到就取不回任何东西", v, p, err)
+	}
+	if st.IsDir() {
+		return fmt.Sprintf("退点不可得：%s 是**目录**（%s）—— 退点要一件**可回写的件**，不是目录", v, p)
 	}
 	return ""
 }

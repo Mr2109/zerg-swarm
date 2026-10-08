@@ -20,7 +20,7 @@ func engineImplCandidate() ModelCandidate {
 	return ModelCandidate{
 		Name:         "example-moe-36b",
 		Family:       "llama",
-		Host:         "edge-node",
+		Host:         "node-a",
 		Backend:      "llama-server",
 		File:         "/data/models/k2/k2horizon-q4_k_m.gguf",
 		MemGb:        23,
@@ -180,9 +180,9 @@ func TestEngineImpl_YAMLFlowAndBlockForm(t *testing.T) {
 	const doc = `
 models:
   example-moe-36b:
-    - { host: edge-node, backend: llama-server, file: /data/models/k2/x.gguf, mem_gb: 23, architecture: example-moe-36b, cmd: ["/home/<user>/agent/run-k2.sh", "-m", "{file}", "--port", "{port}"] }
+    - { host: node-a, backend: llama-server, file: /data/models/k2/x.gguf, mem_gb: 23, architecture: example-moe-36b, cmd: ["/home/<user>/agent/run-k2.sh", "-m", "{file}", "--port", "{port}"] }
   Block-Form-Fork:
-    - host: edge-node
+    - host: node-a
       backend: llama-server
       file: /data/models/fork/y.gguf
       mem_gb: 20

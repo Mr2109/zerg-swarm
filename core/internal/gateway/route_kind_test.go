@@ -37,13 +37,13 @@ func TestKindNormalization(t *testing.T) {
 // 正 + 负 3：从机队配置取档序；**未知 host（含 `local` 这类非机队名）按 work**。
 func TestKindTierFromFleet(t *testing.T) {
 	g := &Gateway{config: &config.FleetConfig{Fleet: map[string]config.FleetNode{
-		"edge-node":    {Host: "<worker-ip>", Kind: kindAI},
-		"Mr2109":  {Host: "127.0.0.1", Kind: kindWork},
-		"mini-node-1": {Host: "<worker-ip>", Kind: kindMini},
-		"raw":   {Host: "<cluster-ip>"}, // 未标 kind
+		"node-a":     {Host: "<cluster-ip>", Kind: kindAI},
+		"node-local": {Host: "127.0.0.1", Kind: kindWork},
+		"node-b":     {Host: "<cluster-ip>", Kind: kindMini},
+		"raw":        {Host: "<cluster-ip>"}, // 未标 kind
 	}}}
-	if g.kindTier("edge-node") != 0 || g.kindTier("mini-node-1") != 1 || g.kindTier("Mr2109") != 2 {
-		t.Fatalf("档序错：edge-node=%d mini-node-1=%d Mr2109=%d", g.kindTier("edge-node"), g.kindTier("mini-node-1"), g.kindTier("Mr2109"))
+	if g.kindTier("node-a") != 0 || g.kindTier("node-b") != 1 || g.kindTier("node-local") != 2 {
+		t.Fatalf("档序错：node-a=%d node-b=%d node-local=%d", g.kindTier("node-a"), g.kindTier("node-b"), g.kindTier("node-local"))
 	}
 	if g.kindTier("raw") != 2 {
 		t.Fatalf("未标 kind 的机器应落 work 档（2），实得 %d", g.kindTier("raw"))
@@ -51,12 +51,12 @@ func TestKindTierFromFleet(t *testing.T) {
 	if g.kindTier("local") != 2 || g.kindTier("不存在的机器") != 2 {
 		t.Fatalf("机队外的 host 应落 work 档（2）：local=%d", g.kindTier("local"))
 	}
-	if g.kindName("edge-node") != kindAI || g.kindName("Mr2109") != kindWork {
-		t.Fatalf("kindName 错：edge-node=%q Mr2109=%q", g.kindName("edge-node"), g.kindName("Mr2109"))
+	if g.kindName("node-a") != kindAI || g.kindName("node-local") != kindWork {
+		t.Fatalf("kindName 错：node-a=%q node-local=%q", g.kindName("node-a"), g.kindName("node-local"))
 	}
 	// nil 安全（不许 panic）
 	var nilGW *Gateway
-	if nilGW.kindTier("edge-node") != 2 {
+	if nilGW.kindTier("node-a") != 2 {
 		t.Fatalf("nil Gateway 应安全落 work 档")
 	}
 }

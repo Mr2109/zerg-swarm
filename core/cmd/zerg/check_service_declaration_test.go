@@ -144,7 +144,7 @@ func TestCheckServiceDeclarationGatePort(t *testing.T) {
 		root := csdTestRoot(t)
 		dp, pp, lp, home := csdWriteFixture(root, csdGoodDecl, csdGoodPS, csdGoodLC, goodPlists)
 		csdSetEnv(t, dp, pp, lp, home)
-		csdWrite(t, lp, "68939\t0\tcom.zerg.core\n86298\t0\tcom.zerg.tunnel.mini-node-1\n")
+		csdWrite(t, lp, "68939\t0\tcom.zerg.core\n86298\t0\tcom.zerg.tunnel.node-b\n")
 		rc, so, _ := csdRun(t, root)
 		if rc != 1 {
 			t.Fatalf("rc=%d 期望 1", rc)
@@ -152,7 +152,7 @@ func TestCheckServiceDeclarationGatePort(t *testing.T) {
 		if !strings.Contains(so, "`A∖B`") || !strings.Contains(so, "`B∖A`") {
 			t.Fatalf("两侧未分开点名：%q", so)
 		}
-		if !strings.Contains(so, "com.zerg.tunnel.mini-node-1") || !strings.Contains(so, "com.zerg.agent-Mr2109") {
+		if !strings.Contains(so, "com.zerg.tunnel.node-b") || !strings.Contains(so, "com.zerg.agent-Mr2109") {
 			t.Fatalf("两侧名字未逐字出现：%q", so)
 		}
 	})
@@ -457,8 +457,8 @@ func TestCheckServiceDeclarationGatePort(t *testing.T) {
 
 	t.Run("正控:层限 非本层行不由本门判 rc=0", func(t *testing.T) {
 		root := csdTestRoot(t)
-		decl := csdGoodDecl + "launchd	edge-node-agent.service	/home/<user>/edge-node-agent.service	" +
-			"/home/<user>/zerg/bin/zerg-agentd	bin/zerg-agentd	节点(edge-node)	-	node:edge-node\n"
+		decl := csdGoodDecl + "launchd	node-a-agent.service	/home/<user>/node-a-agent.service	" +
+			"/home/<user>/zerg/bin/zerg-agentd	bin/zerg-agentd	节点(node-a)	-	node:node-a\n"
 		dp, pp, lp, home := csdWriteFixture(root, decl, csdGoodPS, csdGoodLC, goodPlists)
 		csdSetEnv(t, dp, pp, lp, home)
 		rc, so, _ := csdRun(t, root)

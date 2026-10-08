@@ -80,7 +80,8 @@ import (
 //	「可退 / 不可退」与退法那一行（★ 目测能用、程序用不了 ✗）。四格取值**与 stderr 那一块同源** ——
 //	同一个 `devEditReturnPoint`（禁人面一套、机器面另一套 ✗ · 禁二次算 ✗）。
 //	`rollback_verdict` = 能不能退（闭集 `可退` / `不可退`）· `rollback_tier` = 档位（闭集 `1`/`2`/`3`/`4`）·
-//	`rollback_cmd` = 退法那一行（档 1 = `cp -p <退点件> <件>` · 档 3 = `rm <件>` · 档 2/4 **空** ⇒ 不编）·
+//	`rollback_cmd` = 退法那一行（档 1 = `cp -p <退点件> <件>` · 档 3 = `rm <件>` · 档 2/4 = **可用性标记**
+//	  〈不可退 + 原因〉而**不再留空** —— `GAP-20261009-01`：空串会被读成「没提到 = 大概没事」）·
 //	`rollback_why` = 不可退的原因片段（档 1 = 空；2/3/4 逐字 = stderr 那一行里的同一段）。
 //	★ `GAP-20260928-115`（2026-09-28 · 本枚）：这张表原来是一枚**写死的长串** —— 里面混着
 //	**只由干跑档产出**的五格（`approver` 与退点四格），而**真写档一个都不产出**（见下面写前那一拒）。
@@ -477,7 +478,7 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 		rp := devEditReturnPointOf(root, prop, fileRel, beforeSHA, beforeMissing)
 		row["rollback_verdict"] = rp.Verdict()
 		row["rollback_tier"] = fmt.Sprintf("%d", rp.Tier)
-		row["rollback_cmd"] = rp.Cmd
+		row["rollback_cmd"] = devEditRollbackCmdCell(rp)
 		row["rollback_why"] = rp.Why
 		// ★ `approver` 这一格今天**悬空**：`devEditFields` 列着它、干跑 row 里却没有 ⇒ 任何 `--json`
 		// 都在字段面倒下、还报「未知字段 approver」而同一行又把 approver 列成合法字段（本枚实测）。
@@ -791,7 +792,14 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s: ★ 制品对拍：本件是 Go 源码 —— `dev edit` 只写源码、不触发重编 ⇒ `bin/%s` 可能仍是旧制品（新行为要重编后才在 `./bin/%s` 生效）\n",
 			progName, progName, progName)
 	}
-	fmt.Fprintf(stderr, "回滚路径：提案 %s 的退点 = %s（件级回滚见 `%s dev rollback`）\n", proposalID, orDash(prop.Rollback), progName)
+	// ★ `GAP-20261009-01`：真写回执的退点槽也带**可用性标记**（与干跑档同一枚 `devEditReturnPointOf` ——
+	//   同一个算法、不另写第二份；不可退时才在那一行缀上标记，可退时那一行逐字不变）。
+	rpT := devEditReturnPointOf(root, prop, fileRel, beforeSHA, beforeMissing)
+	rbMark := ""
+	if rpT.Verdict() == "不可退" {
+		rbMark = fmt.Sprintf(" · **不可退（档 %d：%s）**", rpT.Tier, rpT.Why)
+	}
+	fmt.Fprintf(stderr, "回滚路径：提案 %s 的退点 = %s（件级回滚见 `%s dev rollback`）%s\n", proposalID, orDash(prop.Rollback), progName, rbMark)
 	return exitOK
 }
 
@@ -1694,6 +1702,17 @@ func (r devEditReturnPoint) Verdict() string {
 		return "可退"
 	}
 	return "不可退"
+}
+
+// devEditRollbackCmdCell —— `rollback_cmd` 这一格（`GAP-20261009-01`）：**有可执行退法就给命令**，没有
+// （档 2/4：退点读不到 / 不是同一版 / 没给退点）就**带可用性标记**、不留空 —— 空串会被机读方读成
+// 「没提到 = 大概没事」，而这一格要明说「不可退 · 退点不可得」（取值与退建议 stderr 那一块同源：同一个 `rp`）。
+// ★ 字段名不改（仍 `rollback_cmd`）· 档 1/3 的命令一字不动 ✗（`cp -p …` / `rm …`）。
+func devEditRollbackCmdCell(r devEditReturnPoint) string {
+	if c := strings.TrimSpace(r.Cmd); c != "" {
+		return c
+	}
+	return "（不可退 —— " + r.Why + "）"
 }
 
 // devEditReturnPointOf 现算退点档（**只读**：读退点件 + 算 sha256 → 与改前指纹对拍）。

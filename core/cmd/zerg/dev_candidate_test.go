@@ -205,7 +205,7 @@ func TestDevVerifySynthesizesEvidenceSheet(t *testing.T) {
 	p := filepath.Join(dir, "results.tsv")
 	writeResults(t, p, good)
 
-	code, out, errb := runCapture("dev", "verify", "--candidate", "DEV-0002", "--results", p, "--code-sha", "deadbee")
+	code, out, errb := runCapture("dev", "verify", "--yes", "--candidate", "DEV-0002", "--results", p, "--code-sha", "deadbee")
 	if code != 0 {
 		t.Fatalf("全绿一档退码 = %d（要 0）· stderr=%s", code, errb)
 	}
@@ -256,7 +256,7 @@ func TestDevVerifySynthesizesEvidenceSheet(t *testing.T) {
 	} {
 		p2 := filepath.Join(dir, "mix.tsv")
 		writeResults(t, p2, append(append([]string{}, good...), c.row))
-		code, _, errb := runCapture("dev", "verify", "--candidate", "DEV-0002", "--results", p2)
+		code, _, errb := runCapture("dev", "verify", "--yes", "--candidate", "DEV-0002", "--results", p2)
 		if code != c.want {
 			t.Errorf("加一条 %q 后退码 = %d（要 %d）· stderr=%s", c.row, code, c.want, errb)
 		}
@@ -301,7 +301,7 @@ func TestDevBuildRefusesWithoutVerify(t *testing.T) {
 	dir := filepath.Join(root, "DEV-0003")
 	p := filepath.Join(dir, "results.tsv")
 	writeResults(t, p, []string{"PASS\tgate: gofmt -l core\t0\t1s\t/tmp/g.log"})
-	if code, _, errb := runCapture("dev", "verify", "--candidate", "DEV-0003", "--results", p); code != 0 {
+	if code, _, errb := runCapture("dev", "verify", "--yes", "--candidate", "DEV-0003", "--results", p); code != 0 {
 		t.Fatalf("verify 退码 = %d（要 0）· stderr=%s", code, errb)
 	}
 	// 有了证据单：`--dry-run` 走到**计划件**那一态（0），真跑仍在「本版未开放」（2）。
@@ -377,7 +377,7 @@ func TestDevVerifyJSONList(t *testing.T) {
 	dir := filepath.Join(root, "DEV-0004")
 	p := filepath.Join(dir, "results.tsv")
 	writeResults(t, p, []string{"PASS\tgate: gofmt -l core\t0\t1s\t/tmp/g.log"})
-	code, out, errb := runCapture("dev", "verify", "--candidate", "DEV-0004", "--results", p,
+	code, out, errb := runCapture("dev", "verify", "--yes", "--candidate", "DEV-0004", "--results", p,
 		"--json", "candidate,criterion,verdict,rc,log_path")
 	if code != 0 {
 		t.Fatalf("--json 退码 = %d（要 0）· stderr=%s", code, errb)
@@ -395,7 +395,7 @@ func TestDevVerifyJSONList(t *testing.T) {
 	// 旧行为下本断言会红 ⇒ 有牙），而**结果面**仍必须空（`items` 一条都不出）。
 	var outB, errB bytes.Buffer
 	wantK2 := usageCodeFromTable(t)
-	rc := zerg.RunForTest([]string{"dev", "verify", "--candidate", "DEV-0004", "--results", p, "--json"},
+	rc := zerg.RunForTest([]string{"dev", "verify", "--yes", "--candidate", "DEV-0004", "--results", p, "--json"},
 		&outB, &errB)
 	if rc != wantK2 {
 		t.Errorf("`--json` 不给字段：rc=%d（要 %d）· stdout=%q", rc, wantK2, outB.String())

@@ -143,9 +143,9 @@ func TestRedactionActuallyRedacts(t *testing.T) {
 
 // TestControlFingerprintIsStableAndSensitive —— 行为格：指纹「同参同值 · 异参异值」（日志↔响应 对账的前提）。
 func TestControlFingerprintIsStableAndSensitive(t *testing.T) {
-	a := controlFingerprint("config_reload", map[string]any{"host": "Mr2109", "n": 1})
-	b := controlFingerprint("config_reload", map[string]any{"host": "Mr2109", "n": 1})
-	c := controlFingerprint("config_reload", map[string]any{"host": "edge-node", "n": 1})
+	a := controlFingerprint("config_reload", map[string]any{"host": "node-local", "n": 1})
+	b := controlFingerprint("config_reload", map[string]any{"host": "node-local", "n": 1})
+	c := controlFingerprint("config_reload", map[string]any{"host": "node-a", "n": 1})
 	if a == "" {
 		t.Fatalf("指纹为空（audit.ArgsFingerprint 没接上）")
 	}

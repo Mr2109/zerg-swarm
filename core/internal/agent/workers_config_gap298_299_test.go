@@ -17,7 +17,7 @@ func TestGAP299_EmptyDeviceHostNoMatch(t *testing.T) {
 // 必须如实回退默认。改前：Contains(d.Hostname,"") 恒真 ⇒ 返回第一台有值的机器。
 func TestGAP298_EmptyQueryHostFallsBack(t *testing.T) {
 	one := 1
-	devices := []DeviceConfig{{Hostname: "mini-node-1", MaxWorkers: &one}}
+	devices := []DeviceConfig{{Hostname: "node-b", MaxWorkers: &one}}
 	got, explicit := resolveByDevice(devices, "", map[string]int{}, 42)
 	if got != 42 || explicit {
 		t.Fatalf("hostname 空（错误分支）漏出别机值：got=(%d,%v)，want (42,false)", got, explicit)

@@ -455,6 +455,21 @@ func DoctorDoorItemNamesForTest() []string {
 // RepoRootForTest 仓根解析口（模型面扫描要用同一份推导，不另写一份）。
 func RepoRootForTest() string { return repoRoot() }
 
+// ---- `eval` 评测线名册的**只读桥** ------------------------------------------------------------
+
+// EvalGoBackedFilesForTest 评测线里**已真搬 Go**（`GoMain != nil`）的件在名册里标的 `File` 集合。
+// 判据件用：这些件真跑走进程内 Go 真身 ⇒ 旧脚本退役（移出仓）后 `File` 只是**人面标名**、
+// 允许缺席（`family_eval.go` 的退役解耦口径）；未真搬的件（`GoMain == nil`）仍要求它在位。
+func EvalGoBackedFilesForTest() []string {
+	out := []string{}
+	for _, e := range evalRoster {
+		if e.GoMain != nil {
+			out = append(out, e.File)
+		}
+	}
+	return out
+}
+
 // ---- `A2` 六层取数（变更影响面）的**只读桥** ------------------------------------------------
 
 // ImpactSemanticGateForTest 第 ⑤ 层的**在位判据**判定口（三条子句 · 纯函数）。

@@ -14,8 +14,8 @@ import (
 //
 // 路由（注册在 cmd/zerg-core/main.go，与既有 /api/* 同一套 AuthMiddleware 鉴权）：
 //
-//	POST /api/resources/pin   → 体 {"host":"edge-node","model":"example-35b-v2","ttl_s":600}
-//	POST /api/resources/unpin → 体 {"host":"edge-node","model":"example-35b-v2"}
+//	POST /api/resources/pin   → 体 {"host":"node-a","model":"example-35b-v2","ttl_s":600}
+//	POST /api/resources/unpin → 体 {"host":"node-a","model":"example-35b-v2"}
 //
 // pin = "在 TTL 内不被自动驱逐"（§八 Q5：必须带 TTL——无 TTL 的 pin 等同内存泄漏）。
 //

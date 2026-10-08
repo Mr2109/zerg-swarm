@@ -22,12 +22,12 @@ import (
 	"github.com/Mr2109/zerg-swarm/core/internal/store"
 )
 
-// t1TargetConfig 造一台 edge-node 上的登记模型（权重 4G，GGUF 带 KV 真值）：
+// t1TargetConfig 造一台 node-a 上的登记模型（权重 4G，GGUF 带 KV 真值）：
 // need = 4G 权重 + 0.5G KV + 2G 开销 = 6.5G（用于把"装不装得下"卡在可控的区间里）。
 func t1TargetConfig(gguf string) *config.FleetConfig {
 	return &config.FleetConfig{
 		Models: map[string][]config.ModelCandidate{
-			"TestModel": {{Host: "edge-node", File: gguf, Architecture: "llama"}},
+			"TestModel": {{Host: "node-a", File: gguf, Architecture: "llama"}},
 		},
 		Fleet: map[string]config.FleetNode{},
 	}
@@ -46,14 +46,14 @@ func TestT1_SingleSlotYieldVisibleInLedger(t *testing.T) {
 
 	// ── 前：驻留 A（2G、空闲可腾退）；可用内存 5G < need 6.5G → 单槽装不下 B ──
 	h.Store.ReceiveHeartbeat(store.HeartbeatRequest{
-		Machine: "edge-node", MemTotalGb: 128, MemAvailableGb: 5,
+		Machine: "node-a", MemTotalGb: 128, MemAvailableGb: 5,
 		VramKnown: true, VramTotalGb: 48, VramUsedGb: 8, VramFreeGb: 40,
 		Resident: []resources.ResidentEntry{{
 			Alias: "A", Digest: "sha256-A", State: resources.StateReady,
 			MemGb: 2, Managed: true, LastUsedAgoS: 100,
 		}},
 	})
-	before := machinesOf(t, decodeLedger(t, doResReq(t, r, http.MethodGet, "/api/resources/ledger", "test-token", "")))["edge-node"]
+	before := machinesOf(t, decodeLedger(t, doResReq(t, r, http.MethodGet, "/api/resources/ledger", "test-token", "")))["node-a"]
 
 	arr, ok := before["resident"].([]interface{})
 	if !ok || len(arr) != 1 {
@@ -73,14 +73,14 @@ func TestT1_SingleSlotYieldVisibleInLedger(t *testing.T) {
 
 	// ── 后：A 让位、B 驻留；再取一次账本 ──
 	h.Store.ReceiveHeartbeat(store.HeartbeatRequest{
-		Machine: "edge-node", MemTotalGb: 128, MemAvailableGb: 7,
+		Machine: "node-a", MemTotalGb: 128, MemAvailableGb: 7,
 		VramKnown: true, VramTotalGb: 48, VramUsedGb: 12, VramFreeGb: 36,
 		Resident: []resources.ResidentEntry{{
 			Alias: "B", Digest: "sha256-B", State: resources.StateReady,
 			MemGb: 6.5, Managed: true,
 		}},
 	})
-	after := machinesOf(t, decodeLedger(t, doResReq(t, r, http.MethodGet, "/api/resources/ledger", "test-token", "")))["edge-node"]
+	after := machinesOf(t, decodeLedger(t, doResReq(t, r, http.MethodGet, "/api/resources/ledger", "test-token", "")))["node-a"]
 
 	arr2, ok := after["resident"].([]interface{})
 	if !ok || len(arr2) != 1 {
@@ -108,7 +108,7 @@ func TestT4_MemEnoughVramShort_NoFit(t *testing.T) {
 	h.EngineOverheadGb = 2.0
 	// 内存充裕（100G），显存只剩 1G（need 6.5G）
 	h.Store.ReceiveHeartbeat(store.HeartbeatRequest{
-		Machine: "edge-node", MemTotalGb: 128, MemAvailableGb: 100,
+		Machine: "node-a", MemTotalGb: 128, MemAvailableGb: 100,
 		VramKnown: true, VramTotalGb: 24, VramUsedGb: 23, VramFreeGb: 1,
 	})
 	r := newResourcesTestRouter(h)
@@ -116,14 +116,14 @@ func TestT4_MemEnoughVramShort_NoFit(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("状态码应为 200，实得 %d body=%s", w.Code, w.Body.String())
 	}
-	edge-node := machinesOf(t, decodeLedger(t, w))["edge-node"]
-	if edge-node["vram_known"] != true {
-		t.Fatalf("前置：edge-node 应报有显存，实得 vram_known=%v", edge-node["vram_known"])
+	nodeA := machinesOf(t, decodeLedger(t, w))["node-a"]
+	if nodeA["vram_known"] != true {
+		t.Fatalf("前置：node-a 应报有显存，实得 vram_known=%v", nodeA["vram_known"])
 	}
-	if edge-node["vram_free_gb"] != float64(1) {
-		t.Fatalf("前置：账本应如实报 vram_free_gb=1，实得 %v", edge-node["vram_free_gb"])
+	if nodeA["vram_free_gb"] != float64(1) {
+		t.Fatalf("前置：账本应如实报 vram_free_gb=1，实得 %v", nodeA["vram_free_gb"])
 	}
-	fit := firstFit(t, edge-node)
+	fit := firstFit(t, nodeA)
 	if fit["verdict"] != "no_fit" {
 		t.Fatalf("内存够但显存不足必须判 no_fit（二者取严），实得 %v basis=%v", fit["verdict"], fit["basis"])
 	}

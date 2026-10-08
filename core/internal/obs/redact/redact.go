@@ -364,7 +364,7 @@ func foldWidth(s string) string {
 
 // replaceLiteral 是 ReplaceAllLiteralString：替换串**不做 $ 展开**。
 // 写错会静默删数据：`re.ReplaceAllString(s, "${HOME}")` 把 ${HOME} 当命名捕获组 ⇒ 替换为空串，
-// 实测 '~/.config/zerg/token' → '/.config/zerg/token'（路径被删而不是被打码，D14）。
+// 实测 '/Users/<user>/.config/zerg/token' → '/.config/zerg/token'（路径被删而不是被打码，D14）。
 func replaceLiteral(re *regexp.Regexp, s, repl string) string {
 	return re.ReplaceAllLiteralString(s, repl)
 }

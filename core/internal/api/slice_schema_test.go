@@ -91,7 +91,7 @@ func TestSliceMount_RejectsMissingSliceID(t *testing.T) {
 	t.Logf("① 纯函数面原文: %s", serr.Message)
 
 	// 只声明 owner 也算「声明了片字段」——同样要 id（否则无法被 depends_on 引用）
-	if serr2 := ValidateSliceMount(SliceInput{Owner: "Mr2109"}, SliceBoard{}); serr2 == nil ||
+	if serr2 := ValidateSliceMount(SliceInput{Owner: "node-local"}, SliceBoard{}); serr2 == nil ||
 		serr2.Code != SliceErrMissingID {
 		t.Fatalf("只声明 owner 时也应因缺 slice_id 被拒，实际: %v", serr2)
 	}
@@ -251,7 +251,7 @@ func TestSliceMount_AcceptsLegalSliceAndTopoSorts(t *testing.T) {
 func TestSliceMount_AcceptanceMissingVsExplicitlyEmpty(t *testing.T) {
 	// ① 线上真实解码语义: **键缺失** 与 **显式 []** 必须能分开（这是用指针承载的原因）
 	var missing SliceInput
-	if err := json.Unmarshal([]byte(`{"slice_id":"S1","owner":"Mr2109"}`), &missing); err != nil {
+	if err := json.Unmarshal([]byte(`{"slice_id":"S1","owner":"node-local"}`), &missing); err != nil {
 		t.Fatalf("解码失败: %v", err)
 	}
 	if missing.Acceptance != nil {
@@ -403,7 +403,7 @@ func TestSliceMountHandler_RejectsAndAcceptsOverHTTP(t *testing.T) {
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("合法片应回 202，实际 %d（body=%s）", w.Code, w.Body.String())
 	}
-	w = post(`{"description":"片2","slice_id":"S2","depends_on":["S1"],"owner":"Mr2109","acceptance":["echo ok"]}`)
+	w = post(`{"description":"片2","slice_id":"S2","depends_on":["S1"],"owner":"node-local","acceptance":["echo ok"]}`)
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("依赖已挂片的片应回 202，实际 %d（body=%s）", w.Code, w.Body.String())
 	}

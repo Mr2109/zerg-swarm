@@ -33,7 +33,7 @@ import (
 // 多槽需显式开启；取代现有硬编码 maxResident = 3"），与共享包常量
 // resources.DefaultMaxResident 同值。之所以默认 1：实测本机 llama-server 一次只能驻留一个模型
 // （第二个一来第一个就退出），而并行度在路由侧也恒为单槽——默认 1 才"如实"；
-// 大机器（EDGE-NODE）要并发再显式设 ZERG_MAX_RESIDENT=<n>。
+// 大机器（node-a）要并发再显式设 ZERG_MAX_RESIDENT=<n>。
 //
 // 非法值（非数字/<=0）一律忽略并回落到默认值，且记一条日志——不静默接受怪值，
 // 也不因为配错就放开上限（放宽上限等于放开 OOM）。

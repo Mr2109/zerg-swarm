@@ -2,7 +2,7 @@ package gateway
 
 // gateway_breaker_reason_test.go — 「涨计数但 last_error 为空」缺口的反例优先用例。
 //
-// 现场（活系统实测）：GET /api/gateway/breakers 出现过 local/edge-node 都是 state=half-open、
+// 现场（活系统实测）：GET /api/gateway/breakers 出现过 local/node-a 都是 state=half-open、
 // fail_count=11（= healthyTripLimit+1）、而 last_error 是空串。复位后 40s 无新失败 ⇒ 陈旧计数。
 //
 // 缺口本质：快照有两类计数来源（failCounts 由 markFailure/tripMachine/pickRouteExcluding 涨、
@@ -45,15 +45,15 @@ func assertBreakerTextNoPlaceholder(t *testing.T, raw []byte) {
 	}
 }
 
-// singleCandidateGateway 单候选（edge-node）网关——用于确定性地走 pickRouteExcluding 的强制熔断分支
+// singleCandidateGateway 单候选（node-a）网关——用于确定性地走 pickRouteExcluding 的强制熔断分支
 // （选回被排除机器才会把 failCounts 顶到 healthyTripLimit+1）。
 func singleCandidateGateway() *Gateway {
 	cfg := &config.FleetConfig{
 		Models: map[string][]config.ModelCandidate{
-			"example-35b-v2": {{Host: "edge-node", File: "/data/example-35b-v2.gguf"}},
+			"example-35b-v2": {{Host: "node-a", File: "/data/example-35b-v2.gguf"}},
 		},
 		Fleet: map[string]config.FleetNode{
-			"edge-node": {Host: "<worker-ip>", Port: 8100},
+			"node-a": {Host: "<cluster-ip>", Port: 8100},
 		},
 	}
 	return &Gateway{
@@ -75,12 +75,12 @@ func singleCandidateGateway() *Gateway {
 func TestBreaker_StaleCountWithNoReason_ShowsExplicitNotRecorded(t *testing.T) {
 	g := breakerTestGateway()
 	// 复刻旧计数路径留下的形态：只有计数与熔断时间，没有 lastErr/lastErrSrc
-	g.failCounts["edge-node"] = healthyTripLimit + 1 // 11 —— 与现场一致
-	g.failSince["edge-node"] = time.Now().Add(-(circuitCooldown + time.Second))
+	g.failCounts["node-a"] = healthyTripLimit + 1 // 11 —— 与现场一致
+	g.failSince["node-a"] = time.Now().Add(-(circuitCooldown + time.Second))
 
-	b := findBreaker(g.BreakerSnapshot(), "edge-node")
+	b := findBreaker(g.BreakerSnapshot(), "node-a")
 	if b == nil {
-		t.Fatal("快照里没有 edge-node")
+		t.Fatal("快照里没有 node-a")
 	}
 	if b.FailCount != healthyTripLimit+1 {
 		t.Fatalf("前置条件：fail_count 应为 %d（现场值）——实际 %d", healthyTripLimit+1, b.FailCount)
@@ -112,22 +112,22 @@ func TestBreaker_StaleCountWithNoReason_ShowsExplicitNotRecorded(t *testing.T) {
 // 修后必须留下原因，且 last_error_source 指明是这条路径。
 func TestBreaker_ForcedExclusionCountPath_RecordsReasonAndSource(t *testing.T) {
 	g := singleCandidateGateway()
-	// 单候选 = edge-node，排除 edge-node 后仍会选回 edge-node → 触发强制熔断分支
-	_, err := g.pickRouteExcluding("example-35b-v2", "edge-node",
-		"failover: backend edge-node forward failed: context deadline exceeded")
+	// 单候选 = node-a，排除 node-a 后仍会选回 node-a → 触发强制熔断分支
+	_, err := g.pickRouteExcluding("example-35b-v2", "node-a",
+		"failover: backend node-a forward failed: context deadline exceeded")
 	// 强制熔断后重选只有更明确的错误（唯一候选被熔断）——这里关心的是计数与原因是否成对出现
 	if err == nil {
 		t.Fatal("唯一候选被强制熔断后重选应失败（无其他候选）——实际成功")
 	}
-	if g.failCounts["edge-node"] != healthyTripLimit+1 {
-		t.Fatalf("强制熔断应把 fail_count 顶到 %d——实际 %d", healthyTripLimit+1, g.failCounts["edge-node"])
+	if g.failCounts["node-a"] != healthyTripLimit+1 {
+		t.Fatalf("强制熔断应把 fail_count 顶到 %d——实际 %d", healthyTripLimit+1, g.failCounts["node-a"])
 	}
-	if g.lastErr["edge-node"] == "" {
+	if g.lastErr["node-a"] == "" {
 		t.Error("强制熔断涨了计数却没写 lastErr —— 这正是本缺口（修后不允许）")
 	}
-	b := findBreaker(g.BreakerSnapshot(), "edge-node")
+	b := findBreaker(g.BreakerSnapshot(), "node-a")
 	if b == nil {
-		t.Fatal("快照里没有 edge-node")
+		t.Fatal("快照里没有 node-a")
 	}
 	if !b.LastErrorRecorded || b.LastError == "" {
 		t.Errorf("计数路径必须留下可读原因——recorded=%v last_error=%q", b.LastErrorRecorded, b.LastError)
@@ -151,10 +151,10 @@ func TestBreaker_EmptyReason_IsAutoFilledWithCallSite(t *testing.T) {
 
 	t.Run("markFailure", func(t *testing.T) {
 		g := breakerTestGateway()
-		g.markFailure("edge-node", "")
-		b := findBreaker(g.BreakerSnapshot(), "edge-node")
+		g.markFailure("node-a", "")
+		b := findBreaker(g.BreakerSnapshot(), "node-a")
 		if b == nil {
-			t.Fatal("快照里没有 edge-node")
+			t.Fatal("快照里没有 node-a")
 		}
 		if b.LastError == "" {
 			t.Fatal("空原因不得写出空 last_error")
@@ -173,10 +173,10 @@ func TestBreaker_EmptyReason_IsAutoFilledWithCallSite(t *testing.T) {
 
 	t.Run("tripMachine", func(t *testing.T) {
 		g := breakerTestGateway()
-		g.tripMachine("mini-node-1", "   ") // 仅空白也视为没给原因
-		b := findBreaker(g.BreakerSnapshot(), "mini-node-1")
+		g.tripMachine("node-b", "   ") // 仅空白也视为没给原因
+		b := findBreaker(g.BreakerSnapshot(), "node-b")
 		if b == nil {
-			t.Fatal("快照里没有 mini-node-1")
+			t.Fatal("快照里没有 node-b")
 		}
 		if b.LastError == "" {
 			t.Fatal("空原因不得写出空 last_error")
@@ -195,7 +195,7 @@ func TestBreaker_EmptyReason_IsAutoFilledWithCallSite(t *testing.T) {
 // 不硬塞文本——空 last_error 在这里不构成误导（不是「有计数却没原因」）。
 func TestBreaker_ClosedIdleMachine_KeepsEmptyReason(t *testing.T) {
 	g := breakerTestGateway()
-	for _, host := range []string{"edge-node", "local", "mini-node-1"} {
+	for _, host := range []string{"node-a", "local", "node-b"} {
 		b := findBreaker(g.BreakerSnapshot(), host)
 		if b == nil {
 			t.Fatalf("快照里没有 %s", host)
@@ -216,10 +216,10 @@ func TestBreaker_ClosedIdleMachine_KeepsEmptyReason(t *testing.T) {
 // 造「只涨 trip 计数、没有任何原因」的形态（旧代码 tripMachine 的极端表象），断言对外是明确「未记录」。
 func TestBreaker_TripCountOnly_NoReasonStillNeverBlank(t *testing.T) {
 	g := breakerTestGateway()
-	g.tripCounts["mini-node-1"] = 2 // 只有 trip 计数，无 failCounts / 无 lastErr
-	b := findBreaker(g.BreakerSnapshot(), "mini-node-1")
+	g.tripCounts["node-b"] = 2 // 只有 trip 计数，无 failCounts / 无 lastErr
+	b := findBreaker(g.BreakerSnapshot(), "node-b")
 	if b == nil {
-		t.Fatal("快照里没有 mini-node-1")
+		t.Fatal("快照里没有 node-b")
 	}
 	if b.TripCount != 2 {
 		t.Fatalf("前置条件：trip_count 应为 2——实际 %d", b.TripCount)
@@ -239,10 +239,10 @@ func TestBreaker_TripCountOnly_NoReasonStillNeverBlank(t *testing.T) {
 // JSON 里 last_error / last_error_recorded / last_error_source 三者自洽（UI/运维只读快照的口径）。
 func TestBreaker_SnapshotJSON_ReasonFieldsConsistent(t *testing.T) {
 	g := breakerTestGateway()
-	g.markFailure("edge-node", "backend edge-node returned 503: upstream saturated")
-	b := findBreaker(g.BreakerSnapshot(), "edge-node")
+	g.markFailure("node-a", "backend node-a returned 503: upstream saturated")
+	b := findBreaker(g.BreakerSnapshot(), "node-a")
 	if b == nil {
-		t.Fatal("快照里没有 edge-node")
+		t.Fatal("快照里没有 node-a")
 	}
 	raw, err := json.Marshal(b)
 	if err != nil {
@@ -252,7 +252,7 @@ func TestBreaker_SnapshotJSON_ReasonFieldsConsistent(t *testing.T) {
 	if err := json.Unmarshal(raw, &got); err != nil {
 		t.Fatalf("反序列化失败: %v", err)
 	}
-	if v, _ := got["last_error"].(string); v != "backend edge-node returned 503: upstream saturated" {
+	if v, _ := got["last_error"].(string); v != "backend node-a returned 503: upstream saturated" {
 		t.Errorf("last_error 应为原因原文——实际 %v", got["last_error"])
 	}
 	if v, _ := got["last_error_recorded"].(bool); !v {

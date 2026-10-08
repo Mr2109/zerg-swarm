@@ -11,7 +11,7 @@
 // 开关语义（写死）：
 //
 //	未设 / 空 / "0"         ⇒ **关（缺省）**：doStart / Stop / ReapIdle 走原有句柄路径，
-//	                          一行代码路径都不变（EDGE-NODE 未验证前不得改变现有行为）；
+//	                          一行代码路径都不变（node-a 未验证前不得改变现有行为）；
 //	"1" / "true" / "yes" / "on" ⇒ 开：doStart 先判实测档案与两账（不过 ⇒ 507 拒孵，不起任何单元）
 //	                          → hatch.Hatcher.Hatch 起单元 → 既有就绪判据 → 核封闭性
 //	                          （三态：实读不符 ⇒ 收卵 + 拒孵；读不到 ⇒ 告警 + 观测面标记，不拒服务）；
@@ -67,7 +67,7 @@ func hatchEnabled() bool { return hatchEnabledFromEnv(os.Getenv) }
 //
 // 存在理由只有一个：让「开关开」的行为可被单测——注入假孵化器即可验证「单元名记进 subproc /
 // 收卵走 Collect / 无档案不起任何单元 / 拿不到 pid 记为未核验」，而不必在开发机上拉起真实
-// systemd（真 systemd 依赖只在 EDGE-NODE 上存在）。
+// systemd（真 systemd 依赖只在 node-a 上存在）。
 type hatcher interface {
 	Hatch(ctx context.Context, spec hatch.Spec) (string, error)
 	Collect(ctx context.Context, unit string) error
@@ -155,7 +155,7 @@ var hatchGateRead = func() (float64, float64, error) {
 // profileGateLocked **实测档案闸门**（§8.4）—— **不分路径**：裸 exec 与孵化都必须过。
 //
 // 甲（Mr2109 2026-09-16 拍）：此前这半被包在 `if hatchMode` 里 ⇒ 未开 ZERG_HATCH 的机器
-// （本机 Mr2109）会在**没有实测档案**的情况下把引擎拉起来（探针实证：挪走档案后 /load 仍 200、
+// （本机 node-local）会在**没有实测档案**的情况下把引擎拉起来（探针实证：挪走档案后 /load 仍 200、
 // 且日志里连一行闸门记录都没有）。闸门就是闸门，不该因为走哪条路而松。
 func (m *Manager) profileGateLocked(modelName string, entry *registry.ModelEntry) (monitor.EggProfile, map[string]interface{}) {
 	eggID := strings.TrimSpace(entry.EggName())

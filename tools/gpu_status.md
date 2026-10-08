@@ -4,7 +4,7 @@
 
 ## 说明
 
-查看 GPU 利用率（macOS ioreg/EDGE-NODE rocm-smi）。
+查看 GPU 利用率（macOS ioreg/node-a rocm-smi）。
 
 ## 变更记录
 

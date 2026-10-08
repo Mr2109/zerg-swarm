@@ -1,6 +1,6 @@
 // engine_impl_test.go —— 「卵要体现出用的是什么引擎」（Mr2109 2026-09-15 拍）。
 //
-// 背景：`EngineImplOf` 原先只取 cmd 首词的**基名** ⇒ EDGE-NODE 上的
+// 背景：`EngineImplOf` 原先只取 cmd 首词的**基名** ⇒ node-a 上的
 // `/home/<user>/llama.cpp-src/build-hip-flash/bin/llama-server` 与主线 llama-server 同名，
 // 两枚**不同的卵**在清单里看起来一样，"同一模型、不同引擎版本"（§6.8）表达不出来。
 // 现在：声明 `engine_impl` 优先；否则按「实际会执行的可执行文件」推**可辨识短名**

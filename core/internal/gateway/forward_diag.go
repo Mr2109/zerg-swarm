@@ -1,6 +1,6 @@
 // package gateway — 转发失败时的进程内拨号诊断（2026-09-14）
 //
-// 背景：本机出现"只有主控进程拨不通 EDGE-NODE agent（<worker-ip>:8100: no route to host），
+// 背景：本机出现"只有主控进程拨不通 node-a agent（<cluster-ip>:8100: no route to host），
 // 而同机其它进程（终端 curl / launchd 作业 / 甚至以完全相同签名身份运行的探针）
 // 都能拨通"的现象。为定位到具体层级，在主控自身进程内做三层对照：
 //

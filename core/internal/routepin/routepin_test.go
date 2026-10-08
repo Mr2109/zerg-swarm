@@ -57,9 +57,9 @@ func TestSaveLoad_RoundTrip(t *testing.T) {
 	p := tmpTable(t)
 	tbl := &Table{ID: TableID}
 	now := time.Now()
-	a := Pin{Model: "m1", Machine: "edge-node", CreatedAt: now.Format(time.RFC3339),
+	a := Pin{Model: "m1", Machine: "node-a", CreatedAt: now.Format(time.RFC3339),
 		ExpiresAt: now.Add(2 * time.Hour).Format(time.RFC3339), TTLSeconds: 7200, By: "甲"}
-	b := Pin{Model: "m1", Machine: "Mr2109", CreatedAt: now.Format(time.RFC3339),
+	b := Pin{Model: "m1", Machine: "node-local", CreatedAt: now.Format(time.RFC3339),
 		ExpiresAt: now.Add(time.Hour).Format(time.RFC3339), TTLSeconds: 3600, By: "乙"}
 	tbl.Upsert(a)
 	tbl.Upsert(b) // 同一个模型 ⇒ 覆盖
@@ -73,7 +73,7 @@ func TestSaveLoad_RoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("读不回：%v", err)
 	}
-	if len(back.Pins) != 1 || back.Pins[0].Machine != "Mr2109" {
+	if len(back.Pins) != 1 || back.Pins[0].Machine != "node-local" {
 		t.Fatalf("写后读回不是刚落下的那一行：%+v", back.Pins)
 	}
 	if _, ok := back.HostFor("m1", now); !ok {
@@ -128,9 +128,9 @@ func TestHostFor_ExpiredThenActiveRows(t *testing.T) {
 func TestRemove_Prune_AndEmptyScope(t *testing.T) {
 	now := time.Now()
 	tbl := &Table{ID: TableID, Pins: []Pin{
-		{Model: "m1", Machine: "edge-node", ExpiresAt: now.Add(time.Hour).Format(time.RFC3339)},
-		{Model: "m2", Machine: "edge-node", ExpiresAt: now.Add(time.Hour).Format(time.RFC3339)},
-		{Model: "m3", Machine: "edge-node", ExpiresAt: now.Add(-time.Minute).Format(time.RFC3339)},
+		{Model: "m1", Machine: "node-a", ExpiresAt: now.Add(time.Hour).Format(time.RFC3339)},
+		{Model: "m2", Machine: "node-a", ExpiresAt: now.Add(time.Hour).Format(time.RFC3339)},
+		{Model: "m3", Machine: "node-a", ExpiresAt: now.Add(-time.Minute).Format(time.RFC3339)},
 	}}
 	if got := tbl.Prune(now); len(got) != 1 || got[0].Model != "m3" {
 		t.Fatalf("该只清掉过期的那一条（m3），实得 %+v", got)
@@ -153,7 +153,7 @@ func TestRemove_Prune_AndEmptyScope(t *testing.T) {
 func TestLoad_NeverWrites(t *testing.T) {
 	p := tmpTable(t)
 	tbl := &Table{ID: TableID}
-	tbl.Upsert(Pin{Model: "m1", Machine: "edge-node",
+	tbl.Upsert(Pin{Model: "m1", Machine: "node-a",
 		ExpiresAt: time.Now().Add(time.Hour).Format(time.RFC3339), TTLSeconds: 3600})
 	if err := tbl.Save(p); err != nil {
 		t.Fatal(err)

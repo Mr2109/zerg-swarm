@@ -139,14 +139,14 @@ func TestV2Concurrent(t *testing.T) {
 // 哑化：overlay 把 config.NodeAddr 换成「忽略 fleet、恒回退机器名」⇒ 本用例红。
 func TestSSHTargetForFromConfig(t *testing.T) {
 	fleet := map[string]config.FleetNode{
-		"edge-node":    {Host: "10.9.9.9", Port: 8100},
-		"mini-node-1": {Host: "10.9.9.10"},
+		"node-a": {Host: "<cluster-ip>", Port: 8100},
+		"node-b": {Host: "<cluster-ip>"},
 	}
-	if got := sshTargetFor("edge-node", fleet); got != "g01@10.9.9.9" {
-		t.Fatalf("sshTargetFor(edge-node) = %q，want g01@10.9.9.9（地址须来自 fleet 真源）", got)
+	if got := sshTargetFor("node-a", fleet); got != "g01@<cluster-ip>" {
+		t.Fatalf("sshTargetFor(node-a) = %q，want g01@<cluster-ip>（地址须来自 fleet 真源）", got)
 	}
-	if got := sshTargetFor("mini-node-1", fleet); got != "g01@10.9.9.10" {
-		t.Fatalf("sshTargetFor(mini-node-1) = %q，want g01@10.9.9.10", got)
+	if got := sshTargetFor("node-b", fleet); got != "g01@<cluster-ip>" {
+		t.Fatalf("sshTargetFor(node-b) = %q，want g01@<cluster-ip>", got)
 	}
 	// 名册无此机 ⇒ NodeAddr 回退机器名（与 gateway.fleetNode 同口径）。
 	if got := sshTargetFor("nope", fleet); got != "g01@nope" {
@@ -154,7 +154,7 @@ func TestSSHTargetForFromConfig(t *testing.T) {
 	}
 }
 
-// TestNetToolsNoHardcodedX3IP —— net_tools.go 的**代码行**不得含硬编码 EDGE-NODE IP。
+// TestNetToolsNoHardcodedX3IP —— net_tools.go 的**代码行**不得含硬编码 node-a IP。
 // 与 gateway/ds4_route_evict_test.go:TestNoHardcodedAgentURLInSource 同口径：注释行不参与
 // 扫描（注释里留旧值只为 traceability），取址必须走 config.NodeAddr（fleet.yaml 真源）。
 // 哑化：把 net_tools.go 换回写死 IP 的旧版 ⇒ 本用例红。
@@ -170,8 +170,8 @@ func TestNetToolsNoHardcodedX3IP(t *testing.T) {
 			continue
 		}
 		scanned++
-		if strings.Contains(line, "<worker-ip>") {
-			t.Fatalf("net_tools.go:%d 代码行仍含硬编码 IP <worker-ip> —— 地址必须来自 fleet.yaml（config.NodeAddr）", i+1)
+		if strings.Contains(line, "<cluster-ip>") {
+			t.Fatalf("net_tools.go:%d 代码行仍含硬编码 IP <cluster-ip> —— 地址必须来自 fleet.yaml（config.NodeAddr）", i+1)
 		}
 	}
 	if scanned == 0 {

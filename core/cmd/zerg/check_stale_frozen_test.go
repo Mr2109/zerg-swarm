@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -198,31 +199,40 @@ func TestCsfBridgeAffectedMapRetiredFallback(t *testing.T) {
 	}
 }
 
-// TestCsfBridgeHelpShapeRetiredFallback —— 2026-10-07 退役批：兄弟件
-// `scripts/gates/check-help-shape.py` 退役（不在盘）⇒ `csfBridge("help_shape")` 回落**同判据的
-// Go 半** `chsBaseline`（✗ 不因缺 py 而「取不到 ⇒ 不给结论」fail-closed）。
-// ★ 成对：兄弟件在盘（哪怕是个空壳）⇒ 仍走 importlib 那条桥（单一真源不变）。
-// ★ 哑化负控：抽掉 csfBridge 里 `if op == "help_shape"` 那段 ⇒ 本用例 FAIL（带行号）。
-func TestCsfBridgeHelpShapeRetiredFallback(t *testing.T) {
+// TestCsfBridgeHelpShapeSourceIsGoHalf —— 2026-10-08（本单 · 解 check-help-shape.py 退役读耦合）：
+// `csfBridge("help_shape")` 的**取源一律走 Go 半** `chsBaseline`（与 py 半同一冻结真源 ·
+// ✗ 非第二条实现），**✗ 不再读**兄弟件 `scripts/gates/check-help-shape.py` 取 `BASELINE`
+// ⇒ 该 py 件对本件**解除读耦合**（可退）。★「两半同值」由两侧各自判据 ＋门113 维持，✗ 不取消。
+// ★ 两态：py **不在盘** ⇒ 取到 Go 半（✗ 不 fail-closed）；py **在盘**（放一枚**会抛异常的空壳**）
+//
+//	⇒ 读数**逐字不变**（证明真没读它）—— 这正是「解耦」的机器面。
+//
+// ★ 哑化负控：抽掉 csfBridge 里 `if op == "help_shape"` 那段（或恢复成读 py）⇒ 本用例 FAIL（带行号）。
+func TestCsfBridgeHelpShapeSourceIsGoHalf(t *testing.T) {
 	root := t.TempDir() // 仓外空夹具 · 其中**无** check-help-shape.py
 	if _, err := os.Stat(filepath.Join(root, "scripts", "gates", "check-help-shape.py")); err == nil {
 		t.Fatal("前置不成立：夹具里竟有 check-help-shape.py")
 	}
-	res, errStr := csfBridge(root, "help_shape", io.Discard)
-	if errStr != "" {
-		t.Fatalf("退役态该回落 Go 半 chsBaseline（✗ 不 fail-closed）：%q", errStr)
-	}
-	bl, _ := res["baseline"].(map[string]any)
-	if len(bl) == 0 {
-		t.Fatalf("回落读数缺 baseline：%v", res)
-	}
-	for _, k := range []string{"help --all", "help", "help dangerous", "help config"} {
-		m, _ := bl[k].(map[string]any)
-		if m == nil || m["lines"] == nil || m["bytes"] == nil {
-			t.Errorf("回落 baseline 缺 %q 的 lines/bytes：%v", k, bl[k])
+	check := func(tag string) map[string]any {
+		t.Helper()
+		res, errStr := csfBridge(root, "help_shape", io.Discard)
+		if errStr != "" {
+			t.Fatalf("%s：取源该走 Go 半 chsBaseline（✗ 不 fail-closed）：%q", tag, errStr)
 		}
+		bl, _ := res["baseline"].(map[string]any)
+		if len(bl) == 0 {
+			t.Fatalf("%s：读数缺 baseline：%v", tag, res)
+		}
+		for _, k := range []string{"help --all", "help", "help dangerous", "help config"} {
+			m, _ := bl[k].(map[string]any)
+			if m == nil || m["lines"] == nil || m["bytes"] == nil {
+				t.Errorf("%s：baseline 缺 %q 的 lines/bytes：%v", tag, k, bl[k])
+			}
+		}
+		return bl
 	}
-	// 成对负控：把（空壳）兄弟件放回盘 ⇒ 仍走 importlib 桥（空壳 ⇒ 桥必报错 ⇒ 证明在盘时走 py 那把）。
+	blOff := check("py 不在盘")
+	// py 在盘（会抛异常的空壳）⇒ 读数**逐字不变**（真没读它 ⇒ 解耦实证）。
 	py := filepath.Join(root, "scripts", "gates", "check-help-shape.py")
 	if err := os.MkdirAll(filepath.Dir(py), 0o755); err != nil {
 		t.Fatal(err)
@@ -230,8 +240,9 @@ func TestCsfBridgeHelpShapeRetiredFallback(t *testing.T) {
 	if err := os.WriteFile(py, []byte("raise SystemExit('stub')\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, e2 := csfBridge(root, "help_shape", io.Discard); e2 == "" {
-		t.Fatalf("兄弟件在盘时该走 importlib 桥（成对负控：空壳 py 应让桥报错）")
+	blOn := check("py 在盘（空壳）")
+	if !reflect.DeepEqual(blOff, blOn) {
+		t.Fatalf("两态读数该逐字同（取源不读 py）：\n  不在盘=%v\n  在盘  =%v", blOff, blOn)
 	}
 }
 

@@ -7,7 +7,7 @@ import (
 )
 
 // TestReadGttVram —— 统一内存（GTT）汇总：多卡求和 + 缺字段/空目录必须如实 ok=false。
-// 背景（EDGE-NODE 实测 2026-09-25）：Strix Halo 核显的专用显存只有 1 GiB，模型跑在 GTT 里；
+// 背景（node-a 实测 2026-09-25）：Strix Halo 核显的专用显存只有 1 GiB，模型跑在 GTT 里；
 // 只看 VRAM 会把「装得下」误判成 no_fit ⇒ 必须把 GTT 计入。
 func TestReadGttVram(t *testing.T) {
 	root := t.TempDir()

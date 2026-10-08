@@ -16,7 +16,7 @@ import (
 func TestLoadWorkersConfig_Default(t *testing.T) {
 	workDir := t.TempDir() // 空目录——无 config/workers.yaml
 	cfg := LoadWorkersConfig(workDir)
-	// 机无关真值：同源同参解析（本机 <host> ⇒ 内置表 Mr2109=0 显式暂停）
+	// 机无关真值：同源同参解析（本机 <host> ⇒ 内置表 node-local=0 显式暂停）
 	want := resolveByHostname(defaultDeviceMap, defaultMaxWorkers)
 	if cfg.MaxWorkers != want {
 		t.Fatalf("无文件回退 max_workers 应 ==%d（内置表按 hostname 解析），实际 %d", want, cfg.MaxWorkers)

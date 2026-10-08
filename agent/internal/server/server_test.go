@@ -15,7 +15,7 @@ var _ heartbeat.ActiveCounter = (*Agent)(nil)
 
 // TestAgentActiveRequests_ReflectsCounter —— active_requests 来源=activeReqs 真值，随增减。
 func TestAgentActiveRequests_ReflectsCounter(t *testing.T) {
-	a := NewAgent("edge-node", "tok", nil, nil, "")
+	a := NewAgent("node-a", "tok", nil, nil, "")
 	if got := a.ActiveRequests(); got != 0 {
 		t.Fatalf("初始应为 0，实得 %d", got)
 	}
@@ -29,7 +29,7 @@ func TestAgentActiveRequests_ReflectsCounter(t *testing.T) {
 
 // TestAgentActiveRequests_ConcurrentIncrementDecrement —— 并发增减后计数守恒（无丢计数/无竞态）。
 func TestAgentActiveRequests_ConcurrentIncrementDecrement(t *testing.T) {
-	a := NewAgent("edge-node", "tok", nil, nil, "")
+	a := NewAgent("node-a", "tok", nil, nil, "")
 	a.mu.Lock()
 	a.activeReqs = 4
 	a.mu.Unlock()

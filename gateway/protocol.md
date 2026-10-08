@@ -14,7 +14,7 @@
 ### GET /status → 200
 ```json
 {
-  "machine": "edge-node",
+  "machine": "node-a",
   "model": "deepseek-v4-flash" | null,
   "backend": "llama-server" | "ds4-server" | null,
   "port": 8123 | null,
@@ -31,7 +31,7 @@
 }
 ```
 - mem_available_gb/mem_total_gb: 系统可用/总内存（Linux /proc/meminfo MemAvailable；macOS vm_stat）
-- gpu_used_gb: EDGE-NODE 用 rocm-smi 显存占用；Mac 用统一内存
+- gpu_used_gb: node-a 用 rocm-smi 显存占用；Mac 用统一内存
 - backend_rss_gb: 当前后端进程 RSS（ps -o rss），无进程为 0.0
 - active_requests: 当前 in-flight 请求计数
 - healthy: 后端进程存活（或无需后端时为 true）；熔断后 false + error 文本
@@ -61,14 +61,14 @@
 
 ### 日志批量 POST `http://<controller>:8580/api/fleet/logs`（每 5s 一批增量）
 - 头 `X-Auth-Token`
-- body `{"machine":"edge-node","logs":[{"ts":"2026-08-07T15:00:00Z","level":"INFO","component":"agent","model":"deepseek-v4-flash","request_id":"uuid","message":"..."}]}`
+- body `{"machine":"node-a","logs":[{"ts":"2026-08-07T15:00:00Z","level":"INFO","component":"agent","model":"deepseek-v4-flash","request_id":"uuid","message":"..."}]}`
 - level ∈ INFO/WARN/ERROR/DEBUG；component ∈ agent/backend/health/heartbeat/fleet
 
 ## 3. 主控控制 API :8580 fleet 端点（FleetAPI.swift 扩展 ControlAPI）
 - `GET /api/fleet/status` → 全群状态聚合（本机 + 各子端实时采样快照）
 - `GET /api/fleet/models` → 聚合模型清单（fleet.yaml models 合并本机扫描）
 - `POST /api/fleet/load` body `{"model":"..."}` → 手动加载（调试）
-- `POST /api/fleet/unload` body `{"machine":"edge-node"}` 或 `{"model":"..."}` → 手动卸载
+- `POST /api/fleet/unload` body `{"machine":"node-a"}` 或 `{"model":"..."}` → 手动卸载
 - `POST /api/fleet/heartbeat` → 子端心跳接收（校验 token，更新在线/快照）
 - `POST /api/fleet/logs` → 子端日志批量接收（校验 token，落 SQLite）
 - 日志查询：
@@ -92,11 +92,11 @@
 ## 6. 主控轮询子端
 - FleetController 每 5s GET 每个子端 `/status`（带 token），缓存到环形缓冲
 - 双模型并发检测：一台机器任何时刻只允许一个后端进程存活；切换前确认（旧进程死+内存回落+无 in-flight）；检测双后端 → 告警+杀多余
-- 本机请求完成后 60s 空闲自动卸载；EDGE-NODE/Mini 常驻
+- 本机请求完成后 60s 空闲自动卸载；node-a/Mini 常驻
 
 ## 7. X3Monitor 数据源
 - 默认调 `http://127.0.0.1:8580/api/fleet/status` 拉全群
-- :8580 不可用时回退 SSH 直连 EDGE-NODE（保留现有逻辑）
+- :8580 不可用时回退 SSH 直连 node-a（保留现有逻辑）
 
 ## 8. 模型注册表 agent_models.yaml（agent.py 同目录）
 ```yaml
@@ -120,7 +120,7 @@ qwen2.5-3b:
   mem_gb: 3
   modality: text
 ```
-- file 用绝对路径（EDGE-NODE 实际路径由部署时按机器覆盖）；backend ∈ llama-server/ds4-server；modality 默认 text
+- file 用绝对路径（node-a 实际路径由部署时按机器覆盖）；backend ∈ llama-server/ds4-server；modality 默认 text
 - **cmd 必须用绝对路径**（如 /home/<user>/ds4-server）——agent 默认从 PATH 找二进制，systemd 环境 PATH 不含 /home/<user>
 - **健康检查交替探测 /health 与 /v1/models**——ds4-server 无 /health（404），只有 /v1/models 200；死等单个路径会卡死 300s（2026-08-08 实测修复）
 
@@ -137,41 +137,41 @@ auth:
   token: ""            # **保持空**：值走 600 令牌档 ~/.zerg/token（ZERG_AUTH_TOKEN 已弃用）
 models:
   example-35b:  { host: local, backend: llama-server, file: ~/models/example-35b-Q4_K_M.gguf, mem_gb: 22 }
-  deepseek-v4-flash: { host: edge-node, backend: ds4-server, file: /data/models/DeepSeek-V4-Flash.gguf, mem_gb: 86 }
-  GLM-5.2: { host: edge-node, backend: llama-server, file: /data/models/glm/GLM-5.2.gguf, mem_gb: 100, ssd: true }
-  qwen2.5-3b: { host: mini-node-1, backend: llama-server, file: /models/qwen2.5-3b.gguf, mem_gb: 3 }
+  deepseek-v4-flash: { host: node-a, backend: ds4-server, file: /data/models/DeepSeek-V4-Flash.gguf, mem_gb: 86 }
+  GLM-5.2: { host: node-a, backend: llama-server, file: /data/models/glm/GLM-5.2.gguf, mem_gb: 100, ssd: true }
+  qwen2.5-3b: { host: node-b, backend: llama-server, file: /models/qwen2.5-3b.gguf, mem_gb: 3 }
 fleet:
-  edge-node:    { host: <worker-host>, port: 8100, os: ubuntu }
-  mini-node-1: { host: <worker-host>,  port: 8100, os: macos }
-  mini-node-2: { host: <worker-host>,  port: 8100, os: macos }
-  mini3: { host: <worker-host>,  port: 8100, os: macos }
+  node-a:    { host: <worker-host>, port: 8100, os: ubuntu }
+  node-b: { host: <worker-host>,  port: 8100, os: macos }
+  node-c: { host: <worker-host>,  port: 8100, os: macos }
+  node-d: { host: <worker-host>,  port: 8100, os: macos }
 ```
 - host=local → 本机 ServiceController；否则调子端 :8100
 - FleetController 读取路径默认 `<volume-path>`（可配置）
 
 ## 10. 部署脚本
-- deploy_x3.sh: scp agent/agent.py + agent/agent_models.yaml → EDGE-NODE，写 systemd 单元 edge-node-agent.service 常驻 :8100（**只写文件不执行 systemctl restart**）
+- deploy_x3.sh: scp agent/agent.py + agent/agent_models.yaml → node-a，写 systemd 单元 node-a-agent.service 常驻 :8100（**只写文件不执行 systemctl restart**）
 - **systemd 单元必须加 `--host 0.0.0.0`**——agent 默认监听 127.0.0.1（仅本机可达），主控跨机器访问不到（2026-08-08 实测：8100 只监听到 127.0.0.1，主控拉状态失败；加 --host 0.0.0.0 后正常）
 - deploy_mini.sh: scp → Mini，launchd plist 常驻 :8100
 - install.sh: 本机模型管理器 App 重新构建
-- 子端路径: EDGE-NODE=/home/<user>/agent，Mini=~/agent；日志 agent.log 同目录
+- 子端路径: node-a=/home/<user>/agent，Mini=~/agent；日志 agent.log 同目录
 
 ## 11. 实测联调记录（2026-08-08）
-- **EDGE-NODE 子端部署成功**：agent.py + systemd enabled，8100 监听 0.0.0.0，心跳 5s/次上报主控 <worker-host>:8580
-- **主控识别 edge-node 在线**：FleetController /api/fleet/status 显示 edge-node online=True
-- **全链路打通**：:8082 统一入口 → FleetController 路由 → EDGE-NODE agent spawn ds4-server → 推理返回（deepseek-v4-flash 回复正常）
+- **node-a 子端部署成功**：agent.py + systemd enabled，8100 监听 0.0.0.0，心跳 5s/次上报主控 <worker-host>:8580
+- **主控识别 node-a 在线**：FleetController /api/fleet/status 显示 node-a online=True
+- **全链路打通**：:8082 统一入口 → FleetController 路由 → node-a agent spawn ds4-server → 推理返回（deepseek-v4-flash 回复正常）
 - **踩坑**：
   1. agent 默认监听 127.0.0.1 → 必须 --host 0.0.0.0
   2. cmd 路径必须绝对（PATH 不含 /home/<user>）
   3. ds4-server 无 /health（404）→ _wait_healthy 死等 300s 卡死 → 已修复为交替探测
   4. DS4 由 agent 管理（禁止 systemd 自启）——systemd 常驻会与 agent 双后端检测冲突
-  5. machine 名必须匹配路由表（--machine edge-node，不能用主机名 evo-x3）——否则心跳进 snapshots["evo-x3"]，主控遍历 machines["edge-node"] 永远找不到 → offline
+  5. machine 名必须匹配路由表（--machine node-a，不能用主机名 evo-node-a）——否则心跳进 snapshots["evo-node-a"]，主控遍历 machines["node-a"] 永远找不到 → offline
   6. llama-server Linux 参数用 -ngl 999（--rocm 是无效参数）
   7. agent 内存检查必须"先停旧再查预算"（否则切换时旧模型占着内存误拒 507）
   8. systemd 单元需 Environment=PATH=/usr/bin:/bin:/home/<user>/llama（llama-server 不在默认 PATH）
 
 ## 12. 调度能力压测结果（2026-08-08）
-- **多 worker 并发路由**：FleetController 改为按机器分组 worker（fleet-dispatch 分发 → 每机器独立 worker + 独立锁）——跨机器并行已验证（DS4/EDGE-NODE + example-35b-v2/本机同时服务）
+- **多 worker 并发路由**：FleetController 改为按机器分组 worker（fleet-dispatch 分发 → 每机器独立 worker + 独立锁）——跨机器并行已验证（DS4/node-a + example-35b-v2/本机同时服务）
 - **切换链路**：空→qwen3-32b→DS4→glm-z1→example-35b-v2 连续轮换全部 OK（agent 停旧起新 + 端口确认）
 - **并发排队**：3 并发同模型全 OK（串行处理，无丢失无 429）
 - **内存保护**：DS4 占用时其他模型正确 507；切换场景先释放再检查
@@ -183,7 +183,7 @@ fleet:
 
 ### 组件
 - **zerg-core**（Go 主控，headless）：8580 API + 8082 三标准网关 + localback 本机子端
-- **zerg-agent**（Go 子端）：EDGE-NODE(Linux) / Mini(macOS) 的 :8100 agent
+- **zerg-agent**（Go 子端）：node-a(Linux) / Mini(macOS) 的 :8100 agent
 - **ZergApp**（Swift 界面壳）：菜单栏，读 8580 显示（可选，关闭不影响核心）
 
 ### 新增字段

@@ -202,3 +202,62 @@ func TestCheckZhEnReadFailTeeth(t *testing.T) {
 		t.Fatalf("读失败回归牙：未逐件点名锁死件 locked.sh，得 stderr=%q", errb)
 	}
 }
+
+// TestZhEnRetiredGoHalfTolerated —— 退役态（本单 · 解 gen-glossary-exports.py 卡点）：
+// 登记条指向的 py 真身缺席 ∧ 其 Go 真搬件在盘 ⇒ 该条按「退役态」不过问（判「能力可用」）：
+// rc 不因「件不在盘」翻 2 · 登记过期 0 · stderr 空；两半皆缺 ⇒ 仍 fail-closed 点名（成对负控 · ✗ 不拆闸）。
+func TestZhEnRetiredGoHalfTolerated(t *testing.T) {
+	chzeSaveFP(t)
+	chzeKnownFP = []chzeFPDef{{
+		"scripts/docs/gen-glossary-exports.py",
+		"gen_forbid([dict(zip(COLS,",
+		"退役态夹具：py 真身缺席 · 其 Go 半在盘",
+	}}
+	fx := chzeFxRoot(t)
+	if err := os.WriteFile(filepath.Join(fx, "core", "keep.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(fx, "scripts", "docs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(fx, "core", "cmd", "zerg"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	py := filepath.Join(fx, "scripts", "docs", "gen-glossary-exports.py")
+	pyBody := "COLS = [\"zh\"]\ndef gen_forbid(rows):\n    return rows\n\n" +
+		"if __name__ == \"__main__\":\n    print(gen_forbid([dict(zip(COLS, [\"x\"]))])[0])\n"
+	if err := os.WriteFile(py, []byte(pyBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	goHalf := filepath.Join(fx, "core", "cmd", "zerg", "gen_glossary_exports.go")
+	if err := os.WriteFile(goHalf, []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// ① 在盘态：py 真身在盘且子串命中 1 行 ⇒ 不缺失 · 不过期 · rc=0（内容零命中）
+	rcOn, outOn, errOn := chzeRunIn(t, fx)
+	if rcOn != 0 || errOn != "" || !strings.Contains(outOn, "登记过期（键失效 ⇒ 必报）：0 条") {
+		t.Fatalf("在盘态失败：应 rc=0 且登记过期 0 且 stderr 空，得 rc=%d out=%q stderr=%q", rcOn, outOn, errOn)
+	}
+
+	// ② 退役态：py 真身移开（Go 半仍在盘）⇒ 该条不过问 ⇒ rc=0 · stderr 空（✗ 不得 rc=2）
+	if err := os.Remove(py); err != nil {
+		t.Fatal(err)
+	}
+	rcOff, outOff, errOff := chzeRunIn(t, fx)
+	if rcOff != 0 || errOff != "" || !strings.Contains(outOff, "登记过期（键失效 ⇒ 必报）：0 条") {
+		t.Fatalf("退役态失败：py 缺席 ∧ Go 半在盘应 rc=0 且登记过期 0 且 stderr 空，得 rc=%d out=%q stderr=%q", rcOff, outOff, errOff)
+	}
+
+	// ③ 负控：两半皆缺 ⇒ 仍 fail-closed rc=2 且点名（✗ 不拆闸 · ✗ 不静默通过）
+	if err := os.Remove(goHalf); err != nil {
+		t.Fatal(err)
+	}
+	rcMiss, _, errMiss := chzeRunIn(t, fx)
+	if rcMiss != 2 || !strings.Contains(errMiss, "登记表指向的件不在盘") {
+		t.Fatalf("负控失败：两半皆缺应 rc=2 且点名，得 rc=%d stderr=%q", rcMiss, errMiss)
+	}
+	if rcMiss == rcOff {
+		t.Fatalf("成对断言失败：退役态 rc=%d 与两半皆缺 rc=%d 同码 ⇒ 无鉴别力", rcOff, rcMiss)
+	}
+}

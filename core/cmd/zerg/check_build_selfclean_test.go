@@ -155,3 +155,81 @@ func TestBuildSelfcleanSelfTestNoLeak(t *testing.T) {
 		t.Errorf("临时夹具未回收：before=%d after=%d（同前缀目录增量须为 0）", before, after)
 	}
 }
+
+// TestBuildSelfcleanRetireFallback —— 退役态回落的成对负控（同族先例 check_exit_codes_test.go 的
+// TestCheckExitCodesRetireFallback）：
+//
+//	① 默认靶件缺席 ∧ Go 半在盘 ⇒ 退役态：四格判在**合成副本**上（rc=0 · ✗ 不判缺件）；
+//	② Go 半在盘但**自净化语义缺** ⇒ 合成副本照红（rc=1 · ✗ 不静默通过 · 牙）；
+//	③ 两半皆缺（真消失）⇒ fail-closed（rc=2 · 点「脚本读不到」）；
+//	④ 显式 `--file` 缺席 ⇒ 不受回落腿影响（照旧 rc=2）。
+func TestBuildSelfcleanRetireFallback(t *testing.T) {
+	writeFixture := func(t *testing.T, rel, body string, root string) {
+		t.Helper()
+		dir := root
+		for _, seg := range strings.Split(rel, "/")[:strings.Count(rel, "/")] {
+			dir += "/" + seg
+		}
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(root+"/"+rel, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	presentGoHalf := func(t *testing.T, d string) {
+		t.Helper()
+		writeFixture(t, "scripts/build/cmd/zerg-build-all/main.go",
+			"package main\n\nfunc main() {}\n", d)
+		writeFixture(t, "scripts/build/internal/zgb/zgb.go",
+			"package zgb\n\n"+
+				"func SelfClean() {\n"+
+				"\tenv := EnvDrop(os.Environ(), \"ZERG_STATE_DIR\", \"ZERG_REPO\", \"ZERG_PROPOSAL_DIR\")\n"+
+				"\tenv = EnvWith(env, \"TMPDIR\", base)\n"+
+				"\t_ = env\n"+
+				"}\n\n"+
+				"const msg = \"══ 自净化失败：仓外 TMPDIR 建不起来 ⇒ 拒绝在未净化的环境里重编\"\n", d)
+	}
+
+	t.Run("退役态_壳件缺席Go半在盘_合成副本判四格_rc0", func(t *testing.T) {
+		d := t.TempDir()
+		presentGoHalf(t, d)
+		rc, out, errs := bscRunGate("--root", d)
+		if rc != 0 {
+			t.Fatalf("退役态 rc=%d 应 0（合成副本判四格）\nout=%s\nerr=%s", rc, out, errs)
+		}
+		if !strings.Contains(out, "⇒ 全绿（K1/K2/K3/K4 四格全过）") {
+			t.Errorf("退役态须在合成副本上判四格（全绿）：%s", out)
+		}
+		if strings.Contains(out, "脚本读不到") {
+			t.Errorf("退役态 ✗ 不许判缺件：%s", out)
+		}
+	})
+
+	t.Run("Go半缺语义_合成副本照红_rc1", func(t *testing.T) {
+		d := t.TempDir()
+		// Go 半在盘，但**自净化语义缺**（无三旋钮一处清 · 无 TMPDIR · 无 fail-closed 话术）。
+		writeFixture(t, "scripts/build/cmd/zerg-build-all/main.go", "package main\n\nfunc main() {}\n", d)
+		rc, out, _ := bscRunGate("--root", d)
+		if rc != 1 {
+			t.Fatalf("Go 半缺语义 ⇒ 合成副本须照红（✗ 不静默通过），得 rc=%d\nout=%s", rc, out)
+		}
+	})
+
+	t.Run("两半皆缺_真消失_fail_closed_rc2", func(t *testing.T) {
+		d := t.TempDir()
+		rc, out, _ := bscRunGate("--root", d)
+		if rc != 2 || !strings.Contains(out, "脚本读不到：") {
+			t.Fatalf("两半皆缺 ⇒ 期望 rc=2 点缺件，得 rc=%d\nout=%s", rc, out)
+		}
+	})
+
+	t.Run("显式file缺席_不受回落腿影响_rc2", func(t *testing.T) {
+		d := t.TempDir()
+		presentGoHalf(t, d)
+		rc, out, _ := bscRunGate("--root", d, "--file", d+"/没有这个.sh")
+		if rc != 2 || !strings.Contains(out, "脚本读不到：") {
+			t.Fatalf("显式 --file 缺席 ⇒ 期望 rc=2，得 rc=%d\nout=%s", rc, out)
+		}
+	})
+}

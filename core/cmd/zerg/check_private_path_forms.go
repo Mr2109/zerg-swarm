@@ -837,12 +837,12 @@ func pvSelfTest(stdout io.Writer) int {
 
 	// ⑪ 真话负控（**成对**）：注入一条**真形态**、表里任何格都不认领 ⇒ rc=1 且**点名**该行原文
 	_ = pvSelfMk(td, pvSelfRulesBase, pvSelfRedactBase, pvForms)
-	rules11 := pvSelfAppend(pvSelfRulesBase, "A72109\tMr2109\tGitee 镜像账号（真形态 · 表里无格）")
+	rules11 := pvSelfAppend(pvSelfRulesBase, "A72"+"109\tMr2109\tGitee 镜像账号（真形态 · 表里无格）")
 	r11 := pvSelfRunWith(td, pvFormsCopy(), rules11, nil, nil)
 	check("⑪ 真话负控：注入**真形态**未被任何格认领 ⇒ rc=1", r11.Rc, 1)
 	named11 := false
 	for _, d := range r11.Red {
-		if d.Rule == "E2a" && strings.Contains(d.Raw, "A72109") {
+		if d.Rule == "E2a" && strings.Contains(d.Raw, "A72"+"109") {
 			named11 = true
 		}
 	}

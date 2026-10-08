@@ -154,6 +154,24 @@ func rewriteSandboxFile(t *testing.T, sb, rel, old, new string) (string, string)
 	return hex.EncodeToString(before[:8]), hex.EncodeToString(after[:8])
 }
 
+// prependSandboxLine —— 在副本件**头部插一行注释**（只动副本；真仓一个字节不碰）。
+// 返回改前/改后的 sha256 前 8 位（与 rewriteSandboxFile 同形）。
+func prependSandboxLine(t *testing.T, sb, rel, line string) (string, string) {
+	t.Helper()
+	p := filepath.Join(sb, rel)
+	b, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatalf("副本件读不到 %s：%v", rel, err)
+	}
+	before := sha256.Sum256(b)
+	out := []byte(line + "\n" + string(b))
+	if err := os.WriteFile(p, out, 0o644); err != nil {
+		t.Fatalf("副本件写不回去 %s：%v", rel, err)
+	}
+	after := sha256.Sum256(out)
+	return hex.EncodeToString(before[:8]), hex.EncodeToString(after[:8])
+}
+
 // errsText / oneErr —— 负控断言的两把尺：错因原文、且错只该落在那一格（不许一片红）。
 func errsText(errs []error) string {
 	parts := make([]string, 0, len(errs))
@@ -191,7 +209,8 @@ func TestUnresolvedEvidenceAnchorsAreDriftImmune(t *testing.T) {
 	if err != nil {
 		t.Fatalf("取出台账读不出来：%v", err)
 	}
-	const bb = "scripts/build/build-all.sh"
+	// compat 证据件随 `scripts/build/build-all.sh` 退役（DEV-2078）移 Go 真身 —— 靶件按现读取。
+	const bb = "scripts/build/cmd/zerg-build-all/main.go"
 
 	// ── 正控 A：现仓现跑（真件 + 真台账） ⇒ 0 err
 	if v := judgeUnresolved(repo, *led, nil); !v.ok() {
@@ -226,8 +245,7 @@ func TestUnresolvedEvidenceAnchorsAreDriftImmune(t *testing.T) {
 	// ── 正控 B：副本头部插一行注释 ⇒ 新口径**仍绿**，旧口径**必红**
 	sb1 := newAnchorSandbox(t, repo, led)
 	oldLines := strings.Count(mustRead(t, filepath.Join(sb1, bb)), "\n") + 1
-	b0, b1 := rewriteSandboxFile(t, sb1, bb, "#!/usr/bin/env bash",
-		"#!/usr/bin/env bash\n# 漂移正控：在件头插一行注释（本项要治的正是这种提交）")
+	b0, b1 := prependSandboxLine(t, sb1, bb, "// 漂移正控：在件头插一行注释（本项要治的正是这种提交）")
 	if strings.Count(mustRead(t, filepath.Join(sb1, bb)), "\n")+1 != oldLines+1 {
 		t.Fatalf("正控 B 的前置动作没生效：件行数没 +1")
 	}
@@ -259,7 +277,7 @@ func TestUnresolvedEvidenceAnchorsAreDriftImmune(t *testing.T) {
 		// 行的位置**按台账现读**取，不写死 —— 写死就等于把派生值钉进判据：台账随代码随动时这里会变成**假红**
 		// （2026-09-24 撞过一次：`build-all.sh` 头部插了 50 行、台账 `line_hint` 随动到 291/307，
 		//  而这里仍写着 `build-all.sh:241` ⇒ 「旧口径对照」自己先红，把正控 B 判成了失败）。
-		wantLine := fmt.Sprintf("build-all.sh:%d", hintOf(led, "compat", bb))
+		wantLine := fmt.Sprintf("%s:%d", bb, hintOf(led, "compat", bb))
 		if !strings.Contains(errsText(old), wantLine) {
 			t.Errorf("对照失败：旧口径该点名 compat 那条（%s），实测错因：%s", wantLine, errsText(old))
 		}
@@ -267,8 +285,8 @@ func TestUnresolvedEvidenceAnchorsAreDriftImmune(t *testing.T) {
 
 	// ── 负控①：锚不存在（副本里把锚串改掉 = 证据件那一句被改/被搬走）⇒ 必红 + 错因逐字
 	sb2 := newAnchorSandbox(t, repo, led)
-	c0, c1 := rewriteSandboxFile(t, sb2, bb, "--only-compat）\"", "--only-compat-DISABLED）\"")
-	t.Logf("负控①：副本 %s 的 %s 里把锚串 `--only-compat）\"` 改掉（sha256 前 8 位 %s→%s）", sb2, bb, c0, c1)
+	c0, c1 := rewriteSandboxFile(t, sb2, bb, "（--only-compat）", "（--only-compat-DISABLED）")
+	t.Logf("负控①：副本 %s 的 %s 里把锚串 `（--only-compat）` 改掉（sha256 前 8 位 %s→%s）", sb2, bb, c0, c1)
 	v1 := judgeUnresolved(sb2, *led, nil)
 	if v1.ok() {
 		t.Fatal("负控① 失败：锚不存在没有被抓到（证据挂在空气上还判绿）")

@@ -378,6 +378,12 @@ type cptsProbe struct {
 	marks     []string
 	failLines []string
 	why       string
+	// ★ 三段式回退腿（先例 `check_private_path_forms.go` 的 `pvGoHalfRel` / `family_impact_timeface.go`
+	//   的 `impactCalibScriptRetired`）：探针本体若是 py 件 ⇒ pyRel = 该件的树内相对路径；
+	//   goMain = 其 Go 半入口。py 在树里 ⇒ 照旧起子进程；py 缺席而 goMain 非空 ⇒ 进程内跑 Go 半
+	//   （✗ 不判「树里缺件」）；pyRel 空或两半皆缺 ⇒ 照旧「树里缺件」（fail-closed）。
+	pyRel  string
+	goMain func(stdout, stderr io.Writer, argv []string) int
 }
 
 func cptsProbes() []cptsProbe {
@@ -401,6 +407,8 @@ func cptsProbes() []cptsProbe {
 			argv:      []string{cptsPythonBin(), "ui/scripts/check-i18n.py"},
 			needsArgv: []string{},
 			needsTree: []string{"ui/scripts/check-i18n.py", "ui/locales", "ui/src"},
+			pyRel:     "ui/scripts/check-i18n.py",
+			goMain:    checkI18nGateMain,
 			marks:     []string{"[ERROR]"},
 			failLines: []string{},
 			why:       "公开面文案铁律的机械尺；本次 run 唯一的「真红」（G4 两条中文字面量）就是它抓到的。",
@@ -571,13 +579,29 @@ func cptsRunProbe(tree string, p cptsProbe, timeout int) (*int, string, float64,
 			return nil, "", 0.0, "工具不在 PATH：" + a
 		}
 	}
+	// ★ 三段式回退腿（先例 `check_private_path_forms.go` 的 `pvGoHalfRel` / `family_impact_timeface.go`
+	//   的 `impactCalibScriptRetired`）：探针本体是 py 件（`p.pyRel`）时，py 在树里 ⇒ 起子进程；
+	//   py 缺席而本件带 Go 半（`p.goMain`）⇒ 进程内跑 Go 半（✗ 不判「树里缺件」）；
+	//   `pyRel` 空或两半皆缺 ⇒ 照旧「树里缺件」（fail-closed 保留）。
+	pyAbsentFallback := false
 	for _, rel := range p.needsTree {
-		if !cptsPyExists(cptsPyJoin(tree, rel)) {
+		present := cptsPyExists(cptsPyJoin(tree, rel))
+		if !present && p.pyRel != "" && rel == p.pyRel && p.goMain != nil {
+			pyAbsentFallback = true
+			continue
+		}
+		if !present {
 			return nil, "", 0.0, "树里缺件：" + rel
 		}
 	}
 	cwd := cptsPyNormpath(cptsPyJoin(tree, p.cwd))
 	t0 := cptsNow()
+	if pyAbsentFallback {
+		var ob, eb bytes.Buffer
+		rc := gateCheckRunInproc(p.goMain, cwd, &ob, &eb, nil)
+		secs := cptsNow().Sub(t0).Seconds()
+		return &rc, ob.String() + eb.String(), secs, ""
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, p.argv[0], p.argv[1:]...)

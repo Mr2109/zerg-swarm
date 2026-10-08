@@ -144,7 +144,7 @@ const impactPubTreeDefault = ""
 const impactPubTreeEnvAlias = "ZERG_PUBLIC_TREE"
 
 // impactPublishFaceSyncRel —— 第 ⑥ 层的**判据面**（`A2` 产物：**复用 · 不改它**，只消费它的输出）。
-const impactPublishFaceSyncRel = "scripts/gates/check-publish-face-sync.py"
+const impactPublishFaceSyncRel = "core/cmd/zerg/check_publish_face_sync.go"
 
 // ---- 现跑底座 ------------------------------------------------------------------------------
 
@@ -1050,8 +1050,8 @@ func impactLayerPublic(root string, tgt *impactTarget, cheap bool) impactLayer {
 	if cheap {
 		lay.Detail += " · 默认档：判据面 `" + impactPublishFaceSyncRel + "` **未跑**（秒级档 ⇒ 归按需档 `--all`）；±N/−M 的口径三件仍照取（下面逐件给）"
 	} else {
-		absScript := filepath.Join(root, filepath.FromSlash(impactPublishFaceSyncRel))
-		out, errOut, code, err := impactRunIn(root, "python3", absScript)
+		zergBin := filepath.Join(root, "bin", "zerg")
+		out, errOut, code, err := impactRunIn(root, zergBin, "gate", "check", "check-publish-face-sync")
 		if err != nil {
 			lay.Status = "读不到"
 			lay.Detail += " · 判据面起不来 ⇒ **公开面：未取数**（口径三件缺一 ⇒ 只许写未取数，不编数字）"

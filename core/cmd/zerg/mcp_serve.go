@@ -36,12 +36,12 @@
 // ═══════════════════ ★ 两处**有意**设计变更（照设计稿 §3.4/§3.7 · 与 Python 现读分家，已逐条记账）═══════════════════
 //
 //	① **host 真源**（设计稿 §3.7 · GAP-73 拍定 B）：`fleet_topology` 的机器地址 + `machine` 合法集
-//	   **从名册取** —— 读 `gateway/fleet.yaml` 的 `fleet:` 段（现读 4 机：edge-node/mini-node-1/mini-node-2/Mr2109）。
+//	   **从名册取** —— 读 `gateway/fleet.yaml` 的 `fleet:` 段（现读 4 机：node-a/node-b/node-c/node-local）。
 //	   `fleet.yaml` 自陈该段是**投影**（真源 = `~/.zerg/contexts/default.yaml` 的 `nodes:`，由门
 //	   `check-nodes-roster.py` 逐项对账）。⇒ 本件照 B 读 `fleet.yaml`，✗ **不碰** `core/internal/store`。
 //	   读不到 ⇒ 退 **8**（不给结论），✗ **不回退硬编码**（硬编码=假绿）。
-//	② Python 硬编码 `{edge-node,local,mini-node-1}` **已与现名册漂**（无 `local`、缺 `mini-node-2/Mr2109`）⇒ Go 版合法集 =
-//	   名册机名；`local` 不再合法，`mini-node-2`/`Mr2109` 转为合法。
+//	② Python 硬编码 `{node-a,local,node-b}` **已与现名册漂**（无 `local`、缺 `node-c/node-local`）⇒ Go 版合法集 =
+//	   名册机名；`local` 不再合法，`node-c`/`node-local` 转为合法。
 //
 // ═══════════════════ `--json` / 退码口径（设计稿 §3.6）═══════════════════
 //
@@ -940,14 +940,19 @@ func mcpSelfTest(stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "  %s %s %s\n", mark, desc, detail)
 	}
 
-	roster := &mcpRoster{
-		order: []string{"edge-node", "mini-node-1", "mini-node-2", "Mr2109"},
-		byName: map[string]mcpRosterNode{
-			"edge-node":    {name: "edge-node", host: "<worker-ip>"},
-			"mini-node-1": {name: "mini-node-1", host: "<worker-ip>"},
-			"mini-node-2": {name: "mini-node-2", host: "<worker-ip>"},
-			"Mr2109":  {name: "Mr2109", host: "127.0.0.1"},
-		},
+	// ★ 名册（机群名→host）**从 fleet.yaml 真源派生**（✗ 不再件内写死机名/IP：那份字面量就是
+	//   `gateway/fleet.yaml` 的 `fleet:` 段的**第二真源**）。派生源 = `mcpLoadRoster(repoRoot())`
+	//   —— 本包读 fleet.yaml 的**唯一**入口（保 YAML 文档序 ⇒ `order` 与现读名册逐字同）。
+	//   读不到 ⇒ 退 **8**（不给结论 · 照 `mcpServeMain` 同口径），✗ **不回退硬编码**（硬编码=假绿）。
+	root := repoRoot()
+	if root == "" {
+		fmt.Fprintln(stderr, mcpMsgNoRoot)
+		return exitBlocked
+	}
+	roster, err := mcpLoadRoster(root)
+	if err != nil {
+		fmt.Fprintf(stderr, mcpMsgNoRoster+"\n", err)
+		return exitBlocked
 	}
 	srv := newMCPZergServerWithClient(newClient(), roster)
 	names, err := mcpStdioToolNames(srv)

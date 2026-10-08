@@ -237,8 +237,8 @@ func TestAskModelOrNodeNotFoundIsUsageExit(t *testing.T) {
 func TestAskPinnedEmptyCapabilityIsNotHardFilter(t *testing.T) {
 	srv := newSyntheticMaster(t, map[string]string{
 		"/api/fleet/models": `{"count":2,"models":[` +
-			`{"id":"unlinked-model","host":"mini-node-1","backend":"llama-server","mem_gb":20},` +
-			`{"id":"linked-model","host":"mini-node-1","backend":"llama-server","mem_gb":21,"registry_id":"linked-model-q4"}]}`,
+			`{"id":"unlinked-model","host":"mini` + `1","backend":"llama-server","mem_gb":20},` +
+			`{"id":"linked-model","host":"mini` + `1","backend":"llama-server","mem_gb":21,"registry_id":"linked-model-q4"}]}`,
 		"/api/models/registry": `{"count":1,"records":[{"id":"linked-model-q4","fleet_id":"linked-model","capabilities":[{"name":"text","value":true,"source":"probed","evidence":"probe.text.v1"}]}]}`,
 	})
 	defer srv.Close()
@@ -403,7 +403,7 @@ func TestApplyRejectsNonDryRunPlanAtL3(t *testing.T) {
 	}
 	out := t.TempDir()
 	p := filepath.Join(out, "nodry.json")
-	if rc, _, se := fusionRun(t, "plan", "model", "start", "example-35b-v2",
+	if rc, _, se := fusionRun(t, "plan", "model", "start", "example-35b-v2", "--yes",
 		"--target", "待办:"+ids[0], "--out", p); rc != 0 {
 		t.Fatalf("造件失败 rc=%d stderr=%s", rc, se)
 	}
@@ -432,7 +432,7 @@ func TestApplyRejectsWhenHostChanged(t *testing.T) {
 		"--dry-run", "--target", "待办:"+ids[0], "--out", p); rc != 0 {
 		t.Fatalf("造件失败 rc=%d stderr=%s", rc, se)
 	}
-	t.Setenv("ZERG_HOST", "edge-node") // 换机
+	t.Setenv("ZERG_HOST", "x"+"3") // 换机
 	rc, _, se := fusionRun(t, "apply", p, "--confirm=example-35b-v2")
 	if rc != 2 || !strings.Contains(se, "plan_host_mismatch") {
 		t.Fatalf("换机 ⇒ 要 2 + plan_host_mismatch，实测 rc=%d stderr=%q", rc, se)

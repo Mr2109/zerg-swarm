@@ -48,6 +48,14 @@ var cwgFields = []string{
 // cwgLedgerRel = py `os.path.join("scripts","gates","gate-check-write-tools.json")`。
 var cwgLedgerRel = filepath.Join("scripts", "gates", "gate-check-write-tools.json")
 
+// cwgRetireTruthRel —— 退场真源（**同一件** · `scriptRetireTruthRel` · 本件只读 · ✗ 不写、✗ 不新造第二真源）。
+//
+// ★ 已批口径（2026-10-09 · Mr2109「按推荐」）：空账容忍分支的旁证只能取自它。
+var cwgRetireTruthRel = filepath.Join("core", "internal", "contract", "adopt-retire.json")
+
+// cwgRetireLedgerKey —— 退场台账键（逐字照真源 · 与 `scriptRetireLedgerKey` 同串）。
+const cwgRetireLedgerKey = "retire_ledger"
+
 var cwgScriptSuffixes = []string{".sh", ".bash", ".zsh", ".py"}
 var cwgRosterSuffixes = []string{".py", ".sh"}
 
@@ -488,6 +496,90 @@ func cwgLoadLedger(root string) (map[string]interface{}, error) {
 	return m, nil
 }
 
+// ── ★ 退场台账旁证（已批口径 · 2026-10-09 · Mr2109「按推荐」）─────────────────────────
+//
+// 口径逐字：**给「已登记退场条目」留一条容忍口径** —— 台账 items **空集**时，若退场台账能证
+// 「**最后一只写档类工具已被登记退场**」（该退场条目在册 ＋ 对应的 Go 半/新路径存在或在盘）⇒ **判绿**
+// 并留痕一句；★ **✗ 非终态空转下不得判绿**（账为空但退场台账里查不到对应登记 ⇒ **仍 rc=2 不给结论**）。
+//
+// ★ 判「写档类工具」的真源 = 中央分类表 `gateCheckClassEntry`（`gate_inproc_table.go` · GAP-20261008-11）：
+// **件头 `#zerg-class:` 随件退场即消失**（退役后读空）⇒ 不能拿它当旁证真源；中央表按**判据名**登记、
+// 与件在不在盘无关。⇒ 退场条目 `object` 的基名（去目录去后缀）⇒ 判据名 ⇒ 查中央表 `class=="write"`。
+
+// cwgRetireEntry —— 退场台账一条（object/state/evidence · 逐字照真源条目形状）。
+type cwgRetireEntry struct {
+	Object   string `json:"object"`
+	State    string `json:"state"`
+	Evidence string `json:"evidence"`
+}
+
+// cwgBaseNoExt —— `a/b/c.sh` ⇒ `c`（去目录去后缀 · 用于与中央分类表的判据名对齐）。
+func cwgBaseNoExt(p string) string {
+	b := filepath.Base(p)
+	return strings.TrimSuffix(b, filepath.Ext(b))
+}
+
+// cwgGoPathRE —— evidence 里点名的 Go 半/新路径（`…/x.go` · 覆盖 `core/**` 与 `scripts/**` 两类落点）。
+var cwgGoPathRE = regexp.MustCompile(`[A-Za-z0-9_][A-Za-z0-9_./-]*\.go`)
+
+// cwgRetireGoHalfOnDisk —— 退场条目「对应的 Go 半/新路径是否在盘」（普通件）。
+//
+//	① 判据名 ⇒ `core/cmd/zerg/<名 · - → _>.go`（同族 Go 真搬落点 · 先试）；
+//	② 否则在 `evidence` 里找仓内相对 `….go` 路径（覆盖 `scripts/**` 一类新落点）。
+//
+// 返命中的仓内相对路径（slash 形）；都不在盘 ⇒ ""（不旁证 ⇒ 调用方照旧 rc=2）。
+func cwgRetireGoHalfOnDisk(root, key, evidence string) string {
+	if key != "" {
+		rel := filepath.ToSlash(filepath.Join("core", "cmd", "zerg", strings.ReplaceAll(key, "-", "_")+".go"))
+		if st, err := os.Stat(filepath.Join(root, filepath.FromSlash(rel))); err == nil && st.Mode().IsRegular() {
+			return rel
+		}
+	}
+	for _, tok := range cwgGoPathRE.FindAllString(evidence, -1) {
+		if !strings.Contains(tok, "/") {
+			continue
+		}
+		if st, err := os.Stat(filepath.Join(root, filepath.FromSlash(tok))); err == nil && st.Mode().IsRegular() {
+			return tok
+		}
+	}
+	return ""
+}
+
+// cwgRetireCorroboration —— 台账空集时的**唯一**容忍口：返旁证描述 ＋ Go 半/新路径（都在 ⇒ 可容绿）。
+//
+// 逐条扫 `retire_ledger`：`object` 基名 ∈ 中央分类表且 `class=="write"`（= 写档类工具的**登记退场**条目），
+// 且其「对应 Go 半/新路径」在盘 ⇒ 命中第一条即返。无旁证/真源读不到/读不动 ⇒ 返 ("","")（**fail-closed**）。
+func cwgRetireCorroboration(root string) (string, string) {
+	b, err := os.ReadFile(filepath.Join(root, cwgRetireTruthRel))
+	if err != nil {
+		return "", ""
+	}
+	var doc struct {
+		RetireLedger []cwgRetireEntry `json:"retire_ledger"`
+	}
+	dec := json.NewDecoder(strings.NewReader(string(b)))
+	if err := dec.Decode(&doc); err != nil {
+		return "", ""
+	}
+	var lastObj, lastState, lastGo string
+	for _, e := range doc.RetireLedger {
+		key := cwgBaseNoExt(e.Object)
+		spec, ok := gateCheckClassEntry[key]
+		if !ok || spec.Class != "write" {
+			continue
+		}
+		if gp := cwgRetireGoHalfOnDisk(root, key, e.Evidence); gp != "" {
+			// 取**最后一条**命中的写档类工具（退场台账按追加序 ⇒ 最后一只已登记退场的写档类工具）。
+			lastObj, lastState, lastGo = e.Object, e.State, gp
+		}
+	}
+	if lastGo == "" {
+		return "", ""
+	}
+	return fmt.Sprintf("object=%s（state=%s）", cwgPyRepr(lastObj), cwgPyRepr(lastState)), lastGo
+}
+
 // cwgCheckLedger —— py `check_ledger`：返回 (rc, info, notes)。
 func cwgCheckLedger(root string) (int, map[string]int, []string) {
 	info := map[string]int{"write_ledger_missing": 0, "write_ledger_stale": 0}
@@ -506,6 +598,18 @@ func cwgCheckLedger(root string) (int, map[string]int, []string) {
 	}
 	items, ok := led["items"].([]interface{})
 	if !ok || len(items) == 0 {
+		// ★ 已批口径（2026-10-09 · Mr2109「按推荐」）：给「已登记退场条目」留一条容忍口径。
+		//   台账 items **显式空集**时，仅当下列两条**同时**成立才判绿：① 件头**零声明**
+		//   （cwgCollectDeclared 空 ⇒ 写档件确已退尽 · 防「非终态空转」）；② 退场台账能证
+		//   「最后一只写档类工具已被登记退场」（cwgRetireCorroboration）。否则**仍 rc=2 不给结论**。
+		//   ★ ✗ 空即绿（放宽）；✗ 删本条（原 rc=2 分支一字不动地保留在下方）。
+		if ok && len(items) == 0 && len(cwgCollectDeclared(root)) == 0 {
+			if ev, gp := cwgRetireCorroboration(root); ev != "" {
+				return 0, info, []string{fmt.Sprintf(
+					"✅ G0 空账容态：台账 items 空集 ＋ 件头零声明 ＋ 退场台账旁证「最后一只写档类工具已登记退场」—— 旁证来自退场台账 %s · Go 半/新路径在盘 %s（已批口径 2026-10-09）",
+					ev, gp)}
+			}
+		}
 		return 2, info, []string{"⛔ G0 不给结论：台账 items 空集（空转不当绿）"}
 	}
 	countStr := "None"
@@ -953,9 +1057,26 @@ func cwgSelftest(stdout, stderr io.Writer) int {
 	chk("⑫ 未标写形态件 ⇒ rc=1 且点名", l3 == 1 && cwgAnyContains(ln3, "y.sh"), "rc="+strconv.Itoa(l3))
 	_ = os.Remove(filepath.Join(lfake, "scripts", "dev", "y.sh"))
 
-	wrLedger([]interface{}{})
-	l4, _, _ := cwgCheckLedger(lfake)
-	chk("⑬ 台账空集 ⇒ rc=2 不给结论", l4 == 2, "rc="+strconv.Itoa(l4))
+	// ⑬ 台账空集**两态**（★ 2026-10-09 已批口径）：空账 ＋ 无旁证 ⇒ rc=2；空账 ＋ 退场台账旁证
+	//   （写档类工具已登记退场 ＋ 其 Go 半在盘）⇒ rc=0 且**留痕**；★ 反证：拿掉旁证 ⇒ **必须回 rc=2**。
+	//   （用 fresh efake：件头零声明 —— 终态；lfake 的 w.sh 有 write 声明 ⇒ 属「非终态」不当容绿。）
+	efake := filepath.Join(tmp, "erepo")
+	_ = os.MkdirAll(filepath.Join(efake, "scripts", "gates"), 0o755)
+	cwgWriteFile(filepath.Join(efake, "scripts", "gates", "demo.sh"), "OLD\n") // 非写档件（无件头声明）
+	elb, _ := json.Marshal(map[string]interface{}{"schema": cwgLedgerSchema, "head": "x",
+		"count": 0, "regex": cwgClassRE.String(), "items": []interface{}{}})
+	cwgWriteFile(filepath.Join(efake, "scripts", "gates", "gate-check-write-tools.json"), string(elb))
+	e1, _, _ := cwgCheckLedger(efake) // 态①：账空 ＋ 无旁证 ⇒ rc=2
+	cwgWriteFile(filepath.Join(efake, cwgRetireTruthRel),
+		`{"retire_ledger":[{"object":"scripts/dev/atomic-write.sh","state":"已登记退场（夹具）",`+
+			`"evidence":"Go 真身 core/cmd/zerg/atomic_write.go（夹具）"}]}`)
+	cwgWriteFile(filepath.Join(efake, "core", "cmd", "zerg", "atomic_write.go"), "package main\n")
+	e2, _, en2 := cwgCheckLedger(efake) // 态②：账空 ＋ 有旁证 ⇒ rc=0 且留痕
+	_ = os.Remove(filepath.Join(efake, cwgRetireTruthRel))
+	e3, _, _ := cwgCheckLedger(efake) // 反证：拿掉旁证 ⇒ 回 rc=2
+	chk("⑬ 台账空集两态（无旁证 rc=2 · 有旁证 rc=0 留痕 · 拿掉旁证回 rc=2）",
+		e1 == 2 && e2 == 0 && cwgAnyContains(en2, "退场台账") && cwgAnyContains(en2, "atomic-write") && e3 == 2,
+		"无旁证="+strconv.Itoa(e1)+" 有旁证="+strconv.Itoa(e2)+" 反证="+strconv.Itoa(e3))
 
 	bad := 0
 	for _, c := range checks {

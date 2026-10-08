@@ -19,13 +19,13 @@ func breakerTestGateway() *Gateway {
 	cfg := &config.FleetConfig{
 		Models: map[string][]config.ModelCandidate{
 			"example-35b-v2": {
-				{Host: "edge-node", File: "/data/example-35b-v2.gguf"},
-				{Host: "local", File: "~/example-35b-v2.gguf"},
+				{Host: "node-a", File: "/data/example-35b-v2.gguf"},
+				{Host: "local", File: "/Users/<user>/example-35b-v2.gguf"},
 			},
 		},
 		Fleet: map[string]config.FleetNode{
-			"edge-node":    {Host: "<worker-ip>", Port: 8100},
-			"mini-node-1": {Host: "<worker-ip>", Port: 8100},
+			"node-a": {Host: "<cluster-ip>", Port: 8100},
+			"node-b": {Host: "<cluster-ip>", Port: 8100},
 		},
 	}
 	return &Gateway{
@@ -87,7 +87,7 @@ func TestBreakerSnapshot_InitialAllClosed(t *testing.T) {
 			t.Errorf("fail_threshold 应为 %d——host=%s 实际 %d", circuitFailThreshold, b.Host, b.FailThreshold)
 		}
 	}
-	if got := len(snap); got != 3 { // edge-node / local / mini-node-1
+	if got := len(snap); got != 3 { // node-a / local / node-b
 		t.Errorf("初始快照应有 3 台已知机器——实际 %d: %+v", got, snap)
 	}
 }
@@ -101,8 +101,8 @@ func TestBreakerSnapshot_SortedByHost(t *testing.T) {
 			t.Fatalf("快照未按 host 升序: %q 在 %q 之前", snap[i-1].Host, snap[i].Host)
 		}
 	}
-	// 明确断言顺序内容（local < mini-node-1 < edge-node）
-	want := []string{"local", "mini-node-1", "edge-node"}
+	// 明确断言顺序内容（local < node-a < node-b）
+	want := []string{"local", "node-a", "node-b"}
 	if len(snap) != len(want) {
 		t.Fatalf("快照条数应为 %d——实际 %d", len(want), len(snap))
 	}
@@ -118,11 +118,11 @@ func TestBreakerSnapshot_SortedByHost(t *testing.T) {
 // 因此「一次失败」不会立刻 open——这是如实断言，不改成传说里的 3 次熔断。
 func TestBreakerSnapshot_FailureCountAndReasonVisible(t *testing.T) {
 	g := breakerTestGateway()
-	g.markFailure("edge-node", "backend edge-node returned 500: {\"error\":\"inference timeout\"}")
+	g.markFailure("node-a", "backend node-a returned 500: {\"error\":\"inference timeout\"}")
 
-	b := findBreaker(g.BreakerSnapshot(), "edge-node")
+	b := findBreaker(g.BreakerSnapshot(), "node-a")
 	if b == nil {
-		t.Fatal("快照里没有 edge-node")
+		t.Fatal("快照里没有 node-a")
 	}
 	if b.FailCount != 1 {
 		t.Errorf("fail_count 应为 1——实际 %d", b.FailCount)
@@ -146,11 +146,11 @@ func TestBreakerSnapshot_FailureCountAndReasonVisible(t *testing.T) {
 func TestBreakerSnapshot_OpensAtThreshold(t *testing.T) {
 	g := breakerTestGateway()
 	for i := 0; i < circuitFailThreshold; i++ {
-		g.markFailure("edge-node", "backend edge-node returned 503")
+		g.markFailure("node-a", "backend node-a returned 503")
 	}
-	b := findBreaker(g.BreakerSnapshot(), "edge-node")
+	b := findBreaker(g.BreakerSnapshot(), "node-a")
 	if b == nil {
-		t.Fatal("快照里没有 edge-node")
+		t.Fatal("快照里没有 node-a")
 	}
 	if b.FailCount != circuitFailThreshold {
 		t.Errorf("fail_count 应为 %d——实际 %d", circuitFailThreshold, b.FailCount)
@@ -178,18 +178,18 @@ func TestBreakerSnapshot_OpensAtThreshold(t *testing.T) {
 func TestBreakerSnapshot_OpenSinceAfterTrip(t *testing.T) {
 	g := breakerTestGateway()
 	for i := 0; i < circuitFailThreshold; i++ {
-		g.markFailure("edge-node", "backend edge-node returned 500")
+		g.markFailure("node-a", "backend node-a returned 500")
 	}
 	// 达阈值但还没有任何路由判定 → 尚无首次熔断时间
-	if b := findBreaker(g.BreakerSnapshot(), "edge-node"); b == nil || b.OpenSince != "" {
+	if b := findBreaker(g.BreakerSnapshot(), "node-a"); b == nil || b.OpenSince != "" {
 		t.Fatalf("尚未路由判定时 open_since 应为空——实际 %+v", b)
 	}
-	if tripped := g.isTripped("edge-node"); !tripped {
+	if tripped := g.isTripped("node-a"); !tripped {
 		t.Fatal("失败数达阈值后 isTripped 应为 true")
 	}
-	b := findBreaker(g.BreakerSnapshot(), "edge-node")
+	b := findBreaker(g.BreakerSnapshot(), "node-a")
 	if b == nil {
-		t.Fatal("快照里没有 edge-node")
+		t.Fatal("快照里没有 node-a")
 	}
 	if b.State != "open" {
 		t.Errorf("isTripped=true 时 state 应为 open——实际 %s", b.State)
@@ -205,13 +205,13 @@ func TestBreakerSnapshot_OpenSinceAfterTrip(t *testing.T) {
 // TestBreakerSnapshot_HalfOpenAfterCooldown 冷却期（circuitCooldown）过后 → half-open 且剩余冷却 0。
 func TestBreakerSnapshot_HalfOpenAfterCooldown(t *testing.T) {
 	g := breakerTestGateway()
-	g.failCounts["edge-node"] = circuitFailThreshold
-	g.failSince["edge-node"] = time.Now().Add(-(circuitCooldown + time.Second)) // 已过冷却
-	g.lastErr["edge-node"] = "backend edge-node returned 504"
+	g.failCounts["node-a"] = circuitFailThreshold
+	g.failSince["node-a"] = time.Now().Add(-(circuitCooldown + time.Second)) // 已过冷却
+	g.lastErr["node-a"] = "backend node-a returned 504"
 
-	b := findBreaker(g.BreakerSnapshot(), "edge-node")
+	b := findBreaker(g.BreakerSnapshot(), "node-a")
 	if b == nil {
-		t.Fatal("快照里没有 edge-node")
+		t.Fatal("快照里没有 node-a")
 	}
 	if b.State != "half-open" {
 		t.Errorf("冷却到期后 state 应为 half-open——实际 %s", b.State)
@@ -227,10 +227,10 @@ func TestBreakerSnapshot_HalfOpenAfterCooldown(t *testing.T) {
 // TestBreakerSnapshot_TripCountFromTripMachine tripMachine 触发次数（trip_count）在快照里可见。
 func TestBreakerSnapshot_TripCountFromTripMachine(t *testing.T) {
 	g := breakerTestGateway()
-	g.tripMachine("mini-node-1", "backend mini-node-1 forward failed: dial tcp <worker-ip>:8100: connect: connection refused")
-	b := findBreaker(g.BreakerSnapshot(), "mini-node-1")
+	g.tripMachine("node-b", "backend node-b forward failed: dial tcp <cluster-ip>:8100: connect: connection refused")
+	b := findBreaker(g.BreakerSnapshot(), "node-b")
 	if b == nil {
-		t.Fatal("快照里没有 mini-node-1")
+		t.Fatal("快照里没有 node-b")
 	}
 	if b.TripCount != 1 {
 		t.Errorf("tripMachine 一次后 trip_count 应为 1——实际 %d", b.TripCount)
@@ -251,16 +251,16 @@ func TestBreakerSnapshot_TripCountFromTripMachine(t *testing.T) {
 func TestBreakerReset_All(t *testing.T) {
 	g := breakerTestGateway()
 	for i := 0; i < circuitFailThreshold; i++ {
-		g.markFailure("edge-node", "backend edge-node returned 500")
+		g.markFailure("node-a", "backend node-a returned 500")
 	}
-	g.markFailure("mini-node-1", "backend mini-node-1 returned 500")
-	g.tripMachine("edge-node", "backend edge-node forward failed: context deadline exceeded")
-	if n := g.isTripped("edge-node"); !n {
-		t.Fatal("前置条件：edge-node 应处于熔断")
+	g.markFailure("node-b", "backend node-b returned 500")
+	g.tripMachine("node-a", "backend node-a forward failed: context deadline exceeded")
+	if n := g.isTripped("node-a"); !n {
+		t.Fatal("前置条件：node-a 应处于熔断")
 	}
 
 	cleared := g.ResetBreakers("")
-	// 有过状态的机器：edge-node（failCounts/failSince/lastErr/tripCounts）+ mini-node-1（failCounts/lastErr）= 2
+	// 有过状态的机器：node-a（failCounts/failSince/lastErr/tripCounts）+ node-b（failCounts/lastErr）= 2
 	if cleared != 2 {
 		t.Errorf("全量复位应清掉 2 台——实际 %d", cleared)
 	}
@@ -281,8 +281,8 @@ func TestBreakerReset_All(t *testing.T) {
 			t.Errorf("复位后冷却应为 0——host=%s 实际 %v", b.Host, b.CooldownRemainingS)
 		}
 	}
-	if g.failCounts["edge-node"] != 0 || g.failCounts["mini-node-1"] != 0 {
-		t.Errorf("复位后 failCounts 应清零——实际 edge-node=%d mini-node-1=%d", g.failCounts["edge-node"], g.failCounts["mini-node-1"])
+	if g.failCounts["node-a"] != 0 || g.failCounts["node-b"] != 0 {
+		t.Errorf("复位后 failCounts 应清零——实际 node-a=%d node-b=%d", g.failCounts["node-a"], g.failCounts["node-b"])
 	}
 	if len(g.failSince) != 0 || len(g.tripCounts) != 0 || len(g.lastErr) != 0 || len(g.lastErrAt) != 0 || len(g.lastErrSrc) != 0 {
 		t.Errorf("复位后各 map 应为空——failSince=%v tripCounts=%v lastErr=%v lastErrAt=%v lastErrSrc=%v",
@@ -293,25 +293,25 @@ func TestBreakerReset_All(t *testing.T) {
 		t.Errorf("重复复位应返回 0——实际 %d", n)
 	}
 	// 复位后 isTripped 应为 false（恢复路由）
-	if g.isTripped("edge-node") {
-		t.Error("复位后 edge-node 不应再被视为熔断")
+	if g.isTripped("node-a") {
+		t.Error("复位后 node-a 不应再被视为熔断")
 	}
 }
 
 // TestBreakerReset_Single 单机复位：只清目标 host，其他机器状态保留。
 func TestBreakerReset_Single(t *testing.T) {
 	g := breakerTestGateway()
-	g.markFailure("edge-node", "backend edge-node returned 500")
-	g.markFailure("mini-node-1", "backend mini-node-1 returned 500")
+	g.markFailure("node-a", "backend node-a returned 500")
+	g.markFailure("node-b", "backend node-b returned 500")
 
-	if n := g.ResetBreakers("edge-node"); n != 1 {
+	if n := g.ResetBreakers("node-a"); n != 1 {
 		t.Errorf("单机复位应返回 1——实际 %d", n)
 	}
-	if b := findBreaker(g.BreakerSnapshot(), "edge-node"); b == nil || b.FailCount != 0 || b.LastError != "" {
-		t.Errorf("edge-node 应已复位——实际 %+v", b)
+	if b := findBreaker(g.BreakerSnapshot(), "node-a"); b == nil || b.FailCount != 0 || b.LastError != "" {
+		t.Errorf("node-a 应已复位——实际 %+v", b)
 	}
-	if b := findBreaker(g.BreakerSnapshot(), "mini-node-1"); b == nil || b.FailCount != 1 || b.LastError == "" {
-		t.Errorf("mini-node-1 不应被复位——实际 %+v", b)
+	if b := findBreaker(g.BreakerSnapshot(), "node-b"); b == nil || b.FailCount != 1 || b.LastError == "" {
+		t.Errorf("node-b 不应被复位——实际 %+v", b)
 	}
 }
 
@@ -323,7 +323,7 @@ func TestBreakerReset_UnknownHost(t *testing.T) {
 	}
 	// 空 map / 零值实例也不能 panic
 	g2 := &Gateway{}
-	if n := g2.ResetBreakers("edge-node"); n != 0 {
+	if n := g2.ResetBreakers("node-a"); n != 0 {
 		t.Errorf("零值 Gateway 单机复位应返回 0——实际 %d", n)
 	}
 }

@@ -63,7 +63,7 @@ func impactCacheStateDir(t *testing.T) string {
 // impactCacheRun 跑一次 `impact` 并把人面 / 机器面 / stderr 一起带回来。
 func impactCacheRun(t *testing.T, argv ...string) (int, string, string) {
 	t.Helper()
-	rc, out, errb := runCapture(argv...)
+	rc, out, errb := runCapture(append(append([]string{}, argv...), "--yes")...)
 	return rc, out, errb
 }
 

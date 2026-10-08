@@ -10,7 +10,7 @@
 #   ① 取码     从公开镜像仓 clone（URL/ref 可覆盖；`--dir` 用已有树，脏树一律拒绝）
 #   ② 工具链   核验本机 go 是否合钉住的 pin（**单一真源 = core/go.mod 的 go 指令**，
 #              语义同 scripts/gates/check-gotoolchain.py）；不合就清楚招供 + 给安装指引，**绝不自行升级**
-#   ③ 构建     按角色选组件集，走**仓库自己的入口** scripts/build/build-all.sh
+#   ③ 构建     按角色选组件集，走**仓库自己的构建器真身** scripts/build/cmd/zerg-build-all（go run）
 #              （身份注入 -ldflags + ad-hoc 重签——绝不手写 go build，否则升级 verify 直接失效）
 #   ④ 安装     换装到前缀（默认 <树>/bin）：.new → mv 原子换装，旧件留 .prev（照抄升级器纪律）
 #   ⑤ 服务     controller ⇒ launchd plist（macOS；KeepAlive/RunAtLoad/ThrottleInterval +
@@ -265,18 +265,18 @@ check_toolchain() {
   return 0
 }
 
-# ── ③ 构建（仓库自己的入口；**绝不手写 go build**）───────────────────────────
+# ── ③ 构建（仓库自己的构建器真身；**绝不手写 go build**）───────────────────────────
 build_components() {
-  local script="$TREE/scripts/build/build-all.sh" args
+  local builder="scripts/build/cmd/zerg-build-all/main.go" args
   args=()
-  [ -f "$script" ] || die "源码树缺 scripts/build/build-all.sh —— 拒绝用手写 go build 顶替（构建必须走仓库自己的入口）" 5
+  [ -f "$TREE/$builder" ] || die "源码树缺 $builder —— 拒绝用手写 go build 顶替（构建必须走仓库自己的构建器真身）" 5
   if ! has_comp ui "$COMP_LIST"; then args=(--no-ui); fi
-  say "🔨 构建（bash scripts/build/build-all.sh${args:+ ${args[*]}}：身份注入 -ldflags + ad-hoc 重签）"
-  ( cd "$TREE" && bash scripts/build/build-all.sh ${args[@]+"${args[@]}"} ) || die '构建失败（scripts/build/build-all.sh 退出非零）' 1
+  say "🔨 构建（go run ./cmd/zerg-build-all${args:+ ${args[*]}}：身份注入 -ldflags + ad-hoc 重签）"
+  ( cd "$TREE/scripts/build" && go run ./cmd/zerg-build-all ${args[@]+"${args[@]}"} ) || die '构建失败（go run ./cmd/zerg-build-all 退出非零）' 1
 }
 
 # ── ④ 原子安装（.new → mv；旧件留 .prev；macOS 重签名）───────────────────────
-# 组件名 → 仓库 build-all.sh 的产物名（bin/zerg-core / bin/zerg-agent / …）
+# 组件名 → 仓库构建器 zerg-build-all 的产物名（bin/zerg-core / bin/zerg-agent / …）
 artifact_for() {
   case "$1" in
     core)   echo zerg-core ;;
@@ -449,7 +449,7 @@ if [ "$DRY" = 1 ]; then
     say "   取码     : git clone --depth 1 --branch ${REF} ${REPO_URL} ${TREE}"
   fi
   say "   工具链   : 核验本机 go >= core/go.mod 的 go 指令（不合则拒绝并给安装指引）"
-  say "   构建     : bash ${TREE}/scripts/build/build-all.sh$([ "$NO_UI" = 1 ] && echo ' --no-ui')"
+  say "   构建     : (cd ${TREE}/scripts/build && go run ./cmd/zerg-build-all)$([ "$NO_UI" = 1 ] && echo ' --no-ui')"
   say "   安装     : ${PREFIX}（.new → mv 原子换装，旧件留 .prev；macOS 重签）"
   if [ "$NO_SERVICE" = 1 ]; then
     say '   服务     : 不触碰（--no-service）'

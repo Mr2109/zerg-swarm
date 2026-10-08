@@ -1347,7 +1347,7 @@ impl ZergApp {
                             active = active
                         ));
                         ui.separator();
-                        // 机器列表（dict——local/mini-node-1/edge-node）
+                        // 机器列表（dict——local/node-b/node-a）
                         if let Some(machines) = r.get("machines").and_then(|m| m.as_object()) {
                             for (name, mv) in machines {
                                 let model = mv.get("model").and_then(|n| n.as_str()).unwrap_or("—");
@@ -1729,12 +1729,12 @@ impl ZergApp {
                                         }
                                         for (machine, names) in &groups {
                                             let icon = match machine.as_str() {
-                                                "edge-node" => "📊 EDGE-NODE".to_string(),
+                                                "edge-node" => format!("📊 {}", machine.to_uppercase()),
                                                 "local" => {
                                                     t!("resources.machine_local").to_string()
                                                 }
-                                                "mini-node-1" => "🍎 mini-node-1".to_string(),
-                                                "mini-node-2" => "🍎 mini-node-2".to_string(),
+                                                "mini-node-1" => format!("🍎 {}", machine),
+                                                "mini-node-2" => format!("🍎 {}", machine),
                                                 _ => t!("resources.machine_unknown").to_string(),
                                             };
                                             egui::CollapsingHeader::new(t!(
@@ -1981,10 +1981,10 @@ impl ZergApp {
                         }
                         for (machine, names) in &groups {
                             let icon = match machine.as_str() {
-                                "edge-node" => "📊 EDGE-NODE".to_string(),
+                                "edge-node" => format!("📊 {}", machine.to_uppercase()),
                                 "local" => t!("resources.machine_local").to_string(),
-                                "mini-node-1" => "🍎 mini-node-1".to_string(),
-                                "mini-node-2" => "🍎 mini-node-2".to_string(),
+                                "mini-node-1" => format!("🍎 {}", machine),
+                                "mini-node-2" => format!("🍎 {}", machine),
                                 _ => t!("resources.machine_unknown").to_string(),
                             };
                             egui::CollapsingHeader::new(t!("models.header_count", icon = icon, count = names.len()))

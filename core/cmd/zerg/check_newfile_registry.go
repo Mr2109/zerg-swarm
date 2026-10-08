@@ -2017,7 +2017,7 @@ func gnrAudit(root string, newFiles []string, newSet bool, inv string, invSet bo
 			item = "（同级 " + gnrLedgerSib + " 下无 清单-脚本现状-*.tsv）"
 		}
 		res.notJudged = append(res.notJudged, gnrNJ{"④台账面", item,
-			"仓外真源 · 本门**不写**（唯一写入口 `zerg script inventory sync` = 危险档 D2 写面 · 需人签）"})
+			"仓外真源 · 本门**不写**（唯一写入口 `zerg script inventory sync` = 危险档 D2 写面 · 仅需 `--yes`（无批准件））"})
 	}
 	if !wordingOK {
 		res.notJudged = append(res.notJudged, gnrNJ{"⑥文案面", gnrCovJudgeRel, "判据件不在盘 / 找不着处置文案"})
@@ -2337,10 +2337,10 @@ func gnrRun(stdout io.Writer, root string, newFiles []string, newSet bool, inv s
 	if c.R4 == nil {
 		fmt.Fprintf(stdout, "  面④ 脚本台账：**判不了**（真源 %s）\n", gnrPathOr(res.ledPath))
 	} else {
-		fmt.Fprintf(stdout, "  面④ 脚本台账缺登记：%d（台账 %s 行 · **单列旁栏 · 不进退码** · 写入口 = 仓外 `zerg script inventory sync` D2 需人签）\n",
+		fmt.Fprintf(stdout, "  面④ 脚本台账缺登记：%d（台账 %s 行 · **单列旁栏 · 不进退码** · 写入口 = 仓外 `zerg script inventory sync` D2 · 仅需 `--yes`）\n",
 			*c.R4, gnrPyStr(float64(*res.ledRows)))
 		for _, f := range res.items["R4"] {
-			fmt.Fprintf(stdout, "     ✗ %s  ← 台账 tsv 无此行（治法 = 人签跑 sync · 本门只读不写）\n", f)
+			fmt.Fprintf(stdout, "     ✗ %s  ← 台账 tsv 无此行（治法 = 走正门跑 `sync --yes` · 本门只读不写）\n", f)
 		}
 	}
 	for _, nj := range res.notJudged {
@@ -2379,7 +2379,7 @@ func gnrRun(stdout io.Writer, root string, newFiles []string, newSet bool, inv s
 		}
 	}
 	selfIn := gnrContains(res.newFiles, gnrSelfRel)
-	fmt.Fprintf(stdout, "  ★ 自指：本门自身 %s —— 在分母内：%s · 面①：%s · 面②：%s · 面③：%s · 面④：见上「面④」那几行（台账 tsv 里暂无它 · 唯一写入口是仓外 D2 写面 · 需人签）· 面⑤：%s\n",
+	fmt.Fprintf(stdout, "  ★ 自指：本门自身 %s —— 在分母内：%s · 面①：%s · 面②：%s · 面③：%s · 面④：见上「面④」那几行（台账 tsv 里暂无它 · 唯一写入口是仓外 D2 写面（仅需 `--yes`））· 面⑤：%s\n",
 		gnrSelfRel, gnrBoolZh(selfIn, "是", "否（本趟不在新件集）"),
 		gnrSelfMark(res.marks), gnrSelfDry(res.dryHits), gnrSelfInList(res.items["R3"]), gnrSelfInList(res.items["R5"]))
 	for _, p := range res.problems {
@@ -3554,7 +3554,7 @@ const gnrHelp = gnrUsage +
 	"  --dump-baseline DUMP_BASELINE\n" +
 	"                        把现读件集写成基线（仓外路径）后退出；**默认干跑不写**，带 `--yes` 才真落\n" +
 	"  --inventory INVENTORY\n" +
-	"                        面④ 仓外台账 tsv（不给 ⇒ 面④ 判不了 · 需人签）\n" +
+	"                        面④ 仓外台账 tsv（不给 ⇒ 面④ 判不了 · 仅需 `--yes`（无批准件））\n" +
 	"  --new-file NEW_FILE   直接指分母（可重复 · 两态取证用）\n" +
 	"  --strict              阻断档：R1–R5 任一 > 0 ⇒ rc=1（默认报告档 rc=0）\n" +
 	"  --check-missing       查缺档（只读）：三合并式（tracked改动 ∥ untracked ∥\n" +

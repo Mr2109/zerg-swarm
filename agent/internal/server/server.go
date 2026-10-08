@@ -69,7 +69,7 @@ type inferReq struct {
 	stream      bool
 	forwardPath string
 	resultCh    chan inferResult
-	ctx         context.Context // v2.5.6 治本（2026-08-28——edge-node 幽灵请求）: 客户端 context——断开自动取消后端请求——释放单槽
+	ctx         context.Context // v2.5.6 治本（2026-08-28——node-a 幽灵请求）: 客户端 context——断开自动取消后端请求——释放单槽
 	// startedCh 由 worker 在**出队开始执行**时非阻塞发一次；等待方据此把"排队期"与"执行期"分开：
 	// 排队期有可配上限（排队中没有任何可推进的证据可看 ⇒ 时间只能兜底），执行期**不设时长上限**、
 	// 活性一律交看门狗按证据判（输出 / 引擎自报进度 / 本单元 CPU 工时）。

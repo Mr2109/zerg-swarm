@@ -19,9 +19,9 @@ import (
 
 // v1ProfileYAML v1 旧档案在磁盘上的原文（六字段 + 溯源，**无 enclosure 块**）——
 // 等于老机器上既有档案的形态：升版后必须照样读得进。
-const v1ProfileYAML = `# EDGE-NODE 实测档案（v1：无封闭字段）
+const v1ProfileYAML = `# node-a 实测档案（v1：无封闭字段）
 schema_version: 1
-machine: edge-node
+machine: node-a
 measured_at: 2026-09-15T10:00:00Z
 calib_runs: 3
 weight_size_gb: 54.2
@@ -34,7 +34,7 @@ suggested_idle_unload_s: 600
 
 // v2ProfileYAML v2 档案原文：expected 与 observed **不相等**（配方期望 kernel、外部实读只到 os）。
 const v2ProfileYAML = `schema_version: 2
-machine: edge-node
+machine: node-a
 measured_at: 2026-09-15T10:00:00Z
 calib_runs: 3
 weight_size_gb: 54.2

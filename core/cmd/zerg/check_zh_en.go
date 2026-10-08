@@ -192,6 +192,26 @@ var chzeKnownFP = []chzeFPDef{
 	{"scripts/docs/gen-glossary-exports.py", "\"只有「虫茧」\" in gen_forbid([dict(zip(COLS, [\"虫茧\", \"cocoon\", \"\", \"\", \"" + "\u866b\u5de2" + "\", \"\", \"Mr2109\", \"\"]))])[0], True)", "生成器自证夹具：喂 `gen_forbid(...)` 的合成词表行（验理由串「只有「虫茧」」在）"},
 }
 
+// chzeGoHalf —— 登记条「退役态回落」表：py 真身 ⇒ 其 Go 真搬件。
+// 口径 = 判「能力可用」而非「件在盘」（同族先例：check_contract_registry.go R7 退役态不过问 ·
+// check_public_face_anchor「py 在盘 ⇒ 旧路；py 缺席 ∧ Go 半在盘 ⇒ 退役态」）：
+// py 真身不在盘 ∧ 其 Go 真搬件在盘 ⇒ 该登记条按**退役态**处理（不过问 · ✗ 不算缺失、✗ 不算过期）；
+// 两半皆缺 ⇒ 照旧 fail-closed 点「登记表指向的件不在盘」（✗ 不拆闸、✗ 不静默通过）。
+var chzeGoHalf = map[string]string{
+	"scripts/docs/gen-glossary-exports.py": "core/cmd/zerg/gen_glossary_exports.go",
+}
+
+// chzeRetiredGoHalfInPlace —— 退役态判定（判「能力可用」）：该登记条指向的 py 真身缺席时，
+// 其 Go 真搬件是否在盘。在盘 ⇒ true（本登记条不过问）。
+func chzeRetiredGoHalfInPlace(cwd, pyRel string) bool {
+	goRel := chzeGoHalf[pyRel]
+	if goRel == "" {
+		return false
+	}
+	st, err := os.Stat(chzeJoin(cwd, goRel))
+	return err == nil && !st.IsDir()
+}
+
 // ── 遮蔽层（heredoc / 跨行引号 / 三引号）────────────────────────────────────────────────────
 
 // chzeQuoteCols —— py `_hd_quote_cols`：行内字符级状态机，返回「位于引号内」的**rune 列号集合**，并就
@@ -609,6 +629,11 @@ func chzeRegistryStale() (stale []chzeFPStale, missing []string) {
 		full := chzeJoin(cwd, e.path)
 		st, err := os.Stat(full)
 		if err != nil || st.IsDir() {
+			// ★ 退役态（判「能力可用」· 同族先例 check_contract_registry.go R7）：py 真身不在盘 ∧
+			//   其 Go 真搬件在盘 ⇒ 本登记条不过问（✗ 不算缺失 · ✗ 不算过期）；两半皆缺 ⇒ fail-closed。
+			if chzeRetiredGoHalfInPlace(cwd, e.path) {
+				continue
+			}
 			missing = append(missing, e.path)
 			continue
 		}

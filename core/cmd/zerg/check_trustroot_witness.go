@@ -656,22 +656,19 @@ func twStripTrailingComment(s string) string {
 // 新真源 `publish/excludes.txt` 的条目是**裸行**（无引号），须认；引号字面量（侧乙 `DROP_EXACT`）照留。
 // ★ 锚死：本谓词**只**在调用方（`twJudgeReaders`）已按「**排除表件 + 表区间**」定位过的命中上生效
 // （`anchors[h.path]` 的 span 内才会走到这里）⇒ 「认裸行」不会放宽到任意裸行。
+// ★ 行口径**经唯一解析件** `excludes_rules.go::parseExcludesRules`（strip 传本件原 `strings.TrimSpace`）——
+// 裸条目行 = 「进得了排除表」的行（非空 · 非 `#` 注释行）⇒ ✗ 不另抄第二份行口径（`GAP-20260926-223` 账[3]）。
 func twIsExclusionElementLine(line string) bool {
 	core := strings.TrimSpace(twStripTrailingComment(strings.TrimSpace(line)))
-	if core == "" || strings.HasPrefix(core, "#") {
-		return false
-	}
 	if strings.HasSuffix(core, ",") {
 		core = strings.TrimRight(core[:len(core)-1], " 	\r\n\v\f")
 	}
-	if len(core) < 2 {
-		return false
-	}
 	if !strings.HasPrefix(core, "\"") {
-		// ★ 行式新表：裸条目行（无引号）—— 非空非注释即算元素行。
-		return true
+		// ★ 行式新表：裸条目行（无引号）—— 元素行口径**经唯一解析件** `excludes_rules.go::parseExcludesRules`
+		//   （strip 传本件原 `strings.TrimSpace`）：非空、非 `#` 注释行 ⇒ 收到当条目 ⇒ 元素行。
+		return len(core) >= 2 && len(parseExcludesRules([]string{core}, strings.TrimSpace)) > 0
 	}
-	if !strings.HasSuffix(core, "\"") {
+	if len(core) < 2 || !strings.HasSuffix(core, "\"") {
 		return false
 	}
 	inner := core[1 : len(core)-1]

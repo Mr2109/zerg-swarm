@@ -27,8 +27,8 @@
 // 落地序（设计稿 §四 · 第二步）：
 //
 //	① 茧壁 `build-wall.sh`（试点 · 已完成）→ ② `build-all.sh`（本件）。
-//	茧壁段本件**委派** `bash scripts/build/build-wall.sh`（与 `build-all.sh:429` 逐字同口径；该 .sh
-//	按硬约束保留作两态基线）—— 待后续批次把试点 Go 茧壁器（`cmd/zerg-build`）统一接线。
+//	茧壁段本件**委派** **Go 真身** `cmd/zerg-build`（`build-wall.sh` 的 Go 化对等体 · 落 :338 那一行
+//	现编现跑 `<仓>/scripts/build`）—— 该 .sh 按硬约束保留作两态基线，试点 Go 茧壁器已接线（2026-10-09）。
 //
 // 退出码（与 .sh 同口径）：0 成功 · 64 用法错 · 1 硬失败（读不到版本 / 自净化失败 / 留档失败 / 编不出）。
 package main
@@ -72,7 +72,31 @@ type buildInfo struct {
 
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
 
+// runSignOnly —— `--sign-only <文件>…`：**只**走签名面（`internal/sign` 的唯一实现），
+// 不编译、不打包、不碰进程。两个 shell 消费者（`build-all.sh` / `pack-release.sh`）用它替代
+// 「`source lib-sign.sh` + resolve_sign_identity + sign_one」——两态（rc/stdout/stderr）与 shell 件逐字同。
+//
+// 与 `.sh` 逐字同口径（`lib-sign.sh:22-84`）：
+//
+//	· `SIGN`（环境变量 · 缺省 1）：`0` ⇒ 两个函数都直接返回（不签、不打印）；
+//	· 无 `codesign` ⇒ 同样直接返回（静默）；身份解析走 `ZERG_SIGN_ID`（缺省 `Zerg Local Signing`）；
+//	· 探针落点 = 环境变量 `TMPDIR`（缺省 `/tmp`）—— 与 shell 的 `${TMPDIR:-/tmp}` 同；
+//	· 逐件 fail-open：`codesign` 非 0 不阻断（Linux ELF 一类签不上不算构建失败），退码恒 0。
+func runSignOnly(files []string, stdout io.Writer) int {
+	enabled := os.Getenv("SIGN") != "0"
+	logf := func(format string, a ...any) { fmt.Fprintf(stdout, format+"\n", a...) }
+	r := sign.Resolve(enabled, os.Getenv("TMPDIR"), logf)
+	for _, f := range files {
+		sign.One(r, f, logf)
+	}
+	return 0
+}
+
 func run(args []string, stdout, stderr io.Writer) int {
+	// 签名面入口（构建模块的私有档 · ✗ 不进 CLI 命令树）：**最先判**，不吃下面的旗标表。
+	if len(args) > 0 && args[0] == "--sign-only" {
+		return runSignOnly(args[1:], stdout)
+	}
 	var (
 		dist, noUI, public, noSign                bool
 		onlyCLI, onlyCore, onlyCompat, onlyAgentd bool
@@ -308,11 +332,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stdout, "→ 跳过 cocoon-docs-service（非 darwin-arm64 本机 / <container-repo>不在 / 无 go）")
 		}
 
-		// 茧壁 zerg-wall（批 2'.6）：**随卵分发**的沙箱外壳。委派保留的 `build-wall.sh`（与 :429 逐字同）。
+		// 茧壁 zerg-wall（批 2'.6）：**随卵分发**的沙箱外壳。委派 **Go 真身** `cmd/zerg-build`
+		// （`build-wall.sh` 的 Go 化对等体 · 现编现跑 · 与 build-all.sh:426 同一块茧壁接线）。
 		if hasCargo {
 			fmt.Fprintln(stdout, "→ 茧壁 zerg-wall（随卵分发；不进 dist 制品矩阵）")
-			wall := exec.Command("bash", filepath.Join(root, "scripts", "build", "build-wall.sh"))
-			wall.Dir = root
+			wall := exec.Command("go", "run", "./cmd/zerg-build")
+			wall.Dir = filepath.Join(root, "scripts", "build")
 			wall.Env = baseEnv
 			wall.Stdin, wall.Stdout, wall.Stderr = os.Stdin, stdout, stderr
 			if rc := runRC(wall); rc != 0 {

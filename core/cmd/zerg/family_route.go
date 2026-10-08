@@ -2,8 +2,8 @@
 //
 // 设计稿（逐字底账）：`Zerg-内部文档/项目文档/v2.5.12/设计-指定机器路由-v1.0-20260924.md`。
 // 它回答的那个现场问题（逐字）：子代理**没法把模型钉到指定机器** —— 网关择优默认挑本机，
-// 请求落在 Mr2109 的 `llama-server`，而人要的是 edge-node；当时只有「手工 `POST /api/control/unload
-// {"machine":"Mr2109"}` 绕路」这一条路。
+// 请求落在 node-local 的 `llama-server`，而人要的是 node-a；当时只有「手工 `POST /api/control/unload
+// {"machine":"node-local"}` 绕路」这一条路。
 //
 // 三条命令的分工（「单独定制 > 路由默认规则」的人面）：
 //

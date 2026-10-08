@@ -1576,7 +1576,7 @@ func TestProbe23StructuredSignalDecides(t *testing.T) {
 	})
 
 	t.Run("同目录只有别的模型的投影器→不误报（no_vision）", func(t *testing.T) {
-		// 实测本机 ~/models 的形态：gemma 权重与 mmproj-Ornith 同目录混放。
+		// 实测本机 /Users/<user>/models 的形态：gemma 权重与 mmproj-Ornith 同目录混放。
 		srv := fakeVisionStatusEngine(t, http.StatusInternalServerError, engineBody, boolPtr(false), nil)
 		dir := t.TempDir()
 		weights := "gemma-4-26B-A4B-it-UD-Q4_K_M.gguf"
@@ -1701,9 +1701,9 @@ func TestProjectorPresentNameAffinity(t *testing.T) {
 // 真机形态回归：把本机实测（llama.cpp build 10470）抄回的原始响应体裁进测试，
 // 钉住信号解析对真实字段名/结构不漂移（字段改名 = 测试红，而不是悄悄判错）。
 func TestProbe23RealLlamaCppSignalShapes(t *testing.T) {
-	propsWith := `{"total_slots":4,"model_alias":"~/models/example-35b-v2-Q4_K_M.gguf","model_path":"~/models/example-35b-v2-Q4_K_M.gguf","modalities":{"vision":true,"video":true,"audio":false},"media_marker":"<__media_x__>","chat_template":"{{ .Prompt }}","build_info":"b10470-34af94cd9","is_sleeping":false}`
-	propsWithout := `{"total_slots":4,"model_alias":"~/models/example-35b-v2-Q4_K_M.gguf","modalities":{"vision":false,"video":false,"audio":false},"media_marker":"<__media_x__>","is_sleeping":false}`
-	modelsWith := `{"models":[{"name":"~/models/example-35b-v2-Q4_K_M.gguf","model":"~/models/example-35b-v2-Q4_K_M.gguf","capabilities":["completion","multimodal"]}],"object":"list","data":[{"id":"x","aliases":["x"],"object":"model","owned_by":"llamacpp"}]}`
+	propsWith := `{"total_slots":4,"model_alias":"/Users/<user>/models/example-35b-v2-Q4_K_M.gguf","model_path":"/Users/<user>/models/example-35b-v2-Q4_K_M.gguf","modalities":{"vision":true,"video":true,"audio":false},"media_marker":"<__media_x__>","chat_template":"{{ .Prompt }}","build_info":"b10470-34af94cd9","is_sleeping":false}`
+	propsWithout := `{"total_slots":4,"model_alias":"/Users/<user>/models/example-35b-v2-Q4_K_M.gguf","modalities":{"vision":false,"video":false,"audio":false},"media_marker":"<__media_x__>","is_sleeping":false}`
+	modelsWith := `{"models":[{"name":"/Users/<user>/models/example-35b-v2-Q4_K_M.gguf","model":"/Users/<user>/models/example-35b-v2-Q4_K_M.gguf","capabilities":["completion","multimodal"]}],"object":"list","data":[{"id":"x","aliases":["x"],"object":"model","owned_by":"llamacpp"}]}`
 	modelsWithout := `{"models":[{"name":"x","capabilities":["completion"]}],"object":"list","data":[{"id":"x","object":"model"}]}`
 	modelsLegacy := `{"object":"list","data":[{"id":"x","object":"model"}]}` // 老式 OpenAI 响应：没有 models[]
 
