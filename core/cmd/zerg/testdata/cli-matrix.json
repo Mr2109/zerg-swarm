@@ -8798,6 +8798,229 @@
    "want_rc": 2,
    "want_stdout_bytes": 0,
    "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "argv": [
+    "sandbox",
+    "probe",
+    "zz-没有这个探针-zz"
+   ],
+   "command": "sandbox probe",
+   "id": "sandbox/probe#探针名不在册",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "`sandbox probe` 只认 roster 里的**逐字名**（conn_jit/jitprobe/lx2-linux/miniprobe · 模糊匹配等于没匹配 ⇒ 不猜）⇒ 不认的名 fail-closed 退 2、stdout 0 字节（实现体 ui_start.go:cmdSandboxProbe）"
+  },
+  {
+   "argv": [
+    "sandbox",
+    "probe"
+   ],
+   "command": "sandbox probe",
+   "id": "sandbox/probe#缺探针名",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "`sandbox probe` 缺探针名 ⇒ 用法错 2 · stdout 0 字节（逐字给出可用名闭集）"
+  },
+  {
+   "argv": [
+    "sandbox",
+    "probe",
+    "--schema",
+    "zerg/v9"
+   ],
+   "command": "sandbox probe",
+   "id": "sandbox/probe#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判（透传型命令也照判）"
+  },
+  {
+   "argv": [
+    "sandbox",
+    "verify",
+    "--schema",
+    "zerg/v9"
+   ],
+   "command": "sandbox verify",
+   "id": "sandbox/verify#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "argv": [
+    "sandbox",
+    "negctl",
+    "--schema",
+    "zerg/v9"
+   ],
+   "command": "sandbox negctl",
+   "id": "sandbox/negctl#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "argv": [
+    "sandbox",
+    "test"
+   ],
+   "command": "sandbox test",
+   "id": "sandbox/test#未接",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "L1 批1：`sandbox test`（沙箱夹具 fleet/relay/setup/update）归批3、本版**未接** ⇒ fail-closed 退 2「未接」· stdout 0 字节（✗ 不许静默返回 0 · 实现体 ui_start.go:cmdSandboxTest）"
+  },
+  {
+   "argv": [
+    "sandbox",
+    "test",
+    "--schema",
+    "zerg/v9"
+   ],
+   "command": "sandbox test",
+   "id": "sandbox/test#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "argv": [
+    "fleet",
+    "ls"
+   ],
+   "command": "fleet ls",
+   "id": "fleet/ls#未接",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "L1 骨架新族 `fleet` 的占位动作：**未接**（本族只立骨架、未填业务）⇒ fail-closed 退 2「未接」· stdout 0 字节"
+  },
+  {
+   "argv": [
+    "fleet",
+    "ls",
+    "--schema",
+    "zerg/v9"
+   ],
+   "command": "fleet ls",
+   "id": "fleet/ls#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "argv": [
+    "mcp",
+    "serve",
+    "--nosuchflag-zz"
+   ],
+   "command": "mcp serve",
+   "id": "mcp/serve#未知旗标",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标（`mcp serve` 非透传型 ⇒ 全局解析面收口 · 实现体 ui_start.go:cmdMCPServeFamily 转发 mcp_serve.go:cmdMCPServe）"
+  },
+
+  {
+   "argv": [
+    "mcp",
+    "serve",
+    "--schema",
+    "zerg/v9"
+   ],
+   "command": "mcp serve",
+   "id": "mcp/serve#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+
+  {
+   "argv": [
+    "wall",
+    "evidence",
+    "zz-没有这个子动作-zz"
+   ],
+   "command": "wall evidence",
+   "id": "wall/evidence#子动作名不在册",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "`wall evidence` 只认 roster 里的**逐字名**（two-states/macos · 模糊匹配等于没匹配 ⇒ 不猜）⇒ 不认的名 fail-closed 退 2、stdout 0 字节（实现体 ui_start.go:cmdWallEvidence · 底层 scripts/wall/<名>.py · 壳转账）"
+  },
+  {
+   "argv": [
+    "wall",
+    "evidence"
+   ],
+   "command": "wall evidence",
+   "id": "wall/evidence#缺子动作名",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "`wall evidence` 缺子动作名 ⇒ 用法错 2 · stdout 0 字节（逐字给出可用名闭集 two-states | macos）"
+  },
+  {
+   "argv": [
+    "wall",
+    "evidence",
+    "--schema",
+    "zerg/v9"
+   ],
+   "command": "wall evidence",
+   "id": "wall/evidence#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判（透传型命令也照判）"
+  },
+  {
+   "argv": [
+    "wall",
+    "mutate",
+    "--nosuchflag-zz"
+   ],
+   "command": "wall mutate",
+   "id": "wall/mutate#未知旗标",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标（危险档也照判 —— 它非透传型）"
+  },
+  {
+   "argv": [
+    "wall",
+    "mutate",
+    "x"
+   ],
+   "command": "wall mutate",
+   "id": "wall/mutate#缺 --yes（D2）",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "`wall mutate` 是**危险档 D2（写仓）**（真改仓内件做变异验证 · 待拍清单 P5）⇒ 缺 --yes fail-closed 退 2、stdout 0 字节（判在 exec 之前 · 不碰任何目标件）"
+  },
+  {
+   "argv": [
+    "wall",
+    "mutate",
+    "bridge",
+    "--yes"
+   ],
+   "command": "wall mutate",
+   "id": "wall/mutate#未开放（确认档齐）",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "确认档齐了（--yes 已给）但 `wall mutate` **本版未开放**（run=cmdGuarded · 危险档↔执行门对账闸要求未开放危险档一律走 cmdGuarded）⇒ 不给结论退 2、stdout 0 字节"
+  },
+  {
+   "argv": [
+    "wall",
+    "mutate",
+    "--schema",
+    "zerg/v9"
+   ],
+   "command": "wall mutate",
+   "id": "wall/mutate#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
   }
  ],
  "tiers": {

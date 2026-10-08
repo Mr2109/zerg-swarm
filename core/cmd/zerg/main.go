@@ -3197,6 +3197,129 @@ func init() {
 			endpoint: "",
 			run:      cmdMetrics,
 		},
+		// ---- L1 骨架（2026-10-08）：新族 `sandbox` / `wall` / `fleet` / `mcp` —— 只立族、不填业务 ----
+		// 依据：`~/.zerg/state/AlltoGo接线总图-20261008.md` §②「立族清单 = 新立 4 族」·
+		// `待拍清单-AlltoGo-20261008.md` P2（方案 A 立新族）/ P3（`zerg wall` 撞名 ⇒ 帮助主题改名腾出 `wall`）
+		// / P4（`setup-zerg.sh` 归 `zerg svc setup` —— 另一族 · 不在本单四族内）。
+		// 口径（本单只立骨架）：每族 **≥1 条只报告/占位动作**，占位动作**一律 fail-closed** ——
+		// 未实现 ⇒ 退码 `2` + 逐字报「未接」（✗ 绝不静默返回 0）；实现体 = `ui_start.go` 的
+		// `cmdFamilyNotWired`（复用一件**已登记**件作宿主 ⇒ 门78 面④ 齐 · 见该函数头）。X1 层级标记
+		// = `host`（命令面恒在茧壁外 · 门⑥ `check-wall-layer` 闭集）。各路接线时把 `run:` 指向各自
+		// `family_<族>.go` 真实现、并把 `refuses` 随实情撤/留 —— 本条即该族的第一条动作。
+		// ---- L1 批1（2026-10-08）：`zerg sandbox` 真动作分派（壳转账 · 只转发、不翻译）----
+		// 依据：`~/.zerg/state/沙登茧壁组-接线预扫-20261008.tsv` 批1（沙箱探针 ＋ 两态门禁）。
+		// 底层唯一实现 = `scripts/sandbox-probes/*.py|*.sh`（真跑子进程 / 沙箱语义 ⇒ 非纯 Go 可化）；
+		// 命令面只做入口 ＋ 转发（✗ 不重写脚本任何一段）。未接的夹具动作（`sandbox test`）仍 fail-closed
+		// 退 2（批3）。实现体宿主 = `ui_start.go`（门78 面④ 要求实现件已在 `scripts/公开标记.tsv` ⇒ 复用
+		// 已登记件作宿主 · 本单铁律禁碰该表 —— 同 `cmdFamilyNotWired` 那条理由）。
+		{
+			path:        []string{"sandbox", "probe"},
+			layer:       "host",
+			summary:     "沙箱探针（`conn_jit` / `jitprobe` / `lx2-linux` / `miniprobe` · 底层只调 scripts/sandbox-probes/<名>.py —— 命令面不重写逻辑）",
+			usage:       "zerg sandbox probe <conn_jit|jitprobe|lx2-linux|miniprobe> [<透传旗标…>]",
+			arity:       "any",
+			args:        []string{"探针名（逐字 · 见用法串的闭集）", "旗标与退码逐字来自 scripts/sandbox-probes/<名>.py（原样透传）"},
+			endpoint:    "",
+			passthrough: true,
+			run:         cmdSandboxProbe,
+		},
+		{
+			path:        []string{"sandbox", "verify"},
+			layer:       "host",
+			summary:     "两态可验门禁（判据7 · 断言A空间内通信可用 ＋ 断言B出网被拦 · 底层只调 scripts/sandbox-probes/verify-two-states.py —— 命令面不重写逻辑）",
+			usage:       "zerg sandbox verify [--wall <茧壁二进制> | --self-test]",
+			arity:       "any",
+			args:        []string{"旗标与退码逐字来自 scripts/sandbox-probes/verify-two-states.py（原样透传 · 含 --wall / --self-test）"},
+			endpoint:    "",
+			passthrough: true,
+			run:         cmdSandboxVerify,
+		},
+		{
+			path:        []string{"sandbox", "negctl"},
+			layer:       "host",
+			summary:     "两态门禁的负例活体控制（四条必须 rc=2 · 底层只调 scripts/sandbox-probes/negctl-two-states.sh —— 命令面不重写逻辑）",
+			usage:       "zerg sandbox negctl",
+			arity:       "any",
+			args:        []string{"旗标与退码逐字来自 scripts/sandbox-probes/negctl-two-states.sh（原样透传）"},
+			endpoint:    "",
+			passthrough: true,
+			run:         cmdSandboxNegctl,
+		},
+		{
+			path:    []string{"sandbox", "test"},
+			layer:   "host",
+			summary: "沙箱验收夹具（**未接**：`test <fleet|relay|setup|update>` 归批3 —— 依赖被测件正门 + 夹具环境）",
+			usage:   "zerg sandbox test <fleet|relay|setup|update>",
+			arity:   "any",
+			refuses: true,
+			run:     cmdSandboxTest,
+		},
+		// ---- L1 批2（2026-10-08）：`zerg wall` 真动作分派（茧壁证据 2 · 壳转账）＋ 茧壁变异 2（危险档 · 未接）----
+		// 依据：`~/.zerg/state/沙登茧壁组-接线预扫-20261008.tsv` 批2（茧壁证据 ×2 ＋ 茧壁变异 ×2）·
+		// `待拍清单-AlltoGo-20261008.md` P3（`wall` 撞名 ⇒ 帮助主题已改名 `enclosure` 腾出本族名）·
+		// P5（两个变异器**真改仓内件** ⇒ 入危险档 D2/写仓 ＋ 还原台账纪律）。
+		// 形态（两条路，都照仓里既有先例、不自己创式样）：
+		//   · `wall evidence <two-states|macos>` = **壳转账**（底层唯一实现 = `scripts/wall/<名>.py` ·
+		//     真跑 cargo+verify ⇒ 非纯 Go 可化）：命令面只做入口 ＋ 转发，✗ 不重写脚本任何一段。
+		//     实现体宿主 = `ui_start.go`（门78 面④ 要求实现件已在 `scripts/公开标记.tsv` ⇒ 复用**已登记**件
+		//     作宿主 · 本单铁律禁碰该表 —— 同 `cmdSandboxProbe` 那条理由）。
+		//   · `wall mutate <bridge|macos>` = **危险档 D2（写仓）· 本版未接**：两个变异器**真改仓内件**
+		//     （改坏 Rust/Go ⇒ 门必须红 ⇒ 还原）⇒ 依 P5 入危险档，✗ **不得默认裸跑** —— `run: cmdGuarded`
+		//     未开放档：缺确认档 fail-closed 退 2、`--dry-run` 只出计划件（危险档↔执行门对账闸要求未开放
+		//     危险档一律走 `cmdGuarded`）。★ **还原台账纪律**（跑前落备份 · 跑后逐件核 sha · 回执报
+		//     「变异期间碰过哪些件、怎么复原」）随 `dangerSpec.Effect` 逐字登记，接线时随真实现落地。
+		{
+			path:        []string{"wall", "evidence"},
+			kind:        "WallEvidence",
+			layer:       "host",
+			summary:     "茧壁活体回执生成器（two-states / macos · 底层只调 scripts/wall/<名>.py —— 命令面不重写逻辑 · 真跑 cargo+verify）",
+			usage:       "zerg wall evidence <two-states|macos> [<透传旗标…>]",
+			arity:       "any",
+			args:        []string{"子动作名（逐字 · 见用法串的闭集）", "旗标与退码逐字来自 scripts/wall/<名>.py（原样透传 · 0 全绿 / 1 断言红 / 2 硬失败）"},
+			endpoint:    "",
+			passthrough: true,
+			run:         cmdWallEvidence,
+		},
+		{
+			path:    []string{"wall", "mutate"},
+			kind:    "WallMutate",
+			layer:   "host",
+			danger:  &dangerSpec{dangerD2, "变异目标（bridge / macos）", "真改仓内件做变异验证（改坏 wall/src/**.rs 与迁移桥两侧 ⇒ 门必须红 ⇒ 还原）；**还原台账纪律**：跑前落备份（`scripts/docs/inplace-window.py` arm）、跑后逐件核 sha、回执报「变异期间碰过哪些件、怎么复原」", "待拍清单 P5（茧壁变异器入危险档 D2/写仓）· 同族先例 gate check（D3）· 两个变异器件头（inplace-window 复原口径）", false},
+			opened:  false,
+			summary: "茧壁变异验证（bridge / macos · **危险档 D2/写仓 · 本版未开放**：真改仓内件 ⇒ 缺 --yes fail-closed 退 2；`--dry-run` 只出计划件）",
+			usage:   "zerg wall mutate <bridge|macos> [--dry-run | --yes]",
+			arity:   "any",
+			args:    []string{"子动作名（逐字 · bridge / macos）", "确认档：`--dry-run` 出计划件 / `--yes` 才执行（缺 ⇒ fail-closed 退 2）"},
+			run:     cmdGuarded,
+		},
+		{
+			path:    []string{"fleet", "ls"},
+			kind:    "FleetLs",
+			layer:   "host",
+			summary: "机群族骨架（**未接**：本族只立骨架 —— 日志聚合 / 中继待各路接线）",
+			usage:   "zerg fleet ls",
+			refuses: true,
+			run:     cmdFamilyNotWired,
+		},
+		// ---- L1 批3（2026-10-08）：`zerg mcp` 真动作分派（★ 真 Go 化 · 非壳搬运 · 占位 `mcp ls` 下架）----
+		// 依据：`mcp_zerg_server-真Go化-先期设计-20261008.md` §五 步3（命令树接线）· §三（真 Go 化路径）。
+		// 真实现 = `core/cmd/zerg/mcp_serve.go`（8 工具真 Go 化 · 默认 stdio · 复用仓内
+		// `github.com/mark3labs/mcp-go v0.58.0` 的 `server` 子包 —— ✗ 不引新第三方模块 · ✗ 手写 JSON-RPC）；
+		// 承载宿主 = `ui_start.go`（门78 面④ 要求新增 path 的实现件**已在** `scripts/公开标记.tsv` ⇒
+		// 复用**已登记**件作宿主 · 本单铁律禁碰该表 —— 同 `cmdSandboxProbe` / `cmdWallEvidence`）。
+		// ★ 口径（照设计 §3.6）：stdio 下 stdout 是 **MCP 协议通道** ⇒ 本命令**没有** `--json` 信封面
+		// （前置拒收 rc=2）；退码只表「server 本身能不能起」：0 干净退出 · 2 用法错 · 8 名册读不到 · 1 收尾失败。
+		// ★ host 取值照 **GAP-73 拍定 B**：`fleet_topology` 的机器地址与 `machine` 合法集**从名册取**
+		// （`gateway/fleet.yaml` 的 `fleet:` 段 —— 自陈是 `~/.zerg/contexts/default.yaml` 的 `nodes:` 之
+		// **同形投影**）· ✗ **不碰** `core/internal/store`（主控心跳契约）。
+		{
+			path:    []string{"mcp", "serve"},
+			kind:    "McpServe",
+			layer:   "host",
+			summary: "虫族控制面 MCP server（默认 stdio · 8 工具：zerg_help/fleet_status/list_models/get_model_info/fleet_topology/load_model/unload_model/switch_model）—— 真 Go 化（复用仓内 mark3labs/mcp-go · stdout 是 MCP 协议通道 ⇒ 无 --json）",
+			usage:   "zerg mcp serve",
+			run:     cmdMCPServeFamily,
+		},
 	}
 	// 群级只读（§十二 `P-066`）：这些命令「无目标 = 读全群」是**定义**，不是遗漏。
 	for _, c := range commands {

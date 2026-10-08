@@ -131,8 +131,16 @@ const (
 	gnrStepsRel    = zergPrecommitGatesRel
 	gnrCovRel      = "scripts/gates/gate-coverage.config.json"
 	gnrCovJudgeRel = "scripts/gates/check-gate-coverage.py"
-	gnrPubRel      = "scripts/build/publish-public.sh"
-	gnrMirrorRel   = "publish/mirror-public-lib.py"
+	// ★ 面⑥「失败文案面」的判据件：门① `check-gate-coverage` 的 py 真身 **已于 2026-10-08 退役尾批
+	//   退场**（`1c6e461e` · py 既不在盘、也不在 HEAD）。⇒ py 缺席时**改由 Go 半承载**（面⑥ 读它的
+	//   「处置」文案）—— 仓内先例：`check_private_path_forms.go` 的 `pvGoHalfRel`
+	//   「`scripts/gates/<x>.py`」→「`core/cmd/zerg/<x_snake>.go`」· py 缺席且 Go 半在盘 ⇒ 覆盖判据
+	//   改由 Go 半承载（✗ 不判「空指」）。★ `gnrCovJudgeRel` 路径**保持不变**：它是夹具/自检写标记件的
+	//   落点（`core/cmd/zerg/check_newfile_registry_test.go` 冻结「分母 7 件」，逐字断言该标记件在
+	//   `scripts/` 下 ⇒ 挪到 `core/` 会让分母 7→6 而挂红）。
+	gnrCovJudgeGoRel = "core/cmd/zerg/check_gate_coverage.go"
+	gnrPubRel        = "scripts/build/publish-public.sh"
+	gnrMirrorRel     = "publish/mirror-public-lib.py"
 	// 面⑨ 真源：`.sh` 门面冻结清册在 real-gates.sh 里（与门65 真跑档那一面同源）
 	gnrShGatesRel = "scripts/gates/real-gates.sh"
 	gnrShGatesDir = "scripts/gates"
@@ -892,10 +900,16 @@ func gnrAbs(p string) string {
 }
 
 // gnrLoadWording —— ⑥ 门① 判据件的「处置」文案是否已指到白名单档。
+// ★ 判据件 = py（`gnrCovJudgeRel`）优先；py 缺席而 **Go 半在盘**（`gnrCovJudgeGoRel`）⇒ 改由 Go 半承载
+// （退役态先例 `check_private_path_forms.go pvGoHalfRel`）；两者皆无（真消失）⇒ 返回 ok=false（判不了 · fail-closed）。
 func gnrLoadWording(root string) (*bool, []string, bool) {
 	p := filepath.Join(root, gnrCovJudgeRel)
 	if !gnrIsFile(p) {
-		return nil, nil, false
+		g := filepath.Join(root, gnrCovJudgeGoRel)
+		if !gnrIsFile(g) {
+			return nil, nil, false
+		}
+		p = g
 	}
 	txt, ok := gnrReadText(p)
 	if !ok {

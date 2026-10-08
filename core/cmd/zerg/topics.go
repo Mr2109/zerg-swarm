@@ -34,7 +34,7 @@ func helpTopics() []helpTopic {
 		{"version", "版本协商：三层版本 + 兼容窗口（三类分开）", helpVersionTopic},
 		{"watch", "事件 / 订阅通道：单端点 + Accept 协商 + 保留窗口", helpWatch},
 		{"credentials", "凭据：优先级链一条 + 令牌五不进 + 401/403 归一", helpCredentials},
-		{"wall", "茧壁边界：layer 三档 + 分区表 + argv 硬判据", helpWall},
+		{"enclosure", "茧壁边界：layer 三档 + 分区表 + argv 硬判据", helpWall},
 		{"human-machine", "人机双模：三态 + 两层承诺 + 分页/颜色/format 四条", helpHumanMachine},
 		{"registry", "契约登记表：真源口径 + 六处先例 + 变更流程 V0–V7", helpRegistry},
 		{"offline", "离线/降级：单端点 + 四条「不偷偷」+ 例外清单 F-1–F-4", helpOffline},

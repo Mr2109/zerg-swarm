@@ -85,7 +85,10 @@ func layerCounts() string {
 	return strings.Join(parts, ",")
 }
 
-// helpWall —— `zerg help wall`（§九 M10 的自描述面）。
+// helpWall —— `zerg help enclosure`（§九 M10 的自描述面）。
+// ★ 2026-10-08：本主题原名为 `wall`；因新立**族** `zerg wall` 与之撞名 ⇒ 主题改名 `enclosure`
+// 腾出 `wall` 给新族（`待拍清单-AlltoGo-20261008.md` P3 · 方案甲）。函数名 `helpWall` 保留不改
+// （别名与机器面无涉，仅人读名；改名只动主题表那一处 + 本注释）。
 func helpWall() string {
 	var b strings.Builder
 	b.WriteString("茧壁边界（§九 M10 · 调研-M10 条文 `X1`–`X10`）\n\n")

@@ -3,12 +3,12 @@
 // 收编依据（**逐件照抄上一枚的四类归属表，一件都不自编**）：`scripts/evals/` 的 22 件
 // 按 `Zerg-内部文档/项目文档/v2.5.10/归属-收编与退役-20260920.md` §④「脚本 27 条」那一组的逐件归属拆成三档：
 //
-//	① **收编为命令（5 件）** —— 它们本身是**可复用的判据工具**（自带用法、只读或自带 `--self-test`）⇒
-//	   有命令面上的名字：`zerg eval show|run <名>`。
+//	① **收编为命令（5 件 · 2026-10-08 按意见扩至 18 件）** —— 它们本身是**可复用的判据工具**（自带用法、只读或自带 `--self-test`）⇒
+//	   有命令面上的名字：`zerg eval show|run <名>`。原 ④「维持待拍」13 件同批收编入 ①（现读 ① 18 / ④ 0）。
 //	② **保留为内部实现（4 件）** —— 已经被别的入口接线在跑（`pack-release.sh` / CI / `run_all.sh`）⇒
 //	   命令面**只做投影**、**不开 run 面**（开了就是两份真相）。
-//	④ **维持待拍（13 件）** —— 2026-08-13 的历史一次性任务集 · 仓内零调用方 · 归属不能由稿单方面决定
-//	   ⇒ 本批**不替它拍**，也不许 AI 判退役（✗）。
+//	④ **维持待拍（0 件 · 原 13 件 2026-10-08 收编入 ①）** —— 2026-08-13 的历史一次性任务集 · 仓内零调用方
+//	   （登记非死件 ⇒ 无第二入口）⇒ 收编为 ①；**仍不许 AI 判退役**（✗）。
 //
 // 形态（对象 × 动作 · 2 段族 · 与 `calib` / `doc meta` / `approve` 同一条形状）：
 //
@@ -96,58 +96,58 @@ var evalRoster = []evalEntry{
 		Name: "ab-campaigns", File: "scripts/evals/ab-campaigns.py", Run: "python3", Class: evalClassInternal,
 		Why: "实验编排（要**跑着的**生产对话面 + 真任务）⇒ 只做投影、不开 run 面",
 	},
-	// ── ④ 维持待拍（13 件 · 本批不替它拍 · 也不许 AI 判退役）─────────────────────────────
+	// ── ① 收编（续 · 原 ④ 待拍 13 件 · 2026-10-08 按意见同批收编 ① · 现读 ① 18 / ④ 0）─────────
 	{
-		Name: "v24_full_test", File: "scripts/evals/v24_full_test.py", Run: "python3", Class: evalClassPending,
-		Why: "2026-08-13 历史一次性任务集 · 仓内零调用方 · 工作区写死在临时目录 ⇒ 不该升格成契约面、又不许 AI 判退役",
+		Name: "v24_full_test", File: "scripts/evals/v24_full_test.py", Run: "python3", Class: evalClassAdopt,
+		Why: "① 收编（2026-10-08 按意见）：2026-08-13 历史一次性任务集 · 仓内零调用方 · 工作区写死在临时目录（登记非死件 ⇒ 无第二入口）⇒ 收编为 `zerg eval run` 可跑件 · ✗ 不删脚本",
 	},
 	{
-		Name: "v25_agent_tasks", File: "scripts/evals/v25_agent_tasks.py", Run: "python3", Class: evalClassPending,
-		Why: "同上（历史一次性任务集 · 零调用方）",
+		Name: "v25_agent_tasks", File: "scripts/evals/v25_agent_tasks.py", Run: "python3", Class: evalClassAdopt,
+		Why: "① 收编（2026-10-08 按意见）：2026-08-13 历史一次性任务集 · 仓内零调用方（登记非死件 ⇒ 无第二入口）⇒ 收编为 `zerg eval run` 可跑件 · ✗ 不删脚本",
 	},
 	{
-		Name: "v25_benchmark", File: "scripts/evals/v25_benchmark.py", Run: "python3", Class: evalClassPending,
-		Why: "同上（历史一次性任务集 · 零调用方）",
+		Name: "v25_benchmark", File: "scripts/evals/v25_benchmark.py", Run: "python3", Class: evalClassAdopt,
+		Why: "① 收编（2026-10-08 按意见）：2026-08-13 历史一次性任务集 · 仓内零调用方（登记非死件 ⇒ 无第二入口）⇒ 收编为 `zerg eval run` 可跑件 · ✗ 不删脚本",
 	},
 	{
-		Name: "v25_eval_task", File: "scripts/evals/v25_eval_task.py", Run: "python3", Class: evalClassPending,
-		Why: "同上（历史一次性任务集 · 零调用方）",
+		Name: "v25_eval_task", File: "scripts/evals/v25_eval_task.py", Run: "python3", Class: evalClassAdopt,
+		Why: "① 收编（2026-10-08 按意见）：2026-08-13 历史一次性任务集 · 仓内零调用方（登记非死件 ⇒ 无第二入口）⇒ 收编为 `zerg eval run` 可跑件 · ✗ 不删脚本",
 	},
 	{
-		Name: "v25_full_test", File: "scripts/evals/v25_full_test.py", Run: "python3", Class: evalClassPending,
-		Why: "同上（历史一次性任务集 · 零调用方）",
+		Name: "v25_full_test", File: "scripts/evals/v25_full_test.py", Run: "python3", Class: evalClassAdopt,
+		Why: "① 收编（2026-10-08 按意见）：2026-08-13 历史一次性任务集 · 仓内零调用方（登记非死件 ⇒ 无第二入口）⇒ 收编为 `zerg eval run` 可跑件 · ✗ 不删脚本",
 	},
 	{
-		Name: "v25_m1_accept", File: "scripts/evals/v25_m1_accept.py", Run: "python3", Class: evalClassPending,
-		Why: "同上（历史一次性任务集 · 零调用方）",
+		Name: "v25_m1_accept", File: "scripts/evals/v25_m1_accept.py", Run: "python3", Class: evalClassAdopt,
+		Why: "① 收编（2026-10-08 按意见）：2026-08-13 历史一次性任务集 · 仓内零调用方（登记非死件 ⇒ 无第二入口）⇒ 收编为 `zerg eval run` 可跑件 · ✗ 不删脚本",
 	},
 	{
-		Name: "v25_more_classes", File: "scripts/evals/v25_more_classes.py", Run: "python3", Class: evalClassPending,
-		Why: "同上（历史一次性任务集 · 零调用方）",
+		Name: "v25_more_classes", File: "scripts/evals/v25_more_classes.py", Run: "python3", Class: evalClassAdopt,
+		Why: "① 收编（2026-10-08 按意见）：2026-08-13 历史一次性任务集 · 仓内零调用方（登记非死件 ⇒ 无第二入口）⇒ 收编为 `zerg eval run` 可跑件 · ✗ 不删脚本",
 	},
 	{
-		Name: "v25_more_tasks", File: "scripts/evals/v25_more_tasks.py", Run: "python3", Class: evalClassPending,
-		Why: "同上（历史一次性任务集 · 零调用方）",
+		Name: "v25_more_tasks", File: "scripts/evals/v25_more_tasks.py", Run: "python3", Class: evalClassAdopt,
+		Why: "① 收编（2026-10-08 按意见）：2026-08-13 历史一次性任务集 · 仓内零调用方（登记非死件 ⇒ 无第二入口）⇒ 收编为 `zerg eval run` 可跑件 · ✗ 不删脚本",
 	},
 	{
-		Name: "v25_real10", File: "scripts/evals/v25_real10.py", Run: "python3", Class: evalClassPending,
-		Why: "同上（历史一次性任务集 · 零调用方）",
+		Name: "v25_real10", File: "scripts/evals/v25_real10.py", Run: "python3", Class: evalClassAdopt,
+		Why: "① 收编（2026-10-08 按意见）：2026-08-13 历史一次性任务集 · 仓内零调用方（登记非死件 ⇒ 无第二入口）⇒ 收编为 `zerg eval run` 可跑件 · ✗ 不删脚本",
 	},
 	{
-		Name: "v25_real10_v2", File: "scripts/evals/v25_real10_v2.py", Run: "python3", Class: evalClassPending,
-		Why: "同上（历史一次性任务集 · 零调用方）",
+		Name: "v25_real10_v2", File: "scripts/evals/v25_real10_v2.py", Run: "python3", Class: evalClassAdopt,
+		Why: "① 收编（2026-10-08 按意见）：2026-08-13 历史一次性任务集 · 仓内零调用方（登记非死件 ⇒ 无第二入口）⇒ 收编为 `zerg eval run` 可跑件 · ✗ 不删脚本",
 	},
 	{
-		Name: "v25_real_tasks", File: "scripts/evals/v25_real_tasks.py", Run: "python3", Class: evalClassPending,
-		Why: "同上（历史一次性任务集 · 零调用方）",
+		Name: "v25_real_tasks", File: "scripts/evals/v25_real_tasks.py", Run: "python3", Class: evalClassAdopt,
+		Why: "① 收编（2026-10-08 按意见）：2026-08-13 历史一次性任务集 · 仓内零调用方（登记非死件 ⇒ 无第二入口）⇒ 收编为 `zerg eval run` 可跑件 · ✗ 不删脚本",
 	},
 	{
-		Name: "v25_realproj", File: "scripts/evals/v25_realproj.py", Run: "python3", Class: evalClassPending,
-		Why: "同上（历史一次性任务集 · 零调用方）",
+		Name: "v25_realproj", File: "scripts/evals/v25_realproj.py", Run: "python3", Class: evalClassAdopt,
+		Why: "① 收编（2026-10-08 按意见）：2026-08-13 历史一次性任务集 · 仓内零调用方（登记非死件 ⇒ 无第二入口）⇒ 收编为 `zerg eval run` 可跑件 · ✗ 不删脚本",
 	},
 	{
-		Name: "v25_research", File: "scripts/evals/v25_research.py", Run: "python3", Class: evalClassPending,
-		Why: "同上（历史一次性任务集 · 零调用方）",
+		Name: "v25_research", File: "scripts/evals/v25_research.py", Run: "python3", Class: evalClassAdopt,
+		Why: "① 收编（2026-10-08 按意见）：2026-08-13 历史一次性任务集 · 仓内零调用方（登记非死件 ⇒ 无第二入口）⇒ 收编为 `zerg eval run` 可跑件 · ✗ 不删脚本",
 	},
 }
 

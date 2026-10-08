@@ -99,15 +99,55 @@ func TestCpfsEvaluate_CleanIsGreen(t *testing.T) {
 	}
 }
 
-// ── 入口面：自检 16 条必须全过（自回收 delta=0 由 os.RemoveAll 的 defer 保）──────────
+// ── 入口面：自检 18 条必须全过（自回收 delta=0 由 os.RemoveAll 的 defer 保）──────────
 func TestCpfsSelfTest_AllPass(t *testing.T) {
 	var out bytes.Buffer
 	rc := cpfsSelfTest(&out)
 	if rc != 0 {
 		t.Fatalf("自检 rc = %d，期望 0\n%s", rc, out.String())
 	}
-	if !strings.Contains(out.String(), "自检：16 过 / 0 红（16 条用例）") {
+	if !strings.Contains(out.String(), "自检：18 过 / 0 红（18 条用例）") {
 		t.Errorf("自检汇总行不符：\n%s", out.String())
+	}
+}
+
+// ── 负控（降档有牙）：面外件（未入索引）一入库即红 ⇒ 判据⑦ 降档 rc=2（只降档不报红）────────
+func TestCpfsEvaluate_OuterViolDowngrades(t *testing.T) {
+	root := t.TempDir()
+	cpfsMakeFixture(root, cpfsFx{
+		name: "outer", wl: []string{"scripts/", "wall/"},
+		priv: []string{"scripts/mech.py"}, excl: []string{"scripts/mech.py"},
+		drop: []string{"scripts/mech.py"}, want: 2,
+		marksText: "文件\tpublic\t理由\n" +
+			"scripts/mech.py\tno\t夹具：B 类\n" +
+			"scripts/keep.py\tyes\t夹具：A 类\n" +
+			"scripts/outer_viol.py\tno\t夹具：面外件\n",
+	})
+	cpfsWrite(cpfsPyJoin(root, "scripts/outer_viol.py"), "x\n") // 写完不 add ⇒ 面外（未入索引）
+	rc, lines := cpfsEvaluate(root, cpfsPathsFor(root))
+	if rc != 2 {
+		t.Fatalf("面外违规件 rc = %d，期望 2（降档失效）\n%s", rc, strings.Join(lines, "\n"))
+	}
+	if !strings.Contains(strings.Join(lines, "\n"), "判据⑦ 面外件一入库即红 1 条") {
+		t.Errorf("判据⑦ 未点名面外违规件：\n%s", strings.Join(lines, "\n"))
+	}
+}
+
+// ── 正控：面外件全绿（新码）⇒ 判据⑦ 不降档（rc=0 · 不误伤他路未跟踪新码）────────────────
+func TestCpfsEvaluate_OuterCleanNoDowngrade(t *testing.T) {
+	root := t.TempDir()
+	cpfsMakeFixture(root, cpfsFx{
+		name: "outerclean", wl: []string{"scripts/", "wall/"},
+		priv: []string{"scripts/mech.py"}, excl: []string{"scripts/mech.py"},
+		drop: []string{"scripts/mech.py"}, want: 0,
+	})
+	cpfsWrite(cpfsPyJoin(root, "scripts/outer_new.py"), "x\n")
+	rc, lines := cpfsEvaluate(root, cpfsPathsFor(root))
+	if rc != 0 {
+		t.Fatalf("面外干净件 rc = %d，期望 0\n%s", rc, strings.Join(lines, "\n"))
+	}
+	if !strings.Contains(strings.Join(lines, "\n"), "判据⑦ 面外件（未入索引）1 条") {
+		t.Errorf("判据⑦ 关系式行不符：\n%s", strings.Join(lines, "\n"))
 	}
 }
 

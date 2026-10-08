@@ -54,11 +54,11 @@
   {
    "face": "脚本",
    "objects": 125,
-   "adopt": 10,
+   "adopt": 23,
    "internal": 97,
    "retire": 3,
-   "pending": 15,
-   "why": "① 2 原样 + 8（T-56 余项：标定线 3 ⇒ `zerg calib` 立族 + 评测线 5 ⇒ `zerg eval` 立族） = 10；② 81 原样 + 12（决议⑦ 服务 5 并入 core + 决议⑧ 构建 7 归 `zerg build`）+ 4（T-56 余项：评测线 4 件已被别的入口接线在跑 ⇒ 只做投影） = 97；③ 3 = `scripts/253/` 三件（**已删**）；④ 15 = 评测 13（历史任务集 · 维持待拍）+ 两只文档门 2"
+   "pending": 2,
+   "why": "① 2 原样 + 8（T-56 余项：标定线 3 ⇒ `zerg calib` 立族 + 评测线 5 ⇒ `zerg eval` 立族）+ 13（2026-10-08：原 ④「维持待拍」的评测线 13 件同批收编 ① ⇒ `family_eval.go` 现读 ①18/④0） = 23；② 81 原样 + 12（决议⑦ 服务 5 并入 core + 决议⑧ 构建 7 归 `zerg build`）+ 4（T-56 余项：评测线 4 件已被别的入口接线在跑 ⇒ 只做投影） = 97；③ 3 = `scripts/253/` 三件（**已删**）；④ 2 = 两只文档门 2（原「评测线 13 件」已移入 ①）"
   },
   {
    "face": "UI 模块",
@@ -72,15 +72,15 @@
  ],
  "tally": {
   "objects": 273,
-  "adopt": 61,
+  "adopt": 74,
   "internal": 184,
   "retire": 3,
-  "pending": 25,
+  "pending": 12,
   "movement": {
-   "adopt": "41 + 9（决议②）+ 3（决议⑩）+ 8（T-56 余项：标定 3 + 评测 5）= 61",
+   "adopt": "41 + 9（决议②）+ 3（决议⑩）+ 8（T-56 余项：标定 3 + 评测 5）+ 13（2026-10-08 评测线原 ④「维持待拍」13 件收编 ①）= 74",
    "internal": "145 + 17（决议① HTTP）+ 1（决议① 界面）+ 3（决议③ HTTP）+ 1（决议③ 界面）+ 12（决议⑦⑧）+ 4（T-56 余项：评测线接线在跑）+ 1（2026-09-21 改判：compressor_demo ③⇒②）= 184",
    "retire": "3（2026-09-21 改判后 = `scripts/253/` 三件；compressor_demo 由 ③ 改判 ② ⇒ 已移出退役台账）",
-   "pending": "83 − 58（落回量：决议 46 + T-56 余项 12） = 25"
+   "pending": "83 − 71（落回量：决议 46 + T-56 余项 12 + 2026-10-08 评测线 13） = 12"
   },
   "seven_groups": {
    "对话面": 19,
@@ -93,10 +93,10 @@
    "sum": 83
   },
   "pending_row_vs_slot": {
-   "by_rows": 25,
-   "by_seven_group_slots": 24,
+   "by_rows": 12,
+   "by_seven_group_slots": 11,
    "diff": 1,
-   "note": "口径差**照实登记**：§5.5 逐行读界面 ④ = 3 行（chat · ferrite · filebrowse），而 §5.6 的七组只给界面 3 个槽（对话面 2 + 文件浏览器 1）；若那 2 个槽是 chat 的 2 件，则 ferrite 行没有槽 ⇒ 逐行读 25 · 槽读 24。本表取**逐行读 25**，并把 ferrite 单列在 pending_items 里，让这一条差**可见、可复核**（与 `验真-§五-UI与杂项` 记的 `?` 同源，留下一版定稿）。"
+   "note": "口径差**照实登记**：§5.5 逐行读界面 ④ = 3 行（chat · ferrite · filebrowse），而 §5.6 的七组只给界面 3 个槽（对话面 2 + 文件浏览器 1）；若那 2 个槽是 chat 的 2 件，则 ferrite 行没有槽 ⇒ 逐行读 25 · 槽读 24。本表取**逐行读 12**，并把 ferrite 单列在 pending_items 里，让这一条差**可见、可复核**（与 `验真-§五-UI与杂项` 记的 `?` 同源，留下一版定稿）。"
   },
   "seven_groups_source": "设计-命令面与契约-v0.7.md §5.6 行 391（七组）"
  },
@@ -1025,6 +1025,21 @@
       "object": "scripts/gates/repo-diffstat-check.py",
       "state": "已登记退场（2026-10-08）",
       "evidence": "两态三面逐字同：CLI(./bin/zerg gate check repo-diffstat-check) ⟷ py(python3.14 scripts/gates/repo-diffstat-check.py) 四档 rc 0/1/2/8 与 stdout/stderr 逐字同（stdin 档唯临时件名噪声·同源同量）；判定整件委托正门 zerg repo diffstat（薄壳）；Go 半 core/cmd/zerg/family_repo_diffstat.go ＋ inproc 键 repo-diffstat-check@gate_inproc_table.go:164 现读均在；GAP-20261001-15（双份真源）已解；名册退出 DEV-1897"
+    },
+    {
+      "object": "scripts/gates/check-doc-name.py",
+      "state": "已登记退场（2026-10-08）",
+      "evidence": "退场批5-20261008 · 甲组直接退 · 两态三面逐字同（./bin/zerg gate check check-doc-name ⟷ ~/.hermes/tools/python-3.14.7+20260901-darwin-arm64/bin/python3.14 scripts/gates/check-doc-name.py）· --scope repo rc=0/0 · stdout=1227B/1227B 逐字同（sha16 4a2e635dc4019f45）· stderr=0B/0B · --scope devdocs rc=1/1 · stdout=3032B/3032B 逐字同 · --self-test rc=0/0 · Go 后继件 core/cmd/zerg/check_doc_name.go（键 check-doc-name ∈ gate_inproc_table.go · Go测试件已退役容忍 t.Skipf）"
+    },
+    {
+      "object": "mcp/demo_trimnoise.py",
+      "state": "已登记退场（2026-10-08）",
+      "evidence": "退场批6-20261008 · 干净候选 · 消费者判定=无（code find demo_trimnoise 全仓唯一命中=lang-freeze-baseline.json:76 登记行 · 无 import/CI/夹具/文档调用）· 同族 Go 真身 core/internal/gateway/compactor.go TrimNoise 在位"
+    },
+    {
+      "object": "scripts/svc/zerg-cron-submit.sh",
+      "state": "已登记退场（2026-10-08）",
+      "evidence": "退场批7-20261008 · 干净候选 · 消费者判定=无（zerg code find zerg-cron-submit 全仓 11 命中 全为登记/排除面：公开标记.tsv:84 · publish-public.sh:330 · mirror-public-lib.py:326 · judge-registry.json:912-914 · lang-freeze-baseline.json:591 · check-wired-scripts.py:236 · check-wired-scripts.go:1542）· 无 import/CI/夹具/文档/launchd 活调用（.github/workflows 0 命中 · deploy/*.plist 不引用）· 两态：在位 zerg script ls 列本件(kind=sh public=no)/bash -n rc=0 ⟷ 缺件态无门判红（start-zerg-ui.sh 同族口径）· 九面摘行"
     }
  ],
  "retire_exceptions": [
@@ -1052,7 +1067,7 @@
   {
    "object": "scripts/gates/precommit-gates.sh",
    "category": "门跑基建·结构性例外（自举件／执行内核）",
-   "reason": "步骤表唯一真源 ＋ 提交闸总控（4558 行）。shell 独有面占大头：perl-alarm 逐门限时（macOS 无 `timeout`）· perl flock 单实例锁 · 子壳/信号/进程组/环境封口 · 自检⑮⑯⑰ 递归起父脚本。是自举件（`gate.go:69 gateScriptRel` 是条款的一部分 · G1-e「搬家/改名 = 破坏自举」）⇒ 搬 Go 即破自举环。",
+   "reason": "自举：步表宿主＋自举件——步骤表唯一真源＋提交闸总控（4558 行），shell 独有面占大头：perl-alarm 逐门限时（macOS 无 `timeout`）· perl flock 单实例锁 · 子壳/信号/进程组/环境封口 · 自检⑮⑯⑰ 递归起父脚本。`gate.go:69 gateScriptRel` 是条款的一部分（G1-e「搬家/改名 = 破坏自举」）；四位调用者（`.githooks/pre-commit` · `all.sh` · `repo commit` · `gate run`）同钉其 `main()` 首句 flock 锁 ⇒ 改它 = 改门禁本体（搬 Go 即破自举环）。",
    "keep_cost": "步骤表 235 条 ＋ 冻结计数（`95/68/0` · 快档成员集合 · 门96 的 41 步）半改即红，改门要人肉同步多处；四条直调起点（`.githooks/pre-commit` · `all.sh` · `repo commit --fast` · `gate run`）全钉在它 `main()` 首句那把锁上。若要搬 Go：须先解自举环（独立一次提交 · 四条起点同批改），并把 perl-alarm／perl-flock 一类**已被实测调好**的原语逐条等价重写 —— ✗ 不是「不做」。",
    "review_date": "2026-10-07"
   },
@@ -1479,7 +1494,7 @@
   {
    "object": "scripts/gates/two-states-gate-mutate.py",
    "category": "测试面·变异器",
-   "reason": "硬线：变异器——本体是把仓内 scripts/sandbox-probes/verify-two-states.py 真改坏（G1/G2/G3 三条锚点各恰命中一次后原地写盘 · mutate() :134）＋真起茧壁自检子进程（--self-test --wall :143）＋逐字节还原；Go 化=写一个改仓内件的程序。",
+   "reason": "硬线：变异器——本体＝真改仓内 scripts/sandbox-probes/verify-two-states.py（G1/G2/G3 三条锚点各恰命中一次后原地写盘 · mutate() :134）＋真起茧壁自检子进程（--self-test --wall :143）＋ finally 逐字节还原；缺省档两态不可合同（现读）：py 真跑档 rc=0「变异验证全绿」⟷ Go 按「✗ 不改仓内件」硬线只做只读结构断言 rc=2「真跑档未搬」⇒ Go 化该真跑档＝写一个改仓内件的程序 ⇒ 命硬线·物理不可化 ⇒ ✗ 不可退。",
    "keep_cost": "随两态面同步",
    "review_date": "2026-10-08"
   }
@@ -1498,13 +1513,6 @@
    "why": "术语表 ROOT 写死 + 6 处假红未清；i18n 的 `rc=2` 语义未拍",
    "next": "与既有待办同批清（E4/D3 第一步 · E6）",
    "承接": "待办 E4 / E6"
-  },
-  {
-   "object": "脚本·评测线 13 件（scripts/evals/ · 2026-08-13 历史一次性任务集）",
-   "count": 13,
-   "why": "T-56 余项已逐件归属：① 收编 5 · ② 保留内部 4 两档落回，剩 13 件（历史任务集 · 仓内零调用方 · 工作区写死在临时目录）",
-   "next": "待拍「这 13 件要不要退役」—— **不许 AI 自判**（退役要引用面清零 + 逐项确认）",
-   "承接": "待 Mr2109 拍（T-56 表 §三⑦ 同域）"
   },
   {
    "object": "脚本·两只文档门 2 件（check-glossary.py · check-i18n-drift.sh）",
@@ -1537,11 +1545,12 @@
  },
  "boundaries": [
   "本表只登记**归属与判据指针**，不复制设计稿正文；四类定义仍在 §5.0（行 210–215）。",
-  "④ 的 25 条**不是 25 个新任务**：它们收敛成 5 组承接项（见 pending_items），逐条带 why + next。",
+  "④ 的 12 条**不是 12 个新任务**：它们收敛成 4 组承接项（见 pending_items），逐条带 why + next。（2026-10-08：原「脚本·评测线 13 件」一组同批收编入 ① ⇒ 组数 5→4、条数 25→12。）",
   "2026-09-21 改判已生效：`compressor_demo` 由 ③ 退役改判 ② 保留为内部 + 登记 `public=no` —— 原判「退役删除」作废（决策表 §二 第 4 行已同批标注）。",
   "本表不含 273 条的**逐对象枚举**：逐对象落回写在 `Zerg-内部文档/项目文档/v2.5.10/归属-收编与退役-20260920.md`（导出物），两边的四个总数与五个面分布**逐格相同**（机检断言）。",
   "例外类名册（`retire_exceptions`）**只收闭集内件**（决-12：**自研面** ＝ 全仓 − `vendor/**` − `tools/ocr/venv/**` 的 py/sh）：每条须**四列齐**（category / reason / keep_cost / review_date）＋ `object` 在闭集 ＋ `review_date` 可解析（`2006-01-02`）。机检 = `core/cmd/zerg/family_script_retire.go` 的 `scriptRetireExceptionErrors`（`zerg script retire` 每跑一次先自检名册；外部测试出口 `ScriptRetireExceptionErrorsForTest` · GAP-20261007-03）。",
   "★ 闭集外件**不作退场例外登记**：`.githooks/pre-commit`（提交钩子 · 待 `批-8` 形态落地，见 `设计-退场正门-retire-20261006.md`）原在名册里，但 `zerg script retire` 的闭集闸**先于**例外档 ⇒ 该条对该路径**无牙**，已移出名册（2026-10-07 · GAP-20261007-03）。",
-  "★ 例外名册**随动纠正**（2026-10-07 · 该件**已落 Go 半（M2 真搬）** ⇒ 不再是例外类 · 迁出 8 件 · Go 半均在 `core/cmd/zerg/`）：`scripts/gates/check-i18n-drift.sh`＝`check_i18n_drift.go` · `scripts/gates/check-tool-version-sync.sh`＝`check_tool_version_sync.go` · `scripts/sandbox-probes/writeout-probe.py`＝`writeout_probe.go` · `tools/kb_docs_sync.py`＝`kb_docs_sync.go` · `ui/scripts/check-i18n.py`＝`check_i18n.go` · `ui/scripts/i18n_audit.py`＝`i18n_audit.go` · `tools/doc_index_gen.py`＝`doc_index_gen.go` · `tools/gen_tools_md.py`＝`gen_tools_md.go`（名册 76 → 68）。保留件（含 `scripts/gates/check-gate-bootstrap.sh`）的判定依据＝**真跑子进程 ／ 自举面 ／ 无 Go 半**。"
+  "★ 例外名册**随动纠正**（2026-10-07 · 该件**已落 Go 半（M2 真搬）** ⇒ 不再是例外类 · 迁出 8 件 · Go 半均在 `core/cmd/zerg/`）：`scripts/gates/check-i18n-drift.sh`＝`check_i18n_drift.go` · `scripts/gates/check-tool-version-sync.sh`＝`check_tool_version_sync.go` · `scripts/sandbox-probes/writeout-probe.py`＝`writeout_probe.go` · `tools/kb_docs_sync.py`＝`kb_docs_sync.go` · `ui/scripts/check-i18n.py`＝`check_i18n.go` · `ui/scripts/i18n_audit.py`＝`i18n_audit.go` · `tools/doc_index_gen.py`＝`doc_index_gen.go` · `tools/gen_tools_md.py`＝`gen_tools_md.go`（名册 76 → 68）。保留件（含 `scripts/gates/check-gate-bootstrap.sh`）的判定依据＝**真跑子进程 ／ 自举面 ／ 无 Go 半**。",
+  "★ 例外名册 `reason` 的**首词闭集**（与闭集内件是两个面 · ✗ 别混）：`reason` 须写成 `<首词>：<为什么物理上不能 Go 化>`，首词 = **全角 `：`（U+FF1A）之前**那段；首词须 ∈ 闭集 = `生态绑定` / `OS胶水` / `vendor` / `硬线` / `自举`（**5 档**）。**第 5 档 `自举：`（2026-10-08 补 · Mr2109「按建议走」）**收「门禁自举件／步表宿主」一类：本体＝门禁执行内核，改它＝改门禁本体 ⇒ 物理上不能 Go 化；现读唯一条目 `scripts/gates/precommit-gates.sh`。★ 机检（门 `check-retire-roster` · 拟扩同包纯函数 `scriptRetireExceptionErrors` 第④格 ＋ 前缀常量 `scriptRetireExcReasonPrefixes`）**待落** —— 本档先落真源声明与名册，判据体另批（实施单 `~/.zerg/state/实施单-check-retire-roster-20261008.md`）。"
  ]
 }

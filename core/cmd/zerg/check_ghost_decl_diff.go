@@ -589,6 +589,21 @@ func gddCheck(ctx *gddCtx) (int, []gddSide1, []gddSide2, []string, []string) {
 		return 2, nil, nil, notes, []string{fmt.Sprintf("空转：ps 里一件自研件（%s…）都没扫到（不许当绿）", gddProcHints[0])}
 	}
 
+	// ★ GAP-20260927-62 治尾巴①(a) —— **PPID 深度1直系豁免**（与 py 半同源）：先取所有被 launchd
+	//   声明覆盖的现值进程 pid 作父集合；现值自研进程若未被任何 launchd 声明覆盖、且未被任何 ghost
+	//   行登记、而其 ppid ∈ 该父集合 ⇒ 是某条已声明服务的**直接子**（深度 1）⇒ 不算未登记幽灵。
+	//   ✗ 不追孙进程：深度 2+ 的子孙 ppid 落在子进程 pid 上、不在父集合内，照旧计入。
+	declaredPids := map[string]bool{}
+	for _, ln := range psLines {
+		for _, r := range launchdRows {
+			if r.Proc != "" && r.Proc != "-" && strings.Contains(ln, r.Proc) {
+				if f := strings.Fields(ln); len(f) > 0 {
+					declaredPids[f[0]] = true
+				}
+				break
+			}
+		}
+	}
 	var side1 []gddSide1
 	for _, ln := range live {
 		hit := false
@@ -610,6 +625,9 @@ func gddCheck(ctx *gddCtx) (int, []gddSide1, []gddSide2, []string, []string) {
 			}
 		}
 		fields := strings.Fields(ln)
+		if reg == nil && len(fields) >= 2 && declaredPids[fields[1]] {
+			continue
+		}
 		pid := "?"
 		if len(fields) > 0 {
 			pid = fields[0]
@@ -679,16 +697,26 @@ func gddCheck(ctx *gddCtx) (int, []gddSide1, []gddSide2, []string, []string) {
 	if derr != "" {
 		return 2, side1, side2, notes, []string{fmt.Sprintf("同源读数取不到：%s（`T2` 判据③ 的同一格 ⇒ 不许换一份口径）", derr)}
 	}
-	if !hasCount || dcount != len(side1) {
+	// ★ GAP-20260927-62 治尾巴①(b)（与 py 半同源）：S2 比**侧① 中 registered_as 非空的子集**，
+	//   ✗ 不比 `len(side1)`（含未登记幽灵）—— doctor ⑧ 与 `core daemon ls --declared` 同调
+	//   `ghostProcesses()`（`kind=ghost` 行 × 现值命中）⇒ doctor 数的**正是已登记幽灵**，
+	//   未登记幽灵它根本看不见 ⇒ 旧写法会把「多一条未登记幽灵」误判成同源漂移红。
+	regN := 0
+	for _, it := range side1 {
+		if it.HasReg {
+			regN++
+		}
+	}
+	if !hasCount || dcount != regN {
 		dc := dcount
-		problems = append(problems, fmt.Sprintf("FAIL S2 同源漂移：本件侧① %d 条 vs `zerg doctor`「%s」%d 条 ⇒ 两处口径已分叉（`T2` 判据③ 要求逐字同值）· doctor 原读：%s",
-			len(side1), gddDoctorItem, dc, ddetail))
+		problems = append(problems, fmt.Sprintf("FAIL S2 同源漂移：本件侧① 已登记（`registered_as` 非空）%d 条 vs `zerg doctor`「%s」%d 条 ⇒ 两处口径已分叉（`T2` 判据③ 要求逐字同值）· doctor 原读：%s",
+			regN, gddDoctorItem, dc, ddetail))
 	}
 	sameStr := "逐字同值 ✓"
-	if dcount != len(side1) {
+	if dcount != regN {
 		sameStr = "不等 ✗"
 	}
-	notes = append(notes, fmt.Sprintf("S2 同源：侧① %d 条 · doctor「%s」%d 条（%s）", len(side1), gddDoctorItem, dcount, sameStr))
+	notes = append(notes, fmt.Sprintf("S2 同源：侧① 已登记 %d 条（侧① 共 %d 条）· doctor「%s」%d 条（%s）", regN, len(side1), gddDoctorItem, dcount, sameStr))
 	doctorMode := "live"
 	if ctx.doctorFile != "" {
 		doctorMode = "fixture"
@@ -1451,10 +1479,12 @@ func gddSelfTestRoot(stdout io.Writer, root string) int {
 	}
 	casef("⑧ launchctl 取不到 ⇒ rc=2（不当绿）", "2", fmt.Sprintf("%d", rc8), n8)
 
+	// ⑨ 未登记幽灵：侧① 2 条（一登记一未登记）；S2 只比**已登记子集**（1 条）⇒ doctor 1 条同值 ⇒ rc=0
+	//   （★ GAP-20260927-62(b)：未登记幽灵不参与 S2，旧口径 doctor 2 条此格必红）
 	pp9 := filepath.Join(d1, "ps-extra.txt")
 	gddWriteFile(pp9, gddGoodPS+"  88888     1       10:00 /repo/bin/zerg-mystery --boot\n", 0o644)
 	df9 := filepath.Join(d1, "doctor9.json")
-	gddWriteFile(df9, gddDoctorJSON(2, ""), 0o644)
+	gddWriteFile(df9, gddDoctorJSON(1, ""), 0o644)
 	rc9, s19, _, _, _ := gddCheck(&gddCtx{root: d1, declPath: dp, psFile: pp9, lcFile: lp, home: home, doctorFile: df9})
 	unreg := 0
 	for _, it := range s19 {
@@ -1462,8 +1492,41 @@ func gddSelfTestRoot(stdout io.Writer, root string) int {
 			unreg++
 		}
 	}
-	casef("⑨ 未登记幽灵：侧① 2 条（一登记一未登记）且与 doctor 2 条同值 ⇒ rc=0", "(0, 2, 1)",
+	casef("⑨ 未登记幽灵：侧① 2 条（一登记一未登记）· S2 比已登记子集 1 条 == doctor 1 条 ⇒ rc=0", "(0, 2, 1)",
 		fmt.Sprintf("(%d, %d, %d)", rc9, len(s19), unreg), "")
+
+	// ⑪ PPID 深度1直系豁免（★ GAP-20260927-62(a)）：zerg-core(声明服务 · pid=68939) 的直接子
+	//   task 进程（ppid=68939）不算未登记幽灵 ⇒ 侧① 仍 1 条（只 cocoon）· 未登记 0 条 ⇒ rc=0
+	pp11 := filepath.Join(d1, "ps-child.txt")
+	gddWriteFile(pp11, gddGoodPS+"  77777     68939   00:05 /repo/bin/zerg-taskworker --scoped\n", 0o644)
+	df11 := filepath.Join(d1, "doctor-child.json")
+	gddWriteFile(df11, gddDoctorJSON(1, ""), 0o644)
+	rc11, s111, _, _, _ := gddCheck(&gddCtx{root: d1, declPath: dp, psFile: pp11, lcFile: lp, home: home, doctorFile: df11})
+	unreg11 := 0
+	for _, it := range s111 {
+		if !it.HasReg {
+			unreg11++
+		}
+	}
+	casef("⑪ PPID 深度1直系豁免：声明服务直接子 task 进程不入侧① ⇒ (0,1,0)", "(0, 1, 0)",
+		fmt.Sprintf("(%d, %d, %d)", rc11, len(s111), unreg11), "")
+
+	// ⑪b 负控：只豁免**深度 1** —— 孙进程（父=子进程 pid 77777 · 非声明）与父非声明的散件仍计未登记
+	pp11b := filepath.Join(d1, "ps-stray.txt")
+	gddWriteFile(pp11b, gddGoodPS+"  77777     68939   00:05 /repo/bin/zerg-taskworker --scoped\n"+
+		"  88888     77777   00:05 /repo/bin/zerg-grand --deep\n"+
+		"  66666       1     01:00 /repo/bin/zerg-stray --boot\n", 0o644)
+	df11b := filepath.Join(d1, "doctor-stray.json")
+	gddWriteFile(df11b, gddDoctorJSON(1, ""), 0o644)
+	rc11b, s111b, _, _, _ := gddCheck(&gddCtx{root: d1, declPath: dp, psFile: pp11b, lcFile: lp, home: home, doctorFile: df11b})
+	unreg11b := 0
+	for _, it := range s111b {
+		if !it.HasReg {
+			unreg11b++
+		}
+	}
+	casef("⑪b 负控：孙进程/父非声明 仍计未登记 ⇒ (0,3,2)", "(0, 3, 2)",
+		fmt.Sprintf("(%d, %d, %d)", rc11b, len(s111b), unreg11b), "")
 
 	then := gddReadonlyFingerprint(d1, dp)
 	now := gddReadonlyFingerprint(d1, dp)
