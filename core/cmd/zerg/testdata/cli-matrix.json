@@ -1694,6 +1694,33 @@
   {
    "argv": [
     "itask",
+    "interval",
+    "set",
+    "--nosuchflag-zz"
+   ],
+   "command": "itask interval set",
+   "id": "itask/interval/set#未知旗标",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "argv": [
+    "itask",
+    "interval",
+    "set",
+    "--schema",
+    "zerg/v9"
+   ],
+   "command": "itask interval set",
+   "id": "itask/interval/set#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "argv": [
+    "itask",
     "start",
     "--nosuchflag-zz"
    ],

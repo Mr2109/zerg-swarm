@@ -21,6 +21,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -186,4 +188,158 @@ func itaskPost(inv *invocation, stdout, stderr io.Writer, path, action string) i
 		return exitBlocked
 	}
 	return listCmd(inv, stdout, stderr, keys, []map[string]string{row})
+}
+
+// ---- `itask interval set` 写面（D2 · 设/取内部任务的循环周期 · P0 #232 第三面 · 2026-10-08）----
+//
+// 现读写路径（本票只开这一条）：`zerg itask interval set <任务|all> --hours N`
+//   ⇒ POST `/api/internal-tasks/{id}/interval` `{"hours": N}`
+//   （主控侧路由已存在 · `core/cmd/zerg-core/main.go` → `api.InternalIntervalHandler`）
+//   ⇒ `SetInternalInterval(id, hours)` ⇒ 持久化 `<任务目录根>/intervals.json`（重启恢复）。
+//   后端范围（`core/internal/api/internal_interval.go` 的 `req.Hours < 0 || > 24*30` 同一档）：`0（取消）~ 720`。
+//
+// 口径逐字照同族写面先例（`itask stop`〔本件〕＋ `sched set`〔`family_sched.go`〕· §九 M3 C1/C2/C4）：
+//
+//   - D2 档（有影响但可逆：再设回旧周期即回原态）；走自家确认档门 `cmdItaskIntervalSetGuarded`；
+//   - `--dry-run`：只出**计划件**、零副作用、退 0（档序：干跑先于确认档）；
+//   - `--confirm=<本机名>` + `--yes`：fail-closed（缺一即退 2，从不提问）；
+//   - `--dry-run` 与 `--yes` 同给 ⇒ `dryRunYesConflict` 判用法错 2。
+//
+// `<任务|all>`：给任务 id ⇒ 设那一条；给 `all` ⇒ 现读 `GET /api/internal-tasks` 取 16 类 id 逐条设。
+// ★ 本票**不开放** `itask mode set`（另面待拍）—— 命令树、帮助面、危险档三处一律不登记。
+
+// itaskIntervalMaxHours —— 周期上界（与后端 `internal_interval.go` 的 `24*30` 同一档；0 = 取消）。
+const itaskIntervalMaxHours = 24 * 30
+
+// cmdItaskIntervalSetGuarded —— `zerg itask interval set` 的唯一执行门（D2 · 确认档齐 ⇒ 转真写）。
+func cmdItaskIntervalSetGuarded(inv *invocation, stdout, stderr io.Writer) int {
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
+	if len(inv.args) == 0 {
+		inv.setErr("usage", "missing_target", "缺任务 id（或 all）")
+		fmt.Fprintf(stderr, "%s: `itask interval set` 要一个任务 id 或 `all`（如 `%s itask interval set health-check --hours 6`）\n", progName, progName)
+		return exitUsage
+	}
+	target := strings.TrimSpace(inv.args[0])
+	// `--hours N` 必填值旗标：缺 / 坏值 / 越界 ⇒ 用法错 2 · **零写**（判在 dry-run 与写之前）。
+	if !inv.hasFlag("--hours") {
+		inv.setErr("usage", "missing_flag", "缺 --hours N")
+		fmt.Fprintf(stderr, "%s: `itask interval set` 要 --hours N（0 = 取消 · 范围 0~%d 小时）\n", progName, itaskIntervalMaxHours)
+		return exitUsage
+	}
+	raw := strings.TrimSpace(inv.flagVal("--hours"))
+	hours, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		inv.setErr("usage", "bad_flag_value", "周期要一个数（小时）")
+		fmt.Fprintf(stderr, "%s: `--hours` 要一个数（小时）—— 给的是 %q（0 = 取消 · 范围 0~%d）\n", progName, raw, itaskIntervalMaxHours)
+		return exitUsage
+	}
+	if hours < 0 || hours > float64(itaskIntervalMaxHours) {
+		inv.setErr("usage", "bad_flag_value", "周期范围 0~720 小时")
+		fmt.Fprintf(stderr, "%s: 周期范围 0（取消）~ %d 小时 —— 给的是 %g\n", progName, itaskIntervalMaxHours, hours)
+		return exitUsage
+	}
+	if inv.dryRun {
+		emitItaskIntervalSetPlan(stdout, stderr, target, hours)
+		return exitOK
+	}
+	if rc := schedConfirmGate(inv, stderr, "itask interval set"); rc != exitOK {
+		return rc
+	}
+	return cmdItaskIntervalSetWrite(inv, stdout, stderr, target, hours)
+}
+
+// emitItaskIntervalSetPlan —— `itask interval set --dry-run` 的计划件（人面 · stderr 一行收口 · 零副作用）。
+func emitItaskIntervalSetPlan(stdout, stderr io.Writer, target string, hours float64) {
+	fmt.Fprintln(stdout, schedPlanHeader)
+	fmt.Fprintf(stdout, "  动作     : %s itask interval set\n", progName)
+	fmt.Fprintf(stdout, "  危险档   : %s（有影响但可逆 —— 再设回旧周期即回原态；要 --confirm=<本机名> 与 --yes）\n", dangerD2)
+	fmt.Fprintf(stdout, "  目标     : %s\n", target)
+	fmt.Fprintf(stdout, "  请求     : POST %s/api/internal-tasks/%s/interval {\"hours\": %g}\n", newClient().base, target, hours)
+	fmt.Fprintf(stdout, "  它会动   : 把该内部任务的循环周期设成 %g 小时（**持久化**到 intervals.json —— 0 = 取消；主控 goroutine 每 60s 检查到点）\n", hours)
+	fmt.Fprintf(stdout, "  留痕     : 一行一事件 · 追加只写 · **写失败即拒**（§九 M3 C5）\n")
+	fmt.Fprintf(stdout, "  来源     : §7.1 P8 · §5.1 POST /api/internal-tasks/{id}/interval · 同族写面先例 `itask stop`（D2 + --confirm + --yes）\n")
+	fmt.Fprintln(stderr, "（--dry-run：只出计划件 · 零副作用 —— 未执行、未改任何状态）")
+}
+
+// cmdItaskIntervalSetWrite —— 真写（确认档齐后）：一条或 `all` ⇒ POST `/api/internal-tasks/{id}/interval`，
+// 再把落点值**回读**（`GET /api/internal-tasks/intervals`）逐条核（落地值回读）。
+func cmdItaskIntervalSetWrite(inv *invocation, stdout, stderr io.Writer, target string, hours float64) int {
+	ids := []string{}
+	if target == "all" {
+		var resp jsonObj
+		if rc := fetchInv(inv, newClient(), "/api/internal-tasks", &resp, stderr); rc != exitOK {
+			return rc
+		}
+		for _, it := range asList(resp["items"]) {
+			if o := asObj(it); o != nil {
+				if id := strings.TrimSpace(cell(o["id"])); id != "" {
+					ids = append(ids, id)
+				}
+			}
+		}
+		if len(ids) == 0 {
+			inv.setErr("blocked", "empty_targets", "`all` 取不到任何任务 id（不给结论）")
+			fmt.Fprintf(stderr, "%s: `all` 要从 GET /api/internal-tasks 取任务 id，载荷里 items 是空的 ⇒ 不给结论（退码 8）\n", progName)
+			return exitBlocked
+		}
+	} else {
+		ids = append(ids, target)
+	}
+	body := fmt.Sprintf("{\"hours\":%g}", hours)
+	rows := make([]map[string]string, 0, len(ids))
+	for _, id := range ids {
+		status, respBody, err := postJSON(newClient(), "/api/internal-tasks/"+url.PathEscape(id)+"/interval", body)
+		var he *httpError
+		if err != nil && asHTTP(err, &he) {
+			status, respBody, err = he.status, he.body, nil
+		}
+		if err != nil {
+			inv.setErr("unreachable", "dial_failed", err.Error())
+			fmt.Fprintf(stderr, "%s: 打不到主控：%v\n", progName, err)
+			return exitUnreachable
+		}
+		if status == 401 || status == 403 {
+			inv.setErr("unauthenticated", fmt.Sprintf("http_%d", status), "未认证")
+			fmt.Fprintf(stderr, "%s: 主控拒了这次设周期（http_%d）—— 看 `zerg help credentials`\n", progName, status)
+			return exitAuth
+		}
+		if status >= 400 {
+			code := errorCodeOf(respBody)
+			inv.setErr("usage", code, "主控拒绝设周期")
+			fmt.Fprintf(stderr, "%s: 主控拒绝设周期（http_%d）· code=%s\n", progName, status, orDash(code))
+			fmt.Fprintf(stderr, "主控原样响应: %s\n", strings.TrimSpace(respBody))
+			return exitUsage
+		}
+		var resp jsonObj
+		if err := json.Unmarshal([]byte(respBody), &resp); err != nil {
+			inv.setErr("upstream_error", "bad_itask_payload", err.Error())
+			fmt.Fprintf(stderr, "%s: 主控回了 2xx 但响应体不是对象 ⇒ 不给结论（退码 1）\n", progName)
+			return exitFail
+		}
+		rows = append(rows, map[string]string{"id": id, "hours": cell(resp["hours"]), "message": cell(resp["message"])})
+	}
+	// 落地值回读：把现读的 intervals 逐条核进结果面（`set` 报的 hours 与回读值同源对照）。
+	if landed, ok := itaskIntervalReadBack(inv, stderr); ok {
+		for _, r := range rows {
+			r["landed"] = landed[r["id"]]
+		}
+	}
+	return listCmd(inv, stdout, stderr, []string{"id", "hours", "landed", "message"}, rows)
+}
+
+// itaskIntervalReadBack —— 回读现读的周期表（`GET /api/internal-tasks/intervals`）；取不到 ⇒ ok=false（不吞错）。
+func itaskIntervalReadBack(inv *invocation, stderr io.Writer) (map[string]string, bool) {
+	var resp jsonObj
+	if rc := fetchInv(inv, newClient(), "/api/internal-tasks/intervals", &resp, stderr); rc != exitOK {
+		return nil, false
+	}
+	out := map[string]string{}
+	if m := asObj(resp["intervals"]); m != nil {
+		for k, v := range m {
+			out[k] = cell(v)
+		}
+	}
+	return out, true
 }

@@ -20,9 +20,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -402,12 +408,29 @@ func judgeARItask(root string, d arDoc, mainGo, familyItask string) []error {
 			errs = append(errs, fmt.Errorf("判据⑥ 破：写面 `itask %s` 没走确认档门（`*Guarded` · 危险档失守）", v))
 		}
 	}
-	// ⑤ 未开放的写面（mode/interval 的 POST）：命令树里**不许**出现 `itask mode set` 这种子命令。
+	// ⑤ 写面分两档（2026-10-08 · P0 #232 第三面 · ★ **加强**，✗ 不是删断言）：
+	//   · 未开放的写面（真源 `write_registered_not_open` 现读 = ["mode"]）：命令树里**不许**出现 `itask mode set`；
+	//   · **已开放**的写面（`interval` 的 POST）：命令树里**必须**出现 `itask interval set` 子命令 —— 由「负向
+	//     （不许出现）」**加强**成「正向（必须出现）＋ 走确认档门」，四态真跑落在独立测试
+	//     `TestAdoptRetireItaskIntervalSetFourStates`（裸跑 rc=2 / --dry-run rc=0 / --yes 真写 / 坏值 rc=2）。
 	for _, v := range d.Itask.WriteNotOpen {
 		pat := regexp.MustCompile(`\[\]string\{"itask",\s*"` + regexp.QuoteMeta(v) + `",\s*"set"\}`)
 		if pat.MatchString(mainGo) {
 			errs = append(errs, fmt.Errorf("判据⑥ 破：真源写 `itask %s` 写面未开放，命令树里却有 `%s set` 子命令", v, v))
 		}
+	}
+	// ⑤′ 已开放的写面（interval set）**正控**：命令树里必须真有这条 + 走自家确认档门 + 危险档点名自己的 POST 端点。
+	if !regexp.MustCompile(`\[\]string\{"itask",\s*"interval",\s*"set"\}`).MatchString(mainGo) {
+		errs = append(errs, fmt.Errorf("判据⑥ 破：`itask interval` 的 POST 写面已开放，命令树里却没有 `itask interval set` 子命令（正控）"))
+	}
+	if !strings.Contains(mainGo, "POST /api/internal-tasks/{id}/interval") {
+		errs = append(errs, fmt.Errorf("判据⑥ 破：已开放的写面 `itask interval set` 的危险档没点名端点 POST /api/internal-tasks/{id}/interval"))
+	}
+	if !strings.Contains(mainGo, "cmdItaskIntervalSetGuarded") {
+		errs = append(errs, fmt.Errorf("判据⑥ 破：`itask interval set` 没走自家确认档门 cmdItaskIntervalSetGuarded（危险档失守）"))
+	}
+	if !strings.Contains(familyItask, "func cmdItaskIntervalSetGuarded") {
+		errs = append(errs, fmt.Errorf("判据⑥ 破：family_itask.go 里没有 cmdItaskIntervalSetGuarded 的实现"))
 	}
 	return errs
 }
@@ -524,7 +547,7 @@ func TestAdoptRetireItaskCriteriaHold(t *testing.T) {
 		t.Errorf("判据⑥ 破（%d 处）：\n  %s", len(errs), joinErrs(errs))
 	} else {
 		t.Logf("判据⑥ ✓ `itask` 7 条命令路径逐条在命令树里 · 9 条端点逐条有命令映射" +
-			"（4 条只读在实现件里命中 · 3 条写面点名自己的 POST 端点且走确认档门 `*Guarded` · 2 条写面未开放且命令树里零 `set` 子命令）")
+			"（4 条只读在实现件里命中 · 3 条写面点名自己的 POST 端点且走确认档门 `*Guarded` · 1 条写面未开放（mode · 命令树里零 `mode set`）· `interval` 的 POST 已开放 ⇒ 命令树里必须有 `itask interval set`（正控））")
 	}
 }
 
@@ -602,6 +625,15 @@ func TestAdoptRetireJudgeHasTeeth(t *testing.T) {
 	if len(judgeARItask(root, bad8, fake, fam)) == 0 {
 		t.Errorf("负控⑧ 失败：未开放的写面被塞了子命令，itask 判据没报")
 	}
+	// 负控 ⑨（P0 #232 加强后的负控仍有牙）：把**已开放**的 `itask interval set` 子命令从命令树里删掉 ⇒
+	//   ⑤′ 正控必须报（「必须出现」不是恒真断言）。
+	cut := strings.Replace(mainGo, `[]string{"itask", "interval", "set"}`, `[]string{"itask", "interval"}`, 1)
+	if cut == mainGo {
+		t.Fatal("负控⑨ 前置不成立：mainGo 里找不到 `[]string{\"itask\", \"interval\", \"set\"}`（命令树没登记？）")
+	}
+	if len(judgeARItask(root, d, cut, fam)) == 0 {
+		t.Errorf("负控⑨ 失败：删掉已开放的 `itask interval set` 子命令，⑤′ 正控没报（假绿）")
+	}
 }
 
 // cloneAR —— 负控用：把真源过一遍 JSON 克隆（值语义复制，改副本不碰真件）。
@@ -675,4 +707,76 @@ func joinErrs(errs []error) string {
 		parts = append(parts, e.Error())
 	}
 	return strings.Join(parts, "\n  ")
+}
+
+// TestAdoptRetireItaskIntervalSetFourStates —— 判据⑥ 正控加强的**四态真跑**（P0 #232 第三面 · 2026-10-08）：
+// `zerg itask interval set` 这条**已开放**的 D2 写面，从**当前源码现编**（`zergBinaryFromSource` · ✗ 不碰 `bin/`）
+// 逐态真跑四态：
+//
+//	① 裸跑（缺确认档）⇒ rc=2 · stdout 0 字节（**零写**：确认档前不落任何状态）；
+//	② `--dry-run`    ⇒ rc=0 · 出计划件（零副作用）；
+//	③ `--yes`（确认档齐 · 对**合成主控**）⇒ rc=0 · 主控收到 POST `/api/internal-tasks/{id}/interval` 逐字体
+//	   `{"hours":6}` · 回读 GET `/api/internal-tasks/intervals` 报出**落地值**（落地值回读）；
+//	④ 坏值 `--hours abc` ⇒ rc=2 · stdout 0 字节（**零写**）。
+//
+// ★ 本测试**不用活主控**（`ZERG_PORT` 指本机合成 server）· **不碰真状态目录**（真写那一态只打合成 server）。
+func TestAdoptRetireItaskIntervalSetFourStates(t *testing.T) {
+	bin := zergBinaryFromSource(t)
+
+	var gotPath, gotBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/internal-tasks/health-check/interval":
+			b, _ := io.ReadAll(r.Body)
+			gotPath, gotBody = r.URL.Path, string(b)
+			w.WriteHeader(200)
+			fmt.Fprint(w, `{"success":true,"id":"health-check","hours":6,"message":"ok","state":{}}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/internal-tasks/intervals":
+			w.WriteHeader(200)
+			fmt.Fprint(w, `{"intervals":{"health-check":6},"note":"","state":{}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	port := strconv.Itoa(srv.Listener.Addr().(*net.TCPAddr).Port)
+
+	run := func(argv ...string) (int, string, string) {
+		cmd := exec.Command(bin, argv...)
+		cmd.Env = append(os.Environ(), "ZERG_PORT="+port, "ZERG_HOST=testhost")
+		cmd.Stdin = strings.NewReader("")
+		var out, errb strings.Builder
+		cmd.Stdout, cmd.Stderr = &out, &errb
+		rc := 0
+		if err := cmd.Run(); err != nil {
+			var ee *exec.ExitError
+			if errors.As(err, &ee) {
+				rc = ee.ExitCode()
+			} else {
+				t.Fatalf("起不了现编二进制：%v", err)
+			}
+		}
+		return rc, out.String(), errb.String()
+	}
+
+	if rc, out, _ := run("itask", "interval", "set", "health-check", "--hours", "6"); rc != 2 || out != "" {
+		t.Errorf("① 裸跑：rc=%d（要 2）· stdout=%q（要空 —— 零写）", rc, out)
+	}
+	if rc, out, _ := run("itask", "interval", "set", "health-check", "--hours", "6", "--dry-run"); rc != 0 || !strings.Contains(out, "计划件") {
+		t.Errorf("② --dry-run：rc=%d（要 0）· stdout 里没计划件：%q", rc, out)
+	}
+	gotPath, gotBody = "", ""
+	rc, out, errb := run("itask", "interval", "set", "health-check", "--hours", "6", "--confirm=testhost", "--yes")
+	if rc != 0 {
+		t.Errorf("③ --yes：rc=%d（要 0）· stderr=%s", rc, errb)
+	}
+	if gotPath != "/api/internal-tasks/health-check/interval" || gotBody != `{"hours":6}` {
+		t.Errorf("③ 合成主控收到的请求不对：path=%q body=%q（要 path=/api/internal-tasks/health-check/interval · body={\"hours\":6}）", gotPath, gotBody)
+	}
+	if !strings.Contains(out, "6") {
+		t.Errorf("③ 落地值回读没报出 6：stdout=%q", out)
+	}
+	if rc, out, _ := run("itask", "interval", "set", "health-check", "--hours", "abc"); rc != 2 || out != "" {
+		t.Errorf("④ 坏值：rc=%d（要 2）· stdout=%q（要空 —— 零写）", rc, out)
+	}
 }

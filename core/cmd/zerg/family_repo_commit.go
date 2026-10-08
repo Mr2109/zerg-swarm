@@ -187,41 +187,9 @@ func cmdRepoCommit(inv *invocation, stdout, stderr io.Writer) int {
 		return rc
 	}
 
-	// ④ **过快速档才放行**（在暂存之前跑 ⇒ 被拦下时索引面逐字未动）
-	// ★ 2026-09-27（缺口 `GAP-20260927-434` · 与 `gate run` 那一支同形）：原来目录名按**秒级**时间戳拼 +
-	//   `MkdirAll` 复用同名目录 ⇒ 同一秒内两次提交**共用同一处**日志目录；门禁脚本按 `--outdir` 读回
-	//   `results.tsv` 数失败数（`report`）⇒ 后一次会把前一次落的表算成自己的（**陈旧判决回读**：
-	//   这一轮没落表时「不许当绿」被旧表绕开）。
-	//   改成 `MkdirTemp`：名字前缀带**纳秒**时间戳（给人看的时序）、后缀由它加一段随机串，且**原子新建**
-	//   —— 目录必是**本次调用新建的空目录** ⇒ 这一轮没落表就一定读不回（不靠 mtime 一类脆判据，
-	//   也不与任何旧目录重名）。`logDirPattern` 不动：它是计划件里的**模式**（§九 M11 同一判据跑两遍必须一致）。
-	prefix := "zerg-repo-commit-" + time.Now().Format("20060102-150405.000000000") + "-"
-	logDir, mkErr := os.MkdirTemp(osTempRoot(), prefix+"*")
-	if mkErr != nil {
-		inv.setErr("failed", "logdir_failed", mkErr.Error())
-		fmt.Fprintf(stderr, "%s: 建不了门禁日志目录 %s：%v\n", progName, filepath.Join(os.TempDir(), prefix), mkErr)
-		return exitFail
-	}
-	gtRC, err := runFastGate(root, logDir, stderr)
-	if err != nil {
-		inv.setErr("failed", "gate_run_failed", err.Error())
-		fmt.Fprintf(stderr, "%s: 跑不动门禁脚本：%v\n", progName, err)
-		return exitFail
-	}
-	if gtRC != exitOK {
-		// **不给结论 ≠ 绿**：门禁 1（有失败项）/ 2（不给结论）都拦 ⇒ 退码直通。
-		if gtRC == exitFail {
-			inv.setErr("failed", "gate_failed", "快速档有失败项")
-		} else {
-			inv.setErr("usage", "gate_blocked", "快速档不给结论")
-		}
-		fmt.Fprintf(stderr, "%s: **快速档没过（rc=%d）⇒ 不提交**（索引面与工作树逐字未动 · 日志 %s）\n", progName, gtRC, logDir)
-		fmt.Fprintf(stderr, "复核：%s gate run --fast --outdir %s\n", progName, logDir)
-		return gtRC
-	}
-	fmt.Fprintf(stderr, "%s: 快速档 rc=0 ✓（日志 %s）⇒ 放行本次提交\n", progName, logDir)
-
-	// ⑤ 逐件暂存 + **复核暂存清单**（多一件 / 少一件都拒）
+	// ④ **逐件暂存 + 复核暂存清单**（缺口 `GAP-20260927-79`：闸取**索引面** ⇒ 物化索引前索引必须
+	//   先**含点名件** ⇒ 调序为「先 `git add` 再物化再跑闸」；被拦下时逐件 `git reset` 把索引面复原）。
+	// ★ 与旧序（闸在暂存之前）相反的理由：旧序跑闸时索引为空 ⇒ 物化索引只能见 HEAD ⇒ 看不见本次改动。
 	addArgs := append([]string{"add", "--"}, files...)
 	if _, err := gitRun(root, addArgs...); err != nil {
 		inv.setErr("failed", "git_add_failed", err.Error())
@@ -249,6 +217,56 @@ func cmdRepoCommit(inv *invocation, stdout, stderr io.Writer) int {
 		}
 		return exitUsage
 	}
+
+	// ④′ **物化索引 + 过快速档**（闸取**索引面**：物化树 = 本次要提交的内容）
+	// ★ 2026-09-27（缺口 `GAP-20260927-434` · 与 `gate run` 那一支同形）：原来目录名按**秒级**时间戳拼 +
+	//   `MkdirAll` 复用同名目录 ⇒ 同一秒内两次提交**共用同一处**日志目录；门禁脚本按 `--outdir` 读回
+	//   `results.tsv` 数失败数（`report`）⇒ 后一次会把前一次落的表算成自己的（**陈旧判决回读**：
+	//   这一轮没落表时「不许当绿」被旧表绕开）。
+	//   改成 `MkdirTemp`：名字前缀带**纳秒**时间戳（给人看的时序）、后缀由它加一段随机串，且**原子新建**
+	//   —— 目录必是**本次调用新建的空目录** ⇒ 这一轮没落表就一定读不回（不靠 mtime 一类脆判据，
+	//   也不与任何旧目录重名）。`logDirPattern` 不动：它是计划件里的**模式**（§九 M11 同一判据跑两遍必须一致）。
+	prefix := "zerg-repo-commit-" + time.Now().Format("20060102-150405.000000000") + "-"
+	logDir, mkErr := os.MkdirTemp(osTempRoot(), prefix+"*")
+	if mkErr != nil {
+		inv.setErr("failed", "logdir_failed", mkErr.Error())
+		fmt.Fprintf(stderr, "%s: 建不了门禁日志目录 %s：%v\n", progName, filepath.Join(os.TempDir(), prefix), mkErr)
+		return exitFail
+	}
+	matRoot, mErr := materializeIndex(root)
+	if mErr != nil {
+		inv.setErr("blocked", "index_materialize_failed", mErr.Error())
+		fmt.Fprintf(stderr, "%s: **物化索引失败：%v ⇒ 不给结论（退码 8 · 绝不静默回落到工作树面）**\n", progName, mErr)
+		if rc := resetStagedPaths(root, files, stderr); rc != exitOK {
+			fmt.Fprintf(stderr, "%s: ⚠ 索引面复原失败 ⇒ 逐件暂存仍在：%s\n", progName, strings.Join(staged, " · "))
+		}
+		return exitBlocked
+	}
+	gtRC, err := runFastGate(root, matRoot, logDir, stderr)
+	removeMaterialized(matRoot)
+	if err != nil {
+		inv.setErr("failed", "gate_run_failed", err.Error())
+		fmt.Fprintf(stderr, "%s: 跑不动门禁脚本：%v\n", progName, err)
+		return exitFail
+	}
+	if gtRC != exitOK {
+		// **不给结论 ≠ 绿**：门禁 1（有失败项）/ 2（不给结论）都拦 ⇒ 退码直通；**被拦下 ⇒ 索引面复原**。
+		restored := resetStagedPaths(root, files, stderr) == exitOK
+		if gtRC == exitFail {
+			inv.setErr("failed", "gate_failed", "快速档有失败项")
+		} else {
+			inv.setErr("usage", "gate_blocked", "快速档不给结论")
+		}
+		if !restored {
+			inv.setErr("failed", "unstage_failed", "被拦下但索引面复原失败")
+			fmt.Fprintf(stderr, "%s: **快速档没过（rc=%d · 索引面）⇒ 不提交**（⚠ 索引面复原失败 ⇒ 逐件暂存仍在 · 日志 %s）\n", progName, gtRC, logDir)
+			return gtRC
+		}
+		fmt.Fprintf(stderr, "%s: **快速档没过（rc=%d · 索引面）⇒ 不提交**（索引面与工作树逐字未动 · 日志 %s）\n", progName, gtRC, logDir)
+		fmt.Fprintf(stderr, "复核：%s gate run --fast --outdir %s\n", progName, logDir)
+		return gtRC
+	}
+	fmt.Fprintf(stderr, "%s: 快速档 rc=0 ✓（**索引面** · 日志 %s）⇒ 放行本次提交\n", progName, logDir)
 
 	// ⑥ 提交（信息走临时件 ⇒ 不经过 shell 转义；**不加 `--no-verify`**）
 	msgPath := filepath.Join(logDir, "commit-message.txt")
@@ -315,8 +333,89 @@ func osTempRoot() string {
 	return os.TempDir()
 }
 
+// ═══════════ 提交闸取「索引面」：物化索引（缺口 `GAP-20260927-79` · 2026-10-08）═══════════
+//
+// 病根（现读坐实）：提交闸对**工作树**取证而非**索引面** —— 31/31 快档步内容面取自工作树、0/31
+// 取自索引 ⇒ **未跟踪件 / 未暂存件会替提交者变绿**（假绿）。
+//
+// 修法（逐字照 want）：跑闸前 `git checkout-index -a -f --prefix=<仓外同级临时目录>/` **物化索引**，
+// 再以 `ZERG_GATE_REPO_ROOT=<该目录>` 跑闸（`scripts/gates/precommit-gates.sh:196` 的**专用旋钮** ——
+// 本件零改闸脚本）。★ 明确**排除 `git archive HEAD`**：HEAD ≠ 索引 ⇒ 对 HEAD 取证同样会给假绿。
+//
+// ★ 物化树里补一枚 `.git` 符号链接（指向真仓 `.git`）：门82（hooksPath 挂载链）等**依赖 `.git`**
+// 的步在物化树里跑 —— 没有 `.git` 时 `git config --local core.hooksPath` 读不到 ⇒ 判红（实测）。
+// 门禁步全体只读 ⇒ 只读共享真 `.git`，不写仓。移除时**先摘链接再删目录**（`os.RemoveAll` 不跟链，
+// 但显式摘更稳）。物化失败 ⇒ 调用方按**不给结论**（退 8）处置，绝不静默回落到工作树面。
+//
+//	★ 另补一枚 `bin` 符号链接（→ 真仓 `bin/`）：`bin/` **未跟踪** ⇒ 物化树里没有它，而门跑面有
+//	**依赖已建制品**的步（矩阵两档档位判据 / `check-gap-ledger-view` 导出器守卫）⇒ 缺它假红；
+//	同 `.git` 那条（依赖非索引件就补链）。
+func materializeIndex(root string) (string, error) {
+	dir, err := os.MkdirTemp(filepath.Dir(root), ".zerg-gate-idx-*")
+	if err != nil {
+		return "", err
+	}
+	prefix := dir + string(os.PathSeparator)
+	if _, err := gitRun(root, "checkout-index", "-a", "-f", "--prefix="+prefix); err != nil {
+		_ = os.RemoveAll(dir)
+		return "", err
+	}
+	if err := os.Symlink(filepath.Join(root, ".git"), filepath.Join(dir, ".git")); err != nil {
+		_ = os.RemoveAll(dir)
+		return "", err
+	}
+	// ★ 再补一枚 `bin` 链接（→ 真仓 `bin/`）—— 与 `.git` 同一条理由，且**必须**补：
+	//   `bin/` **未被 git 跟踪** ⇒ 物化树（只含索引里的件）里**没有它** ⇒ 门跑面里**依赖已建制品**的步
+	//   会假红：`core: 受影响包 go test` 的两档矩阵判据（`cli_matrix_test.go` 以「仓根有没有 `bin/`」
+	//   定 local/public 档 —— 物化树缺 `bin/` ⇒ 被判成公开面档 ⇒ 7 条两档格全判不过）与
+	//   `check-gap-ledger-view --self-test`（导出器在盘守卫拿 `<root>/bin/zerg` ⇒ 缺它整片 rc=2）。
+	//   实测：物化树给 `bin` 链接后，两层 go 测试面全绿；`bin/` 本就没建（真仓没建过）= 缺件，照旧由门跑
+	//   按缺件处置 ⇒ 不建链接。
+	if st, err := os.Stat(filepath.Join(root, "bin")); err == nil && st.IsDir() {
+		if err := os.Symlink(filepath.Join(root, "bin"), filepath.Join(dir, "bin")); err != nil {
+			_ = os.RemoveAll(dir)
+			return "", err
+		}
+	}
+	return dir, nil
+}
+
+// removeMaterialized —— 自回收物化树（先摘 `.git` / `bin` 两枚链接再删目录）。
+func removeMaterialized(dir string) {
+	if dir == "" {
+		return
+	}
+	_ = os.Remove(filepath.Join(dir, ".git"))
+	_ = os.Remove(filepath.Join(dir, "bin"))
+	_ = os.RemoveAll(dir)
+}
+
+// gateEnv —— 在现环境上叠加 `ZERG_GATE_REPO_ROOT`（物化树）：闸脚本据此**自动改面**（REPO_ROOT）。
+func gateEnv(matRoot string) []string {
+	env := os.Environ()
+	if matRoot != "" {
+		env = append(env, "ZERG_GATE_REPO_ROOT="+matRoot)
+	}
+	return env
+}
+
+// resetStagedPaths —— **被拦下时复原索引面**（逐件 `git reset -q -- <路径…>`）：调序后索引面在跑闸前
+// 已含点名件 ⇒ 拦住/不给结论时必须把它**复原**，否则违背「被拦下时索引面与工作树逐字未动」。
+// 复原失败 ⇒ 照实出声并退非 0（判决照旧，但**不许谎称「索引面未动」**）。
+func resetStagedPaths(root string, paths []string, stderr io.Writer) int {
+	if len(paths) == 0 {
+		return exitOK
+	}
+	if _, err := gitRun(root, append([]string{"reset", "-q", "--"}, paths...)...); err != nil {
+		fmt.Fprintf(stderr, "  ⚠ 撤销暂存失败（索引面留在暂存态）：%v\n", err)
+		return exitFail
+	}
+	return exitOK
+}
+
 // runFastGate —— 跑快速档（**退码直通**：不翻译、不吞输出）。
-func runFastGate(root, logDir string, stderr io.Writer) (int, error) {
+// `matRoot` = 物化索引树（缺口 `GAP-20260927-79`）：闸取**索引面**而非工作树。
+func runFastGate(root, matRoot, logDir string, stderr io.Writer) (int, error) {
 	script := filepath.Join(root, "scripts/gates/precommit-gates.sh")
 	if _, err := os.Stat(script); err != nil {
 		return exitBlocked, fmt.Errorf("门禁最小入口不在（%s）", script)
@@ -325,6 +424,7 @@ func runFastGate(root, logDir string, stderr io.Writer) (int, error) {
 	runningChild = cmd
 	defer func() { runningChild = nil }()
 	cmd.Dir = root
+	cmd.Env = gateEnv(matRoot)
 	cmd.Stdout, cmd.Stderr = stderr, stderr
 	if err := cmd.Run(); err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
@@ -711,7 +811,16 @@ func repoCommitOnly(inv *invocation, stdout, stderr io.Writer, paths []string, m
 		return rc
 	}
 
-	// ④ 快速档（**在提交之前跑** ⇒ 被拦下时索引面与工作树逐字未动）；红时给归因三格 + 例外旗标判定。
+	// ④ **先暂存点名件**（缺口 `GAP-20260927-79`：闸取**索引面** ⇒ 物化索引前索引须含点名件）。
+	//   ★ 旧序对未跟踪新件**只**做 `git add -N` 意图登记 ⇒ 索引里没有内容 ⇒ 物化索引看不见改动；
+	//     调序为「先 `git add` 再物化再跑闸」；被拦下时逐件 `git reset` 复原（别人的暂存一枚不动）。
+	if _, err := gitRun(root, append([]string{"add", "--"}, matched...)...); err != nil {
+		inv.setErr("failed", "git_add_failed", err.Error())
+		fmt.Fprintf(stderr, "%s: `git add` 失败（暂存点名件）：%v ⇒ 不提交\n", progName, err)
+		return exitFail
+	}
+
+	// ④′ **物化索引 + 跑快速档**（闸取**索引面**：物化树 = 本次要落的内容）；红时给归因三格 + 例外旗标判定。
 	// ★ 2026-09-27（缺口 `GAP-20260927-434` · 与 `gate run` 那一支同形）：原来目录名按**秒级**时间戳拼 +
 	//   `MkdirAll` 复用同名目录 ⇒ 同一秒内两次提交**共用同一处**日志目录；门禁脚本按 `--outdir` 读回
 	//   `results.tsv` 数失败数（`report`）⇒ 后一次会把前一次落的表算成自己的（**陈旧判决回读**）。
@@ -725,7 +834,17 @@ func repoCommitOnly(inv *invocation, stdout, stderr io.Writer, paths []string, m
 		fmt.Fprintf(stderr, "%s: 建不了门禁日志目录 %s：%v\n", progName, filepath.Join(os.TempDir(), prefix), mkErr)
 		return exitFail
 	}
-	gtRC, gtOut, err := runFastGateCapture(root, logDir)
+	matRoot, mErr := materializeIndex(root)
+	if mErr != nil {
+		inv.setErr("blocked", "index_materialize_failed", mErr.Error())
+		fmt.Fprintf(stderr, "%s: **物化索引失败：%v ⇒ 不给结论（退码 8 · 绝不静默回落到工作树面）**\n", progName, mErr)
+		if rc := resetStagedPaths(root, matched, stderr); rc != exitOK {
+			fmt.Fprintf(stderr, "%s: ⚠ 索引面复原失败 ⇒ 逐件暂存仍在：%s\n", progName, strings.Join(matched, " · "))
+		}
+		return exitBlocked
+	}
+	gtRC, gtOut, err := runFastGateCapture(root, matRoot, logDir)
+	removeMaterialized(matRoot)
 	if err != nil {
 		inv.setErr("failed", "gate_run_failed", err.Error())
 		fmt.Fprintf(stderr, "%s: 跑不动门禁脚本：%v\n", progName, err)
@@ -817,23 +936,19 @@ func repoCommitOnly(inv *invocation, stdout, stderr io.Writer, paths []string, m
 			}
 			fmt.Fprintf(stderr, "  归因：步名逐字见上面门禁原样输出 · 日志目录 %s · 复核命令 `bash scripts/gates/precommit-gates.sh --fast --outdir %s`\n", logDir, logDir)
 			fmt.Fprintf(stderr, "  合法出口三个：① 等并行写者收工后重跑 ② 按日志逐条复核 ③ 确需人签例外 ⇒ `--waive <步名> --reason <…> --yes`（**进审计**）\n")
+			// 缺口 `GAP-20260927-79`：调序后索引面在跑闸前已含点名件 ⇒ **被拦下必须复原**（别人的暂存一枚不动）。
+			if rrc := resetStagedPaths(root, matched, stderr); rrc != exitOK {
+				fmt.Fprintf(stderr, "%s: ⚠ 索引面复原失败 ⇒ 逐件暂存仍在：%s\n", progName, strings.Join(matched, " · "))
+			}
 			return gtRC
 		}
 	} else {
-		fmt.Fprintf(stderr, "%s: 快速档 rc=0 ✓（日志 %s）⇒ 放行本次提交\n", progName, logDir)
+		fmt.Fprintf(stderr, "%s: 快速档 rc=0 ✓（**索引面** · 日志 %s）⇒ 放行本次提交\n", progName, logDir)
 	}
 
-	// ⑤ 提交：**不 add**（只对**未跟踪的新件**做 `git add -N` 意图登记 —— git 硬要求，见 ②′），
-	// pathspec 走 argv（`exec.Command` 经 fork/exec、不经 `sh -c`）。
-	if len(untracked) > 0 {
-		if _, err := gitRunWrite(root, append([]string{"add", "--intent-to-add", "--"}, untracked...)...); err != nil {
-			inv.setErr("failed", "intent_add_failed", err.Error())
-			fmt.Fprintf(stderr, "%s: 新件意图登记失败（`git add -N`）：%v ⇒ 不提交\n", progName, err)
-			return exitFail
-		}
-		fmt.Fprintf(stderr, "%s: 新件意图登记 %d 件（`git add -N`：只记路径、不写内容、不动别人暂存）：%s\n",
-			progName, len(untracked), strings.Join(untracked, " · "))
-	}
+	// ⑤ 提交：点名件已在 ④ **暂存**（缺口 `GAP-20260927-79` 调序 —— 物化索引须先含内容；不再需要
+	// `git add -N` 意图登记）；pathspec 走 argv（`exec.Command` 经 fork/exec、不经 `sh -c`）。
+	// `git commit --only` 仍**只落点名件**（别人的暂存件原样保留）。
 	msgPath := filepath.Join(logDir, "commit-message.txt")
 	if err := os.WriteFile(msgPath, []byte(msg), 0o600); err != nil {
 		inv.setErr("failed", "message_write_failed", err.Error())
@@ -950,7 +1065,8 @@ func commitExcludedNote(excluded []string) string {
 
 // runFastGateCapture 跑快速档并**捕获输出**（照实打回；退码直通不翻译）。
 // 与 `runFastGate` 同一份口径（同一条命令、同一个 `logDir`），差别只在把 stdout/stderr 收回来判归因。
-func runFastGateCapture(root, logDir string) (int, string, error) {
+// `matRoot` = 物化索引树（缺口 `GAP-20260927-79`）：闸取**索引面**而非工作树。
+func runFastGateCapture(root, matRoot, logDir string) (int, string, error) {
 	script := filepath.Join(root, "scripts/gates/precommit-gates.sh")
 	if _, err := os.Stat(script); err != nil {
 		return exitBlocked, "", fmt.Errorf("门禁最小入口不在（%s）", script)
@@ -959,6 +1075,7 @@ func runFastGateCapture(root, logDir string) (int, string, error) {
 	runningChild = cmd
 	defer func() { runningChild = nil }()
 	cmd.Dir = root
+	cmd.Env = gateEnv(matRoot)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
