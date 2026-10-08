@@ -3215,7 +3215,7 @@ func init() {
 		{
 			path:        []string{"sandbox", "probe"},
 			layer:       "host",
-			summary:     "沙箱探针（`conn_jit` / `jitprobe` / `lx2-linux` / `miniprobe` · 底层只调 scripts/sandbox-probes/<名>.py —— 命令面不重写逻辑）",
+			summary:     "虫卵探针（`conn_jit` / `jitprobe` / `lx2-linux` / `miniprobe` · 底层只调 scripts/sandbox-probes/<名>.py —— 命令面不重写逻辑）",
 			usage:       "zerg sandbox probe <conn_jit|jitprobe|lx2-linux|miniprobe> [<透传旗标…>]",
 			arity:       "any",
 			args:        []string{"探针名（逐字 · 见用法串的闭集）", "旗标与退码逐字来自 scripts/sandbox-probes/<名>.py（原样透传）"},
@@ -3248,7 +3248,7 @@ func init() {
 		{
 			path:    []string{"sandbox", "test"},
 			layer:   "host",
-			summary: "沙箱验收夹具（**未接**：`test <fleet|relay|setup|update>` 归批3 —— 依赖被测件正门 + 夹具环境）",
+			summary: "虫卵验收夹具（**未接**：`test <fleet|relay|setup|update>` 归批3 —— 依赖被测件正门 + 夹具环境）",
 			usage:   "zerg sandbox test <fleet|relay|setup|update>",
 			arity:   "any",
 			refuses: true,
