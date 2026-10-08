@@ -340,6 +340,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 	if inv.hasFlag("--include-open") && !usageDeclaresFlag(cmd, "--include-open") {
 		inv.unknown = append(inv.unknown, "--include-open")
 	}
+	// ★ 同一条数据驱动收口（P0 #232 · 2026-10-08）：`--hours` 在解析面刚上户口（`valueFlagName`）⇒ 全族共用；
+	//   若不在此收口，别族（usage 未列它的命令）真给 `--hours` 会从「未知旗标 2」退化成**静默吞**
+	//   （硬约束⑤：既有命令的退码与输出一字不动）。形状逐字照拄上面 `--top` 那条。
+	if inv.hasFlag("--hours") && !usageDeclaresFlag(cmd, "--hours") {
+		inv.unknown = append(inv.unknown, "--hours")
+	}
 	if len(inv.unknown) > 0 && !cmd.passthrough {
 		fmt.Fprintf(stderr, "%s: 未知旗标 %q\n", progName, inv.unknown[0])
 		fmt.Fprintf(stderr, "See '%s --help'。\n", progName)
@@ -1889,11 +1895,24 @@ func init() {
 		{
 			path:     []string{"itask", "interval"},
 			kind:     "InternalTaskInterval",
-			summary:  "周期现值（只读面；写面 `itask interval set` 未开放）",
+			summary:  "周期现值（只读面；写面 `itask interval set` 已开放 · 见下条三格）",
 			usage:    "zerg itask interval [--json <字段>]",
 			fields:   []string{"intervals", "note", "state"},
 			endpoint: "GET /api/internal-tasks/intervals",
 			run:      cmdItaskInterval,
+		},
+		{
+			path:     []string{"itask", "interval", "set"},
+			kind:     "InternalTaskIntervalSet",
+			summary:  "设内部任务周期（D2 写面 · `--dry-run` 零副作用 · 缺 `--confirm=<本机名>`/`--yes` ⇒ 2 · 给 `all` 则逐条设）",
+			usage:    "zerg itask interval set <任务|all> --hours N [--dry-run | --confirm=<本机名> --yes] [--json <字段>]",
+			arity:    "any",
+			args:     []string{"任务 id（照 `itask ls` 的 id 那一格，或 `all` 逐条设）"},
+			fields:   []string{"id", "hours", "landed", "message"},
+			danger:   &dangerSpec{dangerD2, "本机名", "把该内部任务的循环周期设成 --hours N 小时（**持久化**到 intervals.json —— 0 = 取消；主控 goroutine 每 60s 检查到点）—— 可逆：再设回旧周期即回原态", "§7.1 P8 · §5.1 POST /api/internal-tasks/{id}/interval · 同族写面先例 `itask stop`（D2 + --confirm + --yes）", true},
+			opened:   true,
+			endpoint: "POST /api/internal-tasks/{id}/interval",
+			run:      cmdItaskIntervalSetGuarded,
 		},
 		{
 			path:    []string{"itask", "start"},
@@ -4280,6 +4299,14 @@ func valueFlagName(a string) string {
 		//   `family_gap*.go` 里判（读者由 R2 同批落）。★ 名字表是本仓「唯一真源」⇒ 不登记就
 		//   一律退 2「未知旗标」= 新旗标等于不可用（同族先例逐字同上）。用法串与本表**必须同改**（门73）。
 		"--gate-step", "--log-path", "--rc", "--supersede":
+		return a
+	}
+	// 内部任务周期写面旗标（P0 #232 · 2026-10-08 · 本枚 · **只增**）：`itask interval set <任务|all> --hours N`。
+	// 与上面各排同一口径 —— 值照收，语义在 `cmdItaskIntervalSetGuarded` 里判。
+	// ★ 名字表是本仓「唯一真源」⇒ 不登记就一律退 2「未知旗标」= 新旗标等于不可用；配套 dispatch 收口
+	//   （不归本命令的那一枚补回 `inv.unknown`，既有命令一字不动）。
+	switch a {
+	case "--hours":
 		return a
 	}
 	return ""
