@@ -152,8 +152,8 @@ func TestCheckNewfileRegistryGatePort(t *testing.T) {
 	}
 	// 成对（写面的牙）：加 --yes 才真落 + 逐字保留「基线已写：%s（%d 件）」
 	rcDY, outDY, _ := gnrRunT(t, "--repo", fx, "--dump-baseline", dump, "--yes")
-	if rcDY != 0 || !strings.Contains(outDY, "基线已写：") || !strings.Contains(outDY, "（7 件）") {
-		t.Fatalf("--dump-baseline --yes 失败：应 rc=0 且逐字打印『基线已写：…（7 件）』，得 rc=%d out=%s", rcDY, outDY)
+	if rcDY != 0 || !strings.Contains(outDY, "基线已写：") || !strings.Contains(outDY, "（6 件）") {
+		t.Fatalf("--dump-baseline --yes 失败：应 rc=0 且逐字打印『基线已写：…（6 件）』，得 rc=%d out=%s", rcDY, outDY)
 	}
 	if _, err := os.Stat(dump); err != nil {
 		t.Fatalf("--dump-baseline --yes 失败：应真落盘，得 %v", err)

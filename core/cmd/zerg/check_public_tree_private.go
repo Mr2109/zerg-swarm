@@ -455,34 +455,18 @@ func cptpLoadWhitelist(path string) []string {
 	return out
 }
 
-// cptpLoadExcludes = hsec.load_excludes：解析 publish-public.sh 的 `EXCLUDES=( ... \n)` 数组。
+// cptpLoadExcludes = hsec.load_excludes：读行式排除表真源 `publish/excludes.txt`（切源 2026-10-08 ·
+// `GAP-20260926-223` 账[3]）。行口径 = 唯一 Go 解析件 `excludes_rules.go::parseExcludesRules`
+// （strip 传本件原 `cptpPyStrip`）。缺件 / 读不到 ⇒ 空切片（调用方据 len==0 fail-closed）。
 func cptpLoadExcludes(path string) []string {
-	var ex []string
 	if !cptpExists(path) {
-		return ex
+		return []string{}
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return ex
+		return []string{}
 	}
-	re := regexp.MustCompile(`(?s)EXCLUDES=\((.*?)\n\)`)
-	m := re.FindStringSubmatch(string(b))
-	if m == nil {
-		return ex
-	}
-	for _, raw := range strings.Split(m[1], "\n") {
-		line := cptpPyStrip(raw)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		line = cptpPyStrip(strings.Split(line, "#")[0])
-		line = cptpPyStripSet(line, `"`)
-		line = cptpPyStripSet(line, `'`)
-		if line != "" {
-			ex = append(ex, line)
-		}
-	}
-	return ex
+	return parseExcludesRules(strings.Split(string(b), "\n"), cptpPyStrip)
 }
 
 // cptpPublishedPath = hsec.published_path。
@@ -499,7 +483,7 @@ func cptpPublishedPath(rel string, entries []string) bool {
 	return false
 }
 
-// cptpExcluded = hsec.excluded（噪声后缀 · __pycache__ 段 · EXCLUDES 目录/精确项）。
+// cptpExcluded = hsec.excluded（噪声后缀 · __pycache__ 段 · 排除表命中 = `excludesRulesMatch`）。
 func cptpExcluded(rel string, ex []string) bool {
 	if strings.HasSuffix(rel, ".bak") || strings.HasSuffix(rel, ".orig") || strings.HasSuffix(rel, ".rej") {
 		return true
@@ -509,12 +493,7 @@ func cptpExcluded(rel string, ex []string) bool {
 			return true
 		}
 	}
-	for _, e := range ex {
-		if rel == e || strings.HasPrefix(rel, strings.TrimRight(e, "/")+"/") {
-			return true
-		}
-	}
-	return false
+	return excludesRulesMatch(rel, ex)
 }
 
 func cptpHasPrefixAny(s string, prefixes []string) bool {
@@ -612,18 +591,18 @@ func cptpDocsAllowlist(cwd, repo string) cptpAllow {
 	return cptpDocsAllowlistWith(cwd, repo, "")
 }
 
-// cptpDocsAllowlistWith = py `docs_allowlist()`（`publishShOverride` ≠ "" ⇒ 取代 publish-public.sh 路径 ·
+// cptpDocsAllowlistWith = py `docs_allowlist()`（`excludesOverride` ≠ "" ⇒ 取代排除表路径 ·
 //
-//	等价 py 自检 ⑩ 里临时改全局 `PUBLISH_SH`）。
-func cptpDocsAllowlistWith(cwd, repo, publishShOverride string) cptpAllow {
+//	等价 py 自检 ⑩ 里临时改全局 `PUBLISH_SH` 的同构面）。
+func cptpDocsAllowlistWith(cwd, repo, excludesOverride string) cptpAllow {
 	base := cptpAllow{prefixes: cptpFormalFacePrefixes, exact: map[string]bool{},
 		prov: map[string]string{}, sourceMode: "-"}
 	mk := func(rel string) string { return cptpPyJoin(repo, rel) }
 	mirrorLib := mk("publish/mirror-public-lib.py")
 	whitelist := mk("publish/whitelist.txt")
-	publishSh := mk("scripts/build/publish-public.sh")
-	if publishShOverride != "" { // 自检 ⑩ 注入（py 改全局 PUBLISH_SH 的同构面）
-		publishSh = publishShOverride
+	excludesPath := mk("publish/excludes.txt")
+	if excludesOverride != "" { // 自检 ⑩ 注入（py 改全局 PUBLISH_SH 的同构面）
+		excludesPath = excludesOverride
 	}
 	historySecrets := mk("scripts/gates/check-history-secrets.py")
 	overlayDir := mk("publish/docs")
@@ -632,9 +611,9 @@ func cptpDocsAllowlistWith(cwd, repo, publishShOverride string) cptpAllow {
 	// 不要求该 py 在盘、不读其正文、不校四谓词（✗ 不 fail-closed）；镜像器那一路仍照旧。
 	hsecGoHalf := mk("core/cmd/zerg/check_history_secrets.go")
 	hsecRetired := !cptpExists(historySecrets) && cptpExists(hsecGoHalf)
-	must := []string{mirrorLib, whitelist, publishSh, historySecrets}
+	must := []string{mirrorLib, whitelist, excludesPath, historySecrets}
 	if hsecRetired {
-		must = []string{mirrorLib, whitelist, publishSh}
+		must = []string{mirrorLib, whitelist, excludesPath}
 	}
 	for _, p := range must {
 		if !cptpExists(p) {
@@ -666,10 +645,10 @@ func cptpDocsAllowlistWith(cwd, repo, publishShOverride string) cptpAllow {
 		}
 	}
 	entries := cptpLoadWhitelist(whitelist)
-	excludes := cptpLoadExcludes(publishSh)
+	excludes := cptpLoadExcludes(excludesPath)
 	if len(excludes) == 0 { // ★ 对齐 py `docs_allowlist` L158-161（GAP-20260927-192）：
-		//   EXCLUDES 块读不出 / 缺件 ⇒ 0 条活跃 ⇒ **不给结论**（fail-closed · Go 半此前无此守卫）。
-		base.err = "EXCLUDES 真源解析失配 / 0 条活跃（EXCLUDES=( … ) 块读不出或缺件）⇒ 不给结论 · GAP-20260927-192"
+		//   排除表读不出 / 缺件 ⇒ 0 条活跃 ⇒ **不给结论**（fail-closed · Go 半此前无此守卫）。
+		base.err = "排除表真源解析失配 / 0 条活跃（publish/excludes.txt 读不出或缺件）⇒ 不给结论 · GAP-20260927-192"
 		return base
 	}
 	dropExact := cptpParseStrSet(ms, "DROP_EXACT")
@@ -1187,9 +1166,9 @@ func cptpSelfTestBody(stdout io.Writer, repo, base string) int {
 	// ⑩ EXCLUDES 失配守卫（`GAP-20260927-192` · 对齐 py 自检 ⑩）：真源在盘但解析不出活跃条目
 	//   ⇒ `docs_allowlist` 必须报 error（成对：正控 = 真源正常时 ⑤ 已证 `exact ≥ 1` 且 error 空）。
 	badPsh := cptpPyJoin(base, "publish-sh-broken.sh")
-	_ = os.WriteFile(badPsh, []byte("# 没有 EXCLUDES=( … ) 块\nEXCLUDES_OK=1\n"), 0o644)
+	_ = os.WriteFile(badPsh, []byte("# 排除表全是注释 ⇒ 0 条活跃条目\n# no entries here\n\n"), 0o644)
 	a2 := cptpDocsAllowlistWith(cwd, repo, badPsh)
-	check("⑩ EXCLUDES 真源解析失配（无 EXCLUDES 块）⇒ docs_allowlist 报 error ⇒ 调用方 rc=2",
+	check("⑩ 排除表真源解析失配（全注释 ⇒ 0 条活跃）⇒ docs_allowlist 报 error ⇒ 调用方 rc=2",
 		a2.err != "", fmt.Sprintf("error=%s", a2.err))
 
 	extra := 1

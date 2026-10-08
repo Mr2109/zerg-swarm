@@ -90,10 +90,12 @@ import (
 	"strings"
 )
 
-// crsWhitelistRel / crsPublishShRel —— 两件登记面（仓内相对路径 · 逐字照 py）。
+// crsWhitelistRel / crsExcludesRel —— 两件登记面（仓内相对路径）。★ 切源 2026-10-08
+// （`GAP-20260926-223` 账[3]）：排除面由旧 `scripts/build/publish-public.sh` 的 `EXCLUDES=( … )`
+// 改指行式新表 `publish/excludes.txt`。
 const (
 	crsWhitelistRel = "publish/whitelist.txt"
-	crsPublishShRel = "scripts/build/publish-public.sh"
+	crsExcludesRel  = "publish/excludes.txt"
 )
 
 // crsClaimHead —— 说明块起始句（现读逐字；找不到 ⇒ rc=2）。
@@ -115,7 +117,6 @@ var (
 	crsDirShapeRE       = regexp.MustCompile(`^[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*/$`)
 	crsExtShapeRE       = regexp.MustCompile(`^[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*\.[A-Za-z0-9]{1,6}$`)
 	crsParenRE          = regexp.MustCompile(`（[^）]*）`)
-	crsExcludesRE       = regexp.MustCompile(`(?s)EXCLUDES=\((.*?)\n\)`)
 	crsTokenSplitRE     = regexp.MustCompile(`[\s、，]+`)
 	crsHasAlnumRE       = regexp.MustCompile(`[A-Za-z0-9]`)
 )
@@ -222,33 +223,18 @@ func crsLoadWhitelist(path string) []string {
 	return entries
 }
 
-// crsLoadExcludes —— py 复用的 `load_excludes`：`EXCLUDES=( … )` 数组内的活跃条目。
+// crsLoadExcludes —— 排除表真源（切源 2026-10-08 · `publish/excludes.txt` 行式）。
+// 行口径 = 唯一 Go 解析件 `excludes_rules.go::parseExcludesRules`（strip 传本件原 `strings.TrimSpace`）。
+// 缺件 / 读不到 ⇒ 空切片（调用方据 len==0 fail-closed）。
 func crsLoadExcludes(path string) []string {
-	ex := []string{}
 	if _, err := os.Stat(path); err != nil {
-		return ex
+		return []string{}
 	}
 	text, err := crsReadText(path)
 	if err != nil {
-		return ex
+		return []string{}
 	}
-	m := crsExcludesRE.FindStringSubmatch(text)
-	if m == nil {
-		return ex
-	}
-	for _, raw := range strings.Split(m[1], "\n") {
-		line := strings.TrimSpace(raw)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		line = strings.TrimSpace(strings.SplitN(line, "#", 2)[0])
-		line = strings.Trim(line, `"`)
-		line = strings.Trim(line, "'")
-		if line != "" {
-			ex = append(ex, line)
-		}
-	}
-	return ex
+	return parseExcludesRules(strings.Split(text, "\n"), strings.TrimSpace)
 }
 
 // crsPublishedPath —— py 复用的 `published_path`：目录条目按前缀、文件条目按等值。
@@ -394,21 +380,12 @@ func crsClaimTokens(blockLines []crsBlockLine) ([]crsToken, []crsToken) {
 	return judged, notJudged
 }
 
+// crsCoveredByExcludes —— 命中口径 = 唯一 Go 解析件 `excludes_rules.go::excludesRulesMatch`
+// （`token == e` 或 `token` 以 `e` 去尾 `/` + `/` 开头）。返回覆盖它的条目（✗ 无覆盖 ⇒ ""）。
 func crsCoveredByExcludes(token string, excludes []string) (string, bool) {
 	for _, e := range excludes {
-		if e == token {
-			return token, true
-		}
-	}
-	parent := ""
-	if idx := strings.LastIndex(strings.TrimRight(token, "/"), "/"); idx >= 0 {
-		parent = strings.TrimRight(token, "/")[:idx]
-	}
-	if parent != "" {
-		for _, e := range excludes {
-			if e == parent {
-				return parent, true
-			}
+		if token == e || strings.HasPrefix(token, strings.TrimSuffix(e, "/")+"/") {
+			return e, true
 		}
 	}
 	return "", false
@@ -419,7 +396,7 @@ func crsCoveredByExcludes(token string, excludes []string) (string, bool) {
 func crsAudit(root string) *crsResult {
 	res := &crsResult{}
 	wlPath := filepath.Join(root, crsWhitelistRel)
-	shPath := filepath.Join(root, crsPublishShRel)
+	shPath := filepath.Join(root, crsExcludesRel)
 
 	if _, err := os.Stat(wlPath); err != nil {
 		res.problems = append(res.problems, "白名单不在盘："+wlPath)
@@ -527,7 +504,7 @@ func crsAudit(root string) *crsResult {
 
 func crsPrintReport(stdout io.Writer, root string, res *crsResult, strict bool) int {
 	c := res.counts
-	fmt.Fprintln(stdout, "登记表 ↔ 盘上真物对拍 —— 域：`publish/whitelist.txt` × `scripts/build/publish-public.sh` 的 `EXCLUDES=( … )`")
+	fmt.Fprintln(stdout, "登记表 ↔ 盘上真物对拍 —— 域：`publish/whitelist.txt` × `publish/excludes.txt`（排除表行式真源）")
 	fmt.Fprintf(stdout, "仓：%s\n", root)
 	if c == nil {
 		for _, p := range res.problems {
@@ -854,7 +831,7 @@ func crsResolveRoot(arg string) string {
 		return start
 	}
 	for i := 0; i < 8; i++ {
-		if crsIsFile(filepath.Join(d, crsWhitelistRel)) && crsIsFile(filepath.Join(d, crsPublishShRel)) {
+		if crsIsFile(filepath.Join(d, crsWhitelistRel)) && crsIsFile(filepath.Join(d, crsExcludesRel)) {
 			return d
 		}
 		parent := filepath.Dir(d)
@@ -887,12 +864,9 @@ keep.txt
 # gone/ ← ★ 空指：盘上无此目录（夹具）
 `
 
-const crsFixturePublishSh = `#!/usr/bin/env bash
-# 合成 EXCLUDES（自检夹具）
-EXCLUDES=(
-  "gateway/fleet.yaml"
-  "sub/drop.txt"
-)
+const crsFixturePublishSh = `# 合成排除表（自检夹具 · publish/excludes.txt 行式真源 · 裸条目）
+gateway/fleet.yaml
+sub/drop.txt
 `
 
 func crsBuildFixture(tmp string) {
@@ -904,7 +878,7 @@ func crsBuildFixture(tmp string) {
 	_ = os.WriteFile(filepath.Join(tmp, "sub", "drop.txt"), []byte("drop\n"), 0o644)
 	_ = os.WriteFile(filepath.Join(tmp, "gateway", "fleet.yaml"), []byte("fleet\n"), 0o644)
 	_ = os.WriteFile(filepath.Join(tmp, "publish", "whitelist.txt"), []byte(crsFixtureWhitelist), 0o644)
-	_ = os.WriteFile(filepath.Join(tmp, "scripts", "build", "publish-public.sh"), []byte(crsFixturePublishSh), 0o644)
+	_ = os.WriteFile(filepath.Join(tmp, "publish", "excludes.txt"), []byte(crsFixturePublishSh), 0o644)
 }
 
 func crsSelfTest(stdout io.Writer) int {
@@ -925,16 +899,16 @@ func crsSelfTest(stdout io.Writer) int {
 		defer os.RemoveAll(tmp)
 		crsBuildFixture(tmp)
 		if mutate == "dangling" {
-			p := filepath.Join(tmp, "scripts", "build", "publish-public.sh")
+			p := filepath.Join(tmp, "publish", "excludes.txt")
 			if t, e := crsReadText(p); e == nil {
-				_ = os.WriteFile(p, []byte(strings.Replace(t, "\n)", "\n  \"never-existed/\"\n)", 1)), 0o644)
+				_ = os.WriteFile(p, []byte(t+"never-existed/\n"), 0o644)
 			}
 		}
 		if mutate == "uncovered" {
 			_ = os.WriteFile(filepath.Join(tmp, "loose.txt"), []byte("loose\n"), 0o644)
-			p := filepath.Join(tmp, "scripts", "build", "publish-public.sh")
+			p := filepath.Join(tmp, "publish", "excludes.txt")
 			if t, e := crsReadText(p); e == nil {
-				_ = os.WriteFile(p, []byte(strings.Replace(t, "\n)", "\n  \"loose.txt\"\n)", 1)), 0o644)
+				_ = os.WriteFile(p, []byte(t+"loose.txt\n"), 0o644)
 			}
 		}
 		if mutate == "claim" {

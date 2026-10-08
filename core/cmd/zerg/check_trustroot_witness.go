@@ -83,10 +83,16 @@ const (
 	twBaseKeyID = "8b69ad95939df5cf"
 )
 
-// twPublishExcludesSh / twPublishDropPy —— 两器排除声明件（仓内相对 · 逐字照 py）。
+// twExcludesRel / twPublishDropPy —— 两器排除声明件（仓内相对 · 逐字照 py）。
+// ★ 切源 2026-10-08（`GAP-20260926-223` 账[3]）：侧甲由旧 `scripts/build/publish-public.sh` 的
+// `EXCLUDES=( … )` 改指行式新表 `publish/excludes.txt`（无 `EXCLUDES=( … )` 分隔符 ⇒ **整件即表**）。
 var (
-	twPublishExcludesSh = path.Join("scripts", "build", "publish-public.sh")
-	twPublishDropPy     = path.Join("publish", "mirror-public-lib.py")
+	twExcludesRel   = path.Join("publish", "excludes.txt")
+	twPublishDropPy = path.Join("publish", "mirror-public-lib.py")
+	// twPublishExcludesShLegacy —— 旧真源（`EXCLUDES=( … )`）本体的锚**保留**：双源窗内旧数组
+	//   一字未删（步 3 才随弃用件删）⇒ 它的元素行仍是**合法声明**，仍须豁免（否则切源当天 W5 会把
+	//   旧数组里的声明行误判成「读副本」⇒ 假红）。步 3 删件后本锚自然成为空操作（文件不在 ⇒ 无区间）。
+	twPublishExcludesShLegacy = path.Join("scripts", "build", "publish-public.sh")
 )
 
 // twSourceGlobs —— 「运行路径」的扫描面。
@@ -94,15 +100,20 @@ var twSourceGlobs = []string{"core", "agent", "scripts", "publish"}
 
 // twTableAnchors —— W5 的唯一豁免锚（两器排除声明的表区间）。**切片对**保 py dict 插入序
 // （仅控制流；输出行序由末尾 `sorted()` 定，见遍历/排序点交代）。
+//
+// ★ 2026-10-08 切源：侧甲锚改指行式表 `publish/excludes.txt` —— 该表**无** `EXCLUDES=( … )`
+// 分隔符 ⇒ `wholeFile=true`（区间 = 整件 1..N）。侧乙仍是 `DROP_EXACT = { … }` 括号块。
 type twAnchorDef struct {
-	rel    string
-	opener string
-	closer string
+	rel       string
+	opener    string
+	closer    string
+	wholeFile bool
 }
 
 var twTableAnchors = []twAnchorDef{
-	{twPublishExcludesSh, "EXCLUDES=(", ")"},
-	{twPublishDropPy, "DROP_EXACT = {", "}"},
+	{twExcludesRel, "", "", true},
+	{twPublishExcludesShLegacy, "EXCLUDES=(", ")", false}, // 旧数组（步 3 删）· 双源窗内仍须豁免
+	{twPublishDropPy, "DROP_EXACT = {", "}", false},
 }
 
 // twRegistryRel —— W5 的第二豁免锚（登记表本体 · 首列点名）。
@@ -608,7 +619,7 @@ func twJudgePublicFace(copyLanded bool, excludesText, dropText, copyRel string) 
 	problems := []string{}
 	if !strings.Contains(excludesText, rel) {
 		problems = append(problems, fmt.Sprintf(
-			"W4 破：副本已落地，但 `%s` 的 `EXCLUDES` 里**没有**它（旧器会把它发出去）", twPublishExcludesSh))
+			"W4 破：副本已落地，但 `%s` 的排除表里**没有**它（旧器会把它发出去）", twExcludesRel))
 	}
 	if !strings.Contains(dropText, rel) {
 		problems = append(problems, fmt.Sprintf(
@@ -641,19 +652,26 @@ func twStripTrailingComment(s string) string {
 	return string(out)
 }
 
-// twIsExclusionElementLine —— py `is_exclusion_element_line`。
+// twIsExclusionElementLine —— py `is_exclusion_element_line` + ★ 切源 2026-10-08 扩：
+// 新真源 `publish/excludes.txt` 的条目是**裸行**（无引号），须认；引号字面量（侧乙 `DROP_EXACT`）照留。
+// ★ 锚死：本谓词**只**在调用方（`twJudgeReaders`）已按「**排除表件 + 表区间**」定位过的命中上生效
+// （`anchors[h.path]` 的 span 内才会走到这里）⇒ 「认裸行」不会放宽到任意裸行。
 func twIsExclusionElementLine(line string) bool {
 	core := strings.TrimSpace(twStripTrailingComment(strings.TrimSpace(line)))
 	if core == "" || strings.HasPrefix(core, "#") {
 		return false
 	}
 	if strings.HasSuffix(core, ",") {
-		core = strings.TrimRight(core[:len(core)-1], " \t\r\n\v\f")
+		core = strings.TrimRight(core[:len(core)-1], " 	\r\n\v\f")
 	}
 	if len(core) < 2 {
 		return false
 	}
-	if !(strings.HasPrefix(core, "\"") && strings.HasSuffix(core, "\"")) {
+	if !strings.HasPrefix(core, "\"") {
+		// ★ 行式新表：裸条目行（无引号）—— 非空非注释即算元素行。
+		return true
+	}
+	if !strings.HasSuffix(core, "\"") {
 		return false
 	}
 	inner := core[1 : len(core)-1]
@@ -699,10 +717,17 @@ func twReadTableAnchors(repo string) map[string]twSpan {
 	for _, a := range twTableAnchors {
 		span, ok := twSpan{}, false
 		if txt, err := twReadText(filepath.Join(repo, a.rel)); err == nil {
-			s, e, o := twFindTableSpan(txt, a.opener, a.closer)
-			if o {
-				span = twSpan{s, e}
-				ok = true
+			if a.wholeFile { // ★ 行式表：整件即表（1..N）
+				if n := len(twSplitLines(txt)); n > 0 {
+					span = twSpan{1, n}
+					ok = true
+				}
+			} else {
+				s, e, o := twFindTableSpan(txt, a.opener, a.closer)
+				if o {
+					span = twSpan{s, e}
+					ok = true
+				}
 			}
 		}
 		if ok {
@@ -1014,7 +1039,7 @@ func twJudgeAll(r *twAll, readers []twHit, anchors map[string]twSpan) (reds, noc
 	p3, pubHits := twJudgeL7(r.tracked)
 	reds = append(reds, p3...)
 	exTxt, dropTxt := "", ""
-	for _, pair := range []struct{ rel, key string }{{twPublishExcludesSh, "ex"}, {twPublishDropPy, "drop"}} {
+	for _, pair := range []struct{ rel, key string }{{twExcludesRel, "ex"}, {twPublishDropPy, "drop"}} {
 		t := ""
 		if s, err := twReadText(filepath.Join(r.repo, pair.rel)); err == nil {
 			t = s
@@ -1089,6 +1114,9 @@ func twBuildJSON(rc int, reds, nocalls []string, readers []twHit, excused []twHi
 		for _, a := range twTableAnchors {
 			if strings.ReplaceAll(a.rel, string(os.PathSeparator), "/") == rel {
 				opener = a.opener
+				if a.wholeFile {
+					opener = "行式整件"
+				}
 				break
 			}
 		}
@@ -1256,36 +1284,36 @@ func twSelfTest(stream io.Writer) bool {
 		"⑰ 负控：运行路径里读了副本（**没定出排除表锚** ⇒ 一条都不豁免）⇒ 判红（`P17` 红线 1）",
 		"⑰ 负控失败：读了还判绿 / 没锚也豁免")
 
-	synSh := "EXCLUDES=(\n  \"tools/ocr/venv\"\n  \"" + lit + "\"\n  \"gateway/tasks.md\"\n)\n" +
-		"cat \"" + lit + "\"\n"
+	// ★ 切源后 ⑱：排除表是**行式整件即表**；「表外真读」改由「侧乙 `DROP_EXACT` 块外」+「非锚件」承载。
+	synSh := "# 合成排除表（行式 · 整件即表）\n" +
+		"tools/ocr/venv\n" +
+		lit + "\n" +
+		"gateway/tasks.md\n"
 	synPy := "DROP_EXACT = {\n    \"out_t4.txt\",\n    \"" + lit + "\",\n}\n" +
 		"open(\"" + lit + "\", encoding=\"utf-8\").read()\n"
-	ss, se, so := twFindTableSpan(synSh, "EXCLUDES=(", ")")
 	ps, pe, po := twFindTableSpan(synPy, "DROP_EXACT = {", "}")
 	synAnchors := map[string]twSpan{}
-	exRel := strings.ReplaceAll(twPublishExcludesSh, string(os.PathSeparator), "/")
+	exRel := strings.ReplaceAll(twExcludesRel, string(os.PathSeparator), "/")
 	dropRel := strings.ReplaceAll(twPublishDropPy, string(os.PathSeparator), "/")
-	if so {
-		synAnchors[exRel] = twSpan{ss, se}
-	}
+	shLines := twSplitLines(synSh)
+	synAnchors[exRel] = twSpan{1, len(shLines)} // 整件即表（与 twReadTableAnchors 的 wholeFile 同口径）
 	if po {
 		synAnchors[dropRel] = twSpan{ps, pe}
 	}
-	shLines := twSplitLines(synSh)
 	pyLines := twSplitLines(synPy)
 	inHits := []twHit{{exRel, 3, shLines[2]}, {dropRel, 3, pyLines[2]}}
-	outHits := []twHit{{exRel, 6, shLines[5]}, {dropRel, 5, pyLines[4]}}
+	outHits := []twHit{{dropRel, 5, pyLines[4]}, {"core/cmd/zerg/reader.go", 1, "var p = \"" + lit + "\""}}
 	rIn, eIn := twJudgeReaders(inHits, synAnchors, "", nil, "")
 	rOut, eOut := twJudgeReaders(outHits, synAnchors, "", nil, "")
 	p15, _ := twJudgePublicFace(true, lit+"\n", lit+"\n", "")
-	check(len(p15) == 0 && len(rIn) == 0 && len(eIn) == 2 && len(rOut) > 0 && len(rOut) == 2 && len(eOut) == 0,
+	check(len(p15) == 0 && len(rIn) == 0 && len(eIn) == 2 && len(rOut) == 2 && len(eOut) == 0,
 		"⑱ 合成用例（`Q-114`=甲 · **⑮∧⑯ 同时成立**）：两器都显式排除（W4 绿 · ⑮）**且**字面串只出现在"+
-			"排除表**元素行**内 ⇒ **不红**（豁免 2 处）；同一字面串挪到**表外**（`cat \"…\"` / `open(\"…\")`）"+
-			"⇒ **判红 2 处** —— 豁免窄到「表元素行」",
+			"排除表**元素行**内 ⇒ **不红**（豁免 2 处）；同一字面串挪到排除表**外**（侧乙 `DROP_EXACT` 块外 / "+
+			"非锚件）⇒ **判红 2 处** —— 豁免窄到「排除表件 + 表元素行」",
 		"⑱ 失败：⑮∧⑯ 同时成立时仍判红（豁免没生效）/ 表外真读被豁免（放太宽）")
 
 	// ⑲ --json 机器面
-	jRel := strings.ReplaceAll(twPublishExcludesSh, string(os.PathSeparator), "/")
+	jRel := strings.ReplaceAll(twExcludesRel, string(os.PathSeparator), "/")
 	jMeta := &twOM{}
 	jMeta.set("version", twVersion)
 	jMeta.set("run_bytes", len(good))
@@ -1529,6 +1557,9 @@ func twScan(stdout, stderr io.Writer, repo, state, copyRel string, asJSON bool) 
 		for _, a := range twTableAnchors {
 			if strings.ReplaceAll(a.rel, string(os.PathSeparator), "/") == rel2 {
 				opener = a.opener
+				if a.wholeFile {
+					opener = "行式整件"
+				}
 				break
 			}
 		}

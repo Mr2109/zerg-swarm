@@ -312,7 +312,7 @@ func cpfsPathsFor(repo string) cpfsPaths {
 	return cpfsPaths{
 		whitelist:    cpfsPyJoin(repo, "publish", "whitelist.txt"),
 		privatePaths: cpfsPyJoin(repo, "publish", "private-paths.txt"),
-		publishSh:    cpfsPyJoin(repo, "scripts", "build", "publish-public.sh"),
+		publishSh:    cpfsPyJoin(repo, "publish", "excludes.txt"),
 		mirrorLib:    cpfsPyJoin(repo, "publish", "mirror-public-lib.py"),
 		marksTable:   cpfsPyJoin(repo, cpfsMarksTableRel),
 	}
@@ -808,12 +808,8 @@ func cpfsMakeFixture(root string, fx cpfsFx) {
 		"# 夹具白名单\n"+strings.Join(fx.wl, "\n")+"\n")
 	cpfsWrite(cpfsPyJoin(root, "publish", "private-paths.txt"),
 		"# 夹具黑名单\n"+strings.Join(fx.priv, "\n")+"\n")
-	var exb []string
-	for _, e := range fx.excl {
-		exb = append(exb, "  \""+e+"\"")
-	}
-	cpfsWrite(cpfsPyJoin(root, "scripts", "build", "publish-public.sh"),
-		"#!/usr/bin/env bash\nEXCLUDES=(\n"+strings.Join(exb, "\n")+"\n)\n")
+	cpfsWrite(cpfsPyJoin(root, "publish", "excludes.txt"),
+		"# 夹具：排除表（publish/excludes.txt 行式真源 · 裸条目）\n"+strings.Join(fx.excl, "\n")+"\n")
 	var drb []string
 	for _, d := range fx.drop {
 		drb = append(drb, "\""+d+"\"")
@@ -1100,7 +1096,7 @@ func checkPublishFaceSyncGateMain(stdout, stderr io.Writer, argv []string) int {
 		}
 	}
 	fmt.Fprintf(stdout, "仓：%s\n", repo)
-	fmt.Fprint(stdout, "口径：候选集排除 `publish/`（旧器对它是结构性处置，不由 EXCLUDES 驱动）\n\n")
+	fmt.Fprint(stdout, "口径：候选集排除 `publish/`（旧器对它是结构性处置，不由排除表驱动）\n\n")
 	code, lines := cpfsEvaluate(repo, paths)
 	for _, ln := range lines {
 		fmt.Fprintln(stdout, ln)

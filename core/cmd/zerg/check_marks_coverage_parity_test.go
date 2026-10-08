@@ -38,11 +38,11 @@ func mkcpMakeFx(t *testing.T, tsv, globs string, files, excludes, dropExact []st
 	mkcpWrite(t, root, mkcpConfigRel,
 		`{"schema":"gate-coverage/1","baseline":0,"scan":{"script_globs":`+globs+`},`+
 			`"whitelist":{"build_dirs":[],"scripts":[]}}`)
-	ex := ""
+	ex := "# 夹具：排除表（publish/excludes.txt 行式真源）\n"
 	for _, e := range excludes {
-		ex += "  \"" + e + "\"\n"
+		ex += e + "\n"
 	}
-	mkcpWrite(t, root, mkcpPublishShRel, "#!/usr/bin/env bash\nEXCLUDES=(\n"+ex+")\n")
+	mkcpWrite(t, root, mkcpExcludesRel, ex)
 	drop := ""
 	for i, d := range dropExact {
 		if i > 0 {

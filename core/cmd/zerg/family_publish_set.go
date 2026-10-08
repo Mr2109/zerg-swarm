@@ -130,7 +130,6 @@ const (
 )
 
 var (
-	publishSetExcludesRe  = regexp.MustCompile(`(?s)EXCLUDES=\((.*?)\n\)`)
 	publishSetDropExactRe = regexp.MustCompile(`(?s)DROP_EXACT = \{(.*?)\n\}`)
 	publishSetDropPreRe   = regexp.MustCompile(`(?s)DROP_PREFIX = \((.*?)\n\)`)
 	publishSetMapExactRe  = regexp.MustCompile(`(?s)MAP_EXACT = \{(.*?)\n\}`)
@@ -189,24 +188,14 @@ func publishSetPlainEntries(lines []string) []string {
 	return out
 }
 
-// publishSetShellEntries —— shell 数组（`EXCLUDES=( … )`）的行口径：
-// 跳注释与空行 · 切掉行内注释 · 剥首尾引号（与 `load_excludes` 逐条同义）。
+// publishSetShellEntries —— 排除表（`publish/excludes.txt` 行式真源）的行口径薄壳。唯一实现已抽到
+// 共享件 `excludes_rules.go` 的 `parseExcludesRules`（切源 2026-10-08 · `GAP-20260926-223` 账[3]：
+// 此前本件与 chsec/mkcp/gnr/cnf/crs 各镜像一份同型解析 ⇒ 真源一改各处各漂、双写风险）。
+// 保留本名与签名 = 既有调用点（本件 `publishSetLoadChain` · `check_publish_face_sync.go`）不受影响。
+//
+// strip 传 `strings.TrimSpace`（原口径 · 与原「本件自算」逐字同源）。
 func publishSetShellEntries(lines []string) []string {
-	out := []string{}
-	for _, ln := range lines {
-		s := strings.TrimSpace(ln)
-		if s == "" || strings.HasPrefix(s, "#") {
-			continue
-		}
-		if i := strings.Index(s, "#"); i >= 0 {
-			s = strings.TrimSpace(s[:i])
-		}
-		s = strings.Trim(s, `"'`)
-		if s != "" {
-			out = append(out, s)
-		}
-	}
-	return out
+	return parseExcludesRules(lines, strings.TrimSpace)
 }
 
 // publishSetQuotedEntries —— Python 表（`DROP_EXACT` / `DROP_PREFIX`）的行口径：
@@ -286,7 +275,7 @@ func (c *publishChain) privateFaceHit(rel string) string {
 // ⇒ 与上面同一条（一条都不出，而不是「当没命中」—— 「当没命中」正是私有面件直出公开面的那个病）。
 func publishSetLoadChain(root string) (*publishChain, string) {
 	wlRel := "publish/whitelist.txt"
-	shRel := "scripts/build/publish-public.sh"
+	shRel := "publish/excludes.txt"
 	libRel := "publish/mirror-public-lib.py"
 	pfRel := "publish/private-paths.txt"
 
@@ -309,7 +298,7 @@ func publishSetLoadChain(root string) (*publishChain, string) {
 
 	c := &publishChain{}
 	c.whitelist = publishSetPlainEntries(wlLines)
-	c.excludes = publishSetShellEntries(publishSetBlockLines(strings.Join(shLines, "\n"), publishSetExcludesRe))
+	c.excludes = publishSetShellEntries(shLines)
 	c.dropExact = publishSetQuotedEntries(publishSetBlockLines(string(libText), publishSetDropExactRe))
 	c.dropPrefix = publishSetQuotedEntries(publishSetBlockLines(string(libText), publishSetDropPreRe))
 	c.mapExact = publishSetMapEntries(publishSetBlockLines(string(libText), publishSetMapExactRe))
@@ -319,7 +308,7 @@ func publishSetLoadChain(root string) (*publishChain, string) {
 		return nil, fmt.Sprintf("白名单一条都解析不出来（%s）", wlRel)
 	}
 	if len(c.excludes) == 0 {
-		return nil, fmt.Sprintf("`EXCLUDES=( … )` 一条都解析不出来（%s）", shRel)
+		return nil, fmt.Sprintf("排除表一条都解析不出来（%s）", shRel)
 	}
 	if len(c.dropExact) == 0 || len(c.dropPrefix) == 0 {
 		return nil, fmt.Sprintf("`DROP_EXACT` / `DROP_PREFIX` 解析不出来（%s）", libRel)
@@ -361,12 +350,7 @@ func publishSetExcluded(rel string, excludes []string) bool {
 			}
 		}
 	}
-	for _, e := range excludes {
-		if rel == e || strings.HasPrefix(rel, strings.TrimSuffix(e, "/")+"/") {
-			return true
-		}
-	}
-	return false
+	return excludesRulesMatch(rel, excludes)
 }
 
 // publishSetMapPath —— 层 ⑤（`publish/mirror-public-lib.py:519 map_path` 的逐条镜像；
@@ -501,7 +485,7 @@ func cmdPublishSet(inv *invocation, stdout, stderr io.Writer) int {
 	// ── ④ 人面：口径 + 链势 + 逐件一行（「不发」也照出，逐条带层名）──
 	fmt.Fprintf(stderr, "%s: 口径 = %s\n", progName, publishSetCaliber)
 	fmt.Fprintf(stderr, "%s: 判定链（先拦先判）= %s\n", progName, publishSetChainCaliber)
-	fmt.Fprintf(stderr, "%s: 链真源现读：白名单 %d 条 · EXCLUDES %d 条 · DROP_EXACT %d 条 · DROP_PREFIX %d 条 · MAP_EXACT %d 条\n",
+	fmt.Fprintf(stderr, "%s: 链真源现读：白名单 %d 条 · 排除表 %d 条 · DROP_EXACT %d 条 · DROP_PREFIX %d 条 · MAP_EXACT %d 条\n",
 		progName, len(chain.whitelist), len(chain.excludes), len(chain.dropExact), len(chain.dropPrefix), len(chain.mapExact))
 	fmt.Fprintf(stderr, "%s: 追加两层 = %s\n", progName, publishSetTailCaliber)
 	fmt.Fprintf(stderr, "%s: 私有面清单现读：目录 %d 条 · 单件 %d 条 · `!` 豁免 %d 条（%s）\n",

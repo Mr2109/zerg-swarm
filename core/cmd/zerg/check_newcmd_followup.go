@@ -74,7 +74,7 @@ var (
 	cnfOwnBaselineRel   = cnfPyJoin("scripts", "gates", "newcmd-paths-baseline.json")
 	cnfDryrunRegRel     = cnfPyJoin("core", "internal", "contract", "dryrun-semantics.json")
 	cnfMarksRel         = cnfPyJoin("scripts", "公开标记.tsv")
-	cnfExclARel         = cnfPyJoin("scripts", "build", "publish-public.sh")
+	cnfExclARel         = cnfPyJoin("publish", "excludes.txt")
 	cnfExclBRel         = cnfPyJoin("publish", "mirror-public-lib.py")
 	cnfPkgRel           = cnfPyJoin("core", "cmd", "zerg")
 	cnfErrorsRel        = cnfPyJoin("core", "cmd", "zerg", "errors.go")
@@ -124,8 +124,6 @@ var (
 	}
 	cnfTableRowRE = regexp.MustCompile(`\{` + cnfWS + `*(` + cnfD + `+)` + cnfWS + `*,` + cnfWS + `*"`)
 
-	cnfExclA1RE = regexp.MustCompile(`(?s)EXCLUDES=(.*?)\n\)`)
-	cnfExclA2RE = regexp.MustCompile(`(?s)EXCLUDES="([^"]*)"`)
 	cnfQuotedRE = regexp.MustCompile(`["']([^"']+)["']`)
 	cnfDropRe   = func(name string) *regexp.Regexp {
 		return regexp.MustCompile(`(?s)` + name + cnfWS + `*=` + cnfWS + `*[\[\(](.*?)[\]\)]`)
@@ -613,6 +611,9 @@ func cnfLoadMarks(root string) (map[string]string, bool) {
 	return out, true
 }
 
+// cnfLoadExcludesA —— 侧甲排除表（切源 2026-10-08 · `publish/excludes.txt` 行式 · `GAP-20260926-223` 账[3]）。
+// 行口径 = 唯一 Go 解析件 `excludes_rules.go::parseExcludesRules`（strip 传本件原 `cnfStrip`）。
+// 缺件 / 读不到 ⇒ (nil,false)（调用方据 ok 判缺件 ⇒ rc=2）。
 func cnfLoadExcludesA(root string) ([]string, bool) {
 	fp := cnfPyJoin(root, cnfExclARel)
 	if !cnfIsFile(fp) {
@@ -622,24 +623,7 @@ func cnfLoadExcludesA(root string) ([]string, bool) {
 	if err != nil {
 		return nil, false
 	}
-	i := strings.Index(src, "EXCLUDES=")
-	if i < 0 {
-		return nil, false
-	}
-	tail := src[i:]
-	m := cnfExclA1RE.FindStringSubmatch(tail)
-	if m == nil {
-		m = cnfExclA2RE.FindStringSubmatch(tail)
-	}
-	if m == nil {
-		return nil, false
-	}
-	body := m[1]
-	out := []string{}
-	for _, q := range cnfQuotedRE.FindAllStringSubmatch(body, -1) {
-		out = append(out, q[1])
-	}
-	return out, true
+	return parseExcludesRules(cnfSplitlines(src), cnfStrip), true
 }
 
 func cnfLoadExcludesB(root string) ([]string, []string, bool) {
@@ -1288,7 +1272,7 @@ func cnfAnalyse(root string, maxExamples int, stderr io.Writer) (int, []string) 
 				continue
 			}
 			if pub == "no" {
-				a := cnfExcluded(f, exa, nil)
+				a := excludesRulesMatch(f, exa)
 				b := cnfExcluded(f, exb0, exb1)
 				if !a {
 					f4ok = false
@@ -1867,7 +1851,7 @@ func cnfMiniRoot(dst string, nExtraCmd, extraHasMatrix, countDrift bool, extraUs
 		marks += "core/cmd/zerg/" + c.fn + ".go\tyes\t测试夹具\n"
 	}
 	cnfWrite(cnfPyJoin(dst, cnfMarksRel), marks)
-	cnfWrite(cnfPyJoin(dst, cnfExclARel), "EXCLUDES=(\n \"\"\n)\n")
+	cnfWrite(cnfPyJoin(dst, cnfExclARel), "# 夹具：排除表（publish/excludes.txt 行式真源）\n")
 	cnfWrite(cnfPyJoin(dst, cnfExclBRel), "DROP_EXACT = []\nDROP_PREFIX = []\n")
 	bpaths := []string{}
 	for _, c := range cmds {
