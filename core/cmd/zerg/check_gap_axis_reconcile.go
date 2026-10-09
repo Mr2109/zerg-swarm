@@ -138,6 +138,10 @@ var gapAxisRecExemptExistence = []gapAxisRecExemptPair{
 	{gid: "GAP-20261007-08", unit: "scripts/gates/check-write-face-gate.py"},
 	// 甲组 G01 第5件退场随动（2026-10-08 · 本单）：check-ghost-decl-diff.py 退场后（Go 半 core/cmd/zerg/check_ghost_decl_diff.go 在盘 · 其读取面 :844 源码级牙已 by-guard 容忍 · 自检 ④b/④c 已 by-else 容忍）⇒ 该仍缺行（GAP-20260927-62 · 门㉒ 侧① 现值面）unit 失指，入存量豁免（本表只增不删）。py 在盘时本对不生效（`ls-files` 命中即 continue）。
 	{gid: "GAP-20260927-62", unit: "scripts/gates/check-ghost-decl-diff.py"},
+	// 第二批收口·退役随动（2026-10-09 · 本单）：compare-wall-argv.py 已登记退场（`retire_ledger` 在账 · Go 半 core/cmd/zerg/eval_wall_argv.go 在盘）⇒ 该仍缺行（GAP-20261009-03 · 门禁面 茧壁迁移桥临时件回收）unit 失指，入存量豁免（本表只增不删）。py 在盘时本对不生效（`ls-files` 命中即 continue）。
+	{gid: "GAP-20261009-03", unit: "scripts/evals/compare-wall-argv.py"},
+	// 第二批收口·退役随动（2026-10-09 · 本单）：chat-harness.py 已登记退场（`retire_ledger` 在账 · Go 半 core/cmd/zerg/eval_chat_harness.go 在盘且入口已接线）⇒ 该仍缺行（GAP-20261009-04 · 命令面 eval run chat-harness）unit 失指，入存量豁免（本表只增不删）。py 在盘时本对不生效（`ls-files` 命中即 continue）。
+	{gid: "GAP-20261009-04", unit: "scripts/evals/chat-harness.py"},
 }
 
 // gapAxisRecWUClosed —— 无件桶名闭集 = 裸 `无件` + `无件(<面>)`（面 ∈ 面闭集）
