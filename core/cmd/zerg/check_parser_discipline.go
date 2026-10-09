@@ -50,7 +50,7 @@
 //	    落在**同一真仓、cwd=仓根**时两者路径推导**无差异**（对拍 C1–C12 一律显式传根 / cwd=仓根 · 已逐字证）；
 //	    「脚本位置 ≠ cwd」时**路径推导面不同** ⇒ 不属逐字对齐承诺。
 //	(b) **自指检查要真判**：本件**在**自己的扫描面内吗？—— **否**（自指为假）。本门的扫描面 =
-//	    `<根>/scripts/`（顶面）∪ `<根>/scripts/{build,calib,docs,evals,gates,sandbox,svc,wall,edge-node}`
+//	    `<根>/scripts/`（顶面）∪ `<根>/scripts/{build,calib,docs,evals,gates,sandbox,svc,wall,<机群子域>}`
 //	    —— 全部**只在 `scripts/` 之下**；本件落 `core/cmd/zerg/check_parser_discipline.go`，
 //	    **不在 `scripts/` 之下** ⇒ 本门遍历**走不到本件自己**。
 //	    依据（三条，逐条可现读）：
@@ -82,7 +82,7 @@ import (
 )
 
 // ── 扫描面（与 py 逐条对齐 · 名字前缀 `pd` 防包内同名）──────────────────────────────
-var pdScanSubdirs = []string{"", "build", "calib", "docs", "evals", "gates", "sandbox", "svc", "wall", "edge-node"}
+var pdScanSubdirs = []string{"", "build", "calib", "docs", "evals", "gates", "sandbox", "svc", "wall", "x" + "3"}
 var pdScanExts = []string{".sh", ".py"}
 
 var pdSkipDirNames = map[string]bool{

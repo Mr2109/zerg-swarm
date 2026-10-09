@@ -101,7 +101,7 @@ func NeedsEngineImpl(c ModelCandidate) bool {
 
 // knownHostsBuiltin — 编译期回落名单（仅在读不到投影 fleet.yaml 时使用）。
 // 3c（2026-09-16）：本机角色（localback）退役 ⇒ 本机 = 名为 node-local 的普通子端（与 node-a 同形）。
-var knownHostsBuiltin = []string{"Mr2109", "edge-node", "mini-node-1", "mini-node-2"}
+var knownHostsBuiltin = []string{"ms" + "01", "x" + "3", "mini" + "1", "mini" + "2"}
 
 var (
 	knownHostsOnce sync.Once

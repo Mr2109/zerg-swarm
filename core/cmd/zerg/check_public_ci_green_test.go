@@ -32,11 +32,15 @@ func cicgRunMain(t *testing.T, argv ...string) (int, string, string) {
 	return rc, out.String(), errb.String()
 }
 
-func cicgRepoRootOrSkip(t *testing.T) string {
+// cicgRepoRoot —— 哨兵：锚本门 **Go 半** `core/cmd/zerg/check_public_ci_green.go`（✗ 不再锚分档真源 py）。
+// 旧名 `cicgRepoRootOrSkip` 锚 `scripts/gates/check-manifest-freshness-profile.py`：该 py 已退场
+// （2026-10-07 M2 退役批）⇒ 上溯恒找不到 ⇒ 恒 Skip（假绿、零保护）。改锚 Go 半（与本件同包 ·
+// 编译进测试二进制）⇒ 真跑断言；找不到 = 真仓结构被破 ⇒ **fail-closed**（✗ 不留 Skip）。
+func cicgRepoRoot(t *testing.T) string {
 	t.Helper()
 	root := cicgResolveRoot()
-	if !cicgFileExists(cicgPyJoin(root, cicgProfileGateRel)) {
-		t.Skipf("分档真源不在场（%s）⇒ 本格跳过", cicgProfileGateRel)
+	if !cicgFileExists(cicgPyJoin(root, "core/cmd/zerg/check_public_ci_green.go")) {
+		t.Fatalf("哨兵失守：仓根 %s 下未见 Go 半 core/cmd/zerg/check_public_ci_green.go（✗ 不留 Skip）", root)
 	}
 	return root
 }
@@ -99,14 +103,10 @@ func TestCICGRunProfilePairs(t *testing.T) {
 	}
 }
 
-// ── K1 的机械证明：现调真源 · 合成清单双命中（dev 不拦 / public 拦）──────────────
+// ── K1 的机械证明：现调分档真源（退役 ⇒ 其 Go 半进程内）· 合成清单双命中（dev 不拦 / public 拦）──
 
 func TestCICGRealProfileTeeth(t *testing.T) {
-	if _, err := os.Stat(cicgTestPython); err != nil {
-		t.Skipf("无 %s ⇒ 跳过（GAP-20261001-61 钉死的那根）", cicgTestPython)
-	}
-	root := cicgRepoRootOrSkip(t)
-	t.Setenv("ZERG_CICG_PYTHON", cicgTestPython)
+	root := cicgRepoRoot(t)
 
 	mf := filepath.Join(t.TempDir(), "manifest.json")
 	if err := os.WriteFile(mf, []byte(cicgSynthManifest), 0o644); err != nil {
@@ -129,11 +129,7 @@ func TestCICGRealProfileTeeth(t *testing.T) {
 // ── 门面自检（含 must-fail 真红）──────────────────────────────────────────────
 
 func TestCICGGateMainSelfTest(t *testing.T) {
-	if _, err := os.Stat(cicgTestPython); err != nil {
-		t.Skipf("无 %s ⇒ 跳过", cicgTestPython)
-	}
-	cicgRepoRootOrSkip(t)
-	t.Setenv("ZERG_CICG_PYTHON", cicgTestPython)
+	cicgRepoRoot(t)
 
 	rc, out, errb := cicgRunMain(t, "--self-test")
 	if rc != 0 {
@@ -303,7 +299,7 @@ func TestCICGExitCodesSubsetOfRegistered(t *testing.T) {
 // ── 真·负控：**仓外**夹具越线 ⇒ rc=1 且有牙（件面原样显示绝对路径）──────────────
 
 func TestCICGNegControlExternalFixture(t *testing.T) {
-	cicgRepoRootOrSkip(t)
+	cicgRepoRoot(t)
 	fixture := filepath.Join(t.TempDir(), "越线件.yml")
 	body := "name: 合成负控（仓外夹具）\non: {workflow_dispatch: {}}\n" +
 		"permissions:\n  contents: read\n  id-token: write\n" +
@@ -329,7 +325,7 @@ func TestCICGNegControlExternalFixture(t *testing.T) {
 // ── 机器读面：`--json` 输出必须是**单行合法 JSON**，且 rc 与文本面一致 ──────────
 
 func TestCICGJSONFaceShape(t *testing.T) {
-	cicgRepoRootOrSkip(t)
+	cicgRepoRoot(t)
 	rc, out, _ := cicgRunMain(t, "--json", "rc,gaps,gaps_missing,attest_tokens,uses_total,uses_float,top_write,ci_files_present,hits")
 	lines := cicgSplitLines(out)
 	if len(lines) == 0 {
@@ -375,11 +371,7 @@ func cicgCountCiGreenTmpDirs(t *testing.T) int {
 }
 
 func TestCICGTempdirReclaimed(t *testing.T) {
-	if _, err := os.Stat(cicgTestPython); err != nil {
-		t.Skipf("无 %s ⇒ 跳过（GAP-20261001-61 钉死的那根）", cicgTestPython)
-	}
-	cicgRepoRootOrSkip(t)
-	t.Setenv("ZERG_CICG_PYTHON", cicgTestPython)
+	cicgRepoRoot(t)
 	// ★ GAP-20261003-16：私有计数面（TMPDIR 指到本用例自建空目录）⇒ 只数本用例自建目录。
 	// 断言未放宽（仍是 after!=before 即红）；主件删任一处自清句时私有面内必留目录 ⇒ 仍能抓真泄漏。
 	// （本包零 `t.Parallel()` ⇒ `t.Setenv` 安全。）
@@ -467,5 +459,65 @@ func TestCICGProfileRetiredPredicate(t *testing.T) {
 	// ③ 负控（真消失）：既无 py 又无 Go 半 ⇒ 未退役（fail-closed 保留）
 	if cicgProfileRetired(t.TempDir()) {
 		t.Fatalf("既无 py 又无 Go 半不应判为已退役（fail-closed 保留）")
+	}
+}
+
+// ── 内化金标（DEV-2143 同口径）：分档真源 py 退场 ⇒ K1「单一口径」收回其 Go 半（进程内）· 两态自证 ──
+//
+// 为什么这么测：本门 K1「分档两态」原经**现调分档真源 py**（`scripts/gates/check-manifest-freshness-profile.py`）
+// 才成立；该 py 已退场（2026-10-07 M2 退役批）⇒ 旧哨兵 `cicgRepoRootOrSkip` 恒 Skip（假绿、零保护）。
+// 按 DEV-2143 先例把金标真源**收回 Go 半现役行为本身**：`cicgRunProfile` 在退役态改由本包姊妹件
+// `check_manifest_freshness_profile.go` 的入口**进程内**承载（同入口 · ✗ 不新写第二份判据）。
+//
+//	★ 金标计算式（✗ 不臆造 · 由「Go 半现役行为」现算再冻）：逐格「(profile, 合成清单, --release-head)
+//	  ⇒ (rc, ok)」由 `cicgRunProfile` 现跑捕获，冻成下表常量（dev=(0,true) · public=(1,true)）。
+//
+// 两态（✗ 不许 Skip）：A 态 = 真仓（退役 py 不在盘 · 其 Go 半在盘）；B 态 = 合成「旧态」夹具
+// （py 缺席 · 其 Go 半在盘）⇒ 两态对同一套金标逐字同命中。
+//
+// ★ 哑化负控（"牙" · 见交付读数）：抽掉 `cicgProfileRetired`（恒 false）⇒ 本格 + `TestCICGProfileRetiredPredicate`
+//   必 FAIL 且带行号（✗ 不真改仓内源）。
+
+func TestPublicCiGreenGoldenInternalized(t *testing.T) {
+	root := cicgRepoRoot(t)
+
+	synth := filepath.Join(t.TempDir(), "manifest.json")
+	if err := os.WriteFile(synth, []byte(cicgSynthManifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	relHead := strings.Repeat("1", 40)
+
+	// A 态（真仓 · 退役 py 不在盘 · Go 半在盘）金标：dev 只告警 rc=0 · public 阻断 rc=1。
+	dev, devOK := cicgRunProfile(root, "dev", synth, []string{"--release-head", relHead})
+	pub, pubOK := cicgRunProfile(root, "public", synth, []string{"--release-head", relHead})
+	if !devOK || dev != 0 {
+		t.Errorf("金标 A · 开发机档：rc=%d ok=%v（冻值 0 / true）", dev, devOK)
+	}
+	if !pubOK || pub != 1 {
+		t.Errorf("金标 A · 公开制品档：rc=%d ok=%v（冻值 1 / true）", pub, pubOK)
+	}
+
+	// B 态（合成旧态夹具：py 缺席 · 其 Go 半在盘）⇒ 同一金标逐字同命中。
+	broot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(broot, "core", "cmd", "zerg"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	half, err := os.ReadFile(filepath.Join(root, "core", "cmd", "zerg", "check_manifest_freshness_profile.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(broot, "core", "cmd", "zerg", "check_manifest_freshness_profile.go"), half, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bdev, bdevOK := cicgRunProfile(broot, "dev", synth, []string{"--release-head", relHead})
+	bpub, bpubOK := cicgRunProfile(broot, "public", synth, []string{"--release-head", relHead})
+	if bdev != dev || bdevOK != devOK || bpub != pub || bpubOK != pubOK {
+		t.Fatalf("两态金标不同：A=(%d,%v)/(%d,%v) B=(%d,%v)/(%d,%v)", dev, devOK, pub, pubOK, bdev, bdevOK, bpub, bpubOK)
+	}
+
+	// 门面自检（现调 Go 半 · 退役态）：必须全过（✗ 不再因退役 py 缺席而 3 格红）。
+	rc, out, errb := cicgRunMain(t, "--self-test")
+	if rc != 0 || !strings.Contains(out, "自检结论: 全过") {
+		t.Fatalf("退役态 --self-test 应 rc=0 全过：rc=%d\nstdout:\n%s\nstderr:\n%s", rc, out, errb)
 	}
 }

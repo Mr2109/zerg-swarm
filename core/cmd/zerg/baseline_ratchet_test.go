@@ -11,7 +11,6 @@ package main
 import (
 	"bytes"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -236,65 +235,87 @@ func TestBaselineRatchet_SelfTest(t *testing.T) {
 	}
 }
 
-// ⑤ 与 py 原件的逐字节对拍（只读档 · 仓外夹具；解释器钉 /usr/bin/python3）
-func TestBaselineRatchet_ParityWithPy(t *testing.T) {
-	py := filepath.Join(brTestRepoRoot(t), "scripts", "gates", "baseline-ratchet.py")
-	if _, err := os.Stat(py); err != nil {
-		t.Skipf("py 原件不在（可能已退场）：%s", py)
+// ⑤ 内化金标（py 原件退役 ⇒ 对拍台无对象 · 照 check_doc_name / check_flag_registry_parity 先例）：
+// 旧「py 原件 ⟷ Go 真搬」逐字对拍（其 Skip 落在本件旧第 243 行 · py `scripts/gates/baseline-ratchet.py`
+// 已退场 ⇒ 恒真 Skip · 假绿零保护）⇒ 把金标真源**收回 Go 半现役行为本身**：
+//
+//	① 哨兵改锚 **Go 半** core/cmd/zerg/baseline_ratchet.go（✗ 不锚已退场 py —— 一退役即失锚）；
+//	   找不到 ⇒ fail-closed（✗ 不留 Skip）。
+//	② 金标 brRetiredGolden：逐格 (rc · 关键串) 由 Go 半现役行为**现算现冻**（取时夹具 = brTestFixture）。
+//	③ 两态（✗ 不许 Skip）：A 态 = 真仓现态（无 py）；B 态 = 合成「旧态」（把退役 py 路径放回 stub）
+//	   ⇒ 两态金标逐格同命中（证 py 在/不在盘不改判据结论 · 内化彻底）。
+//	★ 哑化负控（"牙"）：`-overlay` 把 baseline_ratchet.go 的退码判据一臂哑化 ⇒ 本用例必 FAIL 带行号。
+func TestBaselineRatchet_RetiredGolden(t *testing.T) {
+	root := brTestRepoRoot(t)
+	if fi, err := os.Stat(filepath.Join(root, "core", "cmd", "zerg", "baseline_ratchet.go")); err != nil || fi.IsDir() {
+		t.Fatalf("哨兵失守：上溯未见 Go 半 core/cmd/zerg/baseline_ratchet.go ⇒ fail-closed（✗ 不留 Skip）：%v", err)
 	}
-	if _, err := os.Stat(pyInterp); err != nil {
-		t.Skipf("钉死的解释器不在：%s", pyInterp)
-	}
+	brRunRetiredGolden(t, "A真仓无py", nil)
+	brRunRetiredGolden(t, "B旧态有py", func(fx string) {
+		pd := filepath.Join(fx, "scripts", "gates")
+		if err := os.MkdirAll(pd, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(pd, "baseline-ratchet.py"),
+			[]byte("# stub：「旧态」——退役 py 在位（本件只证 py 在/不在盘不改金标结论）\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
 
-	rootG := brTestFixture(t) // 写面档会改夹具 ⇒ py/go 各用一份独立夹具（✗ 同一份跑两态）
-	rootP := brTestFixture(t)
-	rd := filepath.Join(t.TempDir(), "r.tsv")
-	_ = os.WriteFile(rd, []byte("gate-coverage.baseline = 68\ncli-contract.blanks = 0\ndoc-cmds.devdocs_report_hits = 183\ni18n.allowed_count = 7\n"), 0o644)
+// brRetiredGolden —— 退役态金标（现算自证 · 取时夹具 = brTestFixture · 见件头金标计算式 · ✗ 手写）。
+var brRetiredGolden = []struct {
+	name string
+	argv []string
+	rc   int
+	sub  string
+}{
+	{"help", []string{"--help"}, 0, "usage: baseline-ratchet.py"},
+	{"conditions", []string{"--conditions"}, 0, "baseline-conditions.v1"},
+	{"check_json", []string{"--check", "--json"}, 1, `"reason": "ledger_absent"`},
+	{"check_human", []string{"--check"}, 1, "判红（rc=1）"},
+	{"view", []string{"--view"}, 1, "现值 5"},
+	{"bogus", []string{"--bogus"}, 2, "unrecognized arguments: --bogus"},
+	{"mutex", []string{"--view", "--diff"}, 2, "档位互斥"},
+	{"only_unknown", []string{"--only", "nope"}, 2, "条件名不认：nope"},
+	{"diff_readings", []string{"--diff", "--readings", "<RD>"}, 0, "将升 1 条"},
+	{"anchor", []string{"--anchor", "--reason", "夹具锚", "--by", "tester"}, 0, "已补 4 条现状锚"},
+}
 
-	type c struct {
-		name string
-		args []string
+// brRunRetiredGolden —— 现建夹具、现跑 Go 半、逐格钉 (rc · 关键串)。plant 非 nil ⇒ 先落「旧态」py（两态用）。
+func brRunRetiredGolden(t *testing.T, tag string, plant func(fx string)) {
+	t.Helper()
+	fx := brTestFixture(t)
+	rd := filepath.Join(fx, "r.tsv")
+	if err := os.WriteFile(rd, []byte("gate-coverage.baseline = 68\ncli-contract.blanks = 0\ndoc-cmds.devdocs_report_hits = 183\ni18n.allowed_count = 7\n"), 0o644); err != nil {
+		t.Fatal(err)
 	}
-	cases := []c{
-		{"help", []string{"--help"}},
-		{"conditions", []string{"--conditions"}},
-		{"check_json", []string{"--check", "--json"}},
-		{"check_human", []string{"--check"}},
-		{"view", []string{"--view"}},
-		{"bogus", []string{"--bogus"}},
-		{"mutex", []string{"--view", "--diff"}},
-		{"only_unknown", []string{"--only", "nope"}},
-		{"diff_readings", []string{"--diff", "--readings", rd}},
-		{"anchor", []string{"--anchor", "--reason", "夹具锚", "--by", "tester"}},
+	if plant != nil {
+		plant(fx)
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			var so, se bytes.Buffer
-			full := append([]string{"--root", rootG}, tc.args...)
-			rcG := baselineRatchetGateMain(&so, &se, full)
-
-			cmd := exec.Command(pyInterp, append([]string{py, "--root", rootP}, tc.args...)...)
-			cmd.Dir = rootP
-			var po, pe bytes.Buffer
-			cmd.Stdout = &po
-			cmd.Stderr = &pe
-			err := cmd.Run()
-			rcP := 0
-			if ee, ok := err.(*exec.ExitError); ok {
-				rcP = ee.ExitCode()
-			} else if err != nil {
-				t.Fatalf("跑 py 失败：%v", err)
+	mism := 0
+	for _, c := range brRetiredGolden {
+		argv := make([]string, 0, len(c.argv))
+		for _, a := range c.argv {
+			if a == "<RD>" {
+				a = rd
 			}
-			if rcG != rcP {
-				t.Fatalf("退码失配：py=%d go=%d\npy.stdout=%q\ngo.stdout=%q", rcP, rcG, po.String(), so.String())
-			}
-			if po.String() != so.String() {
-				t.Fatalf("stdout 失配：\n--py--\n%s\n--go--\n%s", po.String(), so.String())
-			}
-			if pe.String() != se.String() {
-				t.Fatalf("stderr 失配：\n--py--\n%q\n--go--\n%q", pe.String(), se.String())
-			}
-		})
+			argv = append(argv, a)
+		}
+		var so, se bytes.Buffer
+		full := append([]string{"--root", fx}, argv...)
+		rc := baselineRatchetGateMain(&so, &se, full)
+		if rc != c.rc {
+			mism++
+			t.Errorf("[%s/%s] rc=%d（冻值 %d）\nstdout=%q\nstderr=%q", tag, c.name, rc, c.rc, so.String(), se.String())
+		}
+		if !strings.Contains(so.String()+se.String(), c.sub) {
+			mism++
+			t.Errorf("[%s/%s] 输出缺关键串 %q：stdout=%q stderr=%q", tag, c.name, c.sub, so.String(), se.String())
+		}
+	}
+	if mism != 0 {
+		t.Fatalf("[%s] 内化金标失配 %d 处（py 在/不在盘都不许改结论）", tag, mism)
 	}
 }
 
@@ -319,7 +340,7 @@ func TestBrMeasureValueRetiredGoFallback(t *testing.T) {
 	}
 	root := filepath.Clean(filepath.Join(wd, "..", "..", ".."))
 	if _, err := os.Stat(filepath.Join(root, "core", "cmd", "zerg", "main.go")); err != nil {
-		t.Skip("仓根未定位到 core/cmd/zerg/main.go")
+		t.Fatalf("哨兵失守：仓根未定位到 core/cmd/zerg/main.go（✗ 不留 Skip · fail-closed）：%v", err)
 	}
 	cond := brCond{
 		name:      "doc-cmds.devdocs_report_hits",
@@ -381,7 +402,7 @@ func TestBrConditionsRetiredGoFallbackTabled(t *testing.T) {
 func TestBrGateCoverageRetiredGoFallback(t *testing.T) {
 	root := brTestRepoRoot(t)
 	if _, err := os.Stat(filepath.Join(root, "core", "cmd", "zerg", "main.go")); err != nil {
-		t.Skip("仓根未定位到 core/cmd/zerg/main.go")
+		t.Fatalf("哨兵失守：仓根未定位到 core/cmd/zerg/main.go（✗ 不留 Skip · fail-closed）：%v", err)
 	}
 	cond := brCond{
 		name:      "gate-coverage.baseline",

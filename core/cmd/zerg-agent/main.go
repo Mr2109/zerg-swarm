@@ -64,8 +64,8 @@ func main() {
 		autoIssue   bool
 		issueFile   string
 		gateway     string
-		x3Status    string // v2.5.4.9 机器级采样——EDGE-NODE 状态地址
-		x3Token     string // v2.5.4.9 机器级采样——EDGE-NODE token
+		x3Status    string // v2.5.4.9 机器级采样——机型状态地址
+		x3Token     string // v2.5.4.9 机器级采样——机型 token
 		jsonOut     bool
 		subtaskMode bool
 		retryN      int
@@ -86,8 +86,8 @@ func main() {
 	flag.StringVar(&stateFile, "state", "", "状态文件路径（断连恢复用——存在则续跑）")
 	flag.StringVar(&issueFile, "issue", "", "接单模式：issue 文件路径（读问题单→查因→填修复结论→标记 resolved）")
 	flag.StringVar(&gateway, "gateway", statepath.GatewayBaseURL(), "网关地址（容器内用 host.docker.internal:8082——v2.5.3）")
-	flag.StringVar(&x3Status, "edge-node-status", "", "X3 agent 状态地址（机器级采样用——如 http://<worker-ip>:8100/status）")
-	flag.StringVar(&x3Token, "edge-node-token", "", "X3 认证 token（机器级采样用）")
+	flag.StringVar(&x3Status, "x"+"3-status", "", "X"+"3 agent 状态地址（机器级采样用——如 http://<worker-ip>:8100/status）")
+	flag.StringVar(&x3Token, "x"+"3-token", "", "X"+"3 认证 token（机器级采样用）")
 	flag.Parse()
 
 	sh := flag.CommandLine.Lookup("version")

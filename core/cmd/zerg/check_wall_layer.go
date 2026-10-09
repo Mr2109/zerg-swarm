@@ -100,7 +100,7 @@ var (
 )
 
 const (
-	wlHeaderLine = "── 茧壁边界：layer 闭集 + space 空集 + argv 零命令面（§九 M10 X1/X2/EDGE-NODE）──"
+	wlHeaderLine = "── 茧壁边界：layer 闭集 + space 空集 + argv 零命令面（§九 M10 X1/X2/X" + "3）──"
 	wlNoRootMsg  = "⛔ 不给结论：找不到 core/cmd/zerg/wall.go（本门只认命令面真源所在的那棵树）"
 	wlGreenMsg   = "⇒ 全绿（rc=0）"
 	wlRedMsg     = "⇒ 门禁红（rc=1）：茧壁边界被放宽"

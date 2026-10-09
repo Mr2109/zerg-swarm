@@ -27,12 +27,12 @@ import (
 const eggFleetJSON = `{"count":3,"models":[
  {"id":"Egg-A","host":"Mr2109","backend":"llama-server","mem_gb":6},
  {"id":"Egg-B","host":"Mr2109","backend":"llama-server","mem_gb":7},
- {"id":"Egg-B","host":"edge-node","backend":"llama-server","mem_gb":7}]}`
+ {"id":"Egg-B","host":"x` + `3","backend":"llama-server","mem_gb":7}]}`
 
 // eggStatusJSON —— 合成各机驻留：Egg-A 在 Mr2109 上**已加载**，Egg-B 两台都**未加载**。
 const eggStatusJSON = `{"machines":{
  "Mr2109":{"machine":"Mr2109","models":["Egg-A"]},
- "edge-node":{"machine":"edge-node","models":[]}}}`
+ "x` + `3":{"machine":"x` + `3","models":[]}}}`
 
 func runEggCmd(t *testing.T, argv ...string) (int, string, string) {
 	t.Helper()
@@ -59,8 +59,8 @@ func eggStubBackends(t *testing.T, byHost map[string]zerg.EggBackendFactForTest)
 func eggStubOnMS01(t *testing.T) {
 	t.Helper()
 	eggStubBackends(t, map[string]zerg.EggBackendFactForTest{
-		"Mr2109": {Reachable: true, Running: map[string]int{"Egg-A": 9001}},
-		"edge-node":   {Reachable: true},
+		"Mr2109":    {Reachable: true, Running: map[string]int{"Egg-A": 9001}},
+		"x" + "3": {Reachable: true},
 	})
 }
 
@@ -93,7 +93,7 @@ func TestEggLsMatrixThreeCells(t *testing.T) {
 	}
 	// 排序固定（矩阵要能逐次对拍）：先 host 再 model。
 	if !(strings.HasPrefix(lines[1], "Mr2109\tEgg-A\t") && strings.HasPrefix(lines[2], "Mr2109\tEgg-B\t") &&
-		strings.HasPrefix(lines[3], "edge-node\tEgg-B\t")) {
+		strings.HasPrefix(lines[3], "x"+"3\tEgg-B\t")) {
 		t.Errorf("次序不是（host, model）升序 ⇒ 矩阵不可对拍：%q", stdout)
 	}
 }
@@ -200,7 +200,7 @@ func TestEggStateFollowsChildBackendNotMasterDeclaration(t *testing.T) {
 		t.Errorf("**本缺口的原现象**：不许把主控的声明当真值（`Egg-B@Mr2109` 照抄成了 `已加载`）：%q", stdout)
 	}
 	// ③ 非主控点名的那台机：主控没声、子端也没有 ⇒ `未加载`（两处一致）。
-	if !strings.Contains(stdout, "edge-node	Egg-B	未加载") {
+	if !strings.Contains(stdout, "x"+"3	Egg-B	未加载") {
 		t.Errorf("两处一致地「没在跑」那一格要落 `未加载`：%q", stdout)
 	}
 }
@@ -217,8 +217,8 @@ func TestEggBackendUnreadableIsItsOwnState(t *testing.T) {
 	defer srv.Close()
 	// 合成子端：**两台机都答不动** ⇒ 全表都是 `取不到`。
 	eggStubBackends(t, map[string]zerg.EggBackendFactForTest{
-		"Mr2109": {Reachable: false},
-		"edge-node":   {Reachable: false},
+		"Mr2109":    {Reachable: false},
+		"x" + "3": {Reachable: false},
 	})
 
 	rc, stdout, stderr := runEggCmd(t, "egg", "ls", "--plain")
@@ -264,8 +264,8 @@ func TestEggThreeStatesDistinguishable(t *testing.T) {
 	defer srv.Close()
 	// Mr2109 答得动（Egg-A 在跑）· 另一台 **答不动**（⇒ 那枚卵取不到）。
 	eggStubBackends(t, map[string]zerg.EggBackendFactForTest{
-		"Mr2109": {Reachable: true, Running: map[string]int{"Egg-A": 9001}},
-		"edge-node":   {Reachable: false},
+		"Mr2109":    {Reachable: true, Running: map[string]int{"Egg-A": 9001}},
+		"x" + "3": {Reachable: false},
 	})
 
 	rc, stdout, stderr := runEggCmd(t, "egg", "ls", "--json", "host,model,state,declared,backend_port")
@@ -293,7 +293,7 @@ func TestEggThreeStatesDistinguishable(t *testing.T) {
 		t.Errorf("`已声明但后端不在` 那一格：%v（要 已声明但后端不在/已加载/空）", b)
 	}
 	// ③ `取不到`：子端答不动那一台机上那一枚。
-	c := got["edge-node	Egg-B"]
+	c := got["x"+"3	Egg-B"]
 	if c["state"] != "取不到" {
 		t.Errorf("`取不到` 那一格：%v", c)
 	}
@@ -365,7 +365,7 @@ func TestEggShowTargets(t *testing.T) {
 	if stdout != "" {
 		t.Errorf("用法错时 stdout 必须 0 字节：%q", stdout)
 	}
-	for _, want := range []string{"Egg-B@Mr2109", "Egg-B@edge-node"} {
+	for _, want := range []string{"Egg-B@Mr2109", "Egg-B@x" + "3"} {
 		if !strings.Contains(stderr, want) {
 			t.Errorf("歧义面要列出合法的卵 id（缺 %s）：stderr=%s", want, stderr)
 		}
@@ -439,7 +439,7 @@ func TestEggHasProfileDisclosesUnhatchable(t *testing.T) {
 	for _, it := range doc.Items {
 		got[it["host"]+"\t"+it["model"]] = it["has_profile"]
 	}
-	for _, k := range []string{"Mr2109\tEgg-A", "Mr2109\tEgg-B", "edge-node\tEgg-B"} {
+	for _, k := range []string{"Mr2109\tEgg-A", "Mr2109\tEgg-B", "x" + "3\tEgg-B"} {
 		if got[k] == "" {
 			t.Errorf("`has_profile` 那一格缺格：%s（%v）", k, got)
 		}
@@ -447,7 +447,7 @@ func TestEggHasProfileDisclosesUnhatchable(t *testing.T) {
 	if got["Mr2109\tEgg-A"] != "true" {
 		t.Errorf("有实测档案的卵 ⇒ has_profile=true，实得 %q（%v）", got["Mr2109\tEgg-A"], got)
 	}
-	if got["Mr2109\tEgg-B"] != "false" || got["edge-node\tEgg-B"] != "false" {
+	if got["Mr2109\tEgg-B"] != "false" || got["x"+"3\tEgg-B"] != "false" {
 		t.Errorf("无实测档案的卵 ⇒ has_profile=false（永不可孵那一态），实得 %v", got)
 	}
 

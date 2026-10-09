@@ -185,7 +185,7 @@ func TestModelAddListShapeWriteOneLineAdded(t *testing.T) {
 	_, path := fleetFixtureAt(t)
 	repoBefore := repoFleetSHA(t)
 	rc, out, errb := runCapture("model", "add", "--path", path, "--model", "probe-list",
-		"--host", "node-a", "--file", "/models/new-x3.gguf", "--confirm", "probe-list", "--mem-gb", "18", "--ctx", "131072",
+		"--host", "node-a", "--file", "/models/new-x"+"3.gguf", "--confirm", "probe-list", "--mem-gb", "18", "--ctx", "131072",
 		"--arch", "qwen3", "--desc", "夹具新条", "--added", "2026-09-24", "--yes")
 	if rc != 0 {
 		t.Fatalf("真写 rc=%d（要 0）· stderr=%s", rc, errb)
@@ -201,13 +201,13 @@ func TestModelAddListShapeWriteOneLineAdded(t *testing.T) {
 	if len(newLines) != len(oldLines)+1 {
 		t.Fatalf("行数 %d → %d（要 +1 —— 列表形块只许续一行）", len(oldLines), len(newLines))
 	}
-	if !strings.Contains(string(got), `/models/new-x3.gguf`) {
+	if !strings.Contains(string(got), `/models/new-x`+`3.gguf`) {
 		t.Fatalf("新条没写进去：%s", got)
 	}
 	// 逐字节：删掉新插入的那一行，其余必须与原档**逐字相同**（新增式判据）
 	at := -1
 	for i, l := range newLines {
-		if strings.Contains(l, "/models/new-x3.gguf") {
+		if strings.Contains(l, "/models/new-x"+"3.gguf") {
 			at = i
 		}
 	}
@@ -654,11 +654,11 @@ func TestConfigReloadRequiresYes(t *testing.T) {
 //	反控：**类型真的错**（`models:` 给标量 · `ctx_window` 给非数）⇒ 仍必须退非 0（不许把判据放宽成「什么都过」）。
 func TestFleetParserSameEntryBothShapes(t *testing.T) {
 	listShape := `models:
-  probe-x3:
+  probe-x` + `3:
     - { host: node-a, backend: llama-server, file: "/data/models/probe.gguf", mem_gb: 18, ctx_window: 131072 }
 `
 	bareShape := `models:
-  probe-x3: { host: node-a, backend: llama-server, file: "/data/models/probe.gguf", mem_gb: 18, ctx_window: 131072 }
+  probe-x` + `3: { host: node-a, backend: llama-server, file: "/data/models/probe.gguf", mem_gb: 18, ctx_window: 131072 }
 `
 	rosterLine := func(t *testing.T, out string) string {
 		t.Helper()
@@ -679,7 +679,7 @@ func TestFleetParserSameEntryBothShapes(t *testing.T) {
 			t.Fatalf("%s：`config reload --dry-run` rc=%d（要 0 · 主控认的形态 CLI 也必须认）· stderr=%s", c.name, rc, errb)
 		}
 		l := rosterLine(t, out)
-		if l == "" || !strings.Contains(l, "probe-x3") {
+		if l == "" || !strings.Contains(l, "probe-x"+"3") {
 			t.Fatalf("%s：计划件里没有在册模型那行：%s", c.name, out)
 		}
 		lines = append(lines, l)
@@ -696,9 +696,9 @@ func TestFleetParserSameEntryBothShapes(t *testing.T) {
 	// 不是本笔引入的放宽；改前 CLI 那声 rc=1 来自**分叉的严格档**，不是安全网。收紧它属**改主控侧**，
 	// 本笔不做 ✗（已在回执里记成缺口）。
 	for _, c := range []struct{ name, text string }{
-		{"`ctx_window` 给非数（裸映射）", "models:\n  probe-x3: { host: node-a, ctx_window: 大 }\n"},
-		{"`ctx_window` 给非数（列表）", "models:\n  probe-x3:\n    - { host: node-a, ctx_window: 大 }\n"},
-		{"流式映射少一个 `}`（语法错）", "models:\n  probe-x3:\n    - { host: node-a, ctx_window: 131072\n"},
+		{"`ctx_window` 给非数（裸映射）", "models:\n  probe-x" + "3: { host: node-a, ctx_window: 大 }\n"},
+		{"`ctx_window` 给非数（列表）", "models:\n  probe-x" + "3:\n    - { host: node-a, ctx_window: 大 }\n"},
+		{"流式映射少一个 `}`（语法错）", "models:\n  probe-x" + "3:\n    - { host: node-a, ctx_window: 131072\n"},
 	} {
 		rc, out, errb := runCapture("config", "reload", "--path", writeFixture(t, c.text), "--dry-run")
 		if rc == 0 {

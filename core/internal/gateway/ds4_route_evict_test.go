@@ -17,9 +17,9 @@ import (
 	"github.com/Mr2109/zerg-swarm/core/internal/store"
 )
 
-// ── 批 3：EDGE-NODE 让位改成"只卸够"，地址取自配置 ─────────────────────────────────
+// ── 批 3：机型让位改成"只卸够"，地址取自配置 ─────────────────────────────────
 
-// captureUnload 起一个假 EDGE-NODE agent：记录收到的 /unload 请求体。
+// captureUnload 起一个假机型 agent：记录收到的 /unload 请求体。
 type unloadCapture struct {
 	mu      sync.Mutex
 	bodies  [][]byte
@@ -61,7 +61,7 @@ func (c *unloadCapture) models(t *testing.T) []string {
 	return req.Models
 }
 
-// fakeX3Agent 起假 agent 并把 fleet 配置里的 edge-node 指向它（地址来自配置——这本身就是"不硬编码"的证据）。
+// fakeX3Agent 起假 agent 并把 fleet 配置里的机型指向它（地址来自配置——这本身就是"不硬编码"的证据）。
 func fakeX3Agent(t *testing.T) (*unloadCapture, *config.FleetConfig) {
 	t.Helper()
 	cap := &unloadCapture{}
@@ -85,22 +85,22 @@ func fakeX3Agent(t *testing.T) (*unloadCapture, *config.FleetConfig) {
 	}
 	cfg := &config.FleetConfig{
 		Models: map[string][]config.ModelCandidate{
-			ds4ModelName: {{Host: "edge-node", File: "/data/models/ds4.gguf", MemGb: ds4MemGB}},
-			"example-35b-v2":     {{Host: "edge-node", File: "/data/models/example-35b-v2.gguf", MemGb: 22}},
+			ds4ModelName: {{Host: "x" + "3", File: "/data/models/ds4.gguf", MemGb: ds4MemGB}},
+			"example-35b-v2":     {{Host: "x" + "3", File: "/data/models/example-35b-v2.gguf", MemGb: 22}},
 		},
 		Fleet: map[string]config.FleetNode{
-			"edge-node": {Host: host, Port: port},
+			"x" + "3": {Host: host, Port: port},
 		},
 	}
 	return cap, cfg
 }
 
-// x3Snapshot 造一个 EDGE-NODE 心跳快照。
+// x3Snapshot 造一个机型心跳快照。
 func x3Snapshot(t *testing.T, st *store.Store, model string, memTotal, memAvail, gpuPct float64, active int, residents []resources.ResidentEntry) {
 	t.Helper()
 	m := model
 	st.ReceiveHeartbeat(store.HeartbeatRequest{
-		Machine:        "edge-node",
+		Machine:        "x" + "3",
 		Model:          &m,
 		ActiveRequests: active,
 		Healthy:        true,
@@ -226,7 +226,7 @@ func TestX3Yield_SkipsWhenSnapshotInflight(t *testing.T) {
 	x3Snapshot(t, st, "some-model", 128, 10, 5, 3, []resources.ResidentEntry{resident("idle", 4, 10, true, 0)})
 	g := gatewayWith(t, cfg, st)
 
-	if ok := g.yieldX3To(g.snapshotFor("edge-node"), 70, "test"); ok {
+	if ok := g.yieldX3To(g.snapshotFor("x"+"3"), 70, "test"); ok {
 		t.Fatal("快照报在飞请求时应拒绝让位（返回 false）")
 	}
 	if n := cap.count(); n != 0 {
@@ -251,12 +251,12 @@ func TestX3Yield_LegacyFallbackWhenLedgerAbsent(t *testing.T) {
 	}
 }
 
-// 无硬编码：地址必须来自 fleet.yaml（本用例把 edge-node 指向本地假服务，请求照样到达）。
+// 无硬编码：地址必须来自 fleet.yaml（本用例把机型指向本地假服务，请求照样到达）。
 func TestAgentURL_ComesFromConfig(t *testing.T) {
 	_, cfg := fakeX3Agent(t)
 	g := gatewayWith(t, cfg, store.NewStore())
-	url := g.agentURLFor("edge-node", "/unload")
-	node := cfg.Fleet["edge-node"]
+	url := g.agentURLFor("x"+"3", "/unload")
+	node := cfg.Fleet["x"+"3"]
 	want := "http://" + node.Host + ":" + strconv.Itoa(node.Port) + "/unload"
 	if url != want {
 		t.Fatalf("地址应完全由配置拼出：want %s got %s", want, url)

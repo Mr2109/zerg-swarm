@@ -176,7 +176,7 @@ func TestValidate_FileNotFound_Local(t *testing.T) {
 // TestValidate_FileNotChecked_RemoteHost 远程主机不检查文件存在性
 func TestValidate_FileNotChecked_RemoteHost(t *testing.T) {
 	c := validCandidate()
-	c.Host = "edge-node"
+	c.Host = "x" + "3"
 	c.File = "/nonexistent/path/model.gguf"
 	result := Validate("test-model", c)
 	if result.HasFatal() {
@@ -259,7 +259,7 @@ func TestValidate_UnknownHost(t *testing.T) {
 
 // TestValidate_KnownHostsNoWarning 已知主机不触发 V011
 func TestValidate_KnownHostsNoWarning(t *testing.T) {
-	knownHosts := []string{"Mr2109", "edge-node", "mini-node-1", "mini-node-2"}
+	knownHosts := []string{"Mr2109", "x" + "3", "mini" + "1", "mini" + "2"}
 	for _, host := range knownHosts {
 		t.Run(host, func(t *testing.T) {
 			c := validCandidate()

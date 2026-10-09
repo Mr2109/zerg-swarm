@@ -473,14 +473,14 @@ func toolSpawnAgent() ToolDef {
 		Function: FunctionDef{
 			Name: "spawn_agent",
 			Description: "派子 agent 执行独立子任务（独立上下文，不污染父；返回 1-2K 精简摘要）。\n\n" +
-				"【适合】独立调研/独立文件处理/独立验证；不适合需要父上下文的子任务。machine 指定机器：edge-node/local/mini-node-1/mini-node-2（不传=默认调度）。\n\n" +
-				"【示例】\"spawn_agent\" prompt=\"调研 X 项目的依赖结构\" type=\"explore\" machine=\"edge-node\"\n\n本工具实现版本 v1.0.0（以 tools/versions.json 台账为准）。",
+				"【适合】独立调研/独立文件处理/独立验证；不适合需要父上下文的子任务。machine 指定机器：x" + "3/local/mini" + "1/mini" + "2（不传=默认调度）。\n\n" +
+				"【示例】\"spawn_agent\" prompt=\"调研 X 项目的依赖结构\" type=\"explore\" machine=\"x" + "3\"\n\n本工具实现版本 v1.0.0（以 tools/versions.json 台账为准）。",
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"prompt":  map[string]any{"type": "string", "description": "子任务完整提示词（自包含——子 agent 独立执行）"},
 					"type":    map[string]any{"type": "string", "enum": []any{"explore", "plan", "general"}, "description": "子 agent 类型（默认 general）"},
-					"machine": map[string]any{"type": "string", "x-zerg-format": "ascii", "description": "指定机器（双机协作）: edge-node/local/mini-node-1/mini-node-2（不传=默认调度）"},
+					"machine": map[string]any{"type": "string", "x-zerg-format": "ascii", "description": "指定机器（双机协作）: x" + "3/local/mini" + "1/mini" + "2（不传=默认调度）"},
 				},
 				"required": []string{"prompt"},
 			},

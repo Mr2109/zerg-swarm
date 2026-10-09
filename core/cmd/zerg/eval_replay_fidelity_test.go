@@ -143,24 +143,104 @@ func TestRfgPadBytesWidth(t *testing.T) {
 	}
 }
 
-// ---- -h：优先现读原件；原件退役 ⇒ 回落内嵌合成副本 ----
+// ---- 内化金标：旧 .sh 对拍退场 ⇒ 帮助面金标收 Go 常量 · ✗ 不 Skip ----
+//
+// 为什么这么测（照 `check_flag_registry_parity_test.go` / `check_ghost_decl_diff_test.go` 先例）：本件原
+// 「原件 `scripts/evals/replay-fidelity.sh` ⟷ Go 真搬」的现读对拍（旧名 `TestRfgHelpLiveAndFallback`，其
+// Skip 落在本件第 155 行）的对拍源（原件 .sh）已退役（不在盘）⇒ `os.ReadFile` 恒失败 ⇒ 断言**恒 Skip**
+// （假绿、零保护）。把金标真源**收回 Go 半现役行为本身**：
+//
+//	★ 金标计算式（✗ 不臆造）：帮助面金标 = **原件第 2..30 行的内化副本**，已冻成 Go 常量 `rfgHelpFallback`
+//	  （Go 半现役回落支逐字取自原件第 2..30 行）。退役态 `rfgHelpText(root)` 必回它 ⇒ 逐字比。
+//	两态（✗ 不许 Skip）：A 态 = 真仓 / 合成根**无 .sh** ⇒ 回落内嵌金标；B 态 = 合成「旧态」（把退役 .sh
+//	  路径放回，打一份 ≥30 行合成件）⇒ 现读该件第 2..30 行（证现读支仍活 · .sh 在/不在盘不改金标结论）。
+//	★ 哑化负控（"牙"）：`-overlay` 把 `eval_replay_fidelity.go` 的回落/现读支哑化 ⇒ 用例必 FAIL 且带行号。
 
-func TestRfgHelpLiveAndFallback(t *testing.T) {
-	root := rfgRepoRoot()
-	if root == "" {
-		t.Skip("本机解析不到仓根 ⇒ 该档不适用")
-	}
-	b, err := os.ReadFile(root + "/scripts/evals/replay-fidelity.sh")
+// rfgGoHalfRel —— 哨兵锚：Go 半（✗ 不锚已退役的原件 scripts/evals/replay-fidelity.sh —— 一退役即失锚）。
+const rfgGoHalfRel = "core/cmd/zerg/eval_replay_fidelity.go"
+
+// rfgTestRepoRoot —— 哨兵：由 cwd 上溯找含 Go 半的仓根；找不到 ⇒ fail-closed（缺件 ≠ 绿 · ✗ 不留 Skip）。
+// 旧版锚 `scripts/evals/replay-fidelity.sh`（对拍真身）：该 .sh 已退役 ⇒ 上溯恒找不到 ⇒ 恒 Skip（假绿）。
+// 改锚 Go 半后它在盘（与本测试同包）⇒ 真跑断言。
+func rfgTestRepoRoot(t *testing.T) string {
+	t.Helper()
+	d, err := os.Getwd()
 	if err != nil {
-		t.Skip("原件不在盘 ⇒ 仅回落档适用")
+		t.Fatal(err)
 	}
-	want := strings.Join(strings.Split(strings.TrimSuffix(string(b), "\n"), "\n")[1:30], "\n") + "\n"
-	if got := rfgHelpText(root); got != want {
-		t.Fatalf("-h 未现读原件第 2..30 行:\n--- got ---\n%s--- want ---\n%s", got, want)
+	for i := 0; i < 8; i++ {
+		if st, err := os.Stat(filepath.Join(d, filepath.FromSlash(rfgGoHalfRel))); err == nil && st.Mode().IsRegular() {
+			return d
+		}
+		parent := filepath.Dir(d)
+		if parent == d {
+			break
+		}
+		d = parent
 	}
-	// 负控：原件缺席 ⇒ 必须回落内嵌副本（✗ 不空白、✗ 不报错）——若回落被删 ⇒ 此断言红。
+	t.Fatalf("哨兵失守：上溯未见 Go 半 %s（不是真仓树）⇒ fail-closed（✗ 不留 Skip）", rfgGoHalfRel)
+	return ""
+}
+
+// TestReplayFidelityGoldenInternalized —— A 态（真仓 · 退役 .sh 不在盘）金标自证（✗ 不 Skip · 逐字真断言）。
+func TestReplayFidelityGoldenInternalized(t *testing.T) {
+	root := rfgTestRepoRoot(t) // 哨兵：锚 Go 半；找不到 ⇒ fail-closed（✗ 不 Skip）
+	sh := filepath.Join(root, "scripts", "evals", "replay-fidelity.sh")
+	if _, err := os.Stat(sh); err == nil {
+		t.Fatalf("A 态前提破：退役原件竟在盘 %s（本件前提 = 内化后无 .sh）", sh)
+	}
+	// 退役态：帮助面必回落内嵌金标（✗ 不空白、✗ 不报错）
+	if got := rfgHelpText(root); got != rfgHelpFallback || got == "" {
+		t.Fatalf("-h 退役态回落不符内嵌金标（len=%d）", len(got))
+	}
+	// 入口面：-h ⇒ rc=0 且 stdout 逐字 = 金标（✗ 不放宽）
+	var out, errb bytes.Buffer
+	if rc := evalReplayFidelityGateMain(&out, &errb, []string{"-h"}); rc != 0 {
+		t.Fatalf("入口 -h rc=%d 期望 0（err=%q）", rc, errb.String())
+	}
+	if out.String() != rfgHelpFallback {
+		t.Fatalf("入口 -h stdout 未逐字回内嵌金标:\n--- got ---\n%s--- want ---\n%s", out.String(), rfgHelpFallback)
+	}
+	// 负控：找不到仓根（合成根）⇒ 仍回落内嵌金标（✗ 不空白、✗ 不报错）——若回落被删 ⇒ 此断言红。
 	if got := rfgHelpText("/no/such/repo/root"); got != rfgHelpFallback || got == "" {
 		t.Fatalf("退役态回落不符（len=%d）", len(got))
+	}
+}
+
+// TestReplayFidelityGoldenTwoStates —— 两态（✗ 不许 Skip）：A 态 = 合成根**无 .sh** ⇒ 回落内嵌金标；
+// B 态 = 合成「旧态」（把退役 .sh 路径放回，打一份 ≥30 行合成件）⇒ 现读该件第 2..30 行（证现读支仍活）。
+func TestReplayFidelityGoldenTwoStates(t *testing.T) {
+	_ = rfgTestRepoRoot(t) // 哨兵：锚 Go 半在盘 ⇒ fail-closed（✗ 不 Skip）
+	// A 态：合成根无 .sh ⇒ 必回落内嵌金标
+	noSh := t.TempDir()
+	if got := rfgHelpText(noSh); got != rfgHelpFallback {
+		t.Fatalf("A 态（无 .sh）应回落内嵌金标:\n--- got ---\n%s", got)
+	}
+	// B 态：合成「旧态」——退役 .sh 路径在位（≥30 行）⇒ 现读第 2..30 行
+	old := t.TempDir()
+	sp := filepath.Join(old, "scripts", "evals", "replay-fidelity.sh")
+	if err := os.MkdirAll(filepath.Dir(sp), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var b strings.Builder
+	b.WriteString("#!/bin/sh\n")
+	b.WriteString("# —— 合成「旧态」件（本件只证 .sh 在/不在盘不改金标结论）——\n")
+	for i := 3; i <= 40; i++ {
+		b.WriteString("sha-line-")
+		b.WriteByte(byte('0' + i/10))
+		b.WriteByte(byte('0' + i%10))
+		b.WriteByte('\n')
+	}
+	if err := os.WriteFile(sp, []byte(b.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ls := strings.Split(strings.TrimSuffix(b.String(), "\n"), "\n")
+	if len(ls) < 30 {
+		t.Fatalf("合成件行数 %d < 30（前置不成立）", len(ls))
+	}
+	want := strings.Join(ls[1:30], "\n") + "\n"
+	if got := rfgHelpText(old); got != want {
+		t.Fatalf("B 态（有 .sh）应现读第 2..30 行:\n--- got ---\n%s--- want ---\n%s", got, want)
 	}
 }
 

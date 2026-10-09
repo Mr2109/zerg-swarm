@@ -541,7 +541,9 @@ func impactDocFaceLookup(root string, tgt *impactTarget, layout impactStateLayou
 }
 
 // impactDocQueryWords 目标件（或契约 id）在文档面要找的词（口径写死 · 一件一组）：
-// 件名 · 仓内相对路径 · 顶层符号名（上限 40 · 字典序 ⇒ 两跑逐字相同）。
+// 件名 · 仓内相对路径 · 顶层符号名（**全量** · 字典序 ⇒ 两跑逐字相同）。
+// 为什么不截断（曾按字典序「上限 40」砍尾）：截断会**静默丢掉**排在后面的真符号 ——
+// 聚合件（如 `main.go`）的入口符号 `main` 常被砍到 40 名之外 ⇒ 该件在文档面被误报「面内未见」。
 func impactDocQueryWords(root string, tgt *impactTarget) []string {
 	set := map[string]bool{}
 	if tgt == nil {
@@ -560,9 +562,6 @@ func impactDocQueryWords(root string, tgt *impactTarget) []string {
 		names = append(names, n)
 	}
 	sort.Strings(names)
-	if len(names) > 40 {
-		names = names[:40]
-	}
 	for _, n := range names {
 		set[n] = true
 	}

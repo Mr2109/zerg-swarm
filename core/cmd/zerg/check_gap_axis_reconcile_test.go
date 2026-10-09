@@ -372,7 +372,7 @@ func gaaPyParityOrRetired(t *testing.T, root, pyPath string) {
 		return
 	}
 	if st, err := os.Stat(gaaTestPython); err != nil || st.IsDir() {
-		t.Skip("未钉到 " + gaaTestPython)
+		t.Fatalf("哨兵失守：未钉到解释器 %s（✗ 不留 Skip · fail-closed）", gaaTestPython)
 	}
 	repo := gaaTestFakeRepo(t)
 	led := gaaTestLedger(t, gaaGoodYou, gaaGoodWu,

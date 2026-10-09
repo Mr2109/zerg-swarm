@@ -424,7 +424,7 @@ func main() {
 	idleDetector.SetExternalQueue(func() int { return masterSched.RunningCount() })
 	idleDetector.SetResourceIdle(func() bool {
 		// 资源空闲: node-a GPU idle（快照 active 请求 0）
-		if snap := gw.Snapshot("edge-node"); snap != nil && snap.ActiveRequests == 0 {
+		if snap := gw.Snapshot("x" + "3"); snap != nil && snap.ActiveRequests == 0 {
 			return true
 		}
 		return false

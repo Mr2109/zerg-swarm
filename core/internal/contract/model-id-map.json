@@ -44,7 +44,7 @@
       "registry_name": "Ternary-Bonsai-2-27B",
       "fleet_ids": ["Ternary-Bonsai-2-27B"],
       "weights": "Ternary-Bonsai-2-27B-PTQ1_0.gguf",
-      "evidence": "2026-10-05 zerg-model probe --store 落的 record（version=sha256-175508418b42 · 路径在外部卷 <volume-path>）的 weights 建材名 = Ternary-Bonsai-2-27B-PTQ1_0.gguf；fleet.yaml 的 Ternary-Bonsai-2-27B（Mr2109 · <volume-path>）候选的 file basename 逐字相同 ⇒ 同一份权重。★ 该 record 的 name 字段是 GGUF 里的垃圾值 Hf（另记待修）。"
+      "evidence": "2026-10-05 zerg-model probe --store 落的 record（version=sha256-175508418b42 · 路径在外部卷 BXC）的 weights 建材名 = Ternary-Bonsai-2-27B-PTQ1_0.gguf；fleet.yaml 的 Ternary-Bonsai-2-27B（Mr2109 · 外部卷 BXC）候选的 file basename 逐字相同 ⇒ 同一份权重。★ 该 record 的 name 字段是 GGUF 里的垃圾值 Hf（另记待修）。"
     },
     {
       "registry_id": "nemotron-3-5-lightning-q4-0-ggmlorg",

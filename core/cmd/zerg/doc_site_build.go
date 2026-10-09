@@ -86,6 +86,10 @@ for p in ("mkdocs", "mkdocs-material", "mike", "jieba", "pymdown-extensions", "l
         print(f"  {p}==? ({e})")
 `
 
+// dsbExitSpawnFail —— shell 惯例退码 127（mkdocs 子进程起不来 · 非 ExitError；正文由 sh 侧写进日志）。
+// 属**底层壳件自有码空间**（✗ 不在命令面真源退码表 `core/cmd/zerg/exitcodes.go` ⇒ ✗ 写裸数字，门⑪ T3）；先例 = `deploy_launch.go`/`dplRCSSHAbsent` · `pack_release.go`/`prExitSpawnFail`（大写 E 不进门⑨ `exit…` regex）。
+const dsbExitSpawnFail = 127
+
 // cmdDocSiteBuild —— `zerg doc site build [--strict|--serve|--help]`（A14 的 Go 正门 · 真搬）。
 //
 // 退码口径（逐档照原脚本）：`0` 全绿 · `1` 构建有失败项（断链 / 跨面链 `--strict` 即红）· `2` 不给结论
@@ -270,7 +274,7 @@ func docSiteBuildRun(inv *invocation, args []string, stdout, stderr io.Writer) i
 		rcBuild = e.ExitCode()
 	default:
 		// sh 侧此处是 bash「command not found」⇒ 127；正文由 bash 写进日志（本件不复刻该正文）。
-		rcBuild = 127
+		rcBuild = dsbExitSpawnFail
 		logOut = append(logOut, []byte(fmt.Sprintf("%s: %v\n", venv+"/bin/mkdocs", e))...)
 	}
 	end := time.Now().Unix()

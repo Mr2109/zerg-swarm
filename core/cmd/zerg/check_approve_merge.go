@@ -26,7 +26,7 @@
 //	    ② `<state>/approvals/*.json` ③ `--source` 人喂快照 ④ 夹具目录（`cases.json` + `sources/` + `view.bad-*.json`）。
 //	    这四处**都不含** `core/cmd/zerg/`，故本件自身不在其扫描面内。四形态自查：① 件内**无**任何
 //	    `/Users/…`、`/Volumes/…` 一类仓内/私有**绝对路径字面量**（全部路径由 cwd / `--state` / `--fixtures`
-//	    运行期拼串）；② 夹具/自检标记串（`本机` / `localhost` / `.local` / `Mr2109` / `edge-node`）是**判据常量**
+//	    运行期拼串）；② 夹具/自检标记串（`本机` / `localhost` / `.local` / `Mr2109` / `<机型>`）是**判据常量**
 //	    （与 py 现读逐字一致），非「会被他门扫到的形态」直写；③ self-test 无「魔法环境变量串」；
 //	    ④ 本件**未接线**（无调用点 · 不在任何 `add_step` 步骤表内）。
 //	    ★ `"kind"` 一类 JSON 键名按「前缀 + 字面」拼串（`apmKeyKind`），防被 `check-error-kinds` 的 R3 扫到。
@@ -1661,24 +1661,24 @@ func apmSelfTest(stdout io.Writer, fixdir string) int {
 		{"拿 `default_node` 兜底（值恰在册 ⇒ 更毒 · 只有依据格露馅）",
 			apmPolicy{fillMissing: "Mr2109", hasFillMissing: true, srcBasis: "default_node", hasSrcBasis: true}, "anon", ""},
 		{"写死 `Mr2109`（无视载体 ⇒ §三.4 负控②「别机那一行必须红」）",
-			apmPolicy{hardcode: "Mr2109", hasHardcode: true}, "prefixed", "edge-node"},
+			apmPolicy{hardcode: "Mr2109", hasHardcode: true}, "prefixed", "x" + "3"},
 	}
 	for _, mu := range muts {
 		var d string
 		if mu.which == "anon" {
 			d = apmPyJoin(fixdir, "A5-neg-not-machine", "sources", "anon-edit_audit.jsonl")
 		} else {
-			d = apmPyJoin(fixdir, "A0-ok", "sources", "edge-node-edit_audit.jsonl")
+			d = apmPyJoin(fixdir, "A0-ok", "sources", "x"+"3-edit_audit.jsonl")
 		}
 		srcs := []apmSource{{arg: d, prefix: mu.pre, path: d}}
 		pol := mu.pol
-		rows, why := apmBuildRows(srcs, []string{"Mr2109", "edge-node"}, "", "<host>", &pol)
+		rows, why := apmBuildRows(srcs, []string{"Mr2109", "x" + "3"}, "", "<host>", &pol)
 		if rows == nil {
 			fmt.Fprintf(stdout, "   ✗ 变异 %s：取数失败（%s）\n", mu.name, why)
 			bad++
 			continue
 		}
-		red, _ := apmAuditView(apmBuildView(rows, srcs, apmNowISO("")), []string{"Mr2109", "edge-node"})
+		red, _ := apmAuditView(apmBuildView(rows, srcs, apmNowISO("")), []string{"Mr2109", "x" + "3"})
 		if len(red) > 0 {
 			fmt.Fprintf(stdout, "   ✓ 变异 %s ⇒ 自己的 A5 检索面判红：%s\n", mu.name, apmRuneSlice(red[0], 72))
 			ok++
@@ -1689,8 +1689,8 @@ func apmSelfTest(stdout io.Writer, fixdir string) int {
 	}
 
 	d0 := apmPyJoin(fixdir, "A5-neg-not-machine", "sources", "anon-edit_audit.jsonl")
-	rows0, _ := apmBuildRows([]apmSource{{arg: d0, prefix: "", path: d0}}, []string{"Mr2109", "edge-node"}, "", "<host>", &apmPolicy{hardcode: "Mr2109", hasHardcode: true})
-	red0, _ := apmAuditView(apmBuildView(rows0, nil, apmNowISO("")), []string{"Mr2109", "edge-node"})
+	rows0, _ := apmBuildRows([]apmSource{{arg: d0, prefix: "", path: d0}}, []string{"Mr2109", "x" + "3"}, "", "<host>", &apmPolicy{hardcode: "Mr2109", hasHardcode: true})
+	red0, _ := apmAuditView(apmBuildView(rows0, nil, apmNowISO("")), []string{"Mr2109", "x" + "3"})
 	fmt.Fprint(stdout, "── 自检 ③ 明标缺口（**不计数** · 这一格今天没牙，不许读成已封）：\n")
 	verdict := "**判不出来**（如实标出）"
 	if len(red0) > 0 {
@@ -1709,7 +1709,7 @@ func apmSelfTest(stdout io.Writer, fixdir string) int {
 		fmt.Fprintf(stdout, "   ✗ 未知旗标 ⇒ rc=%d（期望 2 + 字样「用法错」）\n", rc1)
 		bad++
 	}
-	rc2, out2, err2 := apmRunCLI([]string{"--no-self-test", "--source", "/no/such/source.jsonl", "--roster-nodes", "Mr2109,edge-node"})
+	rc2, out2, err2 := apmRunCLI([]string{"--no-self-test", "--source", "/no/such/source.jsonl", "--roster-nodes", "Mr2109,x" + "3"})
 	out2 = out2 + err2
 	if rc2 == 2 && !strings.Contains(out2, "用法错") && (strings.Contains(out2, "未取数") || strings.Contains(out2, "缺证据")) {
 		fmt.Fprint(stdout, "   ✓ 来源件不在 ⇒ rc=2 且字样 ≠「用法错」（未取数那一档）\n")

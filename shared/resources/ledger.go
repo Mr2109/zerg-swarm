@@ -118,7 +118,7 @@ type MachineLedger struct {
 }
 
 // VramKnown 报告该机器是否提供独立显存额度（§4.1：字段缺省=该机器未提供）。
-// 有独立显存（如 EDGE-NODE 的 ROCm 卡）→ true，此时"装得下吗"必须与内存口径取严。
+// 有独立显存（如机型的 ROCm 卡）→ true，此时"装得下吗"必须与内存口径取严。
 func (m MachineLedger) VramKnown() bool { return m.VramTotalGb > 0 }
 
 // VramUnknown 报告该机器的显存是"真未知"：既拿不到独立显存额度，也不是统一内存。

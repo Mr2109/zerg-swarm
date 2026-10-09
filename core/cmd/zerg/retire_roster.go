@@ -2,9 +2,11 @@
 //
 // 义（终版口径 2026-10-08 · 真源 = `core/internal/contract/adopt-retire.json` boundaries 末两条）：
 //
-//	`retire_exceptions` 每条 `reason` 须写成 `<首词>：<为什么物理上不能 Go 化>`；首词 =
+//	`retire_exceptions` 每条 `reason` 须写成 `<首词>：<理由>`；首词 =
 //	**首个全角 `：`（U+FF1A）之前**那段（再 TrimSpace），须 ∈ 闭集
-//	{生态绑定, OS胶水, vendor, 硬线, 自举}（5 档）。★ 与「闭集内件（决-12）」是**两个面**，✗ 别混。
+//	{生态绑定, OS胶水, vendor, 硬线, 自举, 未 Go 化}（6 档）。★ 与「闭集内件（决-12）」是**两个面**，✗ 别混。
+//	6 档分两家：**物理不可化 5 档** ＋ **未 Go 化 1 档**（有能力 · 暂无 Go 真身 —— 有消费者的随本版 Go 化推进；零消费者的本版不搬（搬了即无人维护死件）；
+//	★ 与物理不可化的区别＝时序 vs 障碍 —— 真源见 `contract` boundaries[7]）。
 //
 // ★ **判域 ≡ reason 首词 ∈ 闭集（乙案 · 2026-10-08 代拍）**：判域由契约（`boundaries[7]`）已定义语汇的
 // 单字段派生 —— `reason` 首词合档者即入判域（名册增删**自动随动**）；旧「显式名单 ∪ category 命中三类」
@@ -113,7 +115,7 @@ func rrCheck(root string, stdout, stderr io.Writer) int {
 
 	fmt.Fprintln(stdout, "── 名册形态门 check-retire-roster（判域 ≡ reason 首词∈闭集 · 对照名单仅校验）──")
 	fmt.Fprintf(stdout, "真源 : %s 的 %s\n", scriptRetireTruthRel, scriptRetireExceptionKey)
-	fmt.Fprintf(stdout, "口径 : reason 须 `<首词>：<为什么物理上不能 Go 化>`；首词（首个全角 `：` U+FF1A 之前）∈ 闭集 {%s}\n",
+	fmt.Fprintf(stdout, "口径 : reason 须 `<首词>：<理由>`（物理不可化 5 档 / 未 Go 化 1 档）；首词（首个全角 `：` U+FF1A 之前）∈ 闭集 {%s}\n",
 		strings.Join(scriptRetireExcReasonPrefixes, ", "))
 
 	// 名册块形状不认识 ⇒ 取数面不成立 ⇒ 不给结论。
@@ -202,6 +204,10 @@ func rrSelfTest(stdout, stderr io.Writer) int {
 	// ⑤ 判域随动（乙案要点）：名单外件 ＋ 闭集首词 ⇒ 入判域、rc=0（✗ 无需补名单）。
 	rc5, out5 := runRoster(mk("synth/auto.py", "能 Go 化", "自举：步表宿主"))
 	report("判域随动 名单外件首词合 ⇒ 绿且入判域", 0, rc5, strings.Contains(out5, "判域 1 条"), "名单外合档件未入判域")
+
+	// ⑤b 新档（2026-10-09）：`未 Go 化：` 也作判域首词 ⇒ 入判域、rc=0。
+	rc5b, out5b := runRoster(mk("synth/auto2.py", "未 Go 化·待收编", "未 Go 化：有能力·暂无 Go 真身·随本版 Go 化推进"))
+	report("新档 未 Go 化 首词合 ⇒ 绿且入判域", 0, rc5b, strings.Contains(out5b, "判域 1 条"), "新档未进判域")
 
 	// ⑥ 非判域条（名单外 · 首词 ∉ 闭集）坏理由 ⇒ **豁免** rc=0。
 	rc6, out6 := runRoster(mk("synth/y.py", "能 Go 化", "真跑取数"))

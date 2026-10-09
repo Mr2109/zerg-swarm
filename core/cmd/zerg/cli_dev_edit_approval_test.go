@@ -188,7 +188,7 @@ func synthRepoForEditPy(t *testing.T) (string, string) {
 //	③ 干跑 ⇒ 退 0 且计划面**先打出同一份判决**（「真写会被拒」），零副作用。
 func TestDevEdit_SyntaxGateRefusesUnparsablePy(t *testing.T) {
 	if _, err := exec.LookPath("python3"); err != nil {
-		t.Skip("本机没有 python3 ⇒ 自检落在「不判」那一格（按不给结论处理），本用例不跑")
+		t.Fatalf("哨兵失守：本机没有 python3（✗ 不留 Skip · fail-closed）：%v", err)
 	}
 	repo, target := synthRepoForEditPy(t)
 	prop, state := t.TempDir(), t.TempDir()
@@ -458,5 +458,68 @@ func TestDevEdit_ApprovalFaceSelfCheckGivesHowto(t *testing.T) {
 	}
 	if !strings.Contains(errb, "真写要一枚人签批准件") || !strings.Contains(errb, "批准面·从哪来") {
 		t.Errorf("拒执面要给拒因 + 批准面说明块：%q", errb)
+	}
+}
+
+// TestDevEdit_ReplaceOnAlreadyLandedDisambiguates —— ★ GAP-20261009-10：
+//
+//	① 已改盘件（改前文本已不在盘上）跑 `--replace` ⇒ rc=2 且 stderr **消歧**
+//	   （明写「已落盘 / 回放不了 / 替补路线：还原前态后用 --from」），替掉误导性的「改成更长的上下文」；
+//	② 替补路线（还原**真前态** + `--from <改后整件>`）⇒ rc=0 且审计 before≠after（真落地 · 留真指纹）。
+func TestDevEdit_ReplaceOnAlreadyLandedDisambiguates(t *testing.T) {
+	repo, target := synthRepoForEdit(t)
+	prop, state := t.TempDir(), t.TempDir()
+	writeEditProposal(t, prop, "DEV-9009", target)
+	sign := writeOperatorKey(t, state)
+	mustWrite(t, filepath.Join(state, "approvals", "dev_edit.json"),
+		string(sign("dev_edit", "*", "张三", "2026-10-09T00:00:00+08:00", "放行本件"))+"\n")
+
+	// 造「已改盘件」：真前态 = synth 初值，现盘 = 手改后的内容。
+	baseline := "package main\n\n// 原件\n"
+	after := "package main\n\n// 改后\n"
+	mustWrite(t, filepath.Join(repo, target), after)
+	pb, _ := json.Marshal([]map[string]string{{"old": "// 原件\n", "new": "// 改后\n"}})
+	patch := filepath.Join(t.TempDir(), "p.json")
+	mustWrite(t, patch, string(pb))
+
+	// ① 对已改盘件 --replace ⇒ rc=2 + 消歧
+	rc, _, errb := runDevEdit(t, repo, prop, state, "--proposal", "DEV-9009", "--file", target,
+		"--replace", patch, "--dry-run")
+	if rc != 2 {
+		t.Fatalf("已改盘件 --replace ⇒ rc=%d（要 2）· stderr=%s", rc, errb)
+	}
+	if !strings.Contains(errb, "回放不了") || !strings.Contains(errb, "替补路线") {
+		t.Errorf("stderr 要消歧（回放不了 / 替补路线）：%q", errb)
+	}
+	if strings.Contains(errb, "改成更长的上下文") {
+		t.Errorf("已落盘那一档不许再用误导性的「改成更长的上下文」：%q", errb)
+	}
+	if got, _ := os.ReadFile(filepath.Join(repo, target)); string(got) != after {
+		t.Errorf("拒执 ⇒ 件一个字节不许动：%q", got)
+	}
+
+	// ② 替补路线：还原真前态 + --from <改后整件> ⇒ rc=0 且审计 before≠after
+	mustWrite(t, filepath.Join(repo, target), baseline)
+	from := filepath.Join(t.TempDir(), "after.go")
+	mustWrite(t, from, after)
+	rc, _, errb = runDevEdit(t, repo, prop, state, "--proposal", "DEV-9009", "--file", target,
+		"--from", from, "--confirm="+hostnameOf(t), "--yes")
+	if rc != 0 {
+		t.Fatalf("替补路线（还原前态 + --from）⇒ rc=%d（要 0）· stderr=%s", rc, errb)
+	}
+	if got, _ := os.ReadFile(filepath.Join(repo, target)); string(got) != after {
+		t.Errorf("替补路线要把件写成改后整件：%q", got)
+	}
+	ab, err := os.ReadFile(filepath.Join(state, "edit_audit.jsonl"))
+	if err != nil {
+		t.Fatalf("真写要落审计：%v", err)
+	}
+	all := strings.Split(strings.TrimSpace(string(ab)), "\n")
+	var line map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(all[len(all)-1])), &line); err != nil {
+		t.Fatalf("审计不是一行 JSON：%v", err)
+	}
+	if line["before_sha256"] == line["after_sha256"] {
+		t.Errorf("审计要留**真** before→after（真落地）：before=%v after=%v", line["before_sha256"], line["after_sha256"])
 	}
 }

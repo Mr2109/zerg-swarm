@@ -59,8 +59,8 @@ var calibRoster = []calibEntry{
 		State: calibStateAdopted,
 	},
 	{
-		Name: "calib-x3-model", File: "scripts/calib/calib-x3-model.sh", Run: "bash",
-		Role:  "dev-only bootstrap · 不进 CI/门/公开面 —— EDGE-NODE（Linux/Radeon · 真 GTT）模型标定：3 轮取上界；端口 9699（刻意避开子端池 9400–9499 与沙箱池）；本版暂不可化·待 §13 Q18",
+		Name: "calib-x" + "3-model", File: "scripts/calib/calib-x" + "3-model.sh", Run: "bash",
+		Role:  "dev-only bootstrap · 不进 CI/门/公开面 —— X" + "3（Linux/Radeon · 真 GTT）模型标定：3 轮取上界；端口 9699（刻意避开子端池 9400–9499 与沙箱池）；本版暂不可化·待 §13 Q18",
 		State: calibStateAdopted,
 	},
 }

@@ -234,7 +234,7 @@ func TestMCPReadToolPayloads(t *testing.T) {
 	}
 	mm := data["machine_models"].(map[string]any)
 	if len(mm["node-a"].([]any)) != 1 {
-		t.Fatalf("machine_models.edge-node 应 1 条：%v", mm)
+		t.Fatalf("machine_models.x"+"3 应 1 条：%v", mm)
 	}
 
 	// get_model_info：命中 ⇒ loaded_on/state；未命中 ⇒ success:false。

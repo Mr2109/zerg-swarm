@@ -207,13 +207,13 @@ func cmdRoutePin(inv *invocation, stdout, stderr io.Writer) int {
 	if model == "" {
 		inv.setErr("usage", "model_required", "`route pin` 要 `--model <模型>`")
 		fmt.Fprintf(stderr, "%s: `route pin` **要 `--model <模型>`**（钉的是「哪个模型走哪台机器」这一对）\n", progName)
-		fmt.Fprintf(stderr, "例：%s route pin --model example-35b-v2 --machine edge-node --ttl 2h --yes\n", progName)
+		fmt.Fprintf(stderr, "例：%s route pin --model example-35b-v2 --machine x"+"3 --ttl 2h --yes\n", progName)
 		return exitUsage
 	}
 	if machine == "" {
 		inv.setErr("usage", "machine_required", "`route pin` 要 `--machine <机器>`")
 		fmt.Fprintf(stderr, "%s: `route pin` **要 `--machine <机器>`**（机器名与 `fleet.yaml` 的 `fleet:` 段同名）\n", progName)
-		fmt.Fprintf(stderr, "例：%s route pin --model %s --machine edge-node --ttl 2h --yes\n", progName, model)
+		fmt.Fprintf(stderr, "例：%s route pin --model %s --machine x"+"3 --ttl 2h --yes\n", progName, model)
 		return exitUsage
 	}
 	// `--ttl` 复用 `approve` 那一套（同一枚旗标、同一套时长口径 —— 不另立第二份判据）。

@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // hsWriteStub —— 在 repoRoot/bin/zerg 落一枚 stub 制品（壳脚本）。
@@ -316,4 +317,55 @@ func TestHelpSnapshotHarness(t *testing.T) {
 	_ = os.WriteFile(os.Getenv("HSNAP_OUT"), out.Bytes(), 0o644)
 	_ = os.WriteFile(os.Getenv("HSNAP_ERR"), errb.Bytes(), 0o644)
 	_ = os.WriteFile(os.Getenv("HSNAP_RC"), []byte(strconv.Itoa(rc)), 0o644)
+}
+
+// ── 正控+负控 ⑨：默认选档确定性 —— 优先「当前版本目录」（版本真源决定），✗ 不再走全树 mtime ──────
+//
+//	夹具：版本真源 = 9.9.9 ⇒ 当前版本目录 = v9.9.9（其内存与现跑**一致**、mtime **更旧**）；
+//	另造 v1.0.0（行**不一致**、mtime **更新**）。旧「全树 mtime 最新」会误选 v1.0.0 ⇒ rc=1；
+//	新规则必选 v9.9.9 ⇒ rc=0。读数差即「选择真变了」之证（同一夹具下旧/新两制品读数相反）。
+func TestHelpSnapshot_DefaultPrefersVersionDir(t *testing.T) {
+	root := t.TempDir()
+	vdir := filepath.Join(root, "core", "internal", "version")
+	if err := os.MkdirAll(vdir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(vdir, "version.go"),
+		[]byte("package version\n\nconst Version = \"9.9.9\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	hsWriteStub(t, root, hsStubBody(
+		`{"items":[{"command":"zerg agent ls","commands":"9"}]}`,
+		"  zerg agent ls ｜ 茧壁:node ｜ 子端清单"))
+
+	docs := t.TempDir()
+	curDir := filepath.Join(docs, "项目文档", "v9.9.9")
+	oldDir := filepath.Join(docs, "项目文档", "v1.0.0")
+	if err := os.MkdirAll(curDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(oldDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cur := hsWriteSnap(t, curDir, "导出-命令面帮助-20260101.md", hsSnapRows("agent ls"))
+	old := hsWriteSnap(t, oldDir, "导出-命令面帮助-20261009.md", hsSnapRows("legacy cmd"))
+	now := time.Now()
+	if err := os.Chtimes(old, now, now); err != nil { // 旧版目录 mtime **更新** ⇒ 旧规则会误选它
+		t.Fatal(err)
+	}
+	older := now.Add(-time.Hour)
+	if err := os.Chtimes(cur, older, older); err != nil { // 当前版本目录快照 mtime **更旧**
+		t.Fatal(err)
+	}
+
+	out, _, rc := hsRun("--repo-root", root, "--docs-root", docs)
+	if rc != 0 {
+		t.Fatalf("默认应选当前版本目录快照 ⇒ rc=0（仍走全树 mtime 会误选 v1.0.0 ⇒ rc=1），实得 rc=%d out=%q", rc, out)
+	}
+	if !strings.Contains(out, cur) {
+		t.Fatalf("未选中当前版本目录快照 %q：%q", cur, out)
+	}
+	if !strings.Contains(out, "选档 = 版本目录 v9.9.9") {
+		t.Fatalf("选档来源标签不对：%q", out)
+	}
 }

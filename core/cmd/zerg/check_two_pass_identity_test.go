@@ -74,7 +74,7 @@ func TestCtpiFirstDiffLineHasTeeth(t *testing.T) {
 // ④ 四档退码：稳定 ⇒ 0 · 未登记抖动(pid) ⇒ 1 · 无机器读面 ⇒ 2 · 可变件 ⇒ 8。
 func TestCtpiJudgeBranches(t *testing.T) {
 	if _, err := exec.LookPath("python3"); err != nil {
-		t.Skip("无 python3 ⇒ 本格不给结论（不假装绿）")
+		t.Fatalf("哨兵失守：无 python3（✗ 不留 Skip · fail-closed）：%v", err)
 	}
 	d := t.TempDir()
 	mk := func(name, body string) string {

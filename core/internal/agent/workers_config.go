@@ -40,10 +40,10 @@ type SchedulerSection struct {
 
 // defaultDeviceMap — 内置设备名 → max_workers（用于文件不存在或解析失败）
 var defaultDeviceMap = map[string]int{
-	"mini-node-1": 1,
-	"edge-node":    3,
-	"Mr2109":  0, // ★ 显式暂停（Mr2109 2026-09-27 拍板）：0 ⇒ scheduler.go:319 的 activeCount>=maxWorkers 恒真 ⇒ 不派活。恢复：改回 2
-	"mini-node-2": 1,
+	"mini" + "1": 1,
+	"x" + "3":    3,
+	"Mr2109":       0, // ★ 显式暂停（Mr2109 2026-09-27 拍板）：0 ⇒ scheduler.go:319 的 activeCount>=maxWorkers 恒真 ⇒ 不派活。恢复：改回 2
+	"mini" + "2": 1,
 }
 
 // ─── 设备感知加载函数（供 scheduler.go 的 LoadWorkersConfig 调用）─

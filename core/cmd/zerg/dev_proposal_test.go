@@ -477,3 +477,48 @@ func TestDevProposalCriterionAcceptsLineAssertion(t *testing.T) {
 		t.Errorf("绝对路径的行断言 ⇒ rc=%d（要 2 · 点名「绝对路径」）· stderr=%s", rc, errb3)
 	}
 }
+
+// ---- ★ GAP-20261009-09：`--evidence` 收「描述性证据」（无 `GAP-`/`DEV-` 前缀的自由文本）----
+
+// TestDevProposalEvidenceAcceptsDescriptiveText —— 证据面认两类：
+//
+//	① **id 形状**（`GAP-…` / `DEV-…`）⇒ 仍须**在册**（不放宽对真 id 的校验）；
+//	② **描述性证据**（无前缀自由文本）⇒ 直接收（两态：改前 rc=2、改后 rc=0）。
+//
+// 负控：**不存在的 id 形状**仍 rc=2（不让不存在的 id 蒙混）。
+func TestDevProposalEvidenceAcceptsDescriptiveText(t *testing.T) {
+	proposalEvidenceDir(t) // 合成账里只有在册的 proposalEvidenceInLedger
+	ids, err := contract.DevTargets()
+	if err != nil || len(ids) == 0 {
+		t.Fatalf("回指清单读不出来：%v", err)
+	}
+	t.Setenv("ZERG_PROPOSAL_DIR", t.TempDir())
+	base := []string{"--title", "证据面", "--target", "待办:" + ids[0], "--goal", "g",
+		"--rollback", "r", "--criterion", testCriterion}
+
+	// ② 描述性证据（无前缀自由文本）⇒ rc=0（收下 · 改前是 rc=2）
+	rc, out, errb := runProposalNew(t, append(append([]string{}, base...), "--evidence", "这是一段自由文本证据")...)
+	if rc != 0 {
+		t.Fatalf("描述性证据 ⇒ rc=%d（要 0 · 收下）· stderr=%s", rc, errb)
+	}
+	if strings.TrimSpace(out) == "" {
+		t.Errorf("成功时 stdout 要给提案 id")
+	}
+
+	// ① 在册 id 形状 ⇒ rc=0（不变）
+	if rc, _, errb := runProposalNew(t, append(append([]string{}, base...), "--evidence", "GAP-20260927-254")...); rc != 0 {
+		t.Errorf("在册 id ⇒ rc=%d（要 0）· stderr=%s", rc, errb)
+	}
+
+	// 负控：**不存在的 GAP id** ⇒ 仍 rc=2（仍在册校验 · 不让不存在的 id 蒙混）
+	rc3, out3, errb3 := runProposalNew(t, append(append([]string{}, base...), "--evidence", "GAP-29990101-99")...)
+	if rc3 != 2 {
+		t.Errorf("不存在的 GAP id ⇒ rc=%d（要 2 · 仍在册校验）· stderr=%s", rc3, errb3)
+	}
+	if out3 != "" {
+		t.Errorf("拒收时 stdout 必须 0 字节，实测 %d 字节", len(out3))
+	}
+	if !strings.Contains(errb3, "查不到") {
+		t.Errorf("stderr 要点名「查不到」：%q", errb3)
+	}
+}

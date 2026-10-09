@@ -2,9 +2,9 @@
 //
 // ═══════════════════ 本件在 6 步里的位置（设计稿《mcp_zerg_server-真Go化-先期设计-20261008.md》）═══════════════════
 //
-//	★ **第 1 步：写实现（✗ 不接线）** —— 本件**不碰** `main.go`（另路在立 `zerg mcp serve` 族）、
+//	★ **步 1（写实现）与步 3（命令树接线）均已落** —— 接线在 `main.go`（`mcp serve` → `cmdMCPServeFamily` → `cmdMCPServe` → `mcpServeMain`；收口检查点10 · `cae5fb90`）。本件**不碰** `main.go`、
 //	  不碰 `gate_inproc_table.go` / `precommit-gates.sh` / `publish/**` / `adopt-retire.json`。
-//	  接线（步 3 命令树）与退场（步 6）由他路做；本件只把 8 工具的实现与自测立起来。
+//	  退场（步 6）由他路做；本件仍只承载 8 工具的实现与自测。
 //
 // ═══════════════════ 协议面：复用仓内既有依赖（✗ 不引新第三方模块）═══════════════════
 //
@@ -565,7 +565,7 @@ func (s *mcpZergServer) helpJSON() string {
 		{"fleet_status", "查看所有机器/模型/健康状态（只读）"},
 		{"list_models", "列出可用模型（只读）"},
 		{"get_model_info", mcpObjOut{{"model", "模型名"}, {"desc", "单模型详情（候选机器/文件/内存）"}}},
-		{"fleet_topology", "集群拓扑（本机/EDGE-NODE/mini 连接）"},
+		{"fleet_topology", "集群拓扑（本机/X" + "3/mini 连接）"},
 		{"load_model", mcpObjOut{{"machine", machines}, {"model", "模型名"}, {"desc", "指定机器加载模型"}}},
 		{"unload_model", mcpObjOut{{"machine", machines}, {"model", "模型名"}, {"desc", "卸载模型"}}},
 		{"switch_model", mcpObjOut{{"machine", machines}, {"model", "模型名"}, {"desc", "切换模型（加载新+卸载旧）"}}},
@@ -874,7 +874,7 @@ func mcpRefuseJSON(stderr io.Writer, argv []string) (int, bool) {
 	return exitUsage, true
 }
 
-// mcpServeMain —— 命令面入口（✗ 未接线；另路在步 3 从 main.go 调它或 cmdMCPServe）。
+// mcpServeMain —— 命令面入口（**已接线**：`main.go` 的 `mcp serve` 格 → `cmdMCPServeFamily` → `cmdMCPServe` → 本入口）。
 func mcpServeMain(stdout, stderr io.Writer, in io.Reader, argv []string) int {
 	if rc, refused := mcpRefuseJSON(stderr, argv); refused {
 		return rc
@@ -913,7 +913,7 @@ func mcpServeMain(stdout, stderr io.Writer, in io.Reader, argv []string) int {
 	return exitOK
 }
 
-// cmdMCPServe —— 族命令形入口（步 3 接线用；本步只立实现，不动 main.go）。
+// cmdMCPServe —— 族命令形入口（**已接线**：`main.go` 的 `mcp serve` 格经 `cmdMCPServeFamily` 调本入口）。
 func cmdMCPServe(inv *invocation, stdout, stderr io.Writer) int {
 	if inv != nil && inv.jsonGiven {
 		fmt.Fprintln(stderr, mcpMsgNoJSON)

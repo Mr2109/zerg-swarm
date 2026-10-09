@@ -17,14 +17,22 @@ import (
 	"testing"
 )
 
-// mfpTestRepoRoot —— 由 cwd 上溯找同族 py 原件所在仓根（与入口缺省推导同一枚标记）。
+// mfpTestInitWD —— 包初始化时的 cwd（= 被测包目录 · 早于任何 `t.Chdir`）。
+// ★ 本件用例会 `t.Chdir(夹具根)` 让入口自根推导落在夹具上 ⇒ 仓根上溯**不得**随 Chdir 漂
+// （否则第二次 `mfpTestFixture` 从夹具上溯、找不到同族标记 ⇒ 假红）。故上溯起点钉在包初始化 cwd。
+var mfpTestInitWD, _ = os.Getwd()
+
+// mfpTestRepoRoot —— 由**包初始化 cwd** 上溯找同族 py 原件所在仓根（与入口缺省推导同一枚标记）。
 // ★ 退役稳态（B轨 · 2026-10-07）：认「自指 py **或** `cmfRootMarkerRel`（退役稳态标记）」⇒
 // 自指 py 退役后仍能定位真仓根（与 `cmfTestRepoRoot` 同口径 · 复用同一枚标记，✗ 不新造第二套）。
 func mfpTestRepoRoot(t *testing.T) string {
 	t.Helper()
-	d, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
+	d := mfpTestInitWD
+	if d == "" {
+		var err error
+		if d, err = os.Getwd(); err != nil {
+			t.Fatal(err)
+		}
 	}
 	cur := d
 	for i := 0; i < 32; i++ {
@@ -51,25 +59,32 @@ func mfpTestFixture(t *testing.T, withNeighbor bool) (string, string) {
 	if err := os.MkdirAll(g, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"check-manifest-freshness-profile.py", "check-manifest-freshness.py"} {
-		if name == "check-manifest-freshness.py" && !withNeighbor {
-			continue
+	// 退役稳态标记 `precommit-gates.sh`（仓根上溯用）＋ 保证夹具非空（夹具 `git commit` 需有件）。
+	if err := os.WriteFile(filepath.Join(g, "precommit-gates.sh"), []byte("#!/bin/sh\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// 自指 py（本件被判件 · `check-manifest-freshness-profile.py`）退役：Go 半在进程内自证 ⇒
+	// 夹具不拷它即可（入口根推导由 cwd 回落夹具根 · `mfpResolveRoot`）。
+	if b, err := os.ReadFile(filepath.Join(src, "scripts", "gates", "check-manifest-freshness-profile.py")); err == nil {
+		if err := os.WriteFile(filepath.Join(g, "check-manifest-freshness-profile.py"), b, 0o644); err != nil {
+			t.Fatal(err)
 		}
-		b, err := os.ReadFile(filepath.Join(src, "scripts", "gates", name))
+	}
+	if withNeighbor {
+		// ★ 内化金标哨兵（DEV-2143 同口径 · 甲类同族三处之一）：邻件真源 `check-manifest-freshness.py`
+		// 已退场（2026-10-07 M2 退役批）⇒ 旧哨兵「真源 py 缺席 ∧ Go 半在盘 ⇒ t.Skipf」恒真（整测零断言）。
+		// 改锚其 **Go 半** `core/cmd/zerg/check_manifest_freshness.go`（本门已在进程内重建其 diagnose()）；
+		// 找不到 = 真仓结构被破 ⇒ **fail-closed**（✗ 不留 Skip）。夹具落 Go 半 ⇒ 入口 `mfpNeighborRetired`
+		// 判「已退役」⇒ neiPresent=true ⇒ 判据照常出结论。
+		b, err := os.ReadFile(filepath.Join(src, "core", "cmd", "zerg", "check_manifest_freshness.go"))
 		if err != nil {
-			if name == "check-manifest-freshness.py" {
-				// 邻件（真源）退役容忍（缺口 `GAP-20261007-16`）：真源 py 退役（不在盘）∧ 其 Go 半在盘
-				// ⇒ 夹具无真源对象 ⇒ 容忍跳过（同族 Skip 口径）；两半皆不在盘（真消失）⇒ fail-closed。
-				if mfpFileExists(filepath.Join(src, "core", "cmd", "zerg", "check_manifest_freshness.go")) {
-					t.Skipf("退役态：邻件真源 %s 已退场（其 Go 半 core/cmd/zerg/check_manifest_freshness.go 在盘）⇒ 需真源的夹具无对象，容忍跳过", name)
-				}
-				t.Fatalf("邻件真源与 Go 半皆不在盘 ⇒ fail-closed：%v", err)
-			}
-			// 自指 py（本件被判件 · `check-manifest-freshness-profile.py`）退役：Go 半在进程内自证 ⇒
-			// 夹具不拷它即可（入口根推导由 cwd 回落夹具根 · `mfpResolveRoot`）。
-			continue
+			t.Fatalf("邻件真源 Go 半不在盘 ⇒ fail-closed：%v（✗ 不留 Skip）", err)
 		}
-		if err := os.WriteFile(filepath.Join(g, name), b, 0o644); err != nil {
+		gd := filepath.Join(root, "core", "cmd", "zerg")
+		if err := os.MkdirAll(gd, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(gd, "check_manifest_freshness.go"), b, 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -317,5 +332,97 @@ func TestCheckManifestFreshnessProfileRetired(t *testing.T) {
 	}
 	if rc2 != 2 {
 		t.Fatalf("真消失（无 Go 半）应仍 fail-closed rc=2（取不到发布提交 HEAD），实得 rc=%d", rc2)
+	}
+}
+
+// ── 内化金标（DEV-2143 同口径）：旧 py 对拍退场 ⇒ 逐格金标收 Go 常量 · 两态自证（✗ 不 Skip）─────
+//
+// 为什么这么测（与 `check_manifest_freshness_test.go` 的 `TestCheckManifestFreshnessGoldenInternalized`
+// / `...GoldenTwoStates` 同族）：本件旧「py 真身 ⟷ Go 真搬」对拍源 `scripts/gates/check-manifest-freshness-profile.py`
+// 已退场（2026-10-07 M2 退役批）⇒ 对拍源消失、断言恒 Skip（假绿、零保护）。按 DEV-2143 先例把金标真源
+// **收回 Go 半现役行为本身**：
+//
+//	★ 金标计算式（✗ 不臆造 · 由「Go 半现役行为」现算再冻）：逐格「输入（profile + manifest + argv）
+//	  ⇒ (rc, stdout 关键行)」由 `mfpTestRun` 现跑捕获（一次性现算、只读夹具、✗ 不落仓），冻成 `want`；
+//	  **本机时点类量**比对前归一化（✗ 不冻结）：发布头前 12 位 `mfpCut(head,12)` ⇒ `<HEAD12>`。
+//
+// 两态（✗ 不许 Skip）：A 态 = 夹具邻件**Go 半**在盘（真仓现态 · 退役 py 不在盘）；B 态 = 合成「旧态」
+// 夹具（把退役邻件 py `scripts/gates/check-manifest-freshness.py` 以**打标桩**放回）⇒ 本门**不读邻件 py
+// 正文**（`mfpDiagnose` 已在进程内重建）⇒ 两态对同一套金标**逐字同命中**（证 py 在/不在盘都不改判据结论）。
+//
+// ★ 哑化负控（"牙" · 见交付读数）：抽掉 `mfpNeighborRetired`（恒 false）⇒ `TestCheckManifestFreshnessProfileRetired`
+//   退役两格必 FAIL 且带行号（✗ 不真改仓内源）。
+
+// mfpGoldenNorm —— 归一本机时点类量（夹具根 / 发布头前 12 位）⇒ 金标跨机跨提交可复现。
+func mfpGoldenNorm(s, head, root string) string {
+	if root != "" {
+		s = strings.ReplaceAll(s, root, "<FX>")
+	}
+	if h12 := mfpCut(head, 12); h12 != "" {
+		s = strings.ReplaceAll(s, h12, "<HEAD12>")
+	}
+	return s
+}
+
+// mfpRunGolden —— 金标自证：dev+fresh 现跑本入口 · 归一（现算自证 · ✗ 手写）⇒ 返回 (rc, 归一化 stdout)。
+// withStubNeighbor=true ⇒ 合成「旧态」：把退役邻件 py 以**打标桩**放回（本门不读其正文）。
+func mfpRunGolden(t *testing.T, withStubNeighbor bool) (int, string) {
+	t.Helper()
+	repo, mfDir := mfpTestFixture(t, true)
+	t.Chdir(repo)
+	if withStubNeighbor {
+		if err := os.WriteFile(filepath.Join(repo, "scripts", "gates", "check-manifest-freshness.py"),
+			[]byte("# stub：造「旧态」——退役邻件 py 在位（本门不读其正文）\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	head := mfpGitTolerant(repo, []string{"rev-parse", "HEAD"})
+	if head == "" {
+		t.Fatal("夹具 HEAD 取不到")
+	}
+	fresh := filepath.Join(mfDir, "fresh.json")
+	mfpTestWrite(t, fresh, `{"commit":"`+head+`","source_sha":"`+head+`","dirty":false,"generated_at":"2026-09-23T00:00:00Z"}`)
+	rc, out, _ := mfpTestRun([]string{"--profile", "dev", "--manifest", fresh, "--repo", "", "--release-head", head})
+	return rc, mfpGoldenNorm(out, head, repo)
+}
+
+// TestCheckManifestFreshnessProfileGoldenInternalized —— 内化金标自证（A 态：真仓 · 退役 py 不在盘）。
+// 旧 py 对拍（恒 Skip、零保护）已删；本用例✗ 不 Skip、逐行真断言（✗ 不放宽为「只判非空」）。
+func TestCheckManifestFreshnessProfileGoldenInternalized(t *testing.T) {
+	rc, out := mfpRunGolden(t, false)
+	if rc != 0 {
+		t.Fatalf("金标 rc=%d（冻值 0）\n%s", rc, out)
+	}
+	want := []string{
+		"── 清单新鲜度分档（R-23）· 档=dev（开发机）──",
+		"发布提交 HEAD：<HEAD12>（显式给出 --release-head）",
+		"判定：**只告警**（rc 不拦，命中不红）",
+		"   [J1] 成立 —— source_sha 等于发布提交 HEAD：source_sha=<HEAD12> == 发布提交 HEAD=<HEAD12>",
+		"   [J2] 成立 —— dirty == false：dirty=false（出清单时工作树干净）",
+		"── 三条 stale 判据（现调 check-manifest-freshness.py 的 diagnose() · 单一口径 · 语义一字未改）──",
+		"   无（清单新鲜）",
+		"⇒ 档=dev · 判据 2 条（命中 0）· rc=0",
+	}
+	for _, w := range want {
+		if !strings.Contains(out, w+"\n") {
+			t.Errorf("金标行缺失：%q\n--- 实得 ---\n%s", w, out)
+		}
+	}
+}
+
+// TestCheckManifestFreshnessProfileGoldenTwoStates —— 两态逐字同：A 态 = 夹具邻件 Go 半在盘（真仓现态 ·
+// 退役 py 不在盘）；B 态 = 合成「旧态」夹具（退役邻件 py 以打标桩放回）⇒ 两态对同一套金标逐字同命中
+// （✗ 不 Skip · ✗ 不放宽为「只判非空」）。
+func TestCheckManifestFreshnessProfileGoldenTwoStates(t *testing.T) {
+	rcA, outA := mfpRunGolden(t, false)
+
+	// B 态：另起一枚合成「旧态」夹具（退役邻件 py 以打标桩放回）。本门不读其正文 ⇒ 输出必须逐字同。
+	rcB, outB := mfpRunGolden(t, true)
+
+	if rcA != rcB {
+		t.Fatalf("两态 rc 不同：A=%d B=%d", rcA, rcB)
+	}
+	if outA != outB {
+		t.Fatalf("两态逐字不同（py 在/不在盘不得改判据结论）：\n--- A ---\n%s\n--- B ---\n%s", outA, outB)
 	}
 }

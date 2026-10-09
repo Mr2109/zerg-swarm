@@ -2,7 +2,7 @@
 //
 // 覆盖面（每条都带牙）：
 //  1. 帮助面 **byte 级 golden**：`ccatHelp` 的 sha256 == py 原件 `-h` 的 sha256（389 字节）；
-//     且（本机有 py 时）现跑 `/usr/bin/python3 <py 原件> -h` **逐字节**复核。
+//     且现跑 Go 入口 `-h` **逐字节**复核 == `ccatHelp`（旧「现跑 py 原件复核」已内化 · ✗ 不读 py）。
 //  2. Q-176：给了 `--json` ⇒ rc=2 ＋ 三行 stderr **逐字**；stdout 必空；没给 ⇒ 不拦。
 //  3. argparse 等价面：坏旗标 / `--root` 缺值 / 位置参数 / `--self-test=x` / `-hx` / `--` 分隔符 / `-h`。
 //  4. 判定口正控 + 负控：有序超集（换序红 / 删项红 / **新增项允许**）；返回必须是**非 nil** 空切片。
@@ -11,12 +11,17 @@
 //  7. `parse_show_labels` 的贪心复刻：`工具\t:` 取得出、全角 `：` 取不出、**前导空白**取不出。
 //  8. 字段面九键：逐字等 ⇒ 0 条；换序 ⇒ 只命中「≠ 九键」；塞 `strength` ⇒ 命中「被塞进必填集」。
 //  9. 「取不到 vs 空集合」两态**分开表意**：解不出 ⇒ (nil,false)；解得动但零引号串 ⇒ **非 nil** 空切片。
-//  10. **运行档 py↔go 对拍**：同一仓外夹具 + 同一桩 `bin/zerg`，`/usr/bin/python3 <py 原件> …` 与
-//     Go 入口的 rc/stdout/stderr **逐字节**同（`--self-test` 档 与 `--no-self-test` 全跑档各一）。
+//  10. **运行档 Go 真身金标自证**（旧名 py↔go 对拍 · 对拍源 `scripts/gates/check-approve-tier.py` 已退场
+//     ⇒ 旧测恒 Skip · 零保护）：按本仓先例（`check_verify_cmd_real_test.go` TestCheckVerifyCmdRealGoldenInternalized
+//     · `archive_mount_test.go` TestArchiveMountTwoStatesGoldenInternalized）把金标真源**收回 Go 半本身** ——
+//     合成夹具现建 · 现跑 `checkApproveTierGateMain` · 与**冻结金标常量**逐字节比（`--self-test` 档 与
+//     `--no-self-test` 全跑档 · 含 `CCAT_STUB_SWAP` / `CCAT_STUB_DROP_DANG` 两负控旋钮），✗ 不读任何 py。
 //  11. 子进程面：`ZERG_STATE_DIR` 真的注进了子进程；`CCAT_STUB_*` 旋钮真被读到（否则负控是假的）。
 //  12. A 类止血回归牙：自检跑前/跑后同前缀临时目录计数 **delta=0**（py 侧 finally 回收 ⇒ Go defer 必须对齐）。
 //  13. 外部真源/工具链钉死：档位真源相对路径 = `core/cmd/zerg/family_approve.go`；解释器一律 `/usr/bin/python3`。
 //  14. 退码面：本件用到的裸数字退码 {0,1,2} ⊆ 真源退码表 `core/cmd/zerg/exitcodes.go` 已登记集。
+//  15. 残余三处 Skipf 已内化（DEV-2147 报的另三处 @:511/@:641/@:671）：哨兵一律**改锚 Go 半**、
+//     找不到即 `t.Fatalf` **fail-closed**（✗ 不留 Skip）。旧态「真源/TMPDIR 读不到 ⇒ 静默跳过」= 潜伏 fail-open。
 package main
 
 import (
@@ -25,7 +30,6 @@ import (
 	"encoding/hex"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -114,7 +118,10 @@ func ccatTestSHA(t *testing.T, s string) string {
 	return hex.EncodeToString(h[:])
 }
 
-// ccatTestRepoRoot = cwd 上溯至最近的含 `scripts/gates/` 的目录。
+// ccatTestRepoRoot —— 哨兵：锚 **Go 半** `core/cmd/zerg/check_approve_tier.go`（✗ 不再锚 py）。
+// 旧版锚 `scripts/gates/`（其内曾含对拍源 `check-approve-tier.py`）：该 py 已退场 ⇒ 前置 `ccatTestPyPath`
+// 恒 Skip ⇒ 三格运行档对拍零保护（假绿）。改认 Go 半后它在盘（与本件同包）⇒ 真跑断言。
+// ✗ 不再 Skip：Go 半是编译进本测试二进制的真源，上溯找不到它 = 真仓结构被破 ⇒ 硬错（fail-closed）。
 func ccatTestRepoRoot(t *testing.T) string {
 	t.Helper()
 	d, err := os.Getwd()
@@ -122,7 +129,7 @@ func ccatTestRepoRoot(t *testing.T) string {
 		t.Fatalf("取不到 cwd：%v", err)
 	}
 	for i := 0; i < 12 && d != "" && d != "/"; i++ {
-		if st, err := os.Stat(ccatPyJoin(d, "scripts", "gates")); err == nil && st.IsDir() {
+		if st, err := os.Stat(ccatPyJoin(d, "core", "cmd", "zerg", "check_approve_tier.go")); err == nil && st.Mode().IsRegular() {
 			return d
 		}
 		p := filepath.Dir(d)
@@ -131,61 +138,80 @@ func ccatTestRepoRoot(t *testing.T) string {
 		}
 		d = p
 	}
-	t.Skipf("找不到仓根（%s 上没有 scripts/gates/）⇒ 本格跳过", d)
+	t.Fatalf("哨兵失守：上溯未见 Go 半 core/cmd/zerg/check_approve_tier.go（不是真仓树）")
 	return ""
 }
 
-// ccatTestPyPath —— 仓内 py 原件（**只读** · ✗ 本单不改它）。
-func ccatTestPyPath(t *testing.T) string {
-	t.Helper()
-	p := ccatPyJoin(ccatTestRepoRoot(t), "scripts", "gates", "check-approve-tier.py")
-	if _, err := os.Stat(p); err != nil {
-		t.Skipf("py 原件不在（%s）⇒ 本格跳过", p)
+// ccatTestNorm —— 金标归一：把夹具绝对路径（t.TempDir() 随机 ＋ macOS `/var`↔`/private/var`）归一为
+// `<FIX>`，把本机 TMPDIR 归一为 `<TMP>` ⇒ 冻值与运行机无关 · 跨机可复现。
+func ccatTestNorm(s, root string) string {
+	s = strings.ReplaceAll(s, root, "<FIX>")
+	if real, err := filepath.EvalSymlinks(root); err == nil && real != root {
+		s = strings.ReplaceAll(s, real, "<FIX>")
 	}
-	return p
+	s = strings.ReplaceAll(s, os.TempDir(), "<TMP>")
+	return s
 }
 
-// ccatTestCleanEnv —— 洗掉外部注入面后给 py 侧的 env（与 Go 侧 os.Environ 同一份口径）。
-func ccatTestCleanEnv(base []string) []string {
-	out := make([]string, 0, len(base))
-	for _, e := range base {
-		k := e
-		if i := strings.Index(e, "="); i >= 0 {
-			k = e[:i]
-		}
-		if k == "PYTHONPATH" || k == "ZERG_STATE_DIR" || strings.HasPrefix(k, "ZERG_PST_") {
-			continue
-		}
-		out = append(out, e)
-	}
-	return out
-}
+// ── 运行档金标常量（旧 py 对拍源 `scripts/gates/check-approve-tier.py` 已退场 · 真源收回 Go 半）──
+//
+// ★ 金标**计算式**（现算再冻 · ✗ 非臆造）：在合成夹具上（`ccatTestFixtureRoot` = 桩 `bin/zerg` ＋
+//
+//	最小同形 `family_approve.go`）现跑 Go 入口 `checkApproveTierGateMain`，逐格取 (rc, stdout, stderr)，
+//	用 `ccatTestNorm` 把夹具绝对路径归一为 `<FIX>`（`os.TempDir()` → `<TMP>`）后**冻结**。
+//	现读档：`--root <夹具> --self-test` 与 `--no-self-test`（后者再加 `CCAT_STUB_SWAP=1` /
+//	`CCAT_STUB_DROP_DANG=1` 两负控旋钮）。旧对拍 py 已退场 ⇒ 本单以 Go 半现役行为为准。
+const ccatTestSelfTestGoldenOut = "check-approve-tier.py v1.0.0\n" +
+	"   ✓ ① 正控：现跑人面六列 / 八行 / 九字段都过（列数 7 · 行标签 11）\n" +
+	"   ✓ ⑧ 负控：数据行**少一格** ⇒ 判红\n" +
+	"   ✓ ② 负控：六列**换序** ⇒ 判红\n" +
+	"   ✓ ③ 负控：**删一列**（必填列 `path`）⇒ 判红\n" +
+	"   ✓ ⑨ 负控：**丢一列已知列**（'档'）⇒ 新判据判红；同一输入**现有有序超集抓不住** (0 条) —— 本单缺口 GAP-20260927-29 的当场证据\n" +
+	"   ✓ ⑩ 负控：**丢一行已知行**（'有效期'）⇒ 新判据判红；同一输入**现有有序超集抓不住** (0 条) —— 本单缺口 GAP-20260927-29 的当场证据\n" +
+	"   ✓ ④ 负控：**删一行**（必填标签 `落点`）⇒ 判红\n" +
+	"   ✓ ⑤ 负控：输出里出现 `token` ⇒ 判红（`M-20` ②）\n" +
+	"   ✓ ⑥ 正控：输出里出现 `passphrase` ⇒ **不**判红（生效档自己 · `D1` 判据④）\n" +
+	"   ✓ ⑦ 负控：字段表里塞 `strength` ⇒ 判红（`D1` 红线）\n" +
+	"   自检：10 格过 · 0 格不过（合成夹具目录已清理 · 真状态目录一个字节未动）\n"
 
-// ccatTestWashInjection —— 侧面钉：两档共用同一份洗净后的外部注入面。
-func ccatTestWashInjection(t *testing.T) {
-	t.Helper()
-	saved := map[string]string{}
-	for _, k := range []string{"PYTHONPATH", "ZERG_STATE_DIR"} {
-		saved[k] = os.Getenv(k)
-		os.Unsetenv(k)
-	}
-	for _, e := range os.Environ() {
-		if strings.HasPrefix(e, "ZERG_PST_") {
-			k := e[:strings.Index(e, "=")]
-			saved[k] = os.Getenv(k)
-			os.Unsetenv(k)
-		}
-	}
-	t.Cleanup(func() {
-		for k, v := range saved {
-			if v == "" {
-				os.Unsetenv(k)
-				continue
-			}
-			os.Setenv(k, v)
-		}
-	})
-}
+const ccatTestScanGoldenOut = "check-approve-tier.py v1.0.0\n" +
+	"── 真目标：<FIX>\n" +
+	"── 读数（三处 · 每处带口径）\n" +
+	"   T1 `approve ls` 列（rc=0 · 首行 = 表头）：tool | approver | approved_at | scope | state | path | 档\n" +
+	"   T2 `approve show` 行标签（rc=0）：工具 | 批准者 | 签的时间 | 范围 | 理由 | 签名 | 档 | 钥匙身份 | 有效期 | 判决 | 落点\n" +
+	"   T3 `approveFields`（core/cmd/zerg/family_approve.go：var approveFields）= tool,approver,approved_at,scope,note,sig_alg,key_id,state,path\n" +
+	"   T4 `--json nosuchfield-xyz` ⇒ rc=2（要 2）\n" +
+	"   ·  读数（**不判** · `P26` 未拍）：`--json strength` ⇒ rc=0\n" +
+	"   T5 词汇面：禁词 token/PIN 命中 = 0 · 允许词 passphrase\n" +
+	"   T6 `M-20` 现跑：`keygen --strength token` ⇒ rc=2（原样：zerg: 未知旗标 \"--strength\"）\n" +
+	"⇒ 全绿（rc=0）：T1–T6 全过 · 漂移 0 条（档位标记的落地形态仍待 `P26` 拍）\n"
+
+const ccatTestScanSwapGoldenOut = "check-approve-tier.py v1.0.0\n" +
+	"── 真目标：<FIX>\n" +
+	"── 读数（三处 · 每处带口径）\n" +
+	"   T1 `approve ls` 列（rc=0 · 首行 = 表头）：approver | tool | approved_at | scope | state | path | 档\n" +
+	"   T2 `approve show` 行标签（rc=0）：工具 | 批准者 | 签的时间 | 范围 | 理由 | 签名 | 档 | 钥匙身份 | 有效期 | 判决 | 落点\n" +
+	"   T3 `approveFields`（core/cmd/zerg/family_approve.go：var approveFields）= tool,approver,approved_at,scope,note,sig_alg,key_id,state,path\n" +
+	"   T4 `--json nosuchfield-xyz` ⇒ rc=2（要 2）\n" +
+	"   ·  读数（**不判** · `P26` 未拍）：`--json strength` ⇒ rc=0\n" +
+	"   T5 词汇面：禁词 token/PIN 命中 = 0 · 允许词 passphrase\n" +
+	"   T6 `M-20` 现跑：`keygen --strength token` ⇒ rc=2（原样：zerg: 未知旗标 \"--strength\"）\n" +
+	"⇒ 门禁红（rc=1）：1 条\n" +
+	"   ✗ T1 `approve ls` 列：'approver' 在该序里找不到（换序或删项 ⇒ 红 · 新增项允许）\n"
+
+const ccatTestScanDropGoldenOut = "check-approve-tier.py v1.0.0\n" +
+	"── 真目标：<FIX>\n" +
+	"── 读数（三处 · 每处带口径）\n" +
+	"   T1 `approve ls` 列（rc=0 · 首行 = 表头）：tool | approver | approved_at | scope | state | path\n" +
+	"   T2 `approve show` 行标签（rc=0）：工具 | 批准者 | 签的时间 | 范围 | 理由 | 签名 | 档 | 钥匙身份 | 有效期 | 判决 | 落点\n" +
+	"   T3 `approveFields`（core/cmd/zerg/family_approve.go：var approveFields）= tool,approver,approved_at,scope,note,sig_alg,key_id,state,path\n" +
+	"   T4 `--json nosuchfield-xyz` ⇒ rc=2（要 2）\n" +
+	"   ·  读数（**不判** · `P26` 未拍）：`--json strength` ⇒ rc=0\n" +
+	"   T5 词汇面：禁词 token/PIN 命中 = 0 · 允许词 passphrase\n" +
+	"   T6 `M-20` 现跑：`keygen --strength token` ⇒ rc=2（原样：zerg: 未知旗标 \"--strength\"）\n" +
+	"⇒ 门禁红（rc=1）：2 条\n" +
+	"   ✗ T1 破：已知列 '档' 丢了（改名 / 删列 / 被合并 ⇒ 红 · 已知列名集只增不减）\n" +
+	"   ✗ T1 破：第 2 行格数 7 ≠ 表头 6\n"
 
 // ccatTestFixtureRoot —— 仓外夹具根：桩 bin/zerg ＋ 档位真源同形件（可切除/换成解不出的形态）。
 func ccatTestFixtureRoot(t *testing.T, fields string) string {
@@ -208,33 +234,6 @@ func ccatTestFixtureRoot(t *testing.T, fields string) string {
 	return root
 }
 
-// ccatTestRunPyGo —— 同一 argv / cwd / env：甲 = 仓外 py 副本所在的原件（钉 /usr/bin/python3），乙 = Go 入口。
-func ccatTestRunPyGo(t *testing.T, argv []string) (int, string, string, int, string, string) {
-	t.Helper()
-	ccatTestWashInjection(t)
-	py := ccatTestPyPath(t)
-	root := ccatTestRepoRoot(t)
-	if _, err := os.Stat(ccatTestPyExe); err != nil {
-		t.Skipf("%s 不在 ⇒ 跳过 py↔go 对拍档", ccatTestPyExe)
-	}
-	cmd := exec.Command(ccatTestPyExe, append([]string{py}, argv...)...)
-	cmd.Dir = root
-	cmd.Env = ccatTestCleanEnv(os.Environ())
-	var po, pe bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &po, &pe
-	rcPy := 0
-	if err := cmd.Run(); err != nil {
-		if ee, ok := err.(*exec.ExitError); ok {
-			rcPy = ee.ExitCode()
-		} else {
-			t.Fatalf("跑 py 侧失败：%v", err)
-		}
-	}
-	var goOut, goErr bytes.Buffer
-	rcGo := checkApproveTierGateMain(&goOut, &goErr, argv)
-	return rcPy, po.String(), pe.String(), rcGo, goOut.String(), goErr.String()
-}
-
 func ccatTestCountTemp(prefix string) int {
 	ents, err := os.ReadDir(os.TempDir())
 	if err != nil {
@@ -251,25 +250,25 @@ func ccatTestCountTemp(prefix string) int {
 
 // ── ① 帮助面 byte 级 golden ──────────────────────────────────────────────────
 
-func TestCcatHelpGoldenAgainstPy(t *testing.T) {
+// ── ① 帮助面 byte 级 golden（现跑 Go 入口复核 · 旧「现跑 py 原件」已内化）──────────────
+
+func TestApproveTierHelpGoldenInternalized(t *testing.T) {
 	if len(ccatHelp) != ccatTestPyHelpBytes {
 		t.Fatalf("内置 ccatHelp 不是 %d 字节（现读 %d 字节）", ccatTestPyHelpBytes, len(ccatHelp))
 	}
 	if got := ccatTestSHA(t, ccatHelp); got != ccatTestPyHelpSHA256 {
-		t.Fatalf("内置 ccatHelp 的 sha256 ≠ py `-h` 原件：\n  现读 %s\n  期望 %s", got, ccatTestPyHelpSHA256)
+		t.Fatalf("内置 ccatHelp 的 sha256 ≠ 现算冻结值：\n  现读 %s\n  期望 %s", got, ccatTestPyHelpSHA256)
 	}
-	py := ccatTestPyPath(t)
-	if _, err := os.Stat(ccatTestPyExe); err != nil {
-		t.Skipf("%s 不在 ⇒ 跳过「现跑 py 原件复核」那一半", ccatTestPyExe)
+	// 旧「现跑 py 原件 `-h` 复核」已内化：现跑 Go 入口 `-h`，stdout 必须逐字节 == ccatHelp。
+	var so, se bytes.Buffer
+	if rc := checkApproveTierGateMain(&so, &se, []string{"-h"}); rc != 0 {
+		t.Fatalf("Go 入口 `-h` 应 rc=0，得 %d（stderr=%q）", rc, se.String())
 	}
-	cmd := exec.Command(ccatTestPyExe, py, "-h")
-	var ob, eb bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &ob, &eb
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("跑 py `-h` 失败：%v（stderr=%s）", err, eb.String())
+	if so.String() != ccatHelp {
+		t.Fatalf("Go 入口 `-h` 与内置 ccatHelp **逐字节不同**（%d vs %d 字节）", so.Len(), len(ccatHelp))
 	}
-	if ob.String() != ccatHelp {
-		t.Fatalf("Go 内置 help 与 py `-h` **逐字节不同**（%d vs %d 字节）", len(ccatHelp), ob.Len())
+	if se.Len() != 0 {
+		t.Fatalf("`-h` 不该写 stderr：%q", se.String())
 	}
 }
 
@@ -511,7 +510,9 @@ func TestCcatParseFieldsFromGoTwoStates(t *testing.T) {
 	// 吃真仓物料：九键逐字 == 真源 `core/cmd/zerg/family_approve.go`
 	raw, err := os.ReadFile(ccatPyJoin(ccatTestRepoRoot(t), ccatApproveGoRel))
 	if err != nil {
-		t.Skipf("档位真源读不到（%v）⇒ 本格跳过", err)
+		// ★ 哨兵改锚 Go 半（DEV-2147 残余三处内化）：family_approve.go 是**在盘现役真源**，
+		// 读不到 = 仓结构被破 ⇒ 硬错 fail-closed（旧版 `t.Skipf` = 潜伏 fail-open：真源一改名/移走即静默跳、零保护）。
+		t.Fatalf("哨兵失守：档位真源 %s 读不到（%v）—— Go 半现役件，缺它就是仓结构被破 ⇒ fail-closed（✗ 不再 Skip）", ccatApproveGoRel, err)
 	}
 	real, ok2 := ccatParseFieldsFromGo(string(raw))
 	if !ok2 {
@@ -524,65 +525,73 @@ func TestCcatParseFieldsFromGoTwoStates(t *testing.T) {
 
 // ── ⑩ 运行档 py↔go 对拍（逐字节）────────────────────────────────────────────
 
-func TestCcatParityPySelfTestByte(t *testing.T) {
+// ── ⑩ 运行档 Go 真身金标自证（旧名 TestCcatParityPySelfTestByte · 旧对拍源 py 已退场）──────
+
+func TestApproveTierSelfTestGoldenInternalized(t *testing.T) {
 	root := ccatTestFixtureRoot(t, ccatTestFamilyApprove)
 	argv := []string{"--root", root, "--self-test"}
-	rcP, outP, errP, rcG, outG, errG := ccatTestRunPyGo(t, argv)
-	if rcP != 0 || rcG != 0 {
-		t.Fatalf("正控档应两侧 rc=0，得 py=%d go=%d\npy out=%s\ngo out=%s", rcP, rcG, outP, outG)
+	var o, e bytes.Buffer
+	rc := checkApproveTierGateMain(&o, &e, argv)
+	if rc != 0 {
+		t.Fatalf("自检档应 rc=0，得 %d\nout=%s", rc, o.String())
 	}
-	if outP != outG {
-		t.Fatalf("运行档 stdout 不逐字节：\npy=%q\ngo=%q", outP, outG)
+	if got := ccatTestNorm(o.String(), root); got != ccatTestSelfTestGoldenOut {
+		t.Errorf("自检档 stdout 漂移\n实得=%q\n冻值=%q", got, ccatTestSelfTestGoldenOut)
 	}
-	if errP != errG {
-		t.Fatalf("运行档 stderr 不逐字节：\npy=%q\ngo=%q", errP, errG)
+	if got := ccatTestNorm(e.String(), root); got != "" {
+		t.Errorf("自检档 stderr 应空，得 %q", got)
 	}
-	if !strings.Contains(outG, "① 正控：现跑人面六列 / 八行 / 九字段都过（列数 7 · 行标签 11）") {
-		t.Fatalf("正控档没打到那一行（桩或夹具不对）：%q", outG)
+	if !strings.Contains(o.String(), "① 正控：现跑人面六列 / 八行 / 九字段都过（列数 7 · 行标签 11）") {
+		t.Fatalf("正控档没打到那一行（桩或夹具不对）：%q", o.String())
 	}
-	if !strings.Contains(outG, "10 格过 · 0 格不过") {
-		t.Fatalf("自检 10 格应全过：%q", outG)
+	if !strings.Contains(o.String(), "10 格过 · 0 格不过") {
+		t.Fatalf("自检 10 格应全过：%q", o.String())
 	}
 }
 
-func TestCcatParityPyScanByte(t *testing.T) {
-	root := ccatTestFixtureRoot(t, ccatTestFamilyApprove)
-	argv := []string{"--root", root, "--no-self-test"}
-	rcP, outP, errP, rcG, outG, errG := ccatTestRunPyGo(t, argv)
-	if rcP != rcG || outP != outG || errP != errG {
-		t.Fatalf("全跑档不逐字节：rc py=%d go=%d\npy out=%q\ngo out=%q\npy err=%q\ngo err=%q",
-			rcP, rcG, outP, outG, errP, errG)
+// ── ⑩ 运行档 Go 真身金标自证（旧名 TestCcatParityPyScanByte · 旧对拍源 py 已退场）──────────
+
+func TestApproveTierScanGoldenInternalized(t *testing.T) {
+	run := func(root string) (int, string) {
+		var o, e bytes.Buffer
+		rc := checkApproveTierGateMain(&o, &e, []string{"--root", root, "--no-self-test"})
+		return rc, ccatTestNorm(o.String(), root)
 	}
-	if rcG != 0 {
-		t.Fatalf("桩档应全绿（rc=0），得 %d：%s", rcG, outG)
+	// 正控档：全绿
+	rc, out := run(ccatTestFixtureRoot(t, ccatTestFamilyApprove))
+	if rc != 0 {
+		t.Fatalf("桩档应全绿（rc=0），得 %d：%s", rc, out)
 	}
-	if !strings.Contains(outG, "⇒ 全绿（rc=0）：T1–T6 全过 · 漂移 0 条") {
-		t.Fatalf("缺全绿行：%q", outG)
+	if out != ccatTestScanGoldenOut {
+		t.Errorf("全跑档 stdout 漂移\n实得=%q\n冻值=%q", out, ccatTestScanGoldenOut)
 	}
-	// 负控（同一桩 · 换序旋钮）：两侧都必须 rc=1 且逐字节同
+	if !strings.Contains(out, "⇒ 全绿（rc=0）：T1–T6 全过 · 漂移 0 条") {
+		t.Fatalf("缺全绿行：%q", out)
+	}
+	// 负控①（同一桩 · 换序旋钮）：rc=1 且逐字点名那一列
 	t.Setenv("CCAT_STUB_SWAP", "1")
-	rcP2, outP2, errP2, rcG2, outG2, errG2 := ccatTestRunPyGo(t, argv)
-	if rcP2 != 1 || rcG2 != 1 {
-		t.Fatalf("换序档应两侧 rc=1，得 py=%d go=%d\n%s", rcP2, rcG2, outG2)
+	rc2, out2 := run(ccatTestFixtureRoot(t, ccatTestFamilyApprove))
+	if rc2 != 1 {
+		t.Fatalf("换序档应 rc=1，得 %d\n%s", rc2, out2)
 	}
-	if outP2 != outG2 || errP2 != errG2 {
-		t.Fatalf("换序档不逐字节：\npy=%q\ngo=%q", outP2, outG2)
+	if out2 != ccatTestScanSwapGoldenOut {
+		t.Errorf("换序档 stdout 漂移\n实得=%q\n冻值=%q", out2, ccatTestScanSwapGoldenOut)
 	}
-	if !strings.Contains(outG2, "T1 `approve ls` 列：'approver' 在该序里找不到") {
-		t.Fatalf("换序档没点名那一列（换序后 `tool` 落在 index 1 ⇒ 找不到的是它后面的 'approver'）：%q", outG2)
+	if !strings.Contains(out2, "T1 `approve ls` 列：'approver' 在该序里找不到") {
+		t.Fatalf("换序档没点名那一列（换序后 `tool` 落在 index 1 ⇒ 找不到的是它后面的 'approver'）：%q", out2)
 	}
-	// 丢已知列「档」：两侧都必须点名「已知列 '档' 丢了」
+	// 负控②（丢已知列「档」）：rc=1 且点名「已知列 '档' 丢了」
 	t.Setenv("CCAT_STUB_SWAP", "")
 	t.Setenv("CCAT_STUB_DROP_DANG", "1")
-	rcP3, outP3, _, rcG3, outG3, _ := ccatTestRunPyGo(t, argv)
-	if rcP3 != 1 || rcG3 != 1 {
-		t.Fatalf("丢「档」档应两侧 rc=1，得 py=%d go=%d", rcP3, rcG3)
+	rc3, out3 := run(ccatTestFixtureRoot(t, ccatTestFamilyApprove))
+	if rc3 != 1 {
+		t.Fatalf("丢「档」档应 rc=1，得 %d", rc3)
 	}
-	if outP3 != outG3 {
-		t.Fatalf("丢「档」档不逐字节：\npy=%q\ngo=%q", outP3, outG3)
+	if out3 != ccatTestScanDropGoldenOut {
+		t.Errorf("丢「档」档 stdout 漂移\n实得=%q\n冻值=%q", out3, ccatTestScanDropGoldenOut)
 	}
-	if !strings.Contains(outG3, "已知列 '档' 丢了") {
-		t.Fatalf("丢「档」档没点名：%q", outG3)
+	if !strings.Contains(out3, "已知列 '档' 丢了") {
+		t.Fatalf("丢「档」档没点名：%q", out3)
 	}
 }
 
@@ -633,7 +642,8 @@ func TestCcatNoTempLeak(t *testing.T) {
 	root := ccatTestFixtureRoot(t, ccatTestFamilyApprove)
 	pre := ccatTestCountTemp("zerg-approve-tier")
 	if pre < 0 {
-		t.Skipf("读不到 %s ⇒ 本格跳过", os.TempDir())
+		// ★ 哨兵改锚私有 TMPDIR（上一行 `t.Setenv` 刚建）⇒ 读不到 = 环境被破 ⇒ 硬错 fail-closed（旧版 `t.Skipf` = 静默跳）。
+		t.Fatalf("哨兵失守：读不到本测试私有 TMPDIR %s —— 它是上一行 t.Setenv 刚建好的目录，读不到即环境被破 ⇒ fail-closed（✗ 不再 Skip）", os.TempDir())
 	}
 	var o, e bytes.Buffer
 	if rc := checkApproveTierGateMain(&o, &e, []string{"--root", root, "--self-test"}); rc != 0 {
@@ -663,7 +673,8 @@ func TestCcatExternalSourceAndExitCodes(t *testing.T) {
 	}
 	raw, err := os.ReadFile(ccatPyJoin(root, "core", "cmd", "zerg", "exitcodes.go"))
 	if err != nil {
-		t.Skipf("退码表读不到（%v）⇒ 本格跳过", err)
+		// ★ 哨兵改锚 Go 半（DEV-2147 残余三处内化）：exitcodes.go 是**在盘现役真源** ⇒ fail-closed（旧版 `t.Skipf` = 潜伏 fail-open）。
+		t.Fatalf("哨兵失守：退码真源 core/cmd/zerg/exitcodes.go 读不到（%v）—— Go 半现役件，缺它就是仓结构被破 ⇒ fail-closed（✗ 不再 Skip）", err)
 	}
 	re := regexp.MustCompile(`(?m)^\s*\{(\d+),\s*"`)
 	declared := map[int]bool{}

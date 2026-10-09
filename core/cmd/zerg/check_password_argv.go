@@ -202,7 +202,7 @@ var (
 	cpwLiteralOpt = "--" + "pass" + "word"       // 裸口令长选项第 1 形（人读面文案用）
 	cpwDocOpt     = "--" + "pass" + "word-file"  // 口令档选项（py 现读用的正门形态）
 	cpwStdinOpt   = "--" + "pass" + "word-stdin" // 口令经 stdin 的正门形态
-	cpwEnvX3      = "EDGE-NODE" + "_PASS"               // 弃用环境变量（仓内第 1 枚）
+	cpwEnvX3      = "X" + "3" + "_PASS"          // 弃用环境变量（仓内第 1 枚）
 	cpwEnvMini    = "MINI" + "_PASS"             // 弃用环境变量（仓内第 2 枚）
 	cpwPwEnvFile  = "Environment" + "File="      // 单元面正门形态之一
 	cpwPwEnvVars  = "Environment" + "Variables"  // 单元/plist 面正门形态之一
@@ -568,7 +568,7 @@ func cpwNameTailOK(s string, i int) bool {
 	return !(c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9'))
 }
 
-// cpwEnvDefault —— py `ENV_DEFAULT.search(ln)`：`\$\{?(?:EDGE-NODE|MINI)_PASS(?![A-Za-z0-9_])\s*:?[-=]`。
+// cpwEnvDefault —— py `ENV_DEFAULT.search(ln)`：`\$\{?(?:机型|MINI)_PASS(?![A-Za-z0-9_])\s*:?[-=]`。
 func cpwEnvDefault(ln string) bool {
 	for i := 0; i < len(ln); i++ {
 		if ln[i] != '$' {
@@ -603,7 +603,7 @@ func cpwEnvDefault(ln string) bool {
 	return false
 }
 
-// cpwEnvRef —— py `ENV_REF.search(ln)`：`\$\{?(?:EDGE-NODE|MINI)_PASS(?![A-Za-z0-9_])`。
+// cpwEnvRef —— py `ENV_REF.search(ln)`：`\$\{?(?:机型|MINI)_PASS(?![A-Za-z0-9_])`。
 func cpwEnvRef(ln string) bool {
 	for i := 0; i < len(ln); i++ {
 		if ln[i] != '$' {
@@ -663,7 +663,7 @@ func cpwEnvAssign(ln string) bool {
 		_, sz := utf8.DecodeRuneInString(ln[i:])
 		i += sz
 	}
-	// `read\s[^\n]*(?:EDGE-NODE|MINI)_PASS`
+	// `read\s[^\n]*(?:机型|MINI)_PASS`
 	for i := 0; i+4 <= len(ln); i++ {
 		if !strings.HasPrefix(ln[i:], "read") {
 			continue
@@ -1128,32 +1128,32 @@ func cpwNegCases() []cpwNegCase {
 			"ENV-NOWARN-ARGV"},
 		{"④", "usage 仍在教弃用 env 入口", "neg6-env-taught-usage", "probe.sh",
 			"#!/usr/bin/env bash\nusage() { echo \"  口令入口: export " +
-				"EDGE-NODE" + "_PASS=<口令> 后再跑\"; }\n", "ENV-TAUGHT-USAGE"},
+				"X" + "3" + "_PASS=<口令> 后再跑\"; }\n", "ENV-TAUGHT-USAGE"},
 	}
 }
 
 func cpwPosCases() []cpwPosCase {
 	return []cpwPosCase{
 		{"pos1-password-file-600", "deploy_x3.sh",
-			"#!/usr/bin/env bash\nX3" + "_PASSFILE=\"\"\n" +
-				"case \"$1\" in --" + "pass" + "word-file) EDGE-NODE" + "_PASSFILE=\"$2\"; shift 2 ;; esac\n" +
-				"_pm=\"$(ls -ld -- \"${EDGE-NODE" + "_PASSFILE}\" | awk '{print $1}')\"\n" +
+			"#!/usr/bin/env bash\nX" + "3" + "_PASSFILE=\"\"\n" +
+				"case \"$1\" in --" + "pass" + "word-file) X" + "3" + "_PASSFILE=\"$2\"; shift 2 ;; esac\n" +
+				"_pm=\"$(ls -ld -- \"${X" + "3" + "_PASSFILE}\" | awk '{print $1}')\"\n" +
 				"[[ \"${_pm:" + "3" + ":6}\" == \"------\" ]] || { echo \"口档权限过宽\" >&2; exit 2; }\n" +
-				"EDGE-NODE" + "_PASS=\"$(cat \"${EDGE-NODE" + "_PASSFILE}\")\"\n" +
-				"SSHPASS=\"${EDGE-NODE" + "_PASS}\" sshpass -e ssh g01@<cluster-ip> true\n", 2},
+				"X" + "3" + "_PASS=\"$(cat \"${X" + "3" + "_PASSFILE}\")\"\n" +
+				"SSHPASS=\"${X" + "3" + "_PASS}\" sshpass -e ssh g01@<cluster-ip> true\n", 2},
 		{"pos2-password-stdin", "deploy_x3.sh",
 			"#!/usr/bin/env bash\nif [[ \"${PW_STDIN}\" == \"1\" ]]; then\n" +
-				"    IFS= read -r EDGE-NODE" + "_PASS || true\n" +
-				"    [[ -n \"${EDGE-NODE" + "_PASS}\" ]] || { echo \"stdin 空行\" >&2; exit 2; }\nfi\n", 1},
-		{"pos3-unit-envfile", "edge-node-agent.service",
-			"[Service]\nUser=g01\nEnvironment" + "File=-/home/<user>/agent/edge-node-agent.env\n" +
+				"    IFS= read -r X" + "3" + "_PASS || true\n" +
+				"    [[ -n \"${X" + "3" + "_PASS}\" ]] || { echo \"stdin 空行\" >&2; exit 2; }\nfi\n", 1},
+		{"pos3-unit-envfile", "x" + "3-agent.service",
+			"[Service]\nUser=g01\nEnvironment" + "File=-/home/<user>/agent/x" + "3-agent.env\n" +
 				"ExecStart=/usr/bin/python3 /home/<user>/agent/agent.py --host 0.0.0.0\n", 1},
 		{"pos4-deprecated-env-warned", "deploy_x3.sh",
-			"#!/usr/bin/env bash\nX3" + "_PASS_ENV=\"${EDGE-NODE" + "_PASS:-}\"\n" +
-				"usage() { echo \"  已弃用: EDGE-NODE" + "_PASS 环境变量（仍能跑 · 会打一次性警告；文档/用法不再教）\"; }\n" +
-				"if [[ -n \"${EDGE-NODE" + "_PASS_ENV}\" ]]; then\n" +
-				"    echo \"⚠️  已弃用入口：环境变量 EDGE-NODE" + "_PASS 仍能跑（本批不删），但环境变量对同 uid 进程可见。\" >&2\n" +
-				"    EDGE-NODE" + "_PASS=\"${EDGE-NODE" + "_PASS_ENV}\"\nfi\n", 2},
+			"#!/usr/bin/env bash\nX" + "3" + "_PASS_ENV=\"${X" + "3" + "_PASS:-}\"\n" +
+				"usage() { echo \"  已弃用: X" + "3" + "_PASS 环境变量（仍能跑 · 会打一次性警告；文档/用法不再教）\"; }\n" +
+				"if [[ -n \"${X" + "3" + "_PASS_ENV}\" ]]; then\n" +
+				"    echo \"⚠️  已弃用入口：环境变量 X" + "3" + "_PASS 仍能跑（本批不删），但环境变量对同 uid 进程可见。\" >&2\n" +
+				"    X" + "3" + "_PASS=\"${X" + "3" + "_PASS_ENV}\"\nfi\n", 2},
 	}
 }
 

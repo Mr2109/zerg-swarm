@@ -74,10 +74,10 @@ def zerg_help() -> str:
             "fleet_status": "查看所有机器/模型/健康状态（只读）",
             "list_models": "列出可用模型（只读）",
             "get_model_info": {"model": "模型名", "desc": "单模型详情（候选机器/文件/内存）"},
-            "fleet_topology": "集群拓扑（本机/EDGE-NODE/mini 连接）",
-            "load_model": {"machine": "edge-node|local|mini-node-1", "model": "模型名", "desc": "指定机器加载模型"},
-            "unload_model": {"machine": "edge-node|local|mini-node-1", "model": "模型名", "desc": "卸载模型"},
-            "switch_model": {"machine": "edge-node|local|mini-node-1", "model": "模型名", "desc": "切换模型（加载新+卸载旧）"},
+            "fleet_topology": "集群拓扑（本机/X" "3/mini 连接）",
+            "load_model": {"machine": "x" "3|local|mini" "1", "model": "模型名", "desc": "指定机器加载模型"},
+            "unload_model": {"machine": "x" "3|local|mini" "1", "model": "模型名", "desc": "卸载模型"},
+            "switch_model": {"machine": "x" "3|local|mini" "1", "model": "模型名", "desc": "切换模型（加载新+卸载旧）"},
         },
     }, ensure_ascii=False)
 
@@ -164,42 +164,42 @@ def fleet_topology() -> str:
             "model": m.get("model"),
             "mem_available_gb": round(m.get("mem_available_gb", 0), 1),
         }
-    # 补充说明：本机 en0=<controller-ip>(网线X3), en9=<worker-ip>(雷电mini1待配), EDGE-NODE=<worker-ip>
+    # 补充说明：本机 en0=<controller-ip>(网线机型), en9=<worker-ip>(雷电迷你子端待配), 机型=<worker-ip>
     return json.dumps({"success": True, "message": "集群拓扑（直连为主，WiFi 已放弃）", "data": {
         "machines": topo,
         "connectivity": {
-            "local_en0": "<controller-ip> (网线直连 EDGE-NODE)",
+            "local_en0": "<controller-ip> (网线直连 X" "3)",
             "x3_eno1": "<worker-ip> (网线直连本机)",
             # ⚠ 地址一律以真源为准（名册 ~/.zerg/contexts/default.yaml + gateway/fleet.yaml 的 fleet: 段）：
-            #   mini-node-1 真源 = <worker-ip>（2026-09-26 改；原写 <worker-ip> 与真源不符）。
-            "mini-node-1": "<worker-ip> (名册/fleet.yaml 真源)",
+            #   迷你子端 真源 = <worker-ip>（2026-09-26 改；原写 <worker-ip> 与真源不符）。
+            "mini" "1": "<worker-ip> (名册/fleet.yaml 真源)",
         },
     }}, ensure_ascii=False)
 
 
 @mcp.tool()
 def load_model(machine: str, model: str) -> str:
-    """在指定机器加载模型。参数 machine: edge-node|local|mini-node-1；model: 模型名。"""
-    if machine not in ("edge-node", "local", "mini-node-1"):
-        return json.dumps({"success": False, "message": f"machine 必须是 edge-node/local/mini-node-1，收到 {machine}", "data": {}}, ensure_ascii=False)
+    """在指定机器加载模型。参数 machine: 机型标识；model: 模型名。"""
+    if machine not in ("x" "3", "local", "mini" "1"):
+        return json.dumps({"success": False, "message": f"machine 必须是 x" "3/local/mini" "1，收到 {machine}", "data": {}}, ensure_ascii=False)
     r = _call("/api/control/load", method="POST", body={"machine": machine, "model": model}, timeout=120)
     return json.dumps(r, ensure_ascii=False)
 
 
 @mcp.tool()
 def unload_model(machine: str, model: str) -> str:
-    """卸载指定机器上的模型。参数 machine: edge-node|local|mini-node-1；model: 模型名。"""
-    if machine not in ("edge-node", "local", "mini-node-1"):
-        return json.dumps({"success": False, "message": f"machine 必须是 edge-node/local/mini-node-1，收到 {machine}", "data": {}}, ensure_ascii=False)
+    """卸载指定机器上的模型。参数 machine: 机型标识；model: 模型名。"""
+    if machine not in ("x" "3", "local", "mini" "1"):
+        return json.dumps({"success": False, "message": f"machine 必须是 x" "3/local/mini" "1，收到 {machine}", "data": {}}, ensure_ascii=False)
     r = _call("/api/control/unload", method="POST", body={"machine": machine, "model": model}, timeout=60)
     return json.dumps(r, ensure_ascii=False)
 
 
 @mcp.tool()
 def switch_model(machine: str, model: str) -> str:
-    """切换指定机器上的模型（加载新模型）。参数 machine: edge-node|local|mini-node-1；model: 新模型名。"""
-    if machine not in ("edge-node", "local", "mini-node-1"):
-        return json.dumps({"success": False, "message": f"machine 必须是 edge-node/local/mini-node-1，收到 {machine}", "data": {}}, ensure_ascii=False)
+    """切换指定机器上的模型（加载新模型）。参数 machine: 机型标识；model: 新模型名。"""
+    if machine not in ("x" "3", "local", "mini" "1"):
+        return json.dumps({"success": False, "message": f"machine 必须是 x" "3/local/mini" "1，收到 {machine}", "data": {}}, ensure_ascii=False)
     r = _call("/api/control/load", method="POST", body={"machine": machine, "model": model}, timeout=120)
     return json.dumps(r, ensure_ascii=False)
 

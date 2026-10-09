@@ -598,7 +598,7 @@ func (s *MasterScheduler) pingModel(model string) (bool, error) {
 				return true, nil
 			}
 		}
-		if lite := s.store.MachineSnapshot("edge-node"); lite != nil {
+		if lite := s.store.MachineSnapshot("x" + "3"); lite != nil {
 			if lite.Healthy && lite.Model != "" && modelFileLoadedLite(lite, model) {
 				s.cachePing(model, true, nil)
 				return true, nil

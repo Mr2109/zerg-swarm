@@ -41,8 +41,13 @@ import (
 //   ★ **出口三态**（与 `publish set` / `publish tree has` 同一条纪律「答案缺身份 ⇒ 宁可不答」）：
 //     真源只读预演**拿不到结论**（仓根解析不到 / 脚本不在 / 无 `python3` / 退非 0 / 机器面缺 / 解析不了 /
 //     自报非零副作用）⇒ **退码 8 · stdout 一行都不出**（计划件不许建在不洁读数上）。
-//   ★ 本笔**只动干跑档**：真跑执行路径仍走压平快照器（切真源 = `GAP-20260926-22` · 另一笔）⇒
-//     `走哪一路` 那条诚实标注**保留**（执行面事实未变）；切主路那一笔里它自会消失。
+// ★ 本笔**只动干跑档**：真跑执行路径仍走压平快照器（切真源 = `GAP-20260926-22` · 另一笔）⇒
+//   `走哪一路` 那条诚实标注**保留**（执行面事实未变）；切主路那一笔里它自会消失。
+//
+// ★ 发布链 Go 半优先（本批第二件 · 2026-10-09 · 上件 = 预检 `family_publish_preflight_native.go`）：
+//   真跑执行路径已从「exec 旧壳」改为**进程内 Go 真身**（`family_publish_public_native.go`）——
+//   旧壳 `scripts/build/publish-public.sh` **暂留全量**、**✗ 不退化**（退化会 `bin/zerg`→壳→`bin/zerg`
+//   递归，须与 `bin/` 重编同批）。干跑档（真源只读预演计划件）本笔**不动**（语义与旧壳 `--dry-run` 不同源）。
 
 // publishRunPathNotice —— 「本入口走哪一路」的**逐字**标注（两个位置共用同一份文字 · 不许含糊）。
 // 两个位置：① `--dry-run` 计划件里那一行；② 真跑执行前 stderr 那一行。
@@ -138,20 +143,9 @@ func cmdPublishPreflight(inv *invocation, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 	dir := inv.args[0]
-	root := repoRoot()
-	if root == "" {
-		inv.setErr("blocked", "repo_root_absent", "解析不到仓根")
-		fmt.Fprintf(stderr, "%s: 解析不到仓根 ⇒ 跑不动预检（不给结论 · 退码 8）\n", progName)
-		return exitBlocked
-	}
-	script := "scripts/build/publish-preflight.sh"
-	if _, err := os.Stat(filepath.Join(root, script)); err != nil {
-		inv.setErr("blocked", "script_absent", "预检脚本不在")
-		fmt.Fprintf(stderr, "%s: 预检脚本不在（%s）⇒ 不给结论（退码 8）\n", progName, script)
-		return exitBlocked
-	}
-	fmt.Fprintf(stderr, "%s: 公开面预检（**只读** · 不改任何状态）—— bash %s %s\n", progName, script, dir)
-	return runPublishChild(inv, root, script, []string{dir}, stdout, stderr)
+	// Go 真身（本批第一件 · 发布链 Go 半优先）：编排搬进进程内 —— 见 family_publish_preflight_native.go。
+	// 旧壳 `bash scripts/build/publish-preflight.sh <dir>` 退化为一行转发（其 exec 指向本命令）。
+	return publishPreflightNative(inv, stdout, stderr, dir)
 }
 
 // cmdPublishRun —— `zerg publish run [--out <目录>] [--dry-run | --confirm=<主机名> --yes]`：本地出公开镜像树。
@@ -198,6 +192,10 @@ func cmdPublishRun(inv *invocation, stdout, stderr io.Writer) int {
 			}
 		}
 	}
+	// `--check-excludes-parity`：只跑对拍闸（旧壳语义 · 零副作用 · 不走 D3 确认）。
+	if inv.hasFlag("--check-excludes-parity") {
+		return publishPublicNative(inv, stdout, stderr, ppRunOpts{Out: out, CheckParity: true})
+	}
 	if inv.dryRun {
 		return publishRunDryRun(inv, stdout, stderr, script, scriptArgs, effect)
 	}
@@ -205,11 +203,6 @@ func cmdPublishRun(inv *invocation, stdout, stderr io.Writer) int {
 	if root == "" {
 		inv.setErr("blocked", "repo_root_absent", "解析不到仓根")
 		fmt.Fprintf(stderr, "%s: 解析不到仓根 ⇒ 跑不动发布（不给结论 · 退码 8）\n", progName)
-		return exitBlocked
-	}
-	if _, err := os.Stat(filepath.Join(root, script)); err != nil {
-		inv.setErr("blocked", "script_absent", "发布脚本不在")
-		fmt.Fprintf(stderr, "%s: 发布脚本不在（%s）⇒ 不给结论（退码 8）\n", progName, script)
 		return exitBlocked
 	}
 	// D3 三态：--confirm 的值必须与主机名**逐字相同** + --yes 同时到（§4.1 K7 / §6.3 S5）。
@@ -235,14 +228,15 @@ func cmdPublishRun(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
 		return exitUsage
 	}
-	// ★ 诚实标注（同级第二处 · 与计划件那一行**逐字同一份文字**）：执行前先把「本入口走哪一路」说清。
-	fmt.Fprintf(stderr, "%s: %s\n", progName, publishRunPathNotice)
-	fmt.Fprintf(stderr, "%s: 发布档执行 —— bash %s%s\n", progName, script, scriptArgs)
-	args := []string{}
-	if out != "" {
-		args = append(args, "--out", out)
+	// ★ 发布链 Go 半优先（本批第二件）：压平快照器编排搬进**进程内 Go 真身**（见 family_publish_public_native.go）。
+	//   旧壳 `scripts/build/publish-public.sh` **暂留全量**（✗ 不退化：退化会 bin/zerg→壳→bin/zerg 递归，须与 bin/ 重编同批）。
+	//   ★ 这里**不打** `publishRunPathNotice`（旧壳也不打）—— 报话由真身按旧壳逐字出（保两态三面逐字同）。
+	push := inv.hasFlag("--push")
+	remote := strings.TrimSpace(inv.flagVal("--remote"))
+	if remote == "" {
+		remote = strings.TrimSpace(os.Getenv("ZERG_PUBLIC_REMOTE"))
 	}
-	return runPublishChild(inv, root, script, args, stdout, stderr)
+	return publishPublicNative(inv, stdout, stderr, ppRunOpts{Out: out, Push: push, Remote: remote})
 }
 
 // publishRunDryRun —— `zerg publish run --dry-run`：**真源只读预演 + 计划件**（零副作用）。

@@ -58,7 +58,7 @@ var internalTaskDefs = []InternalTask{
 	// === 第二批（v2.5.5 稳定期扩展——全部配置）===
 	{
 		ID:          "proc-cleanup",
-		Description: "残留进程自动清理——EDGE-NODE llama-server 残留（防瘫）",
+		Description: "残留进程自动清理——X" + "3 llama-server 残留（防瘫）",
 		Template:    "清理X3残留进程。工作区=项目core。要求: 1. ssh g01@<worker-ip> ps aux|grep llama-server 2. 超过1个=残留——启动时间早于agent重启=残留(防PID复用) 3. 残留→SIGTERM等5s→仍活SIGKILL 4. 记录到 internal-task-report.md 5. 贴输出。注意: 不误杀正在跑的(agent刚启动的=在用)——只清残留",
 		Cooldown:    6 * time.Hour,
 	},

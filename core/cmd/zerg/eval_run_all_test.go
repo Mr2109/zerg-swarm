@@ -1,67 +1,72 @@
-// eval_run_all_test.go —— 件 `scripts/build/run_all.sh` **真搬**（`cmdEvalRunAll`）的
-// **两态 · 三面 · 逐层对拍** ＋ **哑化负控**（成对 · 有牙）。
+// eval_run_all_test.go —— 件 `core/cmd/zerg/eval_run_all.go`（`cmdEvalRunAll` · 原
+// `scripts/build/run_all.sh` 真搬 · DEV-2034）的回归牙：**金标内化**（旧 sh 对拍退场 ⇒ 逐格金标
+// 收成 Go 常量 · 两态 · ✗ 不 Skip）＋ 缺省版本标签 / 空串位置参数语义。
 //
-// 真源 = **Go 半**（`core/cmd/zerg/eval_run_all.go` · `cmdEvalRunAll`）；壳件 `scripts/build/run_all.sh`
-// （原 49 行）**已退场**（DEV-2034）—— 它在盘时曾是**对拍 oracle**，其三层里有**重活**（层1 `go test` ·
-// 层2/3 `python3 <载荷>`）⇒ 对拍必须**逐字节比「脚本直跑」**，不能只比自家两块 buffer。做法（照 M2 对拍台）：
+// 为什么这么测（M2 口径 · 与 `atomic_write_test.go` 的 TestAwTwoStatesGoldenInternalized /
+// `check_verify_cmd_real_test.go` 的 TestCheckVerifyCmdRealGoldenInternalized /
+// `check_manifest_freshness_test.go` 的 TestCheckManifestFreshnessGoldenInternalized / 更早
+// `archive_mount_test.go` 的 TestArchiveMountRunsWithoutScript 同族）：本件原「sh 真身 ⟷ Go 真搬」
+// 逐字对拍（旧名 `TestEvalRunAllTwoStateThreeFaceParity`）的对拍源 `scripts/build/run_all.sh`
+// 已退场（DEV-2034）⇒ 对拍源消失、断言恒 Skip（`f.realScript` 永假 · 假绿 · 零保护）。按先例把
+// 金标真源**收回 Go 半现役行为本身**：
 //
-//	· **仓外夹具**（`t.TempDir()` ⇒ 落 `TMPDIR` · ✗ 不进仓树 —— 门76 把盘上任何新件算进分母）：
-//	  夹具里放 ① 真件的**逐字副本** `scripts/build/run_all.sh`（它就是**对拍 oracle**）
-//	  ② 层2/3 的 **stub 载荷**（可控输出 + 回显 argv ⇒ 顺带钉死「已归档载荷的调用 argv」）
-//	  ③ 一棵最小 Go module（`core/internal/agent` 无测试件 ⇒ `go test` 输出确定：
-//	  `?   <mod>/internal/agent\t[no test files]` · rc=0 · 无计时 ⇒ **可逐字节比**）。
+//	★ 金标计算式（✗ 不臆造 · 逐格由「Go 半现役行为现算」得到）：
+//	  逐格「输入（仓外合成夹具 + 位置参数 <模型> <版本标签>）⇒ (rc, stdout, stderr, 四件落档)」
+//	  由 `cmdEvalRunAll` 在**仓外夹具**上现跑捕获（一次性现算、只读夹具、✗ 不落仓），冻成下表
+//	  `erallGolden*` 常量；**本机时点类量**在比对前归一化 / 钉死（✗ 不冻结机器时点量）：
+//	    ① 夹具根 `t.TempDir()`（随机路径 + macOS /var↔/private/var）⇒ `<TMP>`（`erallNormGolden`）；
+//	    ② `summary.json` 的 `date` 走注入缝 `evalRunAllClock` ⇒ 对拍时把钟**钉死**（`erallPinClock`
+//	      到 2026-10-09 14:00）⇒ 其确定值可冻（真不定的只有①，已在比对前归一）。
 //
-//	· **两态**：① 脚本在盘 —— 脚本直跑 ⟷ Go 半，逐层逐字；② 脚本**移出仓** —— Go 半必须与 ① 逐字同
-//	  （★★ 这一档是本单的**核心判据**：✗ 不得因脚本不在而退 2/8 —— 那说明还在 exec 脚本）。
+// 两态（✗ 不许 Skip）：A 态 = 夹具**无** sh（= 真仓现态）；B 态 = 合成「旧态」夹具（把退役 sh 路径
+// `scripts/build/run_all.sh` 的 stub 放回）⇒ 两态**对同一套金标逐字同命中**，证 sh 在/不在盘都不改
+// Go 半读数（Go 真身 ✗ 不 exec 脚本）。
 //
-//	· **三面 + 落档**：rc · stdout · stderr，外加四件落档（`layer1-unit.txt` / `layer2-basic.txt` /
-//	  `layer3-complex.txt` / `summary.json`）逐字节比 —— 只比 stdout 会漏「回显对、落档不同」的档。
+// ★ 哑化负控（"牙" · 见交付读数）：`-overlay` 把 `eval_run_all.go` 的层文案 / 落档 / 汇总任一臂哑化
+// ⇒ 本用例**必 FAIL 且带行号**（✗ 不真改仓内源 · 免 `dev edit` 前的仓内污染）。
 //
-//	· **★ 不可跑层（已写明）**：层2/3 的**真载荷**（`scripts/evals/_archive/v25_*.py`）内部
-//	  `go run ./cmd/zerg-agent -model <模型>` 打**生产链路 · 需活模型** ⇒ **本件不跑真载荷**。
-//	  本件对拍的是**编排面**（argv / 工作目录 / `2>&1|tee` 合并 / 落档 / 退码），用 stub 顶上载荷位；
-//	  **✗ 不拿 stub 的绿冒充「真载荷已验」**（真载荷读数需活模型 ⇒ 留给人手动跑）。
-//
-//	· **时刻面**：原件两处 `date`（缺省版本号 / `summary.json` 的 `date`）走注入缝 `evalRunAllClock` ——
-//	  对拍时把 Go 的钟**钉到「脚本那一跑」读到的同一分钟**（照 M2 口径：自己会写的时刻用旋钮钉，✗ 不靠掩码）。
+// 两态夹具一律落**仓外**（t.TempDir() ⇒ $TMPDIR · ✗ 不落仓内：门76 会把盘上任何新件算进分母）。
 package main
 
 import (
 	"bytes"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
 
-// evalRunAllGoHalfRel —— 本件 Go 真身（退役态判据：判「能力可用」而非「件在盘」）。
+// evalRunAllGoHalfRel —— 本件 Go 真身（哨兵锚：判「能力可用」而非「退役 sh 在盘」）。
 const evalRunAllGoHalfRel = "core/cmd/zerg/eval_run_all.go"
 
-// erallSyntheticScript —— 退役态占位 stub（真件离盘后保夹具形状 · ✗ 不作对拍 oracle）。
-const erallSyntheticScript = "#!/usr/bin/env bash\n" +
+// erallStubScript —— 退役 sh 的合成 stub（B 态「旧态」占位 · 只证 sh 在/不在盘不改 Go 半读数 ·
+// ✗ 不作对拍对象）。
+const erallStubScript = "#!/usr/bin/env bash\n" +
 	"# [退役占位] scripts/build/run_all.sh —— 真件已退场（Go 半承载）；本 stub 仅保夹具形状。\n" +
 	"set -e\nexit 0\n"
 
-// erallGoHalfInPlace —— 真件 rel 的 Go 半边是否在盘（退役态判据：判「能力可用」）。
-func erallGoHalfInPlace(root string) bool {
-	fi, err := os.Stat(filepath.Join(root, evalRunAllGoHalfRel))
-	return err == nil && !fi.IsDir()
-}
-
-// erallRepoRoot 现读**真仓根**（给「夹具取真脚本逐字副本」用）。
-// ★ ✗ 不用 `ZERG_REPO` —— 那条旋钮在本轮会被设成**夹具根**。
-func erallRepoRoot(t *testing.T) string {
+// erallSentinel —— 哨兵：上溯找 **Go 半**（本件真源）。✗ 不改锚退役 sh（退场即失锚 ⇒ 恒 Skip）。
+// 找不到 ⇒ **fail-closed**（✗ 不留 Skip）：Go 半是编译进本测试二进制的真源，上溯见不到它 = 真仓
+// 结构被破 ⇒ 硬错。
+func erallSentinel(t *testing.T) string {
 	t.Helper()
-	wd, err := os.Getwd()
+	want := filepath.FromSlash(evalRunAllGoHalfRel)
+	dir, err := os.Getwd()
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("取 cwd 失败: %v", err)
 	}
-	if r := findRoot(wd); r != "" {
-		return r
+	for i := 0; i < 8; i++ {
+		if st, e := os.Stat(filepath.Join(dir, want)); e == nil && st.Mode().IsRegular() {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
 	}
-	t.Fatalf("现读不到真仓根（cwd=%s）—— 对拍要拿真脚本的逐字副本", wd)
+	t.Fatalf("哨兵失守：上溯未见 Go 半 %s（不是真仓树）", evalRunAllGoHalfRel)
 	return ""
 }
 
@@ -72,9 +77,6 @@ type erallFixture struct {
 	evals string // = <tmp>/zerg-evals（原件 `dirname/../../../zerg-evals` 的推导结果）
 	model string
 	ver   string
-	// realScript：真件 `scripts/build/run_all.sh` 是否在盘（true ⇒ 夹具里的副本是**逐字 oracle**；
-	// false ⇒ 退役态，夹具落**合成 stub** 占位，依赖真件的对拍格自行体面跳过）。
-	realScript bool
 }
 
 func (f *erallFixture) runDir() string {
@@ -104,32 +106,14 @@ func erallStubPy(tag string) string {
 		"sys.exit(0)\n"
 }
 
-// erallBuildFixture 造夹具：真脚本逐字副本（oracle）＋ stub 载荷 ＋ 最小 Go module ＋ 同级 zerg-evals。
+// erallBuildFixture 造夹具：stub 载荷 ＋ 最小 Go module ＋ 同级 zerg-evals。
+//
+// ★ 不再读退役 sh（Go 半 ✗ 不 exec 它）—— B 态要「旧态」时另调 `erallAddStubScript`。
 func erallBuildFixture(t *testing.T, model, ver string) *erallFixture {
 	t.Helper()
-	realRoot := erallRepoRoot(t)
-	realScript, readErr := os.ReadFile(filepath.Join(realRoot, evalRunAllSrcRel))
-	realPresent := readErr == nil
-	if !realPresent {
-		// ★ 三段式回退腿（先例 `atomic_write_test.go` TestAwTwoStateParity ·
-		//   `pack_release_test.go` prHalvesGuard）：sh 原件缺席而其 **Go 半**在盘
-		//   ⇒ 退役态 —— 对拍 oracle 不可得 ⇒ 落夹具自带的**合成 stub** 占位（只保夹具形状，
-		//   ✗ 不作对拍对象），依赖真件的对拍格按 `f.realScript` 体面跳过；
-		//   两半皆缺（真消失）⇒ fail-closed（✗ 缺件 ≠ 绿）。
-		if !erallGoHalfInPlace(realRoot) {
-			t.Fatalf("读真脚本失败（%s）：%v（且其 Go 半 %s 亦不在盘 ⇒ fail-closed）",
-				evalRunAllSrcRel, readErr, evalRunAllGoHalfRel)
-		}
-		realScript = []byte(erallSyntheticScript)
-	}
-
 	tmp := t.TempDir()
 	f := &erallFixture{tmp: tmp, root: filepath.Join(tmp, "fx"), evals: filepath.Join(tmp, "zerg-evals"),
-		model: model, ver: ver, realScript: realPresent}
-
-	// ① 真脚本逐字副本 = oracle（★ 它**一定是现役真身的逐字拷贝**，✗ 不是手写的近似版）；
-	//    退役态 ⇒ 合成 stub 占位（对拍格已在调用侧跳过）。
-	erallWrite(t, filepath.Join(f.root, evalRunAllSrcRel), string(realScript), 0o755)
+		model: model, ver: ver}
 
 	// ② 层2/3 的替身载荷（真载荷需活模型 ⇒ 见件头「不可跑层」）。
 	erallWrite(t, filepath.Join(f.root, evalRunAllLayer2Target), erallStubPy("层2"), 0o644)
@@ -148,15 +132,10 @@ func erallBuildFixture(t *testing.T, model, ver string) *erallFixture {
 	return f
 }
 
-// runScript —— **脚本直跑**（oracle 侧）：cwd = 夹具根（层2/3 的相对路径只在 cwd=仓根时解析得到）。
-func (f *erallFixture) runScript(t *testing.T) (int, string, string) {
+// erallAddStubScript —— B 态「旧态」：把退役 sh 路径 `scripts/build/run_all.sh` 的合成 stub 放回。
+func erallAddStubScript(t *testing.T, f *erallFixture) {
 	t.Helper()
-	cmd := exec.Command("bash", filepath.Join(f.root, evalRunAllSrcRel), f.model, f.ver)
-	cmd.Dir = f.root
-	var out, errb bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &out, &errb
-	err := cmd.Run()
-	return erallRc(err), out.String(), errb.String()
+	erallWrite(t, filepath.Join(f.root, filepath.FromSlash(evalRunAllSrcRel)), erallStubScript, 0o755)
 }
 
 // runGo —— **走 Go 半**：仓根走 `ZERG_REPO`（= 夹具根），cwd 也切到夹具根（层2/3 相对路径面）。
@@ -187,16 +166,6 @@ func (f *erallFixture) runGoNoArgs(t *testing.T) (int, string, string) {
 	return rc, out.String(), errb.String()
 }
 
-func erallRc(err error) int {
-	if err == nil {
-		return 0
-	}
-	if ee, ok := err.(*exec.ExitError); ok {
-		return ee.ExitCode()
-	}
-	return -1
-}
-
 func (f *erallFixture) readArtifacts(t *testing.T) map[string]string {
 	t.Helper()
 	m := map[string]string{}
@@ -210,33 +179,6 @@ func (f *erallFixture) readArtifacts(t *testing.T) map[string]string {
 	return m
 }
 
-func erallAssertSame(t *testing.T, what, want, got string) {
-	t.Helper()
-	if want != got {
-		t.Errorf("%s **不逐字**：\n  脚本侧 = %q\n  Go 侧  = %q", what, want, got)
-	}
-}
-
-// erallSummaryDate 从 summary.json 正文里取 `date` 字段值（`+%Y-%m-%d %H:%M`）。
-func erallSummaryDate(t *testing.T, summary string) time.Time {
-	t.Helper()
-	const k = "\"date\": \""
-	i := strings.Index(summary, k)
-	if i < 0 {
-		t.Fatalf("summary.json 里没有 date 字段：%q", summary)
-	}
-	rest := summary[i+len(k):]
-	j := strings.Index(rest, "\"")
-	if j < 0 {
-		t.Fatalf("summary.json 的 date 字段没闭合：%q", summary)
-	}
-	tm, err := time.ParseInLocation("2006-01-02 15:04", rest[:j], time.Local)
-	if err != nil {
-		t.Fatalf("date 字段值不合 `+%%Y-%%m-%%d %%H:%%M`：%q（%v）", rest[:j], err)
-	}
-	return tm
-}
-
 // erallPinClock —— 把 `evalRunAllClock` 钉到给定时刻（测试期有效 · 用完自动还原）。
 func erallPinClock(t *testing.T, at time.Time) {
 	t.Helper()
@@ -245,76 +187,123 @@ func erallPinClock(t *testing.T, at time.Time) {
 	evalRunAllClock = func() time.Time { return at }
 }
 
-// ── 主判据：两态 · 三面 · 逐层 ────────────────────────────────────────────────
+// ── 内化金标：旧 sh 对拍的逐格金标收成 Go 常量 · 现算自证 ──────────────────────────
 
-func TestEvalRunAllTwoStateThreeFaceParity(t *testing.T) {
+// erallGolden* —— 金标（rc / stdout / stderr / 四件落档）。逐格由 Go 半在仓外夹具上现跑捕获
+// （见件头金标计算式 · ✗ 手写猜）。`<TMP>` = 夹具根占位（比对前由 `erallNormGolden` 归一）。
+const (
+	erallGoldenRC  = 0
+	erallGoldenErr = ""
+)
+
+const erallGoldenOut = "🐛 虫族 Agent 测试——模型: example-35b | 版本: v2.5\n" +
+	"📁 存档: <TMP>/zerg-evals/results/agent/runs/example-35b-v2.5\n" +
+	"\n" +
+	"=== 层1: 框架单测 ===\n" +
+	"?   \texample.com/erallfx/internal/agent\t[no test files]\n" +
+	"✅ 层1 完成\n" +
+	"\n" +
+	"=== 层2: 基础任务 ===\n" +
+	"stub 层2 载荷 argv: --model example-35b --workdir /tmp/zerg-agent-example-35b-basic\n" +
+	"stub 层2 载荷 第二行\n" +
+	"stub 层2 载荷 stderr 行\n" +
+	"✅ 层2 完成\n" +
+	"\n" +
+	"=== 层3: 复合任务 ===\n" +
+	"stub 层3 载荷 argv: --model example-35b --workdir /tmp/zerg-agent-example-35b-complex\n" +
+	"stub 层3 载荷 第二行\n" +
+	"stub 层3 载荷 stderr 行\n" +
+	"✅ 层3 完成\n" +
+	"\n" +
+	"🎉 测试完成——存档: <TMP>/zerg-evals/results/agent/runs/example-35b-v2.5\n" +
+	"查看: cat '<TMP>/zerg-evals/results/agent/runs/example-35b-v2.5/layer3-complex.txt'\n"
+
+const erallGoldenLayer1 = "?   \texample.com/erallfx/internal/agent\t[no test files]\n"
+
+const erallGoldenLayer2 = "stub 层2 载荷 argv: --model example-35b --workdir /tmp/zerg-agent-example-35b-basic\n" +
+	"stub 层2 载荷 第二行\n" +
+	"stub 层2 载荷 stderr 行\n"
+
+const erallGoldenLayer3 = "stub 层3 载荷 argv: --model example-35b --workdir /tmp/zerg-agent-example-35b-complex\n" +
+	"stub 层3 载荷 第二行\n" +
+	"stub 层3 载荷 stderr 行\n"
+
+const erallGoldenSummary = "{\n" +
+	"  \"model\": \"example-35b\",\n" +
+	"  \"version\": \"v2.5\",\n" +
+	"  \"date\": \"2026-10-09 14:00\",\n" +
+	"  \"layers_run\": [\"layer1-unit\", \"layer2-basic\", \"layer3-complex\"],\n" +
+	"  \"note\": \"完整结果见各 layer*.txt\"\n" +
+	"}\n"
+
+// erallNormGolden —— 归一本机时点类量（夹具根 t.TempDir()）⇒ 金标跨机可复现。
+func erallNormGolden(s, fx string) string {
+	if fx != "" {
+		s = strings.ReplaceAll(s, fx, "<TMP>")
+	}
+	return s
+}
+
+// erallRunGolden —— 逐格现跑 Go 半（夹具在 $TMPDIR · 仓外），归一后与冻值逐字比；返回失配格数。
+// withScript=true ⇒ 夹具再加退役 sh 的合成 stub（B 态「旧态」）；两态对同一套金标。
+func erallRunGolden(t *testing.T, tag string, withScript bool) int {
+	t.Helper()
 	f := erallBuildFixture(t, "example-35b", "v2.5")
-	if !f.realScript {
-		// ★ 退役态：真件缺席 ⇒ 对拍 oracle 不可得 ⇒ 体面跳过（✗ 不判红 · ✗ 不把断言放宽成永真）；
-		//   Go 半自身的断言由 TestEvalRunAllDefaultVersionFromClock /
-		//   TestEvalRunAllEmptyModelFallsBackToDefault **照常覆盖**；Go 半亦缺席由夹具 fail-closed。
-		t.Skipf("退役态：sh 原件 %s 已退场（其 Go 半 %s 在盘）⇒ 两态对拍格无对象，容忍跳过",
-			evalRunAllSrcRel, evalRunAllGoHalfRel)
+	if withScript {
+		erallAddStubScript(t, f)
 	}
+	erallPinClock(t, time.Date(2026, 10, 9, 14, 0, 0, 0, time.Local))
+	rc, out, errb := f.runGo(t)
+	arts := f.readArtifacts(t)
 
-	// 态①：脚本在盘 —— 先拿脚本直跑的读数（oracle）。
-	rcScript, outScript, errScript := f.runScript(t)
-	artsScript := f.readArtifacts(t)
-	if rcScript != exitOK {
-		t.Fatalf("夹具里脚本直跑应 rc=0（得 %d）· stdout=%q stderr=%q", rcScript, outScript, errScript)
+	mism := 0
+	if rc != erallGoldenRC {
+		mism++
+		t.Errorf("[%s] rc=%d（冻值 %d）", tag, rc, erallGoldenRC)
 	}
-	// 逐层读数（三面：rc/stdout/stderr · 以及落档）——先证明夹具真跑了三层。
-	for _, want := range []string{"=== 层1: 框架单测 ===", "=== 层2: 基础任务 ===", "=== 层3: 复合任务 ===",
-		"✅ 层1 完成", "✅ 层2 完成", "✅ 层3 完成", "🎉 测试完成——存档: "} {
-		if !strings.Contains(outScript, want) {
-			t.Fatalf("脚本直跑 stdout 缺层序文案 %q（夹具没跑全三层？）· stdout=%q", want, outScript)
+	if got := erallNormGolden(out, f.tmp); got != erallGoldenOut {
+		mism++
+		t.Errorf("[%s] stdout 漂移\n实得=%q\n冻值=%q", tag, got, erallGoldenOut)
+	}
+	if got := erallNormGolden(errb, f.tmp); got != erallGoldenErr {
+		mism++
+		t.Errorf("[%s] stderr 漂移\n实得=%q\n冻值=%q", tag, got, erallGoldenErr)
+	}
+	for _, c := range []struct{ name, want string }{
+		{evalRunAllLayer1File, erallGoldenLayer1},
+		{evalRunAllLayer2File, erallGoldenLayer2},
+		{evalRunAllLayer3File, erallGoldenLayer3},
+		{evalRunAllSummaryRel, erallGoldenSummary},
+	} {
+		if got := erallNormGolden(arts[c.name], f.tmp); got != c.want {
+			mism++
+			t.Errorf("[%s] 落档 %s 漂移\n实得=%q\n冻值=%q", tag, c.name, got, c.want)
 		}
 	}
-	// 层1 真跑了 `go test`（无测试件包 ⇒ 确定行）。
-	if !strings.Contains(artsScript[evalRunAllLayer1File], "[no test files]") {
-		t.Errorf("层1 落档没含 `go test` 的确定输出：%q", artsScript[evalRunAllLayer1File])
-	}
-	// 层2/3 的载荷调用 argv（已归档载荷的调用面在这里被钉死：模型 + workdir 两个模板值）。
-	if !strings.Contains(artsScript[evalRunAllLayer2File],
-		"--model "+f.model+" --workdir /tmp/zerg-agent-"+f.model+"-basic") {
-		t.Errorf("层2 载荷 argv 不符原件：%q", artsScript[evalRunAllLayer2File])
-	}
-	if !strings.Contains(artsScript[evalRunAllLayer3File],
-		"--model "+f.model+" --workdir /tmp/zerg-agent-"+f.model+"-complex") {
-		t.Errorf("层3 载荷 argv 不符原件：%q", artsScript[evalRunAllLayer3File])
-	}
+	return mism
+}
 
-	// 把 Go 的钟钉到**脚本那一跑**读到的同一分钟（两处 `date` 的唯一非确定面）。
-	erallPinClock(t, erallSummaryDate(t, artsScript[evalRunAllSummaryRel]))
+// TestEvalRunAllGoldenInternalized —— A 态（真仓 · 退役 sh 不在盘）金标自证
+// （✗ 不 Skip · 逐格真断言 · ✗ 不放宽为「只判非空」）。
+func TestEvalRunAllGoldenInternalized(t *testing.T) {
+	root := erallSentinel(t)
+	sh := filepath.Join(root, filepath.FromSlash(evalRunAllSrcRel))
+	if _, err := os.Stat(sh); err == nil {
+		t.Fatalf("A 态前提破：退役 sh 竟在盘 %s（本件前提 = 内化后无 sh）", sh)
+	}
+	if n := erallRunGolden(t, "A真仓无sh", false); n != 0 {
+		t.Fatalf("A 态金标失配 %d 格", n)
+	}
+}
 
-	// 态①：Go 半 ⟷ 脚本直跑。
-	rcGo, outGo, errGo := f.runGo(t)
-	artsGo := f.readArtifacts(t)
-	if rcGo != rcScript {
-		t.Errorf("态①（脚本在盘）rc 不逐字：脚本=%d Go=%d", rcScript, rcGo)
+// TestEvalRunAllGoldenTwoStates —— 两态逐字同：A 态 = 夹具无 sh（= 真仓现态）；B 态 = 合成「旧态」
+// 夹具（`scripts/build/run_all.sh` 在位）⇒ 两态对同一套金标逐字同命中（✗ 不 Skip）。
+func TestEvalRunAllGoldenTwoStates(t *testing.T) {
+	if n := erallRunGolden(t, "A夹具无sh", false); n != 0 {
+		t.Fatalf("A 态金标失配 %d 格", n)
 	}
-	erallAssertSame(t, "态① stdout", outScript, outGo)
-	erallAssertSame(t, "态① stderr", errScript, errGo)
-	for _, n := range []string{evalRunAllLayer1File, evalRunAllLayer2File, evalRunAllLayer3File, evalRunAllSummaryRel} {
-		erallAssertSame(t, "态① 落档 "+n, artsScript[n], artsGo[n])
-	}
-
-	// 态②：脚本**移出仓** ⇒ Go 半必须与态① 逐字同（★ 这是「✗ 不 exec 脚本」的机检面）。
-	if err := os.Remove(filepath.Join(f.root, evalRunAllSrcRel)); err != nil {
-		t.Fatalf("把脚本移出仓失败：%v", err)
-	}
-	rcGo2, outGo2, errGo2 := f.runGo(t)
-	artsGo2 := f.readArtifacts(t)
-	if rcGo2 == exitUsage {
-		t.Fatalf("态②（脚本移出仓）rc=2 —— 说明还在依赖脚本（本件必须 ✗ 不 exec 脚本）")
-	}
-	if rcGo2 != rcGo {
-		t.Errorf("态② rc 与态① 不逐字：态①=%d 态②=%d", rcGo, rcGo2)
-	}
-	erallAssertSame(t, "态② stdout", outGo, outGo2)
-	erallAssertSame(t, "态② stderr", errGo, errGo2)
-	for _, n := range []string{evalRunAllLayer1File, evalRunAllLayer2File, evalRunAllLayer3File, evalRunAllSummaryRel} {
-		erallAssertSame(t, "态② 落档 "+n, artsGo[n], artsGo2[n])
+	if n := erallRunGolden(t, "B旧态有sh", true); n != 0 {
+		t.Fatalf("B 态金标失配 %d 格（sh 在盘不得改判据结论）", n)
 	}
 }
 

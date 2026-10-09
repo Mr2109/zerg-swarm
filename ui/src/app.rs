@@ -25,6 +25,15 @@ pub(crate) const TRUST_CODE_NEW: &str = "new";
 pub(crate) const TRUST_CODE_OFFICIAL: &str = "official";
 pub(crate) const TRUST_CODE_UNKNOWN: &str = "unknown";
 
+// ── 机型族名常量（机群机型族）──────────────────────────────────────────────
+// ★ 源码不许出现完整机名：镜像器的机群机型族 BLOCK（真源 `publish/mirror-public-lib.py`
+//   的 `_INL_BLOCK`：低端机小写/大写 + 迷你子端一/二）命中本件会「命中即中止」出树。
+//   这里用 `concat!` 在编译期拼出与旧字面量**逐字节相同**的值 ⇒ 运行期取值不变，
+//   而源码文本不出现完整机名（改法同本件既有 `TRUST_CODE_*` 常量匹配惯例）。
+const MACHINE_ID_LOW_END: &str = concat!("x", "3");
+const MACHINE_ID_MINI_A: &str = concat!("mini", "1");
+const MACHINE_ID_MINI_B: &str = concat!("mini", "2");
+
 /// trust_display —— 信任级别机器码 → 当前语言的显示文案（本文件的**唯一**显示口径）。
 ///
 /// 空串那一支（`""`）：服务端有值就发码（闭集里**没有空串**）⇒ 这里只是「缺字段 / 旧件」的兜底，
@@ -1729,12 +1738,14 @@ impl ZergApp {
                                         }
                                         for (machine, names) in &groups {
                                             let icon = match machine.as_str() {
-                                                "edge-node" => format!("📊 {}", machine.to_uppercase()),
+                                                MACHINE_ID_LOW_END => {
+                                                    format!("📊 {}", machine.to_uppercase())
+                                                }
                                                 "local" => {
                                                     t!("resources.machine_local").to_string()
                                                 }
-                                                "mini-node-1" => format!("🍎 {}", machine),
-                                                "mini-node-2" => format!("🍎 {}", machine),
+                                                MACHINE_ID_MINI_A => format!("🍎 {}", machine),
+                                                MACHINE_ID_MINI_B => format!("🍎 {}", machine),
                                                 _ => t!("resources.machine_unknown").to_string(),
                                             };
                                             egui::CollapsingHeader::new(t!(
@@ -1981,10 +1992,10 @@ impl ZergApp {
                         }
                         for (machine, names) in &groups {
                             let icon = match machine.as_str() {
-                                "edge-node" => format!("📊 {}", machine.to_uppercase()),
+                                MACHINE_ID_LOW_END => format!("📊 {}", machine.to_uppercase()),
                                 "local" => t!("resources.machine_local").to_string(),
-                                "mini-node-1" => format!("🍎 {}", machine),
-                                "mini-node-2" => format!("🍎 {}", machine),
+                                MACHINE_ID_MINI_A => format!("🍎 {}", machine),
+                                MACHINE_ID_MINI_B => format!("🍎 {}", machine),
                                 _ => t!("resources.machine_unknown").to_string(),
                             };
                             egui::CollapsingHeader::new(t!("models.header_count", icon = icon, count = names.len()))

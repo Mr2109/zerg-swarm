@@ -330,7 +330,7 @@ var (
 	clicPassthroughRE = regexp.MustCompile(`passthrough:\s*true`)
 	clicRowRE         = regexp.MustCompile(`\{\s*(\d+)\s*,\s*"([^"]+)"\s*,\s*"([^"]*)"`)
 	clicConstRE       = regexp.MustCompile(`exit([A-Z]\w*)\s*=\s*(\d+)\b`)
-	clicBareRetRE     = regexp.MustCompile(`\b(?:return|os\.Exit)\s+\(?\s*(\d+)\b`)
+	clicBareRetRE     = regexp.MustCompile(`\b(?:(?:return|os\.Exit)\s+|rc[A-Za-z_]*\s*=\s*)\(?\s*(\d+)\b`)
 )
 
 const clicNoConclusionRC = 8
@@ -591,7 +591,7 @@ func clicNamedConsts(root string) map[string]int {
 // clicStripGoCode — 去掉 Go 源里的**字符串/字符字面量与注释**（换行原样保留、其余字符以空格顶替，
 // 长度与偏移不变），使 T3 的裸数字判据只看**真源码位置**：夹具字符串里的 `func … { return 3 }`、
 // 注释里的 `return 9` 都**不算**退码（缺口 GAP-20261002-12：此前全文扫 ⇒ 三处假红）。
-// ★ 真源码里的 `return 127` 原样留在结果里 ⇒ **真缺口照红**（负控面不缩水）。
+// ★ 真源码里的 `return 127` / 赋值形 `rc = 127`（DEV-2144/DEV-2148 两半）原样留在结果里 ⇒ **真缺口照红**（负控面不缩水）。
 func clicStripGoCode(s string) string {
 	out := []byte(s)
 	const (
@@ -2512,6 +2512,21 @@ func clicSelfTest(w io.Writer) int {
 	caseFn("⑥ T3 负控（裸数字 77 ⇒ 1）", 1, rc, "")
 	if !clicAnyLine(lines, "裸数字") {
 		bad = append(bad, "⑥ T3 负控：判词里没有「裸数字」")
+	}
+
+	// ⑥b T3 负控c（赋值形裸数字不在表里 —— 闭合 DEV-2144/DEV-2148 的赋值支）
+	r = clicPyJoin(tmp, "t3c")
+	clicFixture(r, clicGoodMain, clicGoodExitcodes, clicGoodMatrix(), clicGoodBaseline(), clicGoodRegistry(), "")
+	p = clicPyJoin(r, clicMainRel)
+	f, _ = os.OpenFile(p, os.O_APPEND|os.O_WRONLY, 0o644)
+	if f != nil {
+		_, _ = f.WriteString("\nfunc bogusAssign() int { rc := 0; rc = " + "127; return rc }\n")
+		_ = f.Close()
+	}
+	rc, lines = clicCheck(r, true)
+	caseFn("⑥b T3 负控（赋值形裸数字 rc=127 ⇒ 1）", 1, rc, "")
+	if !clicAnyLine(lines, "裸数字") {
+		bad = append(bad, "⑥b T3 负控：判词里没有「裸数字」")
 	}
 
 	// ⑦ T5 负控（豁免无 reason ⇒ 2）

@@ -1174,7 +1174,7 @@ func cnrSortedSet(m map[string]bool) []string {
 // （`file` / `mmproj` / `cmd`）里的账户名必须 ∈ 该机**声明的**账户集
 // （源 = 名册 `nodes.<名>.ssh` 与 `updates.nodes[].ssh` 的用户段）。
 //
-//	✦ ✗ 不按命名规律猜（`mini-node-1` 的账户是 `a1`，与机器名无关）；
+//	✦ ✗ 不按命名规律猜（迷你子端的账户是 `a1`，与机器名无关）；
 //	✦ `host` 非名册键 ⇒ 交给 E 判；该机未声明 `ssh:`（账户集空）⇒ 跳过该条（报告跳过数）。
 func cnrCheckHostPathUsername(fleetLines []string, nodes map[string]cnrValue) ([]string, []string) {
 	fails := []string{}
@@ -1719,13 +1719,13 @@ func cnrSelfTest(stdout, stderr io.Writer) int {
 		{"fleet: 少一台 ⇒ 1", roster, w("f2.yaml",
 			cnrReplaceAll(cnrFleetFix, "  Mr2109: { host: 127.0.0.1, port: 8100, os: macos }\n", "")), plist, 1, false},
 		{"fleet: host 改一位 ⇒ 1", roster, w("f3.yaml",
-			cnrReplaceAll(cnrFleetFix, "edge-node: { host: <worker-ip>", "edge-node: { host: <worker-ip>")), plist, 1, false},
+			cnrReplaceAll(cnrFleetFix, "x"+"3: { host: <worker-ip>", "x"+"3: { host: <worker-ip>")), plist, 1, false},
 		{"fleet: 投影源声明删掉 ⇒ 1（建而不收）", roster, w("f4.yaml",
 			cnrReplaceN(cnrFleetFix, "  # 投影源：真源 = ~/.zerg/contexts/default.yaml 的 nodes:\n", "", 1)), plist, 1, false},
 		{"updates.nodes 的 ssh 改 ⇒ 1", roster, w("f5.yaml",
 			cnrReplaceAll(cnrFleetFix, "ssh: g01@<worker-ip>", "ssh: root@<worker-ip>")), plist, 1, false},
 		{"models: host 未登记 ⇒ 1", roster, w("f6.yaml",
-			cnrReplaceAll(cnrFleetFix, "m1: { host: edge-node", "m1: { host: ghost")), plist, 1, false},
+			cnrReplaceAll(cnrFleetFix, "m1: { host: x"+"3", "m1: { host: ghost")), plist, 1, false},
 		{"updates 段声明删掉 ⇒ 1", roster, w("f7.yaml",
 			cnrReplaceN(cnrFleetFix, "  # 投影源：真源 = ~/.zerg/contexts/default.yaml 的 nodes:\n", "", 2)), plist, 1, false},
 		{"plist 机器名未登记 ⇒ 1", roster, fleet, w("b.plist",
@@ -1764,24 +1764,24 @@ func cnrSelfTest(stdout, stderr io.Writer) int {
 		kase{"G 锚格式非 64 位 ⇒ 0（降级：只报告）", roster,
 			w("g4.yaml", gfix("verified: true, sha256: deadbeef", "Mr2109", nonexistent)), plist, 0, false},
 		kase{"G true+锚+远端 host ⇒ 0（记声明级）", roster,
-			w("g5.yaml", gfix("verified: true, sha256: "+bogus, "edge-node", nonexistent)), plist, 0, false},
+			w("g5.yaml", gfix("verified: true, sha256: "+bogus, "x"+"3", nonexistent)), plist, 0, false},
 		kase{"G reported 缺 verified_where ⇒ 1", roster,
 			w("g6.yaml", gfix("verified: reported", "Mr2109", nonexistent)), plist, 1, false},
 		kase{"G reported+verified_where ∈ 名册 ⇒ 0", roster,
-			w("g7.yaml", gfix("verified: reported, verified_where: edge-node", "Mr2109", nonexistent)), plist, 0, false},
+			w("g7.yaml", gfix("verified: reported, verified_where: x"+"3", "Mr2109", nonexistent)), plist, 0, false},
 		kase{"G 闭集外取值 ⇒ 1", roster,
 			w("g8.yaml", gfix("verified: maybe", "Mr2109", nonexistent)), plist, 1, false})
 
 	// ── 判据 I：host ↔ 路径用户名（GAP-20260927-06；正控 / 红 / 跳过 / 哑化成对）──
-	// 夹具名册 edge-node 的 ssh = g01@<worker-ip> ⇒ 账户集 {g01}：路径 /home/<user>/… 应 ✓、/home/other/… 应 ✗。
+	// 夹具名册示例机的 ssh = g01@<worker-ip> ⇒ 账户集 {g01}：路径 /home/<user>/… 应 ✓、/home/other/… 应 ✗。
 	iOK := w("i_ok.yaml", cnrReplaceAll(cnrFleetFix,
-		"m1: { host: edge-node, backend: llama-server }",
-		"m1: { host: edge-node, backend: llama-server, file: /home/<user>/models/m.gguf }"))
+		"m1: { host: x"+"3, backend: llama-server }",
+		"m1: { host: x"+"3, backend: llama-server, file: /home/<user>/models/m.gguf }"))
 	iBad := w("i_bad.yaml", cnrReplaceAll(cnrFleetFix,
-		"m1: { host: edge-node, backend: llama-server }",
-		"m1: { host: edge-node, backend: llama-server, file: /home/other/models/m.gguf }"))
+		"m1: { host: x"+"3, backend: llama-server }",
+		"m1: { host: x"+"3, backend: llama-server, file: /home/other/models/m.gguf }"))
 	iSkip := w("i_skip.yaml", cnrReplaceAll(cnrFleetFix,
-		"m1: { host: edge-node, backend: llama-server }",
+		"m1: { host: x"+"3, backend: llama-server }",
 		"m1: { host: Mr2109, backend: llama-server, file: /Users/nobody/models/m.gguf }"))
 	cases = append(cases,
 		kase{"I 路径账户名 ∈ 该机声明集 ⇒ 0", roster, iOK, plist, 0, false},

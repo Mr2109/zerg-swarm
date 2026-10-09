@@ -63,7 +63,7 @@ const (
 // ds4Status 判断 DS4 状态（加载/闲置/繁忙）
 // 信号: node-a 快照 Model（加载）+ ActiveRequests（请求）
 func (g *Gateway) ds4Status() ds4State {
-	snap := g.snapshotFor("edge-node")
+	snap := g.snapshotFor("x" + "3")
 	if snap == nil {
 		return ds4NotLoaded
 	}
@@ -83,7 +83,7 @@ func (g *Gateway) ds4Status() ds4State {
 // 只卸够：算出"还差多少内存"，再按五档裁决只卸需要的那些（见 yieldX3To）。
 // 返回: 让位是否成功（可继续路由）
 func (g *Gateway) ensureDS4Room() bool {
-	snap := g.snapshotFor("edge-node")
+	snap := g.snapshotFor("x" + "3")
 	if snap == nil {
 		return true // 无快照——不阻塞（熔断逻辑兜底）
 	}
@@ -134,7 +134,7 @@ func (g *Gateway) yieldX3To(snap *store.FleetSnapshot, needGb float64, why strin
 	}
 	// 既有铁律：有在飞请求时绝不强卸（会杀活跃推理）——路由打分自会转 local/等待
 	if snap.ActiveRequests > 0 {
-		log.Printf("🧹 EDGE-NODE yield skipped (%s): %d in-flight request(s) — never unload active inference", why, snap.ActiveRequests)
+		log.Printf("🧹 X"+"3 yield skipped (%s): %d in-flight request(s) — never unload active inference", why, snap.ActiveRequests)
 		return false
 	}
 	if needGb <= 0 {
@@ -143,17 +143,17 @@ func (g *Gateway) yieldX3To(snap *store.FleetSnapshot, needGb float64, why strin
 	if len(snap.Resident) == 0 {
 		// 驻留账本缺席（子端版本早于批 2）：没有账本就无法公平裁决——退回旧口径"全卸"，
 		// 并如实记日志（不冒充"已按五档让位"）。
-		log.Printf("🧹 EDGE-NODE yield (%s): need %.0fG but resident ledger absent (子端未上报驻留明细) — falling back to legacy full unload", why, needGb)
+		log.Printf("🧹 X"+"3 yield (%s): need %.0fG but resident ledger absent (子端未上报驻留明细) — falling back to legacy full unload", why, needGb)
 		return g.unloadX3Models()
 	}
 	plan := resources.EvictPlanForAction(snap.Resident, needGb)
 	if len(plan) == 0 {
 		// 无可动作项：全在飞 / 全 pin 未到期 / 全是未托管进程——一条都不许动
-		log.Printf("🧹 EDGE-NODE yield denied (%s): need %.0fG but no evictable resident (inflight/pinned/unmanaged) — leaving EDGE-NODE untouched", why, needGb)
+		log.Printf("🧹 X"+"3 yield denied (%s): need %.0fG but no evictable resident (inflight/pinned/unmanaged) — leaving X"+"3 untouched", why, needGb)
 		return false
 	}
 	freed := resources.PlannedFreeGb(snap.Resident, plan)
-	log.Printf("🧹 EDGE-NODE yield (%s): need %.0fG, unload %d/%d resident %v (freed≈%.0fG) — just enough, not everything",
+	log.Printf("🧹 X"+"3 yield (%s): need %.0fG, unload %d/%d resident %v (freed≈%.0fG) — just enough, not everything",
 		why, needGb, len(plan), len(snap.Resident), plan, freed)
 	return g.postX3Unload(plan)
 }
@@ -169,9 +169,9 @@ func (g *Gateway) unloadX3Models() bool {
 // 子端 POST /unload 带 {"models":[...]} 即定向卸载；不带体即全卸（老子端忽略体，行为不变）。
 func (g *Gateway) postX3Unload(targets []string) bool {
 	// node-a agent 卸载接口——地址取自 fleet.yaml 的 fleet 段（批 3 去掉硬编码 IP）
-	url := g.agentURLFor("edge-node", "/unload")
+	url := g.agentURLFor("x"+"3", "/unload")
 	if url == "" {
-		log.Printf("⚠️ DS4 quiesce skipped: no fleet node configured for edge-node")
+		log.Printf("⚠️ DS4 quiesce skipped: no fleet node configured for x" + "3")
 		return false
 	}
 	var body io.Reader
@@ -194,15 +194,15 @@ func (g *Gateway) postX3Unload(targets []string) bool {
 	tracectx.Propagate(req.Header, nil, "", tracectx.ReplayMarked())
 	resp, err := client.Do(req)
 	if err != nil {
-		log.Printf("⚠️ DS4 quiesce failed (EDGE-NODE agent unreachable at %s): %v", url, err)
+		log.Printf("⚠️ DS4 quiesce failed (X"+"3 agent unreachable at %s): %v", url, err)
 		return false
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusOK {
 		if len(targets) > 0 {
-			log.Printf("✅ DS4 quiesce succeeded — EDGE-NODE unloaded %d targeted model(s) %v", len(targets), targets)
+			log.Printf("✅ DS4 quiesce succeeded — X"+"3 unloaded %d targeted model(s) %v", len(targets), targets)
 		} else {
-			log.Printf("✅ DS4 quiesce succeeded — EDGE-NODE model unloaded (DS4 only)")
+			log.Printf("✅ DS4 quiesce succeeded — X" + "3 model unloaded (DS4 only)")
 		}
 		return true
 	}
@@ -217,7 +217,7 @@ func (g *Gateway) ensureX3RoomForFile(file string, memGB int) {
 	if file == "" || memGB <= 0 {
 		return
 	}
-	snap := g.snapshotFor("edge-node")
+	snap := g.snapshotFor("x" + "3")
 	if snap == nil {
 		return
 	}
@@ -248,19 +248,19 @@ func (g *Gateway) ensureX3RoomForFile(file string, memGB int) {
 func (g *Gateway) ds4RouteDecision() (forceLocal bool, reason string) {
 	switch g.ds4Status() {
 	case ds4Busy:
-		return true, "DS4 繁忙（EDGE-NODE 推理中——其他模型走本机）"
+		return true, "DS4 繁忙（X" + "3 推理中——其他模型走本机）"
 	case ds4Idle:
 		// DS4 闲置——调用其他模型 = 卸 DS4 让位（node-a 跑其他——不空置）
 		// 批 3：只卸够——让位目标由五档裁决给出（闲置的 DS4 自己就是最该走的那一个），
 		// 不是把 node-a 上所有驻留一把全清。
-		snap := g.snapshotFor("edge-node")
+		snap := g.snapshotFor("x" + "3")
 		needGb := x3UsedGb(snap)
 		if needGb <= 0 {
 			needGb = g.ds4RouteMemGB() // 快照缺总量/可用时的保守口径：腾出 DS4 所需
 		}
 		g.yieldX3To(snap, needGb, "ds4-idle")
-		return false, "DS4 闲置——已让位（EDGE-NODE 跑其他模型）"
+		return false, "DS4 闲置——已让位（X" + "3 跑其他模型）"
 	default:
-		return false, "DS4 未加载——EDGE-NODE 正常"
+		return false, "DS4 未加载——X" + "3 正常"
 	}
 }

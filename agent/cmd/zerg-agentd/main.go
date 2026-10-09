@@ -91,7 +91,7 @@ func main() {
 	m := *machineParam
 	if m == "" {
 		if h, err := os.Hostname(); err == nil {
-			// 取主机名第一部分（如 "evo-x3" → "evo"）
+			// 取主机名第一部分（如 "evo-host" → "evo"）
 			for i := 0; i < len(h); i++ {
 				if h[i] == '.' || h[i] == '-' {
 					m = h[:i]

@@ -192,9 +192,31 @@ func TestGateCheckDryRunFullTableZeroSideEffect(t *testing.T) {
 // ⑤ 件级锁竞争 ⇒ 退 2（**不给结论** · 不 exec ⇒ 不落台账）。调**现成的** `judge-lock.py` 造真竞争。
 func TestGateCheckLockContentionIsBlocked(t *testing.T) {
 	repoRel := filepath.Join("..", "..", "..")
+	// 哨兵改锚 Go 半 judge_lock.go（✗ 不锚已退场 py scripts/gates/judge-lock.py）；找不到 ⇒ fail-closed（✗ 不留 Skip）。
+	if _, err := os.Stat(filepath.Join(repoRel, "core", "cmd", "zerg", "judge_lock.go")); err != nil {
+		t.Fatalf("哨兵失守：Go 半 core/cmd/zerg/judge_lock.go 不在 ⇒ fail-closed（✗ 不留 Skip）：%v", err)
+	}
 	realTool := filepath.Join(repoRel, "scripts", "gates", "judge-lock.py")
 	if _, err := os.Stat(realTool); err != nil {
-		t.Skipf("现成 judge-lock.py 不在（%v）", err)
+		// ── 退役态（A态 · 锁件 judge-lock.py 已退场）：`gateCheckAcquire` 退役支**不过问取锁**
+		//   （family_gate_check.go:387-395）⇒ 即便同名锁被真持也**不阻断**：退 exitOK · 不 exec 取号件 ·
+		//   不落取锁台账。此即现役语义（与 TestGateCheckAcquireLockToolRetiredSilent 同源）。
+		//   ★ 哑化负控（"牙" · 带行号）：把 gateCheckAcquire 退役支改成 `return exitBlocked,false`
+		//     ⇒ 本用例 FAIL（退码≠exitOK）。
+		root := t.TempDir()
+		marker := filepath.Join(root, "RAN")
+		gctWrite(t, root, "scripts/lockprobe.py",
+			"import os\nopen(os.environ['GCT_MARKER'],'w').write('x')\n")
+		t.Setenv("GCT_MARKER", marker)
+		t.Setenv("ZERG_GATE_LOCK_DIR", t.TempDir())
+		rc, _, errb := gctRun(gctInv("lockprobe"), root)
+		if rc != exitOK {
+			t.Fatalf("退役态锁件不在盘 ⇒ gate-check 不过问取锁 ⇒ 不阻断（退 exitOK=%d），得到 %d · stderr=%s", exitOK, rc, errb)
+		}
+		if _, err := os.Stat(marker); err != nil {
+			t.Errorf("退役态不阻断 ⇒ 应继续 exec 子件（marker 应在）：%v", err)
+		}
+		return
 	}
 	root := t.TempDir()
 	tool := gctWrite(t, root, "scripts/gates/judge-lock.py", "")
@@ -214,7 +236,7 @@ func TestGateCheckLockContentionIsBlocked(t *testing.T) {
 	// 起**真第二个进程**持同名锁（内部 `--_selftest-hold` 真持锁数秒）。
 	// 解释器钉死（缺口 `GAP-20261001-61`）：✗ 不用 PATH 上的裸 python3；不在盘则跳过（前置不成立）。
 	if _, err := os.Stat(gctTestPyExe); err != nil {
-		t.Skipf("%s 不在盘 ⇒ 跳过（GAP-20261001-61：钉解释器）", gctTestPyExe)
+		t.Fatalf("哨兵失守：%s 不在盘（✗ 不留 Skip · fail-closed · GAP-20261001-61）：%v", gctTestPyExe, err)
 	}
 	holder := exec.Command(gctTestPyExe, tool, "--name", "lockprobe", "--slots", "2", "--wait", "0",
 		"--_selftest-hold", "8")
@@ -281,17 +303,21 @@ func TestGateCheckLockContentionIsBlocked(t *testing.T) {
 // ★ 2026-10-08 建键批（本单 · pack-release · DEV-2005）：接线 pack-release（packReleaseMain · scripts/build/pack-release.sh 的 Go 真身）⇒ 175→176。
 // ★ 2026-10-08 接线批（GAP-20260927-347 · check-danger-guard-parity）：接线 check-danger-guard-parity（dangerGuardParityMain · 危险档↔执行门对账闸的 Go 真身 · 无 py 半）⇒ 176→177。
 // ★ 2026-10-09（隐私面口径 B+A · 本单）：入表 check-public-marks-deep（checkPublicMarksDeepGateMain · 「真实出树面 ⨯ 私有面模式表」只报告档 · Go 半无 py 半 · 接既有 cptp* 出树面件族）⇒ 177→178。
+// ★ 2026-10-09（AlltoGo-② 第二波「入表」· 本单）：建键 check-cli-ownership（checkCliOwnershipGateMain · CLI 归属门 · Go 半无 py 半 · 判存量闭集 py/sh 是否接 inproc 标准路由 · tri-report 只报告）⇒ 178→179。
+// ★ 2026-10-09（缺口 GAP-20260927-183 · 扫 shell 执行位只报告档门 · 本单）：建键 check-shell-true-scan
+//
+//	（checkShellTrueScanGateMain · Go 半无 py 半 · 扫仓内「shell 键赋 True」执行位三分类计数 · tri-report 只报告）⇒ 179→180。
 func TestGateCheckGoEntryTableComplete(t *testing.T) {
 	root := filepath.Join("..", "..", "..")
 	byName, dupes, err := gateCheckRoster(root)
 	if err != nil {
-		t.Skipf("现读名录读不到（%v）", err)
+		t.Fatalf("哨兵失守：现读名录读不到（✗ 不留 Skip · fail-closed）：%v", err)
 	}
 	if len(dupes) != 0 {
 		t.Fatalf("真实名录有同名多件 ⇒ 前置不成立：%v", dupes)
 	}
-	if got := len(gateCheckGoEntry); got != 178 {
-		t.Fatalf("进程内 Go 表项数要 == 178，得到 %d", got)
+	if got := len(gateCheckGoEntry); got != 180 {
+		t.Fatalf("进程内 Go 表项数要 == 180，得到 %d", got)
 	}
 	// ★ 放宽（2026-10-07 退役批）：旧不变量「表键必在名录」⇒「表键 ⇒ 名录 **或** inproc 键 二者其一」。
 	//   退役件（py 已 `git rm`）只余 inproc 那一路（family_gate_check.go 的 inproc 兜底 ⇒ rc=0）；
@@ -327,7 +353,7 @@ func TestGateCheckGoEntryKeysMirrorRoster(t *testing.T) {
 	root := filepath.Join("..", "..", "..")
 	byName, _, err := gateCheckRoster(root)
 	if err != nil {
-		t.Skipf("现读名录读不到（%v）", err)
+		t.Fatalf("哨兵失守：现读名录读不到（✗ 不留 Skip · fail-closed）：%v", err)
 	}
 	for name := range gateCheckGoEntry {
 		full, ok := byName[name]

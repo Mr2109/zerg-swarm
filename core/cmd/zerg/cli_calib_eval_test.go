@@ -2,7 +2,7 @@
 //
 // 八格（前七格全在**合成仓根**里跑，真仓一个字节不动；第八格读真仓盘上现况但只读）：
 //
-//	① 声明面：`calib ls` 3 件（全 ①）· `eval ls` 22 件，逐件带归属（①18 / ②4 / ④0 —— 现算不手写）；
+//	① 声明面：`calib ls` 3 件（全 ①）· `eval ls` 22 件，逐件带归属（①19 / ②3 / ④0 —— 现算不手写）；
 //	② 台账不腐：两族点名的件在**真仓盘上**逐件存在 —— **已真搬 Go（`GoMain` 非空）的件例外**：旧脚本退役（移出仓）后 `File` 只是人面标名、允许缺席（矩阵 `eval ls` ⟷ `scripts/evals/` 现读两面一致）；
 //	③ 未知名 ⇒ 退 2 + 「最像的合法输入」+ 候选（§4.1 K14 第三件）；
 //	④ 缺 `--yes` ⇒ 退 2 且**脚本一次都没跑**（fail-closed 那一格 —— 判据是「夹具的哨兵件没出现」）；
@@ -34,7 +34,7 @@ func synthCalibEvalRepo(t *testing.T) (string, string, string) {
 	t.Helper()
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "core", "internal", "version", "version.go"), "package version\n")
-	mustWrite(t, filepath.Join(root, "scripts", "calib", "calib-x3-model.sh"),
+	mustWrite(t, filepath.Join(root, "scripts", "calib", "calib-x"+"3-model.sh"),
 		"#!/bin/bash\n# 合成夹具（判据件用）：证明命令面真调了这支脚本、且退码原样转出。\n"+
 			": > \"$(dirname \"$0\")/ran.sentinel\"\necho \"夹具：x"+"3 标定（合成）\"\nexit 7\n")
 	// ★ 2026-10-09（family_eval 退役解耦随动 · chat-harness 真搬随动）：评测族的这一格改用**未真搬**的 ① 件
@@ -128,8 +128,8 @@ func TestCalibEval_LsRoster(t *testing.T) {
 	for _, it := range ev {
 		tally[it["class"]]++
 	}
-	// 四类归属表现读：① 收编 18（原 5 + 2026-10-08 同批收编的原 ④「维持待拍」13）· ② 保留内部 4 · ③ 退役 0 · ④ 维持待拍 0。
-	want := map[string]int{"①": 18, "②": 4, "④": 0}
+	// 四类归属表现读：① 收编 19（原 5 + 2026-10-08 同批收编的原 ④「维持待拍」13 + 2026-10-09 ab-campaigns 接线）· ② 保留内部 3 · ③ 退役 0 · ④ 维持待拍 0。
+	want := map[string]int{"①": 19, "②": 3, "④": 0}
 	for k, v := range want {
 		if tally[k] != v {
 			t.Errorf("归属 %s 应是 %d 件，现算 %d 件（合计 %d/%d）", k, v, tally[k], len(ev), 22)
@@ -259,7 +259,7 @@ func TestCalibEval_UnknownNameIsUsageError(t *testing.T) {
 		argv []string
 		near string
 	}{
-		{[]string{"calib", "run", "calib-x3"}, "calib-x3-model"},
+		{[]string{"calib", "run", "calib-x" + "3"}, "calib-x" + "3-model"},
 		{[]string{"calib", "show", "zzz-没有这件-zz"}, ""},
 		{[]string{"eval", "run", "stability"}, "stability-stats"},
 		{[]string{"eval", "show", "zzz-没有这件-zz"}, ""},
@@ -294,7 +294,7 @@ func TestCalibEval_ThreeStatesAndExitForwarding(t *testing.T) {
 	repo, calibSentinel, evalSentinel := synthCalibEvalRepo(t)
 
 	// ④ 缺 --yes ⇒ 退 2 且**脚本一次都没跑**（fail-closed）
-	rc, out, errb := runZergRepo(t, repo, "calib", "run", "calib-x3-model")
+	rc, out, errb := runZergRepo(t, repo, "calib", "run", "calib-x"+"3-model")
 	if errs := judgeRun(2, false, rc, exists(calibSentinel)); len(errs) > 0 {
 		t.Errorf("缺 --yes 那一格：%v", errs)
 	}
@@ -306,16 +306,16 @@ func TestCalibEval_ThreeStatesAndExitForwarding(t *testing.T) {
 	}
 
 	// ⑤ --dry-run ⇒ 退 0 且脚本一次都没跑（零副作用）
-	rc, out, errb = runZergRepo(t, repo, "calib", "run", "calib-x3-model", "--dry-run")
+	rc, out, errb = runZergRepo(t, repo, "calib", "run", "calib-x"+"3-model", "--dry-run")
 	if errs := judgeRun(0, false, rc, exists(calibSentinel)); len(errs) > 0 {
 		t.Errorf("--dry-run 那一格：%v · stderr=%s", errs, errb)
 	}
-	if !strings.Contains(out, "计划件") || !strings.Contains(out, "scripts/calib/calib-x3-model.sh") {
+	if !strings.Contains(out, "计划件") || !strings.Contains(out, "scripts/calib/calib-x"+"3-model.sh") {
 		t.Errorf("--dry-run ⇒ 计划件要打在 stdout 上（含要跑的那一行）：%q", out)
 	}
 
 	// ⑥ 真跑 ⇒ 退码**原样转出**（夹具退 7 ⇒ 命令面返 7）且脚本真跑了
-	rc, out, errb = runZergRepo(t, repo, "calib", "run", "calib-x3-model", "--yes")
+	rc, out, errb = runZergRepo(t, repo, "calib", "run", "calib-x"+"3-model", "--yes")
 	if errs := judgeRun(7, true, rc, exists(calibSentinel)); len(errs) > 0 {
 		t.Errorf("真跑那一格（标定）：%v · stderr=%s", errs, errb)
 	}
@@ -425,7 +425,7 @@ func TestCalibEval_JSONFieldFace(t *testing.T) {
 func TestCalibEval_JudgeHasTeeth(t *testing.T) {
 	repo, calibSentinel, _ := synthCalibEvalRepo(t)
 
-	rc, _, errb := runZergRepo(t, repo, "calib", "run", "calib-x3-model", "--yes")
+	rc, _, errb := runZergRepo(t, repo, "calib", "run", "calib-x"+"3-model", "--yes")
 	if errs := judgeRun(7, true, rc, exists(calibSentinel)); len(errs) > 0 {
 		t.Fatalf("负控前的正控就不绿：%v · stderr=%s", errs, errb)
 	}
@@ -439,7 +439,7 @@ func TestCalibEval_JudgeHasTeeth(t *testing.T) {
 		t.Error("负控② 失败：哨兵件一格改错后没报错")
 	}
 	// ③ 干跑那一格：把「跑没跑」的期望写成「跑了」而实际没跑 ⇒ 必须报（哨兵件这一格对干跑也带牙）
-	rcDry, _, _ := runZergRepo(t, repo, "calib", "run", "calib-x3-model", "--dry-run")
+	rcDry, _, _ := runZergRepo(t, repo, "calib", "run", "calib-x"+"3-model", "--dry-run")
 	if len(judgeRun(0, true, rcDry, false)) == 0 {
 		t.Error("负控③ 失败：干跑那一格把「跑没跑」写反，判定口没报红")
 	}

@@ -563,6 +563,18 @@ func cicgPythonBin() string {
 func cicgRunProfile(root, profile, manifest string, extra []string) (int, bool) {
 	gate := cicgPyJoin(root, cicgProfileGateRel)
 	if !cicgFileExists(gate) {
+		// ★ 真源内化（DEV-2143 同口径 · B轨 2026-10-07）：分档真源 py 退役（缺席 · 其 Go 半在盘）
+		// ⇒ K1 的「单一口径」改由其 **Go 半**（本包姊妹件 `check_manifest_freshness_profile.go`）
+		// **进程内**承载（同入口 `checkManifestFreshnessProfileGateMain` · ✗ 不新写第二份判据、
+		// ✗ 不 fail-closed）。缺件且无 Go 半（真消失）⇒ 照旧 `(0, false)`（= py 的 None · 逐字保留）。
+		if cicgProfileRetired(root) {
+			argv := []string{"--profile", profile, "--json", "rc,hits,stale"}
+			if manifest != "" {
+				argv = append(argv, "--manifest", manifest)
+			}
+			argv = append(argv, extra...)
+			return checkManifestFreshnessProfileGateMain(io.Discard, io.Discard, argv), true
+		}
 		return 0, false
 	}
 	argv := []string{cicgPythonBin(), gate, "--profile", profile, "--json", "rc,hits,stale"}

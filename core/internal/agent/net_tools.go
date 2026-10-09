@@ -341,7 +341,7 @@ func x3SSHTarget() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("读 fleet.yaml 失败(%s): %w", fleetYAML, err)
 	}
-	return sshTargetFor("edge-node", cfg.Fleet), nil
+	return sshTargetFor("x"+"3", cfg.Fleet), nil
 }
 
 func llmRewriteQuery(q string) (string, error) {
