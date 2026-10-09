@@ -239,3 +239,21 @@ Exporting and preflighting the public face now have CLI entry points:
 | `zerg script ls` | Lists the script surface (including the three publish scripts) | Read-only |
 
 The preflight **requires the artifact-dir argument**; if it does not pass, nothing may be pushed.
+
+---
+
+## Publish and gate entry points: current invocation strings
+
+Publishing is an **ordered sequence**; the current invocation string for each step is:
+
+```bash
+zerg publish run --dry-run                          # 1. dry run first: prints a plan · zero side effects
+zerg publish run --confirm=<machine> --yes           # 2. confirmed real write: builds the public mirror tree locally (no network, no push)
+zerg publish preflight <artifact-dir>                # 3. read-only preflight: gates + staleness + command-name parity + generated-region consistency
+zerg publish verify                                 # 4. cross-checker output consistency (local, no network)
+```
+
+Key points: the dry run and the real write are **two states of the same command** (`--dry-run` ↔ `--confirm=<machine> --yes`) — inspect the plan before the tree is landed; the preflight **requires the artifact-dir argument**, and if it does not pass, nothing may be pushed.
+
+The gate face has one more entry point, and it always uses the **placeholder form**: `zerg gate check <criterion-name>` — it runs one registered criterion file, passing through its exit code and output verbatim; a name not on the register is refused on the spot with the list of valid names.
+

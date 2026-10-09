@@ -172,3 +172,25 @@ zerg publish preflight <产物目录>                # 只读预检：门禁 + �
 ```
 
 镜像只落在**本地产物目录**（`dist/<版本>/release`）——**不出网、不推送**；推送远端是另一条显式动作。
+
+---
+
+## 6. 发布与判据（维护者）
+
+维护者动**发布面 / 判据面**时，四条口径各管一面：
+
+**发布四入口**（现值调用串：先计划、再真跑、后复核、末验收）：
+
+```bash
+zerg publish run --dry-run                       # 只出计划件：零副作用，返回规则指纹 + 对账
+zerg publish run --confirm=<主机名> --yes         # 本地出公开镜像树（白名单 + 排除项 + 脱敏替换）
+zerg publish preflight <产物目录>                 # 只读复核：逐条拦（门禁 · 现值面 · 命令名对拍 · 存量债棘轮）
+zerg publish verify                              # 两器产出一致性验收（本地 · 不出网、不推送）
+```
+
+**镜像真源是逐提交镜像器**：真源是 `publish/mirror-public.sh` —— **逐笔真历史**（差分驱动 + 逐笔硬门禁），**非**压平快照；`zerg publish run` 的读数就取自它（`--list-only` · 零写盘 / 零联网）。推送是另一条显式动作：`--push` 需**同时**给 `--push` **且** `ZERG_MIRROR_ALLOW_PUSH=1`（**双重保险**），且一律**非 force** —— 历史关系不成立时让远端拒绝，而不是覆盖。
+
+**判据一律从 CLI 打**：`zerg gate check <判据名>` —— 判据名保守解析到 `scripts/gates/*.py|*.sh`，退码与输出**逐字透传**（判据名如 `gen-cli-reference`、其自带旗标如 `--check`，都原样透传）；**不要**直起 `scripts/gates/*.py|*.sh`。名字不在册 ⇒ 拒并列出可用名。
+
+**门禁双档**：`zerg gate run` 跑**全量 206 步**（一次全冷跑），`zerg gate run --fast` 跑**快速档 43 步**（提交时的便宜子集）—— 两档各管一面；`--list` 现印步数，以现跑为准。
+

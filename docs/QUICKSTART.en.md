@@ -174,3 +174,25 @@ zerg publish preflight <artifact-dir>           # read-only preflight: gates + s
 ```
 
 The mirror only lands in the **local artifact dir** (`dist/<version>/release`) — **no network, no push**. Pushing to a remote is a separate, explicit action.
+
+---
+
+## 6. Publishing and gates (maintainers)
+
+Four rules for anyone touching the **publish / gate surface** — each covers one face:
+
+**Four publish entry points** (current invocation strings: plan, run, review, then verify):
+
+```bash
+zerg publish run --dry-run                       # plan only: zero side effects; returns the rule fingerprint + reconciliation
+zerg publish run --confirm=<hostname> --yes      # build the mirror locally (allowlist + excludes + redaction)
+zerg publish preflight <artifact-dir>            # read-only review: catches, item by item (gates · staleness · command-name parity · stale-stock ratchet)
+zerg publish verify                              # two-tool output consistency check (local · no network, no push)
+```
+
+**The mirror's source of truth is a per-commit mirror**: it is `publish/mirror-public.sh` — the **real history, commit by commit** (diff-driven + per-commit hard gates), **not** a flattened snapshot; `zerg publish run` reads from it (`--list-only` · no disk writes, no network). Pushing is a separate, explicit action: `--push` needs **both** `--push` **and** `ZERG_MIRROR_ALLOW_PUSH=1` (**double safety**), and is always **non-force** — if the history relationship does not hold, the remote rejects rather than being overwritten.
+
+**Always drive judgments through the CLI**: `zerg gate check <judge-name>` — the name is resolved conservatively to `scripts/gates/*.py|*.sh`, and the exit code and output are passed through **verbatim** (a name such as `gen-cli-reference`, and its own flags such as `--check`, are passed straight through); **do not** invoke `scripts/gates/*.py|*.sh` directly. An unlisted name is refused, listing the available names.
+
+**Two gate tiers**: `zerg gate run` runs the **full 206 steps** (everything, once, cold), `zerg gate run --fast` runs the **fast subset of 43 steps** (the cheap subset used at commit time) — each covers one face; `--list` prints the current step count, which prevails.
+

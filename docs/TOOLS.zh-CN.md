@@ -239,3 +239,21 @@ python3 tools/gen_tools_md.py > docs/TOOLS.zh-CN.md   # 英文版 docs/TOOLS.en.
 | `zerg script ls` | 列出脚本面（含发布三条脚本） | 只读 |
 
 预检**必须带产物目录参数**；预检不过 ⇒ 不得推送。
+
+---
+
+## 发布与判据入口：现值调用串
+
+公开发布是一条**有序序列**，每步的现值调用串如下：
+
+```bash
+zerg publish run --dry-run                          # ① 先干跑：出计划件 · 零副作用
+zerg publish run --confirm=<主机名> --yes            # ② 确认态真写：本地生成公开镜像树（不出网、不推送）
+zerg publish preflight <产物目录>                    # ③ 只读预检：门禁 + 现值面 + 命令名对拍 + 生成区一致性
+zerg publish verify                                 # ④ 两器产出一致性验收（本地、不出网）
+```
+
+要点：干跑与真写是**同一条命令的两态**（`--dry-run` ↔ `--confirm=<主机名> --yes`），先看计划再落树；预检**必须带产物目录参数**，不过则不得推送。
+
+判据面另一个入口，统一走**占位式**：`zerg gate check <判据名>` —— 跑一件在册的判据件，逐字透传它的退码与输出；名字不在册 ⇒ 当场拒绝并给可用名。
+
