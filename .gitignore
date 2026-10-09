@@ -88,3 +88,10 @@ scripts/gates/_history/
 #   它是「记着指纹的件」；未 ignore ⇒ 每跑一趟门就脏一个未跟踪件（固定点未治）。
 #   → 登记层忽略该子目录；与同族运行期落点 `scripts/gates/_history/`（上方）同规。
 scripts/gates/seal/.runtime/
+
+# ★ 2026-10-09 追加（Q-211 治法 · 甲类）：跑门台账每跑一趟门就追加一行 ⇒ 它**必然**比索引新一件；
+#   跟踪它 = 每次提交后工作树立刻变脏 ⇒ 制品永远带 `+dirty` ⇒ `Q-211` 身份行结构性判不了绿（实测：
+#   四页 drift 全"无"、源码面"自 X 起无改动"，唯一红格就是制品后缀 `+dirty`）。
+#   → 登记层摘出（`git rm --cached`）+ 忽略；**盘上文件原样保留**当证据（回执另有 receipts/R-*.json 正门）。
+#   与同族运行期落点 `scripts/gates/seal/.runtime/`、`scripts/gates/_history/` 同规。
+scripts/gates/judge-run-ledger.jsonl
