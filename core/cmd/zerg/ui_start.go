@@ -441,7 +441,42 @@ const (
 	// sandboxTestRelayRel —— `sandbox test relay` 的底层唯一实现（B5.1 主控镜像中继验收套件 ·
 	// 离线自足：全在 /tmp 沙箱 + 假 ssh 里跑 · 命令面只做入口 ＋ 转发，✗ 不重写它任何一段）。
 	sandboxTestRelayRel = "scripts/sandbox/test-relay-sandbox.sh"
+	// sandboxTestFleetRel / sandboxTestSetupRel / sandboxTestUpdateRel —— 同族另三个子动作的底层唯一实现
+	// （B5 机群验收 / B6 安装初始化验收 / B3·B4 升级换件验收 · 与 relay **同一条口径**：各自全在 /tmp 沙箱 +
+	// 假环境里跑 ⇒ 命令面只做入口 ＋ 转发，✗ 不重写脚本任何一段 · ✗ 三个不许并成同一个壳 —— 逐条转发**各自**
+	// 的夹具脚本，四子动作行为一致）。
+	sandboxTestFleetRel  = "scripts/sandbox/test-fleet-sandbox.sh"
+	sandboxTestSetupRel  = "scripts/sandbox/test-setup-sandbox.sh"
+	sandboxTestUpdateRel = "scripts/sandbox/test-update-sandbox.sh"
 )
+
+// sandboxTestRoster —— `sandbox test <子动作>` 的子动作名 → 底层唯一实现脚本（唯一真源 = 脚本本体 ·
+// ✗ 不搬实现）。四个子动作与 relay 同形：只做入口 ＋ 转发，✗ 不重写脚本。
+var sandboxTestRoster = []struct{ Name, File string }{
+	{"relay", sandboxTestRelayRel},
+	{"fleet", sandboxTestFleetRel},
+	{"setup", sandboxTestSetupRel},
+	{"update", sandboxTestUpdateRel},
+}
+
+// sandboxTestScript —— 按**逐字名**取砂箱夹具脚本（模糊匹配等于没匹配 ⇒ 不猜）。
+func sandboxTestScript(name string) (string, bool) {
+	for _, t := range sandboxTestRoster {
+		if t.Name == name {
+			return t.File, true
+		}
+	}
+	return "", false
+}
+
+// sandboxTestNames —— 在册子动作名（逐字 · 帮助/用法串共用一份真源）。
+func sandboxTestNames() string {
+	names := make([]string, 0, len(sandboxTestRoster))
+	for _, t := range sandboxTestRoster {
+		names = append(names, t.Name)
+	}
+	return strings.Join(names, "|")
+}
 
 // sandboxProbeScript —— 按**逐字名**取探针脚本（模糊匹配等于没匹配 ⇒ 不猜）。
 func sandboxProbeScript(name string) (string, bool) {
@@ -537,42 +572,37 @@ func cmdSandboxNegctl(inv *invocation, stdout, stderr io.Writer) int {
 
 // cmdSandboxTest —— `zerg sandbox test <子动作>`：虫卵验收夹具的**子动作分派**。
 //
-// 子动作 `relay` 已接线：命令面只做入口 ＋ 转发 —— 底层唯一实现 = `scripts/sandbox/test-relay-sandbox.sh`
-// （B5.1 主控镜像中继验收套件 · 离线自足：全在 /tmp 沙箱 + 假 ssh 里跑 ⇒ ✗ 不重写脚本任何一段 ·
-// 退码原样转出）。其余子动作（`fleet` / `setup` / `update`）归**批3**（依赖被测件正门 + 夹具环境）⇒
-// 本版**未接**，fail-closed 退 `2` ＋ 逐字报「未接」（✗ 绝不静默返回 0）。
+// 四个子动作（`relay` / `fleet` / `setup` / `update`）**均已接线**：命令面只做入口 ＋ 转发 —— 逐条转发**各自**
+// 的底层唯一实现（`scripts/sandbox/test-<名>-sandbox.sh` · 离线自足：全在 /tmp 沙箱 + 假环境里跑 ⇒ ✗ 不重写
+// 脚本任何一段 · 退码原样转出 · ✗ 四支不并成同一个壳）。缺子动作 / 不在册子动作 ⇒ 用法错退 `2` ＋ 逐字给出
+// 在册名（✗ 绝不静默返回 0）。
 func cmdSandboxTest(inv *invocation, stdout, stderr io.Writer) int {
 	sub := ""
 	if len(inv.args) > 0 {
 		sub = strings.TrimSpace(inv.args[0])
 	}
-	switch sub {
-	case "":
+	if sub == "" {
 		inv.setErr("usage", "sandbox_test_subaction_required", "缺子动作")
-		fmt.Fprintf(stderr, "%s: `sandbox test` 要一个子动作（`relay` 已接；`fleet`/`setup`/`update` 归批3 未接）⇒ 不给结论（退码 2）\n", progName)
+		fmt.Fprintf(stderr, "%s: `sandbox test` 要一个子动作（%s）⇒ 不给结论（退码 2）\n", progName, sandboxTestNames())
 		fmt.Fprintf(stderr, "error.kind=usage · detail=sandbox_test_subaction_required · retryable=false\n")
 		return exitUsage
-	case "relay":
-		tail := []string{}
-		if len(inv.orig) > len(inv.path) {
-			// 子动作名已消费（`relay` 只是分派键）⇒ 其后的实参原样转给夹具脚本。
-			tail = inv.orig[len(inv.path):]
-			if len(tail) > 0 {
-				tail = tail[1:]
-			}
-		}
-		return sandboxRunScript(inv, stdout, stderr, "bash", sandboxTestRelayRel, tail)
-	case "fleet", "setup", "update":
-		inv.setErr("usage", "sandbox_test_not_wired", "沙箱夹具动作未接（批3）")
-		fmt.Fprintf(stderr, "%s: `sandbox test %s` **未接** —— 归批3（依赖被测件正门 + 夹具环境）⇒ 不给结论（退码 2）\n", progName, sub)
-		fmt.Fprintf(stderr, "error.kind=usage · detail=sandbox_test_not_wired · retryable=false\n")
-		return exitUsage
-	default:
+	}
+	rel, ok := sandboxTestScript(sub)
+	if !ok {
 		inv.setErr("usage", "sandbox_test_unknown_subaction", "未知子动作")
-		fmt.Fprintf(stderr, "%s: `sandbox test` 认的子动作：relay（已接）| fleet | setup | update（后三者归批3 未接）（给的是 %q）⇒ 不给结论（退码 2）\n", progName, sub)
+		fmt.Fprintf(stderr, "%s: `sandbox test` 认的子动作：%s（给的是 %q）⇒ 不给结论（退码 2）\n", progName, sandboxTestNames(), sub)
 		fmt.Fprintf(stderr, "error.kind=usage · detail=sandbox_test_unknown_subaction · retryable=false\n")
 		return exitUsage
 	}
+	// 子动作名已消费（只是分派键）⇒ 其后的实参原样转给**该子动作各自的**夹具脚本（✗ 不翻译 · ✗ 四支不并壳）。
+	tail := []string{}
+	if len(inv.orig) > len(inv.path) {
+		tail = inv.orig[len(inv.path):]
+		if len(tail) > 0 {
+			tail = tail[1:]
+		}
+	}
+	return sandboxRunScript(inv, stdout, stderr, "bash", rel, tail)
 }
 
 // ── L1 批2（2026-10-08）：`zerg wall` 茧壁证据真动作分派（壳转账 · 只转发、不翻译）──────────────

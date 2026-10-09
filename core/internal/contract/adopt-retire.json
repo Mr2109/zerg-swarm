@@ -1249,20 +1249,35 @@
       "object": "scripts/evals/chat-harness.py",
       "state": "已登记退场（2026-10-09）",
       "evidence": "GAP-20261009-04 · 退场批-A2-三件-20261009 · Go 真身 core/cmd/zerg/eval_chat_harness.go（入口 evalChatHarnessGateMain · 命令面 zerg eval run chat-harness）· 退役态预检：件移出仓 rc/stdout/stderr 与在盘逐字同（--help/未知参/--dry-run 三档 · 无 rc=2 新增）"
+    },
+    {
+      "object": "scripts/evals/ab-campaigns.py",
+      "state": "已登记退场（2026-10-09）",
+      "evidence": "GAP-20261001-13（M2 真搬台账）· GAP-20261008-05（退件↔登记/排除面一致性）· 退场批-A3-ab-campaigns-20261009 · Go 真身 core/cmd/zerg/eval_ab_campaigns.go（入口 evalABCampaignsGateMain · 命令面 zerg eval run ab-campaigns · family_eval.go:103 GoMain 已接线）· 退役态预检：eval run 执行面 = Go 真身（✗ 不再 exec 旧脚本）"
+    },
+    {
+      "object": "gateway/scripts/fleet_logs.py",
+      "state": "已登记退场（2026-10-09）",
+      "evidence": "GAP-20261001-13（M2 真搬台账） · GAP-20261008-05（退件↔登记/排除面一致性） · 退场批1a-fleet-logs-20261009 · Go 真身 core/cmd/zerg/fleet_logs.go（入口 fleetLogsGateMain · 命令面 zerg fleet logs · 已接线 main.go:3476/3485/3488）· 退役态预检：zerg fleet logs 移件前后 rc/stdout/stderr 逐字同（无参 usage rc=2 · 无 rc=2 新增）"
+    },
+    {
+      "object": "deploy/scripts/deploy-launch.sh",
+      "state": "已登记退场（2026-10-09）",
+      "evidence": "GAP-20261001-13（M2 真搬台账） · GAP-20261008-05（退件↔登记/排除面一致性） · 退场批1b-deploy-launch-20261009 · Go 真身 core/cmd/zerg/deploy_launch.go（2026-10-08 真搬 · 入口 deployLaunchGateMain · 命令面 zerg deploy launch）· 名册旧 reason「OS胶水…Go壳仅exec…物理不可化」已过期 ⇒ 改判=已真搬（✗ 不再 exec 本件）· 退役态预检：zerg deploy launch 移件前后 rc/stdout/stderr 逐字同（缺 --host usage rc=2 · 无 rc=2 新增）"
     }
  ],
  "retire_exceptions": [
   {
    "object": "scripts/build/publish-public.sh",
    "category": "外部依赖（退场例外）",
-   "reason": "能力依赖外部工具／联网：`git init` + 远端推送 + 公开面树（白名单/排除项/脱敏）—— 本机跑不出等价行为",
+   "reason": "生态绑定：`git init` + 远端推送 + 公开面树（白名单/排除项/脱敏）—— 本机跑不出等价行为",
    "keep_cost": "随公开面规则（白名单 / 排除项 / 脱敏）逐版核对；若要退场，得先把发布流水线搬进 Go 并与 `publish/mirror-public-lib.py` 对拍（✗ 不是「不做」）",
    "review_date": "2026-10-07"
   },
   {
    "object": "scripts/svc/fleet-relay.sh",
    "category": "外部依赖（退场例外）",
-   "reason": "能力依赖外部工具／联网：`ssh` 到远端 + git 远端推送（本机跑不出等价行为）",
+   "reason": "OS胶水：`ssh` 到远端 + git 远端推送（本机跑不出等价行为）",
    "keep_cost": "每版要随 relay 的 ssh／远端协议改动同步核对；若要退场，得先把 relay 能力搬进 Go 并与远端协议对拍（✗ 不是「不做」）",
    "review_date": "2026-10-07"
   },
@@ -1283,49 +1298,49 @@
   {
    "object": "scripts/gates/all.sh",
    "category": "门跑基建·结构性例外（门面统一入口）",
-   "reason": "门面统一入口（四数 ＋ 逐门 rc ＋ 总 rc）；默认增量逐门自检档按 `git diff`/`git ls-files --others` 只对**变动过**的判据件调它自己的 `--self-test`，缺 git ⇒ 回退全量；真跑档委派 `precommit-gates.sh`／真跑分位委派 `real-gates.sh --fast --json`。shell 独有：`perl -e 'alarm …'` 限时 ＋ 遍历/过滤 `scripts/gates/*.py|*.sh` ＋ 逐门起子进程收 rc。",
+   "reason": "自举：门面统一入口（四数 ＋ 逐门 rc ＋ 总 rc）；默认增量逐门自检档按 `git diff`/`git ls-files --others` 只对**变动过**的判据件调它自己的 `--self-test`，缺 git ⇒ 回退全量；真跑档委派 `precommit-gates.sh`／真跑分位委派 `real-gates.sh --fast --json`。shell 独有：`perl -e 'alarm …'` 限时 ＋ 遍历/过滤 `scripts/gates/*.py|*.sh` ＋ 逐门起子进程收 rc。",
    "keep_cost": "四数口径委派 `check-cli-contract.py`（**不另写一份**）⇒ 随命令面契约漂移要同步；真跑委派回路未去重（GAP-20260927-161）。若要搬 Go：得把「按 git diff 选变动判据件」与逐门限时原语搬过去并与 shell 版逐字节对拍 —— ✗ 不是「不做」。",
    "review_date": "2026-10-07"
   },
   {
    "object": "scripts/gates/real-gates.sh",
    "category": "门跑基建·结构性例外（真跑档）",
-   "reason": "「真跑面名单/白名单/阈值」的**唯一处处**：`SH_TABLE` ＋ 字面 `SH_GATES` 清册（与 `SH_TABLE` 键集**必相等**，棘轮第④条钉住）· `SLOW_NAMES` · `SKIP_TABLE` · `FAST_NAMES`；逐门真跑（`--fast` / `--full`）＋ `--json` 出 `name/rc_self/rc_real` 两列并排。shell 独有：逐门起子进程 ＋ 限时 ＋ 收 rc ＋ `.sh` 集合与清册的棘轮四条（任一不成立 ⇒ `rc=8` 判不了）。",
+   "reason": "自举：「真跑面名单/白名单/阈值」的**唯一处处**：`SH_TABLE` ＋ 字面 `SH_GATES` 清册（与 `SH_TABLE` 键集**必相等**，棘轮第④条钉住）· `SLOW_NAMES` · `SKIP_TABLE` · `FAST_NAMES`；逐门真跑（`--fast` / `--full`）＋ `--json` 出 `name/rc_self/rc_real` 两列并排。shell 独有：逐门起子进程 ＋ 限时 ＋ 收 rc ＋ `.sh` 集合与清册的棘轮四条（任一不成立 ⇒ `rc=8` 判不了）。",
    "keep_cost": "清册/阈值是纯数据面，但棘轮四条与逐门限时是 shell 面；改真跑面要人肉同步清册与键集。若要搬 Go：得保住「两态逐字节同」硬线并把棘轮四条等价搬过去 —— ✗ 不是「不做」。",
    "review_date": "2026-10-07"
   },
   {
    "object": "scripts/gates/shard-go-test.sh",
    "category": "门跑基建·结构性例外（分片并发执行器）",
-   "reason": "按**包**分片 ＋ 按**顶层测试名**包内分片；partition 机检（包集并集==全集 ∧ 两两交集空 ∧ 空片必红）；`--affected` 档由本批改的 `.go` 件反推包；`argv` 快照（防解析循环吃光 `$@`）；分片器锁（键 = 仓根）；★ git 面剥离（`env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE ZERG_GATE_LOCK_DIR=<私有> TMPDIR=<私有> go test …`）。执行面最重、全 shell 独有。",
+   "reason": "自举：按**包**分片 ＋ 按**顶层测试名**包内分片；partition 机检（包集并集==全集 ∧ 两两交集空 ∧ 空片必红）；`--affected` 档由本批改的 `.go` 件反推包；`argv` 快照（防解析循环吃光 `$@`）；分片器锁（键 = 仓根）；★ git 面剥离（`env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE ZERG_GATE_LOCK_DIR=<私有> TMPDIR=<私有> go test …`）。执行面最重、全 shell 独有。",
    "keep_cost": "无纯数据面（包集是**现推导**的，不是清单）；分片/并发/限时/锁/环境域全是 shell 独有原语；GAP-20261001-24 记录过「锁键按 `--outdir` 而非仓根」的盲信。若要搬 Go：得把并发分片与 partition 机检等价重写并与现版对拍 —— ✗ 不是「不做」。",
    "review_date": "2026-10-07"
   },
   {
    "object": "scripts/gates/judge-targets.sh",
    "category": "门跑基建·结构性例外（旧件对拍靶 · 五件里最像可收进命令面的一件）",
-   "reason": "唯一「旧件对拍靶」工具（改前取证）：`git show <commit>:<路径>` 取件 · 写 `overlay.json`/`manifest.tsv` · `go build -overlay=<…>` 构建旧版 `bin/zerg` · `cmd_run` 把 `ZERG_STATE_DIR` 隔离到靶临时目录。阶段1只支持「已 Go 真搬」的判据件。",
+   "reason": "自举：唯一「旧件对拍靶」工具（改前取证）：`git show <commit>:<路径>` 取件 · 写 `overlay.json`/`manifest.tsv` · `go build -overlay=<…>` 构建旧版 `bin/zerg` · `cmd_run` 把 `ZERG_STATE_DIR` 隔离到靶临时目录。阶段1只支持「已 Go 真搬」的判据件。",
    "keep_cost": "依赖 `git show` 与 `go build -overlay` 构建（shell 独有）；靶形状是闭集（`<判据名>/<commit8>-<件sha16>/` 下只留 `src/` ＋ `overlay.json` ＋ `manifest.tsv`）。设计稿 Q5 点名它最不像自举件、最像可收进命令面。若要退场/收编：得先把 overlay 构建与隔离跑搬进 Go 正门 —— ✗ 不是「不做」。",
    "review_date": "2026-10-07"
   },
   {
    "object": "scripts/gates/accept-no-probe.sh",
    "category": "门跑基建·结构性例外（探针验收·真跑子进程）",
-   "reason": "起子进程跑探针套件并与 selftest 对拍；shell 独有进程/信号面",
+   "reason": "自举：起子进程跑探针套件并与 selftest 对拍；shell 独有进程/信号面",
    "keep_cost": "随探针面与验收档漂移同步",
    "review_date": "2026-10-07"
   },
   {
    "object": "scripts/gates/accept-no-probe-selftest.sh",
    "category": "门跑基建·结构性例外（探针验收·真跑子进程 · selftest 变体）",
-   "reason": "`scripts/gates/accept-no-probe.sh` 的 selftest 变体（真跑子进程 · shell 独有进程/信号面）",
+   "reason": "自举：`scripts/gates/accept-no-probe.sh` 的 selftest 变体（真跑子进程 · shell 独有进程/信号面）",
    "keep_cost": "随探针面与验收档漂移同步",
    "review_date": "2026-10-07"
   },
   {
    "object": "scripts/gates/check-gate-bootstrap.sh",
    "category": "门跑基建·结构性例外（门自举）",
-   "reason": "门自举环（起门/验门自身）；真跑子进程",
+   "reason": "自举：门自举环（起门/验门自身）；真跑子进程",
    "keep_cost": "随自举环形态同步",
    "review_date": "2026-10-07"
   },
@@ -1339,63 +1354,63 @@
   {
    "object": "scripts/gates/overlay-guard.sh",
    "category": "门跑基建·结构性例外（真跑 go build -overlay）",
-   "reason": "真跑 `go build -overlay` 守卫",
+   "reason": "自举：真跑 `go build -overlay` 守卫",
    "keep_cost": "随 overlay 面同步",
    "review_date": "2026-10-07"
   },
   {
    "object": "scripts/gates/probe-build-all-wall-wiring.sh",
    "category": "门跑基建·结构性例外（探针·真跑接线）",
-   "reason": "真跑验证 build-all 与 wall 接线",
+   "reason": "自举：真跑验证 build-all 与 wall 接线",
    "keep_cost": "随接线面同步",
    "review_date": "2026-10-07"
   },
   {
    "object": "scripts/gates/redaction-probes.sh",
    "category": "门跑基建·结构性例外（探针·脱敏活体）",
-   "reason": "脱敏活体探针·真跑",
+   "reason": "自举：脱敏活体探针·真跑",
    "keep_cost": "随脱敏面同步",
    "review_date": "2026-10-07"
   },
   {
    "object": "scripts/build/publish-snapshot-self-test.py",
    "category": "测试面·自检",
-   "reason": "publish-public 自检",
+   "reason": "生态绑定：publish-public 自检",
    "keep_cost": "随发布面同步",
    "review_date": "2026-10-07"
   },
   {
    "object": "scripts/build/test-publish-parity.sh",
    "category": "测试面·一致性验收",
-   "reason": "两器一致性验收",
+   "reason": "生态绑定：两器一致性验收",
    "keep_cost": "随两器面同步",
    "review_date": "2026-10-07"
   },
   {
    "object": "scripts/sandbox-probes/conn_jit.py",
    "category": "沙箱探针·真跑",
-   "reason": "沙箱连通/JIT 探针（现跑 ok）",
+   "reason": "OS胶水：沙箱连通/JIT 探针（现跑 ok）",
    "keep_cost": "随机型/沙箱面同步",
    "review_date": "2026-10-07"
   },
   {
    "object": "scripts/sandbox-probes/jitprobe.py",
    "category": "沙箱探针·真跑",
-   "reason": "JIT 权限探针（现跑 PermissionError）",
+   "reason": "OS胶水：JIT 权限探针（现跑 PermissionError）",
    "keep_cost": "随机型/沙箱面同步",
    "review_date": "2026-10-07"
   },
   {
    "object": "scripts/sandbox-probes/lx2-linux.py",
    "category": "沙箱探针·真跑",
-   "reason": "Linux 沙箱探针",
+   "reason": "OS胶水：Linux 沙箱探针",
    "keep_cost": "随机型/沙箱面同步",
    "review_date": "2026-10-07"
   },
   {
    "object": "scripts/sandbox-probes/miniprobe.py",
    "category": "沙箱探针·真跑",
-   "reason": "沙箱 bind/出网探针（现跑 egress OPEN）",
+   "reason": "OS胶水：沙箱 bind/出网探针（现跑 egress OPEN）",
    "keep_cost": "随机型/沙箱面同步",
    "review_date": "2026-10-07"
   },
@@ -1409,42 +1424,42 @@
   {
    "object": "scripts/sandbox-probes/verify-two-states.py",
    "category": "沙箱探针·两态验证器",
-   "reason": "网/沙箱两态验证器（真跑）",
+   "reason": "OS胶水：网/沙箱两态验证器（真跑）",
    "keep_cost": "随两态面同步",
    "review_date": "2026-10-07"
   },
   {
    "object": "scripts/sandbox/test-fleet-sandbox.sh",
    "category": "沙箱夹具·真跑子进程",
-   "reason": "舰队沙箱端到端夹具",
+   "reason": "OS胶水：舰队沙箱端到端夹具",
    "keep_cost": "随舰队面同步",
    "review_date": "2026-10-07"
   },
   {
    "object": "scripts/sandbox/test-relay-sandbox.sh",
    "category": "沙箱夹具·真跑子进程",
-   "reason": "镜像中继沙箱夹具",
+   "reason": "OS胶水：镜像中继沙箱夹具",
    "keep_cost": "随舰队面同步",
    "review_date": "2026-10-07"
   },
   {
    "object": "scripts/sandbox/test-setup-sandbox.sh",
    "category": "沙箱夹具·真跑子进程",
-   "reason": "安装/初始化沙箱夹具",
+   "reason": "OS胶水：安装/初始化沙箱夹具",
    "keep_cost": "随舰队面同步",
    "review_date": "2026-10-07"
   },
   {
    "object": "scripts/sandbox/test-update-sandbox.sh",
    "category": "沙箱夹具·真跑子进程",
-   "reason": "升级/换件沙箱夹具",
+   "reason": "OS胶水：升级/换件沙箱夹具",
    "keep_cost": "随舰队面同步",
    "review_date": "2026-10-07"
   },
   {
    "object": "scripts/wall/two-states-wall-evidence.py",
    "category": "测试面·茧壁取证",
-   "reason": "茧壁两态取证",
+   "reason": "OS胶水：茧壁两态取证",
    "keep_cost": "随茧壁面同步",
    "review_date": "2026-10-07"
   },
@@ -1458,7 +1473,7 @@
   {
    "object": "scripts/wall/wall-macos-evidence.py",
    "category": "测试面·茧壁取证",
-   "reason": "macOS 茧壁取证",
+   "reason": "OS胶水：macOS 茧壁取证",
    "keep_cost": "随茧壁面同步",
    "review_date": "2026-10-07"
   },
@@ -1470,16 +1485,9 @@
    "review_date": "2026-10-07"
   },
   {
-   "object": "deploy/scripts/deploy-launch.sh",
-   "category": "物理不可化",
-   "reason": "OS胶水：主控侧发布「意图件+回读」薄封装——真跑 ssh 到节点跑发布器（OS/外部工具链胶水·无法干净真 Go 化）；Go 壳 core/cmd/zerg/deploy_launch.go 仅 exec bash 本件 ⇒ 本件是其唯一真源，删＝阉割正门 `zerg deploy launch`",
-   "keep_cost": "本件是真源·Go 侧只能 exec 调它 ⇒ 无迁移路径；保留代价＝随其外部工具链（ssh/远端发布器）版本查核",
-   "review_date": "2026-10-08"
-  },
-  {
    "object": "deploy/scripts/zerg-deploy-agent.sh",
    "category": "外部依赖/联网",
-   "reason": "子端发布器唯一写点；坏则发布失控（远端）",
+   "reason": "OS胶水：子端发布器唯一写点；坏则发布失控（远端）",
    "keep_cost": "随发布协议同步",
    "review_date": "2026-10-07"
   },
@@ -1493,63 +1501,56 @@
   {
    "object": "gateway/deploy/transfer_mini_light.sh",
    "category": "外部依赖/联网·本机",
-   "reason": "轻量模型串传（运维·远端）",
+   "reason": "OS胶水：轻量模型串传（运维·远端）",
    "keep_cost": "随模型面同步",
    "review_date": "2026-10-07"
   },
   {
    "object": "gateway/deploy/transfer_mini_models.sh",
    "category": "外部依赖/联网·本机",
-   "reason": "三件套串传（运维）",
+   "reason": "OS胶水：三件套串传（运维）",
    "keep_cost": "随模型面同步",
    "review_date": "2026-10-07"
   },
   {
    "object": "gateway/deploy_mini.sh",
    "category": "本机物件·子端部署",
-   "reason": "Mini 子端部署",
+   "reason": "OS胶水：Mini 子端部署",
    "keep_cost": "随机型同步",
    "review_date": "2026-10-07"
   },
   {
    "object": "gateway/deploy_x3.sh",
    "category": "本机物件·子端部署",
-   "reason": "X3 子端部署",
+   "reason": "OS胶水：EDGE-NODE 子端部署",
    "keep_cost": "随机型同步",
    "review_date": "2026-10-07"
   },
   {
    "object": "gateway/install.sh",
    "category": "本机物件",
-   "reason": "本机三件套构建",
+   "reason": "未 Go 化：本机三件套构建",
    "keep_cost": "随机型同步",
-   "review_date": "2026-10-07"
-  },
-  {
-   "object": "gateway/scripts/fleet_logs.py",
-   "category": "非例外·待收编",
-   "reason": "机群日志聚合",
-   "keep_cost": "保留至 Go 正门 `zerg fleet logs` 落地",
    "review_date": "2026-10-07"
   },
   {
    "object": "gateway/tests/fixtures/mock_backend.py",
    "category": "测试夹具",
-   "reason": "夹具假后端",
+   "reason": "未 Go 化：夹具假后端",
    "keep_cost": "随被夹具面同步",
    "review_date": "2026-10-07"
   },
   {
    "object": "gateway/tests/mock_controller.py",
    "category": "测试夹具",
-   "reason": "夹具假主控",
+   "reason": "未 Go 化：夹具假主控",
    "keep_cost": "随被夹具面同步",
    "review_date": "2026-10-07"
   },
   {
    "object": "gateway/tests/test_agent.py",
    "category": "测试面·真跑子进程",
-   "reason": "子端集成测试",
+   "reason": "生态绑定：子端集成测试",
    "keep_cost": "随被夹具面同步",
    "review_date": "2026-10-07"
   },
@@ -1570,14 +1571,14 @@
   {
    "object": "mcp/mcp_zerg_server.py",
    "category": "非例外·待收编",
-   "reason": "MCP server 唯一入口",
+   "reason": "未 Go 化：MCP server 唯一入口",
    "keep_cost": "保留至 Go 正门 `zerg mcp serve` 落地",
    "review_date": "2026-10-07"
   },
   {
    "object": "mcp/test_autocompact.py",
    "category": "测试面·真跑模型",
-   "reason": "自动压缩测试（模型依赖）",
+   "reason": "生态绑定：自动压缩测试（模型依赖）",
    "keep_cost": "随模型面同步",
    "review_date": "2026-10-07"
   },
@@ -1591,14 +1592,14 @@
   {
    "object": "mcp/test_needle_in_haystack.py",
    "category": "测试面·真跑模型",
-   "reason": "大海捞针测试",
+   "reason": "生态绑定：大海捞针测试",
    "keep_cost": "随模型面同步",
    "review_date": "2026-10-07"
   },
   {
    "object": "mcp/test_needle_rounds.py",
    "category": "测试面·真跑模型",
-   "reason": "多轮捞针测试",
+   "reason": "生态绑定：多轮捞针测试",
    "keep_cost": "随模型面同步",
    "review_date": "2026-10-07"
   },
@@ -1612,63 +1613,63 @@
   {
    "object": "publish/install.sh",
    "category": "本机物件·安装语义",
-   "reason": "安装/升级共用逻辑；坏则半装",
+   "reason": "未 Go 化：安装/升级共用逻辑；坏则半装",
    "keep_cost": "随机型同步",
    "review_date": "2026-10-07"
   },
   {
    "object": "publish/mirror-acceptance.sh",
    "category": "测试面·验收套件",
-   "reason": "B1 镜像器验收套件",
+   "reason": "生态绑定：B1 镜像器验收套件",
    "keep_cost": "随镜像器面同步",
    "review_date": "2026-10-07"
   },
   {
    "object": "publish/mirror-cn-init.sh",
    "category": "外部依赖/联网",
-   "reason": "国内镜像建仓+首搬（git 远端）",
+   "reason": "生态绑定：国内镜像建仓+首搬（git 远端）",
    "keep_cost": "随镜像协议同步",
    "review_date": "2026-10-07"
   },
   {
    "object": "publish/mirror-cn.sh",
    "category": "外部依赖/联网",
-   "reason": "国内镜像下发（git 远端）",
+   "reason": "生态绑定：国内镜像下发（git 远端）",
    "keep_cost": "随镜像协议同步",
    "review_date": "2026-10-07"
   },
   {
    "object": "publish/mirror-public-lib.py",
    "category": "外部依赖/联网",
-   "reason": "逐提交镜像器库；坏则发布面泄漏/漂移（1597 行）",
+   "reason": "生态绑定：逐提交镜像器库；坏则发布面泄漏/漂移（1597 行）",
    "keep_cost": "随公开面规则逐版核对",
    "review_date": "2026-10-07"
   },
   {
    "object": "publish/mirror-public.sh",
    "category": "外部依赖/联网",
-   "reason": "现役逐提交镜像器（git 远端）",
+   "reason": "生态绑定：现役逐提交镜像器（git 远端）",
    "keep_cost": "随公开面规则逐版核对",
    "review_date": "2026-10-07"
   },
   {
    "object": "publish/mirror-verify-tree.py",
    "category": "测试面·验物化",
-   "reason": "产出树验物化",
+   "reason": "生态绑定：产出树验物化",
    "keep_cost": "随产出面同步",
    "review_date": "2026-10-07"
   },
   {
    "object": "publish/parity-compare.py",
    "category": "测试面·对拍",
-   "reason": "两器产出对拍",
+   "reason": "生态绑定：两器产出对拍",
    "keep_cost": "随产出面同步",
    "review_date": "2026-10-07"
   },
   {
    "object": "zerg-evals/backends/bfcl_eval.py",
    "category": "外部依赖·第三方基准",
-   "reason": "BFCL 评测引擎（调 llama-server）",
+   "reason": "生态绑定：BFCL 评测引擎（调 llama-server）",
    "keep_cost": "随端点/基准面同步",
    "review_date": "2026-10-07"
   },

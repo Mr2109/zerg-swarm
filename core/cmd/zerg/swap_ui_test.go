@@ -190,7 +190,7 @@ func TestSwapUICheckReportTwoStatesVerbatim(t *testing.T) {
 	}
 	// 裸跑档经授权门（`--yes`）：与 `--check` 同路 ⇒ 三面逐字同。
 	rc2, o2, e2 := suRunCmd(t, root, "--yes")
-	if rc1 != rc2 || o1 != o2 || e1 != e2 {
+	if rc1 != rc2 || suTNorm(root, o1) != suTNorm(root, o2) || e1 != e2 {
 		t.Fatalf("裸跑(`--yes`)与 `--check` 不逐字同：%d/%q/%q · %d/%q/%q", rc1, o1, e1, rc2, o2, e2)
 	}
 	// 退役态：自造壳移出仓 ⇒ 三面逐字同（✗ 不得退 8/2）。
@@ -201,7 +201,7 @@ func TestSwapUICheckReportTwoStatesVerbatim(t *testing.T) {
 	if rc3 == exitBlocked || rc3 == exitUsage {
 		t.Fatalf("退役态**不得**退 8/2：rc=%d", rc3)
 	}
-	if rc1 != rc3 || o1 != o3 || e1 != e3 {
+	if rc1 != rc3 || suTNorm(root, o1) != suTNorm(root, o3) || e1 != e3 {
 		t.Fatalf("退役态与在盘态不逐字同：%d/%dB/%q · %d/%dB/%q", rc1, len(o1), e1, rc3, len(o3), e3)
 	}
 }

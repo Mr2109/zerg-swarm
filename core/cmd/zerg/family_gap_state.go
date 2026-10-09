@@ -2701,3 +2701,288 @@ func cmdGapVerifyOne(inv *invocation, stdout, stderr io.Writer) int {
 }
 
 // ── ⒢ `zerg gap assign ls [--egg <卵号>]`（只读面 · 批3 第一片）────────────────────────────────
+
+// ── ⒥ `zerg gap set-unit <GAP id> --unit <件路径>`（**改件面三键的正门** · 2026-10-09）────────────
+//
+// 病（缺口账 `GAP-20261008-06`/`-07` 逐字：「改 unit / 改 want 均无正门」）：缺口账的件面三键
+// （`unit` / `module` / `unit_source`）此前只有两个写口 —— `gap add`（新落行那一刻算）与
+// `gap backfill-unit`（存量一次性只加三键）⇒ **改某一条已落账的 unit** 无处可走。
+//
+// 实需：退役后旧 `unit` 指向已退场件（例：`GAP-20261009-03` 的 `scripts/evals/compare-wall-argv.py`
+// 已离盘）⇒ 没有正门时只能往门75 存量豁免表加行（**该表只增不删**）绕过。有本正门后，这类条可以
+// **归位**（改指还在盘的 Go 半）而不是永久豁免。
+//
+// 形制照同族五写面（`set-state` / `note` / `project` / `assign` / `verify-one`）逐字同款：
+//
+//	① 走族内唯一收口 `gapRewriteOne`（只重写目标那一行 · 其余行逐字节不变 · 行序不变 · 末行换行不变）；
+//	② `--dry-run` 恒 0 零副作用 · 缺 `--yes` fail-closed 2（D2 档）；
+//	③ `--evidence` 必填（**改件留证** —— 落成该条 `notes` 末尾一条注：`<时刻> · <谁>：改件面 …`）；
+//	   审计进 `edit_audit.jsonl`（**写不进就不写真源** —— 审计先落盘）；
+//	④ 写回执回显「改前 → 改后」的 `unit` / `module` / `unit_source` 三键。
+//
+// ★ `unit` 存在性预检（本面取定 · 帮助里写清 · ✗ 不许默默放行）：`--unit` 是**仓内相对路径**时逐条对
+//   `git ls-files` 现读校验 —— **不在仓内 ⇒ 默认拒 2**（一个字节都不写），要确认改指一个尚待创建的件
+//   就得**显式带 `--allow-missing-unit`**（因由写进 `--evidence`）。兜底档（`无件(命令面)` / `无件` /
+//   `拟(x)`）不受此闸；**取不到清单**（不在 git 仓）⇒ **不判**（读不到不当「都不存在」）。
+//
+// 退码（一律引现有表 `exitcodes.go` · 本族**不取新号**）：
+//
+//	0 真写或幂等「无变化」· 1 真源那一行序列化不过 · 2 用法错（缺 id / id 多于一条 / 账内没有 /
+//	缺 `--unit` / 缺 `--evidence` / 收到 `--state` / `--unit-source` 闭集外 / `--unit` 不在仓内且
+//	未带 `--allow-missing-unit` / 缺 `--yes`）· 8 真源读不到 / 审计写不进 / 真源写不进 / 写回读不对拍。
+
+// gapUnitSourceClosed —— `--unit-source` 的**闭集**（与 `gap add` 抽取面同源两值：`auto` / `hand`）。
+var gapUnitSourceClosed = []string{gapUnitAuto, gapUnitHand}
+
+// gapSetUnitFields —— `--json <字段>` 的可取字段（写面与读面同一份口径）。
+var gapSetUnitFields = []string{"id", "fp", "unit", "module", "unit_source", "changed"}
+
+// gapSetUnitSourceDefault —— `--unit-source` 缺省取值：兜底件（`无件(命令面)` / `无件` / `拟(x)`）⇒
+// `hand`；仓内相对路径 ⇒ `auto`（判据与 `gapUnitIsNoFileSel` 同源）。
+func gapSetUnitSourceDefault(unit string) string {
+	if gapUnitIsNoFileSel(unit) || strings.HasPrefix(unit, "拟(") {
+		return gapUnitHand
+	}
+	return gapUnitAuto
+}
+
+// gapSetUnitModuleDefault —— `--module` 缺省：由 `unit` 的目录前缀推导（逐字复用 `gapModuleOfUnit`）。
+func gapSetUnitModuleDefault(unit string) string { return gapModuleOfUnit(unit) }
+
+// gapSetUnitIsFallback —— 该 unit 是不是「非仓内路径」的兜底档（降预检不判、按 `hand` 缺省）。
+func gapSetUnitIsFallback(unit string) bool {
+	return gapUnitIsNoFileSel(unit) || strings.HasPrefix(unit, "拟(")
+}
+
+// gapSetUnitExistsInRepo —— `unit` 是不是仓内入库件（逐条对 `git ls-files` 现读）。
+// 返回 `(found, readable)`：`readable=false` ⇒ 取不到清单（不在 git 仓 / git 起不来）—— 与
+// 「真不在盘」分家（✗ 读不到不当「都不存在」）。
+func gapSetUnitExistsInRepo(unit string) (found, readable bool) {
+	tracked := gapTrackedFiles()
+	if len(tracked) == 0 {
+		return false, false
+	}
+	for _, t := range tracked {
+		if t == unit {
+			return true, true
+		}
+	}
+	return false, true
+}
+
+// gapSetUnitNote —— 改件留证那一行（落进该条 `notes` 末尾 · 形态照同族注 `<时刻> · <谁>：<文本>`）。
+func gapSetUnitNote(by, beforeUnit, beforeModule, beforeSource, unit, module, unitSource, evidence string) string {
+	return fmt.Sprintf("%s · %s%s改件面 unit: %s → %s · module: %s → %s · unit_source: %s → %s · 证据：%s",
+		gapNow(), by, gapNoteSep,
+		orDash(beforeUnit), unit, orDash(beforeModule), module, orDash(beforeSource), unitSource, evidence)
+}
+
+// gapSetUnitRow —— `--json` 那一行的逐格取值（写面与读面同一份口径）。
+func gapSetUnitRow(r gapRecord, changed string) map[string]string {
+	return map[string]string{
+		"id": r.ID, "fp": r.FP, "unit": r.Unit, "module": r.Module,
+		"unit_source": r.UnitSource, "changed": changed,
+	}
+}
+
+// gapSetUnitPlanBlock —— `set-unit` 的计划件（`--dry-run` 走 stdout · 缺 `--yes` 走 stderr）。
+// `lines < 0` ⇒ 真源**未读**（缺 `--yes` 那一档：一个盘面动作都还没做）。照 `gapStatePlanBlock` 的
+// 形状，但把「要落的键」换成件面三键（本面**不碰** `state`）。
+func gapSetUnitPlanBlock(w io.Writer, title, ledgerPath string, lines int, id, fp, unit, module, unitSource, evidence string) {
+	fmt.Fprintf(w, "计划件（改件面三键 · %s · 零副作用 —— 未改真源、未写审计）\n", title)
+	if lines < 0 {
+		fmt.Fprintf(w, "  真源     : %s（未读 —— 缺 `--yes` ⇒ 不执行）\n", ledgerPath)
+	} else {
+		fmt.Fprintf(w, "  真源     : %s（现有 %d 行）\n", ledgerPath, lines)
+	}
+	fmt.Fprintf(w, "  目标     : %s\n", id)
+	if fp != "" {
+		fmt.Fprintf(w, "  fp       : %s\n", fp)
+	}
+	fmt.Fprintf(w, "  要落的键（逐格）：\n")
+	fmt.Fprintf(w, "    unit         : → %s\n", unit)
+	fmt.Fprintf(w, "    module       : → %s\n", module)
+	fmt.Fprintf(w, "    unit_source  : → %s\n", unitSource)
+	fmt.Fprintf(w, "    evidence     : %s（落成 `notes` 末尾一条注）\n", evidence)
+	fmt.Fprintf(w, "  审计     : 计划写一行 `event=%s` + `gap_cmd=set-unit`（这一态**不写**）\n", gapEventName)
+}
+
+// cmdGapSetUnit —— `zerg gap set-unit <GAP id> --unit <件路径> …`：改件面三键（写面 · D2 档）。
+func cmdGapSetUnit(inv *invocation, stdout, stderr io.Writer) int {
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
+	unitWant := strings.TrimSpace(inv.flagVal("--unit"))
+	moduleWant := strings.TrimSpace(inv.flagVal("--module"))
+	unitSourceWant := strings.TrimSpace(inv.flagVal("--unit-source"))
+	evidence := strings.TrimSpace(inv.flagVal("--evidence"))
+
+	// ① 用法面（在任何盘面动作之前 —— 与同族写面同一条位置）
+	if inv.jsonGiven && len(inv.fields) == 0 {
+		inv.setErr("usage", "json_fields_required", "--json 不给字段")
+		fmt.Fprintf(stderr, "%s: `--json` 要给逗号分隔的字段（本族口径 = 用法错 2）\n", progName)
+		fmt.Fprintf(stderr, "可选字段: %s\n", strings.Join(gapSetUnitFields, ","))
+		return exitUsage
+	}
+	if len(inv.flagVals("--state")) > 0 {
+		v := strings.TrimSpace(inv.flagVal("--state"))
+		inv.setErr("usage", "state_not_in_shape", "--state 不在 set-unit 的形状里")
+		fmt.Fprintf(stderr, "%s: `gap set-unit` 不收 `--state %s` —— 本面**只改件面三键、不改 `state`**\n", progName, v)
+		fmt.Fprintf(stderr, "  改态 : `zerg gap set-state <GAP id> --state <…> --evidence <…>`（人的口径）\n")
+		return exitUsage
+	}
+	if unitWant == "" {
+		inv.setErr("usage", "missing_required", "缺 --unit")
+		fmt.Fprintf(stderr, "%s: `gap set-unit` 缺必填旗标：--unit（要改指的那一件 · 仓内相对路径）\n", progName)
+		fmt.Fprintf(stderr, "用法：zerg gap set-unit <GAP id> --unit <件路径> [--module <模块前缀>] [--unit-source <auto|hand>] [--allow-missing-unit] --evidence <一句话> [--by <谁>] [--dry-run | --yes] [--json <字段>]\n")
+		return exitUsage
+	}
+	// ★ 「裸给不降级」：给了 `--unit-source` 却不给值 ⇒ 用法错 2（与同族 `--retract` / `--solved-kind` 同款）。
+	if inv.hasFlag("--unit-source") && unitSourceWant == "" {
+		inv.setErr("usage", "unit_source_missing_value", "--unit-source 没给值")
+		fmt.Fprintf(stderr, "%s: `--unit-source` 要给一个值（只认 %s）—— 裸给不降级（用法错 2）\n",
+			progName, gapClosedText(gapUnitSourceClosed))
+		return exitUsage
+	}
+	if unitSourceWant != "" && !gapIn(gapUnitSourceClosed, unitSourceWant) {
+		inv.setErr("usage", "bad_unit_source", "unit_source 值不在闭集里")
+		fmt.Fprintf(stderr, "%s: `--unit-source %s` 不在闭集里 —— 只认 %s\n",
+			progName, unitSourceWant, gapClosedText(gapUnitSourceClosed))
+		return exitUsage
+	}
+	if evidence == "" {
+		inv.setErr("usage", "missing_required", "缺 --evidence")
+		fmt.Fprintf(stderr, "%s: `gap set-unit` 缺必填旗标：--evidence（**改件必留一句证据** —— 与 `add` 的「留证据」同一条纪律）\n", progName)
+		return exitUsage
+	}
+
+	// 缺省推导（module 由 unit 目录前缀推；unit_source 由 unit 形态推 —— 与 `gap add` 抽取面同源）。
+	module := moduleWant
+	if module == "" {
+		module = gapSetUnitModuleDefault(unitWant)
+	}
+	unitSource := unitSourceWant
+	if unitSource == "" {
+		unitSource = gapSetUnitSourceDefault(unitWant)
+	}
+
+	// ② 缺 `--yes`（且非 `--dry-run`）：fail-closed rc=2，计划件走 stderr（判在读真源之前）。
+	if !inv.dryRun && !inv.yes {
+		ids := gapIDsOf(inv)
+		id := "（未给：缺必填）"
+		if len(ids) == 1 {
+			id = ids[0]
+		}
+		gapSetUnitPlanBlock(stderr, "缺 `--yes`（D2 档）", gapLedgerPath(), -1, id, "", unitWant, module, unitSource, evidence)
+		fmt.Fprintf(stderr, "  未执行   : 缺 `--yes` ⇒ 不执行（fail-closed：从不提问）\n")
+		fmt.Fprintf(stderr, "  ⚠ `--yes` 是**命令行确认档**，不是 `approve` 件（不产生 `approver` / `approval` 两格）\n")
+		inv.setErr("usage", "yes_required", "缺 --yes")
+		return exitUsage
+	}
+
+	// ③ 读真源（`--dry-run` 与 `--yes` 都要它：读不到 ⇒ 8）
+	led, rc := gapReadLedgerOrDie(inv, stderr)
+	if rc != exitOK {
+		return rc
+	}
+
+	// ④ 点名（恰好一条 · 账内没有 ⇒ 2）
+	idx, rc := gapTargetOne(inv, led, stderr, "set-unit")
+	if rc != exitOK {
+		return rc
+	}
+	r := led.Recs[idx]
+
+	// ④a `--unit` 存在性预检（仓内相对路径 · 兜底档不受此闸 · 读不到清单 ⇒ 不判）
+	if !gapSetUnitIsFallback(unitWant) {
+		found, readable := gapSetUnitExistsInRepo(unitWant)
+		switch {
+		case readable && !found && !inv.hasFlag("--allow-missing-unit"):
+			inv.setErr("usage", "unit_not_in_repo", "unit 不在仓内入库件清单里")
+			fmt.Fprintf(stderr, "%s: `--unit %s` **不在仓内**（`git ls-files` 现读对不上）—— 本面默认**拒写**（一个字节都不写）\n",
+				progName, unitWant)
+			fmt.Fprintf(stderr, "  要确认改指一个尚待创建的件 ⇒ 显式带 `--allow-missing-unit`（并把因由写进 `--evidence`）\n")
+			fmt.Fprintf(stderr, "  ⚠ 默认拒 = 防手滑把 unit 指到不存在的路径（✗ 不许默默放行）；`无件(命令面)` / `拟(x)` 兜底档不受此闸\n")
+			return exitUsage
+		case readable && !found:
+			fmt.Fprintf(stderr, "%s: ⚠ `--unit %s` 不在仓内 —— 显式 `--allow-missing-unit` 放行（因由应已在 `--evidence` 留痕）\n",
+				progName, unitWant)
+		case !readable:
+			fmt.Fprintf(stderr, "%s: ⚠ 取不到入库件清单（不在 git 仓 / git 起不来）—— 本发**不判** `unit` 存在性（读不到不当「都不存在」）\n", progName)
+		}
+	}
+
+	// ⑤ 幂等：同 id 同三键 ⇒ 「无变化」（不写真源、不写审计、**不落注**）
+	if r.Unit == unitWant && r.Module == module && r.UnitSource == unitSource {
+		inv.changed = boolPtr(false)
+		if inv.jsonGiven {
+			return selectJSON(stdout, stderr, inv, inv.path, inv.fields, gapSetUnitRow(r, "false"))
+		}
+		fmt.Fprintf(stdout, "无变化 %s · unit=%s（同 id 同三键 ⇒ 幂等命中：不写真源、不写审计）\n", r.ID, r.Unit)
+		return exitOK
+	}
+
+	// ⑥ `--dry-run`：只出计划件（stdout · rc=0 · 零副作用）
+	if inv.dryRun {
+		inv.changed = boolPtr(false)
+		would := gapRecord{ID: r.ID, FP: r.FP, Unit: unitWant, Module: module, UnitSource: unitSource}
+		if inv.jsonGiven {
+			return selectJSON(stdout, stderr, inv, inv.path, inv.fields, gapSetUnitRow(would, "false"))
+		}
+		gapSetUnitPlanBlock(stdout, "--dry-run", led.Path, len(led.Lines), r.ID, r.FP, unitWant, module, unitSource, evidence)
+		fmt.Fprintf(stdout, "  改前     : unit=%s · module=%s · unit_source=%s\n", orDash(r.Unit), orDash(r.Module), orDash(r.UnitSource))
+		fmt.Fprintf(stderr, "（--dry-run：只出计划件 · 零副作用 —— 未改真源、未写审计）\n")
+		return exitOK
+	}
+
+	// ★ 本枚（缺口账 `GAP-20261005-26`）：**字段面前置判定** —— 把 `--json` 字段名校验从出口
+	//    `selectJSON`（真写**之后**）前移到第一个真写动作之前：坏字段 ⇒ 同 kind 同 detail 同退码，
+	//    而真源**一个字节不落、审计一行不落**（改前「先写后校」⇒ 写得成也退得了 2）。
+	if rc := gapFrontJSONFields(inv, stderr, gapSetUnitFields); rc != exitOK {
+		return rc
+	}
+
+	// ⑦ 真写：三键（`unit` / `module` / `unit_source`）+ `notes` 末尾追加一条**改件留证**注；
+	//    `state` 逐字不动（改前改后现算对拍，破 ⇒ 不给结论）。走本族唯一收口 `gapRewriteOne`。
+	beforeUnit, beforeModule, beforeSource := r.Unit, r.Module, r.UnitSource
+	before := r.State
+	r.Unit = unitWant
+	r.Module = module
+	r.UnitSource = unitSource
+	r.Notes = append(append([]string{}, r.Notes...),
+		gapSetUnitNote(gapByOf(inv), beforeUnit, beforeModule, beforeSource, unitWant, module, unitSource, evidence))
+	if r.State != before {
+		inv.setErr("failed", "state_mutated", "set-unit 这一路改了 state")
+		fmt.Fprintf(stderr, "%s: 内部对拍破了：本面改了 `state`（%s → %s）⇒ 不给结论（退码 1）\n", progName, before, r.State)
+		return exitFail
+	}
+	detail, wrc, msg := gapRewriteOne(inv, led, idx, r, "set-unit", before, before)
+	if wrc != exitOK {
+		gapWriteFail(inv, stderr, detail, msg, "set-unit")
+		return wrc
+	}
+	// 写后读回自证：三键都在（读回对拍外再点一次名）
+	back, err := readGapLedger()
+	if err != nil {
+		inv.setErr("failed", "readback_failed", err.Error())
+		fmt.Fprintf(stderr, "%s: 写后读回真源失败（退码 1）：%v\n", progName, err)
+		return exitFail
+	}
+	bidx := gapFindIdx(back, r.ID)
+	if bidx < 0 || back.Recs[bidx].Unit != unitWant || back.Recs[bidx].Module != module || back.Recs[bidx].UnitSource != unitSource {
+		inv.setErr("failed", "readback_mismatch", "写后读回与要写的不一致")
+		fmt.Fprintf(stderr, "%s: 写后读回不一致（退码 1）\n", progName)
+		return exitFail
+	}
+	inv.changed = boolPtr(true)
+	if inv.jsonGiven {
+		return selectJSON(stdout, stderr, inv, inv.path, inv.fields, gapSetUnitRow(back.Recs[bidx], "true"))
+	}
+	fmt.Fprintf(stdout, "已改件面 %s · unit %s → %s（真源 %d 行不变 · 只重写目标那一行 · 审计已落 1 行）\n",
+		r.ID, orDash(beforeUnit), back.Recs[bidx].Unit, len(led.Lines))
+	fmt.Fprintf(stdout, "  module      : %s → %s\n", orDash(beforeModule), back.Recs[bidx].Module)
+	fmt.Fprintf(stdout, "  unit_source : %s → %s\n", orDash(beforeSource), back.Recs[bidx].UnitSource)
+	fmt.Fprintf(stdout, "  evidence    : %s（已落成 `notes` 末尾一条注）\n", evidence)
+	gapReceiptPrint(stdout, msg)
+	return exitOK
+}

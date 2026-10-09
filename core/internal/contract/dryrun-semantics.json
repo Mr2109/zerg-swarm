@@ -965,6 +965,14 @@
    "零副作用判据": "纯 `const` 字符串常量（镜像引擎 `publish/mirror-public-lib.py` 的 URL-safe base64 逐字节副本 `mpPyLibB64` ＋ 旧壳 `-h` 正文 `mpHelpBody`）：不读件、不 exec、不写盘、无任何行为。",
    "备注": "登记依据 = 门⑩ `R1 未登记件`：命中是**引文**（`-h` 正文逐字节照抄里提到 dry-run 字样 · 3 处子命中同在 1468 这一物理行），不是语义站点 —— 同 `family_lsface.go` / `family_code.go` / `family_publish_public_pyblocks.go` 的「字样引用」处置。"
   }
+,
+  {
+   "file": "core/cmd/zerg/cli_dev_edit_base_test.go",
+   "类": "命令面测试件（`dev edit --base` 基线回放的四态对拍 —— 裸跑（无 `--base`）rc=2 消歧 / 基线回放干跑 rc=0 且零副作用 / 真写 rc=0 且审计 before=基线 · after=现盘 / 安全闸与形态错 rc=2）—— 测试面，非语义站点（本件只把 `--dry-run` 原样交给 CLI 并断言，自身一行干跑逻辑都没有）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "干跑那一档（判据①现跑）：断言 rc=0 且 stderr 点明「基线回放」、目标件字节逐字不变、`<state>/edit_audit.jsonl` **不出现**（没写就不记账）；真写那一档只落 `t.TempDir()` 的合成仓根/状态目录（`ZERG_REPO`/`ZERG_STATE_DIR` 指临时目录）；本测试件自身不碰真仓、不碰真状态目录、不删 / 不推 / 不改 git 状态。",
+   "备注": "登记依据 = 门⑩ `R1 未登记件`（本波新开正门 `dev edit --base`（DEV-2215）带来新测试件 ⇒ 命中行带 `--dry-run` 字面进扫描面）。它走的是既有的 `dryrun.v1` 一套语义（`--dry-run` ⇒ 计划件 · 零副作用），**不是第五套语义** —— 命中是**调用 argv / 对拍夹具串**（同族先例 `cli_dev_edit_approval_test.go` / `cli_dev_edit_hook_test.go`：测试面，非语义站点）。"
+  }
 
  ]
 

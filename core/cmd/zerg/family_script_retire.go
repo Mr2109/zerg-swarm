@@ -144,12 +144,11 @@ var scriptRetireExcReasonPrefixes = []string{"生态绑定", "OS胶水", "vendor
 // scriptRetireExcReasonColon —— 首词分隔符 = **全角冒号**（U+FF1A）；✗ 半角 `:` 不算。
 const scriptRetireExcReasonColon = "\uFF1A"
 
-// scriptRetireExcReasonDomainObjects —— **对照/校验**名单（现读 15 件 · ✗ **非判域**）。
+// scriptRetireExcReasonDomainObjects —— **对照/校验**名单（现读 14 件 · ✗ **非判域**）。
 //
 // ★ 名单不再当判域选择子：判域 ≡ `reason` 首词 ∈ 闭集（契约真源）⇒ 名册增删**自动随动**，消掉
 // 「添件忘补名单 ⇒ 漏判」这颗雷。此名单只作回归对照（仅校验「名单内件仍在判域」· ✗ 只许随名册瘦身下调）。
 var scriptRetireExcReasonDomainObjects = []string{
-	"deploy/scripts/deploy-launch.sh",
 	"docs/site/export-and-build.sh",
 	"mcp/bench_llmlingua2.py",
 	"mcp/bench_llmlingua2_v2.py",

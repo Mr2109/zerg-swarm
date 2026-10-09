@@ -8947,19 +8947,7 @@
    "id": "sandbox/test#缺子动作",
    "want_rc": 2,
    "want_stdout_bytes": 0,
-   "why": "`sandbox test` 不给子动作 ⇒ 用法错 退 2（`relay` 已接、`fleet`/`setup`/`update` 归批3 未接）· stdout 0 字节（✗ 不许静默返回 0 · 实现体 ui_start.go:cmdSandboxTest 子动作分派）"
-  },
-  {
-   "argv": [
-    "sandbox",
-    "test",
-    "fleet"
-   ],
-   "command": "sandbox test",
-   "id": "sandbox/test#未接子动作",
-   "want_rc": 2,
-   "want_stdout_bytes": 0,
-   "why": "`sandbox test fleet`（沙箱夹具 · 依赖被测件正门 + 夹具环境）归批3、本版**未接** ⇒ fail-closed 退 2「未接」· stdout 0 字节（`relay` 已接线、其余子动作仍未接）"
+   "why": "`sandbox test` 不给子动作 ⇒ 用法错 退 2（`relay`/`fleet`/`setup`/`update` 四子动作**均已接线**）· stdout 0 字节（✗ 不许静默返回 0 · 实现体 ui_start.go:cmdSandboxTest 子动作分派）"
   },
   {
    "argv": [
@@ -9476,6 +9464,31 @@
    "want_rc": 2,
    "want_stdout_bytes": 0,
    "why": "只读命令不收 `--dry-run`/`--yes`（要看计划件用 `sync --dry-run` · 要写台账用 `sync --yes`）⇒ 退 2 · stdout 0 字节。"
+  },
+  {
+   "argv": [
+    "gap",
+    "set-unit",
+    "--nosuchflag-zz"
+   ],
+   "command": "gap set-unit",
+   "id": "gap/set-unit#未知旗标",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "执行前判：未知旗标 ⇒ 退 2 · stdout 0 字节（读数由 2026-10-09 仓外新制品 `go build -overlay` 现跑两遍派生 · 本单禁碰 bin/）。"
+  },
+  {
+   "argv": [
+    "gap",
+    "set-unit",
+    "--schema",
+    "zerg/v9"
+   ],
+   "command": "gap set-unit",
+   "id": "gap/set-unit#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "执行前判：不认的契约主号 ⇒ 退 2 · stdout 0 字节（读数由 2026-10-09 仓外新制品 `go build -overlay` 现跑两遍派生 · 本单禁碰 bin/）。"
   }
  ],
  "tiers": {

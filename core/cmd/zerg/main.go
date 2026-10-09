@@ -2325,7 +2325,7 @@ func init() {
 			path:    []string{"dev", "proposal"},
 			kind:    "Proposal",
 			summary: "提案件通道：只产可审查物（new|list|show|check）· 目标必须回指既有编号 · **判据必须可机检** · 「提 ≠ 批」两对字段（subject/approver）",
-			usage:   "zerg dev proposal new --title <题（必填）> --target <待办编号（必填 · 只收 D/E/F/G 族编号 · 逐条闭集真源 core/internal/contract/dev-targets.json）> --goal <目标（必填）> --evidence <出处（必填 · 至少一条）> --rollback <退点件（必填 · 仓外整件路径 —— 退建议照它核 sha256 取改前态；路径形的退点（绝对 / 带目录分隔符）在提案这一步就要求**现读可得**（读不到 / 是目录 ⇒ 当场退 2），非路径形的「方式」文本才留到退建议那一步判）> --criterion <判据（必填 · 一条首词是 zerg、本版真跑得动的命令）> [--by <提出者>] [--file <要改的件（仓内相对路径 —— 与 --rollback 收的**仓外**整件路径是两套口径 · 别混）>]… [--subject <提出者>] [--subject-kind human|ai|egg|ci] [--egg-id <卵 id>] [--approver <批准者>] [--approver-kind human] [--dry-run | --yes]",
+			usage:   "zerg dev proposal new --title <题（必填）> --target <待办编号（必填 · 只收 D/E/F/G 族编号 · 逐条闭集真源 core/internal/contract/dev-targets.json）> --goal <目标（必填）> --evidence <出处（必填 · 至少一条）—— 两类：① **id 形状**（首部 `GAP-…` / `DEV-…`，如 `GAP-YYYYMMDD-NN`）须**在册**（缺口账 / 在册提案件里查得到）—— 查不到 ⇒ 退码 2「出处 … 在缺口账 / 在册件里查不到 ⇒ 不给结论」；② **描述性证据**（无前缀自由文本）直接收，不要求在册> --rollback <退点件（必填 · 仓外整件路径 —— 退建议照它核 sha256 取改前态；路径形的退点（绝对 / 带目录分隔符）在提案这一步就要求**现读可得**（读不到 / 是目录 ⇒ 当场退 2），非路径形的「方式」文本才留到退建议那一步判）> --criterion <判据（必填 · 一条首词是 zerg、本版真跑得动的命令）> [--by <提出者>] [--file <要改的件（仓内相对路径 —— 与 --rollback 收的**仓外**整件路径是两套口径 · 别混）>]… [--subject <提出者>] [--subject-kind human|ai|egg|ci] [--egg-id <卵 id>] [--approver <批准者>] [--approver-kind human] [--dry-run | --yes]",
 			arity:   "any",
 			args:    []string{"动作：new | list | show | check", "提案 id（show/check 才要）"},
 			fields:  proposalFields,
@@ -2393,7 +2393,7 @@ func init() {
 			path:    []string{"dev", "edit"},
 			kind:    "DevEdit",
 			summary: "受控写入：只改**提案声明过**的件（越界写 ⇒ 2）· 默认干跑 · 一行一事件的审计（写不进审计就不改件）",
-			usage:   "zerg dev edit --proposal <提案 id> --file <仓内相对路径> (--from <件> | --replace <件：补丁 JSON 数组 [{\"old\":…,\"new\":…}] —— 逐格精确替换 · 每格 old 必须在目标件里**恰好命中 1 次**（0 次或多次 ⇒ 拒执 2）>) [--by <谁>] [--allow-cross-root <理由>] [--allow-sibling-repo <名>] [--dry-run | --confirm=<本机名> --yes] （真写前置：一枚**人签批准件** <状态目录>/approvals/dev_edit.json —— 由 `zerg approve new --tool dev_edit` 签出 · `zerg approve ls` 可查现状；无件 / 手写件 / 它的 scope 不含本件 ⇒ 一律拒（退 2）；--dry-run 那一态不需要它）" + devEditDryRunOnlyNote,
+			usage:   "zerg dev edit --proposal <提案 id> --file <仓内相对路径> (--from <件> | --replace <件：补丁 JSON 数组 [{\"old\":…,\"new\":…}] —— 逐格精确替换 · 每格 old 必须在目标件里**恰好命中 1 次**（0 次或多次 ⇒ 拒执 2）>) [--base <件路径|HEAD|sha>] [--by <谁>] [--allow-cross-root <理由>] [--allow-sibling-repo <名>] [--dry-run | --confirm=<本机名> --yes] （真写前置：一枚**人签批准件** <状态目录>/approvals/dev_edit.json —— 由 `zerg approve new --tool dev_edit` 签出 · `zerg approve ls` 可查现状；无件 / 手写件 / 它的 scope 不含本件 ⇒ 一律拒（退 2）；--dry-run 那一态不需要它；`--base` 只与 `--replace` 合用：用**基线内容**当匹配基（`HEAD`=该件的已提交版 · `sha`=某提交版 · 其它=当作仓外前态件路径读），并把基线作为审计的 before ⇒ 已改盘的件可**回放**；回放结果必须与现盘件逐字节相同、否则拒执 2）" + devEditDryRunOnlyNote,
 			arity:   "any",
 			args:    []string{"提案 id（--proposal）", "要改的件（--file · 必须在提案的 files[] 里）"},
 			fields:  devEditFields,
@@ -3137,6 +3137,25 @@ func init() {
 			endpoint: "",
 			run:      cmdGapSetState,
 		},
+		// ★ 2026-10-09（缺口账 `GAP-20261008-06`/`-07` · 「改 unit / 改 want 均无正门」）：`gap set-unit`
+		//   —— **改件面三键（`unit` / `module` / `unit_source`）的正门**。病源：退役后旧 `unit` 指向已退场件
+		//   ⇒ 只能往门75 存量豁免表加行（**只增不删**）绕过；有本门后这类条可**归位**。实现件 =
+		//   `family_gap_state.go:cmdGapSetUnit`。形制照同族五写面：走唯一收口 `gapRewriteOne`（只重写目标那一行）·
+		//   `--dry-run` 恒 0 · 缺 `--yes` fail-closed 2（D2）· `--evidence` 必填（落成 `notes` 一条注）·
+		//   `--unit` 不在仓内 ⇒ 默认拒 2（须显式 `--allow-missing-unit`）。
+		{
+			path:     []string{"gap", "set-unit"},
+			kind:     "GapSetUnit",
+			summary:  "改一条缺口的**件面三键**（`unit` / `module` / `unit_source` · 写面 · `--dry-run` 恒 0 · 缺 `--yes` fail-closed 2）：走族内唯一收口 `gapRewriteOne`（只重写目标那一行 · 其余行逐字节不变 · 行序不变 · 末行换行不变）· `--unit` 必填（仓内相对路径）· `--module` 缺省由 `unit` 目录前缀推（`gapModuleOfUnit`）· `--unit-source` 缺省由 `unit` 形态推（兜底档 `hand` / 仓内路径 `auto` · 闭集 `auto|hand`）· `--evidence` 必填（**改件留证** —— 落成该条 `notes` 末尾一条注）· ★ **`--unit` 不在仓内（`git ls-files` 现读对不上）⇒ 默认拒 2**（一个字节都不写），须显式 `--allow-missing-unit` 才放行（兜底档 `无件(命令面)`/`拟(x)` 不受此闸）· 同 id 同三键 ⇒ 「无变化」0 · 回执回显「改前 → 改后」三键 · 审计进 `edit_audit.jsonl`（写不进就不写真源）",
+			usage:    "zerg gap set-unit <GAP id> --unit <件路径> [--module <模块前缀>] [--unit-source <auto|hand>] [--allow-missing-unit] --evidence <一句话> [--by <谁>] [--dry-run | --yes] [--json <字段>]",
+			arity:    "any",
+			args:     []string{"缺口 id（**恰好一条** —— 本动作不做批量）"},
+			fields:   gapSetUnitFields,
+			danger:   &dangerSpec{dangerD2, "缺口 id", "改真源那一行的 `unit` / `module` / `unit_source` 三键 + 往 `notes` 追加一条改件留证注 + 审计一行（可逆：照审计那一格回写 · 留证注删掉即回原状；其余键名与值逐字节不变 · 行序不变 · 末行换行不变）；`--unit` 不在仓内且未带 `--allow-missing-unit` / 缺 `--unit` / 缺 `--evidence` / 收到 `--state` ⇒ 2（一个字节都不写）", "缺口账 `GAP-20261008-06`/`-07`（「改 unit 无正门」· 治法）· 同族写面先例 `gap set-state` / `gap note` / `gap assign` / `gap verify-one`（`H-10`：`--yes` 是命令行确认档，不是批准件）", false},
+			opened:   true,
+			endpoint: "",
+			run:      cmdGapSetUnit,
+		},
 		// ★ 批3 第五片（2026-09-28）：`gap bulk set-state` —— **族级批量改态**（一次改 N 条）。
 		//   病源 = 缺口账 `GAP-20260926-97`（逐字：想要 `zerg gap-batch-state` · 「一次只能改一个 GAP id
 		//   （结账/收版时逐条改态成本高）」）；本片 = 该条点名的治法，**不另开写路**：逐条仍走
@@ -3400,7 +3419,7 @@ func init() {
 		{
 			path:        []string{"sandbox", "test"},
 			layer:       "host",
-			summary:     "虫卵验收夹具（子动作分派：`relay` 已接 —— 底层只调 scripts/sandbox/test-relay-sandbox.sh，命令面不重写逻辑；`fleet`/`setup`/`update` 归批3 未接 · fail-closed）",
+			summary:     "虫卵验收夹具（子动作分派：`relay`/`fleet`/`setup`/`update` 四子动作**均已接线** —— 各自底层只调 scripts/sandbox/test-<名>-sandbox.sh，命令面只做入口＋转发、不重写逻辑）",
 			usage:       "zerg sandbox test <relay|fleet|setup|update>",
 			arity:       "any",
 			passthrough: true,
@@ -4105,6 +4124,11 @@ func parseInvocation(args []string) (*invocation, error) {
 		//   ★ 必须在下面「未知旗标」兜底**之前**上户口，否则派单里写着它会一律退 2「未知旗标」。
 		case a == "--allow-drifted":
 			inv.kvSet(a, "true")
+		// ★ 2026-10-09（缺口账 `GAP-20261008-06`/`-07`）：`gap set-unit` 的 `--allow-missing-unit`
+		//   —— `--unit` 指向**仓内不存在**路径时的**显式放行闸**（默认拒 2 · ✗ 不许默默放行）。
+		//   语义是布尔档 ⇒ 与 `--aging`/`--stale`/`--allow-drifted` 同一种形态（写进 `inv.kv`）。
+		case a == "--allow-missing-unit":
+			inv.kvSet(a, "true")
 		// ★ R1 登记（2026-10-04 · 缺口 `GAP-20260927-377` · R3）：`dev check --syntax` 的
 		//   两枚**布尔**旗标 —— `--syntax`（本命令的语义档）与 `--vet`（跑 go vet 而非 go build）。
 		//   与 `--aging`/`--stale`/`--allow-drifted` 同一种形态（写进 `inv.kv` ⇒ `foreignFlag` 看得见）；
@@ -4328,6 +4352,15 @@ func valueFlagName(a string) string {
 	case "--machine":
 		return a
 	}
+	// dev 族「基线回放」旗标（GAP-20261009-10 修法① · 本枚）：`dev edit --base <件路径|HEAD|sha>` ——
+	// 用给的**基线内容**当 `--replace` 的匹配基（而不是读现盘件），并把该基线作为审计的 `before`
+	// （真前态指纹）⇒ 已手改过盘的件（改前文本已不在盘上）也能把同一笔改动**回放**出真 before→after。
+	// 与上面各排同一口径：值照收，语义在 `cmdDevEdit` 里判。
+	// ★ 本排是名字表「唯一真源」⇒ 不登记就一律退 2「未知旗标」= 新旗标等于不可用。
+	switch a {
+	case "--base":
+		return a
+	}
 	// 名册面旗标（波① `T1a` · `Q-099`：`model add` 往 `gateway/fleet.yaml` 写一条）。
 	// 与上面几排同一口径：值照收，语义在各自命令里判（`model add` 逐个校验）。
 	switch a {
@@ -4497,7 +4530,11 @@ func valueFlagName(a string) string {
 		//   作废、不能给替代 ⇒ 救场要两步）。同上面各排同一口径 —— 值照收，语义在各自
 		//   `family_gap*.go` 里判（读者由 R2 同批落）。★ 名字表是本仓「唯一真源」⇒ 不登记就
 		//   一律退 2「未知旗标」= 新旗标等于不可用（同族先例逐字同上）。用法串与本表**必须同改**（门73）。
-		"--gate-step", "--log-path", "--rc", "--supersede":
+		"--gate-step", "--log-path", "--rc", "--supersede",
+		// ★ 2026-10-09（缺口账 `GAP-20261008-06`/`-07`）：`--unit-source <auto|hand>` ——
+		//   `gap set-unit` 的件面三键之一（`unit_source`）。名字表是本仓「唯一真源」⇒
+		//   不登记就一律退 2「未知旗标」= 新旗标等于不可用（同族先例逐字同上）。
+		"--unit-source":
 		return a
 	}
 	// 内部任务周期写面旗标（P0 #232 · 2026-10-08 · 本枚 · **只增**）：`itask interval set <任务|all> --hours N`。
