@@ -106,7 +106,7 @@ var impactHeads = [3]string{"会牵动：", "会红：", "建议："}
 
 // TestImpact_MachineFaceSixKeysAndEmptyItems —— 判据① + 判据②（正控）：
 // `A2` 取数接上之后，**零命中**要挑一件三层都空的件（① 反向包 0 · ③ 契约 0 · ④ 词法/形近 0）——
-// 那一件见 `impactZeroHitTarget()`（**件名不许逐字写出**：写出来它就命中词法面）：
+// 那一件见 `impactZeroHitTarget(t)`（仓内未跟踪合成件 · 件名随机 ⇒ 词法面零命中）：
 // ⇒ `--json` 出**六键**、`items` 逐字 `[]`、退码 **1**（零命中 · 不是 0、不是失败）。
 func TestImpact_MachineFaceSixKeysAndEmptyItems(t *testing.T) {
 	requireDeep(t) // 贵档闸 · 现读见本件头：ZERG_DEEP=1 才跑
@@ -114,7 +114,7 @@ func TestImpact_MachineFaceSixKeysAndEmptyItems(t *testing.T) {
 	// `A5`：`zerg impact` 自本批起**会落盘缓存**（落点在状态目录）⇒ 测试一律把状态目录改到合成目录，
 	// **不碰真状态目录**（本件判据一个字不动；不这么做就是「测试有副作用」）。
 	t.Setenv("ZERG_STATE_DIR", t.TempDir())
-	tgt := impactZeroHitTarget()
+	tgt := impactZeroHitTarget(t)
 
 	rc, out, errb := runCapture("impact", tgt, "--json", "what,why,how,red", "--yes")
 	if rc != 1 {
@@ -179,7 +179,7 @@ func TestImpact_NegativeControls(t *testing.T) {
 	t.Setenv("ZERG_STATE_DIR", t.TempDir())
 
 	// ① 判定口的负控：三枚坏期望，逐枚**必须**报错。
-	rc, out, _ := runCapture("impact", impactZeroHitTarget(), "--json", "what", "--yes")
+	rc, out, _ := runCapture("impact", impactZeroHitTarget(t), "--json", "what", "--yes")
 	if rc != 1 {
 		t.Fatalf("准备态不对：正控退码 = %d（要 1 —— 零命中件见 impactZeroHitTarget）", rc)
 	}

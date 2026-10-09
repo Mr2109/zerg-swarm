@@ -342,14 +342,22 @@ mod tests {
     use super::{actions, roots};
 
     /// 后端 /api/fileroots 的真实形态（五项——§4.2 Mr2109：含「模型权重」）
+    ///
+    /// 路径**运行时派生**、✗ 不写死任何机器/私有绝对路径 —— 与后端 `fileroots()` 的真源同口径
+    /// （`core/internal/api/fileroots.go`：仓库/任务类根由 `statepath` 解析、家目录类根由 `HOME` 解析）：
+    /// 仓库/任务类根取进程临时目录下的夹具基址（同后端 `fileroots_test.go` 用 `t.TempDir()` 注入各根），
+    /// 家目录类根取 `HOME`。夹具既像真实响应，又不夹带任何私有/占位符路径。
     fn fileroots_fixture() -> serde_json::Value {
+        let base = std::env::temp_dir();
+        let base = base.to_string_lossy();
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
         serde_json::json!({
             "roots": [
-                {"id":"docs","label":"虫族文档","path":"<volume-path>/Zerg/docs","default":true,"writable":true},
-                {"id":"repo","label":"虫族仓库","path":"<volume-path>/Zerg","default":false,"writable":false},
-                {"id":"models","label":"模型登记库","path":"/Users/<user>/.zerg/models","default":false,"writable":false},
+                {"id":"docs","label":"虫族文档","path": format!("{base}/zerg-fb/repo/docs"),"default":true,"writable":true},
+                {"id":"repo","label":"虫族仓库","path": format!("{base}/zerg-fb/repo"),"default":false,"writable":false},
+                {"id":"models","label":"模型登记库","path": format!("{home}/.zerg/models"),"default":false,"writable":false},
                 {"id":"tasks","label":"任务目录","path":"/tmp/zerg/tasks","default":false,"writable":false},
-                {"id":"weights","label":"模型权重","path":"/Users/<user>/models","default":false,"writable":false}
+                {"id":"weights","label":"模型权重","path": format!("{home}/models"),"default":false,"writable":false}
             ],
             "config": {"display_max": 1048576, "allow_all_types": false, "text_exts": [".md",".txt"]}
         })
@@ -368,7 +376,9 @@ mod tests {
         for ro in ["repo", "models", "tasks", "weights"] {
             assert!(!s.find(ro).unwrap().writable, "{} 根必须只读（§九 Q2）", ro);
         }
-        assert_eq!(s.path_of("weights"), Some("/Users/<user>/models"));
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+        let weights = format!("{home}/models");
+        assert_eq!(s.path_of("weights"), Some(weights.as_str()));
         assert_eq!(s.config.display_max, 1048576);
         assert_eq!(
             s.config.text_exts,

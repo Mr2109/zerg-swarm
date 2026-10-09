@@ -23,6 +23,8 @@ package main_test
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -62,6 +64,37 @@ func cutWarningCount(warns []string) int {
 		}
 	}
 	return -1
+}
+
+// truncatedZeroHitTarget 造一件**稳定**的零命中靶（本用例第二层负控用）：
+// 在**仓内**落一件**未跟踪**的合成小件，并交 `t.Cleanup` 回收。
+//
+// 为什么必须落在**仓内**：`zerg impact` 只认「仓内、盘上存在」的目标
+// （`impactResolve`：绝对路径 / `..` ⇒ rc=2「目标解析不到」）⇒ **仓外件**
+// （含 `t.TempDir()`）拿不到 rc=1，只有仓内路径才是「目标有效但零命中」。
+//
+// 为什么**稳定**：④ 词法层拿件名（`path.Base`）当查询词，走 git 的 grep -w
+// （只搜 **tracked** 件）⇒ 未跟踪的合成件既不在面内、件名也在 tracked 面里无人提
+// ⇒ 零命中。★ 旧靶钉在一枚**真源件**上（靠它当时恰好零命中），正常开发一动那件
+// 就翻成有命中 ⇒ 前提失效（本用例就是这么红的）——合成件的件名连同临时目录名一起
+// 随机 ⇒ 与任何真源件都不撞名，谁的正常开发都改不到它。
+func truncatedZeroHitTarget(t *testing.T, root string) string {
+	t.Helper()
+	dir, err := os.MkdirTemp(root, "zerg-zero-hit-")
+	if err != nil {
+		t.Fatalf("零命中靶：临时目录建不了（root=%s）：%v", root, err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	name := filepath.Base(dir) + ".go"
+	p := filepath.Join(dir, name)
+	if err := os.WriteFile(p, []byte("package zqzerohit\n"), 0o644); err != nil {
+		t.Fatalf("零命中靶：件写不了（%s）：%v", p, err)
+	}
+	rel, err := filepath.Rel(root, p)
+	if err != nil {
+		t.Fatalf("零命中靶：相对路径算不出：%v", err)
+	}
+	return filepath.ToSlash(rel)
 }
 
 // synthDetail 造一份合成 detail（负控用 · 键序无关）。
@@ -198,9 +231,9 @@ func TestTruncatedDetail_RealRunPairsWithCutCount(t *testing.T) {
 		strings.Trim(string(d["cut_from"]), `"`), kept, dropped, total, len(env.Items), cutWarningCount(env.Warnings))
 
 	// 成对负控（**没裁**）：零命中件 ⇒ `truncated=false` 且本格**缺席**（缺席 ≠ 假值）。
-	rc, out, _ = runCapture("impact", impactZeroHitTarget(), "--json", "what", "--yes")
+	rc, out, errb = runCapture("impact", truncatedZeroHitTarget(t, root), "--json", "what", "--yes")
 	if rc != 1 {
-		t.Fatalf("准备态不对：零命中件退码 = %d（要 1）", rc)
+		t.Fatalf("准备态不对：零命中靶退码 = %d（要 1）· stderr=%s", rc, tail(errb, 400))
 	}
 	if _, ok := truncatedDetailForTest(t, out); ok {
 		t.Errorf("负控①失败：一条都没裁却写了 `meta.truncated_detail`（余量不是「裁了」）· 包封=%s", tail(out, 300))

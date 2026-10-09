@@ -25,13 +25,16 @@ import (
 	zerg "github.com/Mr2109/zerg-swarm/core/cmd/zerg"
 )
 
-// impactZeroHitTarget —— **零命中**的件目标（现跑 rc=1）：`core/internal/plugin/runtime/` 下那一件
-// （该包无人 import · 件名在 tracked 面里无人提 · 不命中任何契约条目 —— 三层都空才是真零命中）。
+// impactZeroHitTarget —— **零命中**的件目标（现跑 rc=1）：在**仓内**落一件**未跟踪**的合成小件
+// （④ 词法层走 git 的 `grep -w`，只搜 tracked 面 ⇒ 未跟踪件的件名在面里无人提 ⇒ 三层都空才是真零命中）。
 //
-// ★ **它的件名在源码里用拼的，不许逐字写出来** —— 写出来它就落进**词法面**（`git grep -w <件名>`），
-// 于是它自己把「零命中」变成「有命中」。这不是洁癖：A2 落地时真撞到过这一格（见回执）。
-func impactZeroHitTarget() string {
-	return "core/internal/plugin/runtime/" + "lla" + "ma.go"
+// ★ 用**合成件**而不是钉一枚真源件：旧靶钉在 `core/internal/plugin/runtime/` 下那一件上（靠它当时
+// 恰好零命中），正常开发一碰那件就翻成有命中 ⇒ 前提失效（本件就是这么红的）。合成件的件名连同随机
+// 临时目录名一起随机 ⇒ 与任何真源件都不撞名，谁的正常开发都改不到它。
+// 靶的落地与 `t.Cleanup` 回收复用同包的 `truncatedZeroHitTarget`（不另造第二套）。
+func impactZeroHitTarget(t *testing.T) string {
+	t.Helper()
+	return truncatedZeroHitTarget(t, repoRootFromCLI(t))
 }
 
 // impactLayerLineRe —— 层表一行的形状（判据①：`layer=` + `口径=` + `head_sha=` 三件**必在**）。
