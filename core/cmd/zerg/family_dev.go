@@ -91,7 +91,7 @@ func cmdDevProposal(inv *invocation, stdout, stderr io.Writer) int {
 	case "":
 		fmt.Fprintf(stderr, "%s: `dev proposal` 要给动作：new | list | show | check\n", progName)
 		fmt.Fprintf(stderr, "用法：zerg dev proposal new --title <题> --target <既有编号（只收 D/E/F/G 族 · 逐条闭集真源 core/internal/contract/dev-targets.json）> --goal <目标> "+
-			"--evidence <出处（必填 · 至少一条）> --rollback <退点件（必填 · 仓外整件路径 —— 退建议照它核 sha256 取改前态）> "+
+			"--evidence <出处（必填 · 至少一条）—— 两类：① **id 形状**（首部 `GAP-…` / `DEV-…`，如 `GAP-YYYYMMDD-NN`）须**在册**（缺口账 / 在册提案件里查得到）—— 查不到 ⇒ 退码 2「出处 … 在缺口账 / 在册件里查不到 ⇒ 不给结论」；② **描述性证据**（无前缀自由文本）直接收，不要求在册> --rollback <退点件（必填 · 仓外整件路径 —— 退建议照它核 sha256 取改前态）> "+
 			"--criterion <判据（必填 · 一条首词是 zerg、本版真跑得动的命令）> [--file <要改的件>]… [--by <提出者>]\n")
 		fmt.Fprintf(stderr, "       zerg dev proposal list [--state 未决|已批准|已否决]\n")
 		fmt.Fprintf(stderr, "       zerg dev proposal show <提案 id>\n")

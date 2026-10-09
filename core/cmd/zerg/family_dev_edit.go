@@ -237,6 +237,8 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 	fileRel := strings.TrimSpace(inv.flagVal("--file"))
 	fromPath := strings.TrimSpace(inv.flagVal("--from"))
 	replacePath := strings.TrimSpace(inv.flagVal("--replace"))
+	// ★ GAP-20261009-10 修法①（本枚）：**基线回放** `--base <件路径|HEAD|sha>`。
+	baseSpec := strings.TrimSpace(inv.flagVal("--base"))
 
 	// ①② 用法面先判（在任何盘面动作之前）
 	if proposalID == "" {
@@ -253,6 +255,12 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 	if (fromPath == "") == (replacePath == "") {
 		inv.setErr("usage", "bad_content_source", "内容来源要给且只给一种")
 		fmt.Fprintf(stderr, "%s: 内容来源**恰给一种**：`--from <件>`（整件替换）或 `--replace <件>`（逐格精确替换）\n", progName)
+		return exitUsage
+	}
+	// ★ GAP-20261009-10 修法①：`--base` 只与 `--replace` 合用（`--from` 是整件替换，用不上基线）。
+	if baseSpec != "" && fromPath != "" {
+		inv.setErr("usage", "base_with_from", "基线回放只与逐格替换合用")
+		fmt.Fprintf(stderr, "%s: `--base` 只与 `--replace` 合用（`--from` 是整件替换，用不上基线）⇒ 拒执（退码 2 · GAP-20261009-10 修法①）\n", progName)
 		return exitUsage
 	}
 	if why := declaredFilesWhy([]string{fileRel}); why != "" {
@@ -384,6 +392,27 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 		beforeMissing = true
 		before = []byte{}
 	}
+	// ★ GAP-20261009-10 修法①（本枚）**基线回放** `--base <件路径|HEAD|sha>`：给该旗标 ⇒
+	//   `--replace` 的匹配基与审计的 `before` 取**基线内容**（而非现盘件）⇒ 已手改过盘的件
+	//   （改前文本已不在盘上）也能把同一笔改动**回放**出真 before→after 的审计链。
+	//   ★ 默认态（不给旗标）**逐字节不改**：`diskBefore` 只是 `before` 的副本，仅在 baseUsed 时被读。
+	diskBefore := before
+	baseUsed := false
+	if baseSpec != "" && fromPath == "" {
+		if beforeMissing {
+			inv.setErr("usage", "base_target_absent", "基线回放要求目标件在盘上")
+			fmt.Fprintf(stderr, "%s: `--base` 要求目标件 %s **在盘上**（基线回放 = 把同一笔改动落到已存在的现盘件；新件没有「回放」一说）⇒ 拒执（退码 2 · GAP-20261009-10 修法①）\n", progName, fileRel)
+			return exitUsage
+		}
+		bc, berr := devEditResolveBase(baseSpec, root, fileRel)
+		if berr != nil {
+			inv.setErr("usage", "base_unresolvable", berr.Error())
+			fmt.Fprintf(stderr, "%s: %v\n", progName, berr)
+			return exitUsage
+		}
+		before = bc
+		baseUsed = true
+	}
 	mode := "from"
 	after := []byte{}
 	if fromPath != "" {
@@ -400,6 +429,18 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 			inv.setErr("usage", "replace_failed", err.Error())
 			fmt.Fprintf(stderr, "%s: %v\n", progName, err)
 			return exitUsage
+		}
+		if baseUsed {
+			// ★ 安全闸（**只能更严** · 本单口径）：基线回放的结果必须与**现盘件逐字节相同** ——
+			//   本旗标只做**零内容变更的回放**（补真 before→after 的审计链）；若不等，说明回放结果
+			//   会覆盖现盘（可能含别路改动）⇒ 拒执（退码 2），绝不盲写。
+			if !bytes.Equal(after, diskBefore) {
+				inv.setErr("usage", "base_replay_diverges", "回放结果与现盘件不逐字节相同")
+				fmt.Fprintf(stderr, "%s: **基线回放落点不符 ⇒ 拒执**：基线 %s ＋ `--replace` 算出的结果与现盘件 %s **不逐字节相同**（基线 %d 字节 → 结果 %d 字节 · 现盘 %d 字节）—— `--base` 只做**零内容变更的回放**（补真 before→after 的审计链），绝不覆盖现盘可能有的后改；要真改现盘请走 `--from <改后整件>` 或还原真前态后用 `--replace`（GAP-20261009-10 修法①）\n",
+					progName, baseSpec, fileRel, len(before), len(after), len(diskBefore))
+				return exitUsage
+			}
+			fmt.Fprintf(stderr, "%s: ★ **基线回放**（`--base %s`）—— `--replace` 的匹配基与审计的 `before` 取**基线内容**；回放结果与现盘逐字节相同 ⇒ **零内容变更**、只补真 before→after 的审计链（GAP-20261009-10 修法①）\n", progName, baseSpec)
 		}
 	}
 	// ④-b **写入前语法自检**（③-b）：判的是「改完之后长什么样」，不是原件 —— 干跑也照样判，
@@ -1139,6 +1180,50 @@ func applyReplacements(before []byte, replacePath string) ([]byte, error) {
 		cur = strings.Replace(cur, p.Old, p.New, 1)
 	}
 	return []byte(cur), nil
+}
+
+// ── GAP-20261009-10 修法①（本枚）：`dev edit --base <件路径|HEAD|sha>` 的基线解析 ─────────────
+
+// devEditResolveBase —— 解析 `--base` 的取值 ⇒ (基线内容, 错误)。
+//
+//	`HEAD`           ⇒ git 显示 `<root>` 里 `HEAD:<fileRel>`（该件的已提交版 = 最常用的真前态）；
+//	`[0-9a-f]{7,40}` ⇒ git 显示 `<root>` 里 `<sha>:<fileRel>`（某提交版）；
+//	其它             ⇒ 当**件路径**读（绝对路径或相对 cwd 的仓外前态快照整件）。
+//
+// ★ 解析不到 / git 起不来 / git 报错 ⇒ 返回错误（调用方退码 2 · **不猜基线**）。
+func devEditResolveBase(spec, root, fileRel string) ([]byte, error) {
+	if spec == "HEAD" || devEditLooksLikeSHA(spec) {
+		rel := filepath.ToSlash(fileRel)
+		cmd := exec.Command("git", "-C", root, "show", spec+":"+rel)
+		var out, errb bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &out, &errb
+		if err := cmd.Run(); err != nil {
+			msg := strings.TrimSpace(errb.String())
+			if msg == "" {
+				msg = err.Error()
+			}
+			return nil, fmt.Errorf("`--base %s`：git show %s:%s 取不到（%s）—— 仓里有没有这个版本的 %s？", spec, spec, rel, msg, fileRel)
+		}
+		return out.Bytes(), nil
+	}
+	b, err := os.ReadFile(spec)
+	if err != nil {
+		return nil, fmt.Errorf("`--base %s` 当件路径**读不了**：%v", spec, err)
+	}
+	return b, nil
+}
+
+// devEditLooksLikeSHA —— 取值是否形如 git 对象名（7..40 位小写 hex）。纯函数 · 可单测。
+func devEditLooksLikeSHA(s string) bool {
+	if len(s) < 7 || len(s) > 40 {
+		return false
+	}
+	for _, r := range s {
+		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f')) {
+			return false
+		}
+	}
+	return true
 }
 
 // proposalAuditMismatch —— ★ GAP-20260928-79：作用域闸读的提案目录（proposalDir）与审计落点

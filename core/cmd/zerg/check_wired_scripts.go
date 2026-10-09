@@ -1576,7 +1576,9 @@ var cwsWhitelist = []cwsWLEntry{
 	// ★ 2026-10-09（退场批-A1-两件-20261009 · DEV-2081 · GAP-20261008-05）：`stability-stats.py` 已登记退场（Go 真搬
 	//   core/cmd/zerg/eval_stability_stats.go · inproc 键 stability-stats）⇒ 本白名单条目**下架**（件离盘 ⇒ 门自检 ⑧d
 	//   「删件后必须同步下架」）。
-	{"ab-campaigns\u002Epy", "零引用件（登记，非死件）：A/B 活动编排脚本。它在**仓内已跟踪引用面**里唯一的点名出自 `docs/项目文档/v2.5.10/任务表-协作骨架v2.1仓内核对结论-20260918.md`——该目录（`docs/项目文档/`，17 套快照）已于 2026-09-19「项目文档」二次分家**整目录移出工作树**（现位置 = 同级 `Zerg-内部文档/项目文档/`，件级 sha256 已核对）⇒ 仓内引用面不再含该点名，**接线已不可行**（不能为了凑引用去造一个调用方）。登记自证：登记前 断言 B「未登记 20 只」= FAIL(rc=1) ↔ 登记后 未登记 0 只 = rc=0（豁免只增这 20 条、逐条带 reason+date，判据一字未改）。", "2026-09-19"},
+	// ★ 2026-10-09（退场批-A3-ab-campaigns-20261009 · GAP-20261001-13/20261008-05）：`ab-campaigns.py` 已登记退场（Go 真搬
+	//   core/cmd/zerg/eval_ab_campaigns.go · 命令面 zerg eval run ab-campaigns）⇒ 本白名单条目**下架**
+	//   （件离盘 ⇒ 门自检 ⑧d「删件后必须同步下架」）。
 	// ★ 2026-10-08（退役批8-20261008 · DEV-2002/DEV-2004）：`lib-sign.sh` 已登记退场（件离盘 ⇒ 门自检 ⑧d「删件后必须同步下架」）⇒ 本白名单条目**下架**。
 	{"publish-public.sh", "零命令位引用（登记 · 非死件 · 新口径）：压平快照发布器（Q5 已弃用 · 现役 = `publish/mirror-public.sh`）；未被任何闸/脚本按命令位执行，仍作 `EXCLUDES` 单一真源被多件按路径读正文（check-history-secrets / check-public-tree-private / check-registry-vs-disk / family_publish 等 Go 半件）⇒ 零引用。留待 Q5 退役。", "2026-10-08"},
 	{"start-zerg-core.sh", "零命令位引用（登记 · 非死件 · 新口径）：主控启动／按仓根重写 plist 的引导脚本；被 `scripts/build/zerg-upgrade.sh` 以变量 `STARTCORE=\"${ZERG_START_CORE:-…}\"` 赋值引用（变量间接 ⇒ 非命令位字面）⇒ 零引用。活件保留（plist 真源形态）。", "2026-10-08"},

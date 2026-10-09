@@ -929,11 +929,14 @@ func evalWallArgvGateMain(stdout, stderr io.Writer, argv []string) int {
 		return ewaExitHard
 	}
 
-	// ③ Go 侧产物
-	dumpPath := ewaPyJoin("/tmp", fmt.Sprintf("zerg-bridge-go-%d.json", os.Getpid()))
-	if _, err := os.Stat(dumpPath); err == nil {
-		_ = os.Remove(dumpPath)
+	// ③ Go 侧产物（落本次自建的临时目录，函数返回时即清 —— ✗ 不落固定路径 /tmp/zerg-bridge-go-*.json）
+	tmpDir, mkErr := os.MkdirTemp("", "zerg-bridge-go-")
+	if mkErr != nil {
+		fmt.Fprintf(stdout, "!! 建临时目录失败（%v）—— 硬失败（不许落固定路径）\n", mkErr)
+		return ewaExitHard
 	}
+	defer os.RemoveAll(tmpDir)
+	dumpPath := ewaPyJoin(tmpDir, "zerg-bridge-go.json")
 	goRC, goLog := ewaRunGoDump(agentDir, ewaAbs(a.specs), dumpPath)
 	if goRC != 0 {
 		fmt.Fprintf(stdout, "!! Go 侧出口跑不起来（rc=%d）：\n%s\n", goRC, ewaPySliceTail(goLog, 2000))
