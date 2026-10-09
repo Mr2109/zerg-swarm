@@ -490,6 +490,14 @@ func readVersion(root string) string {
 	return ""
 }
 
+// runLedgerRel：跑门台账 —— 「每跑一趟门就追加一行」的运行期落点，**不是制品输入**。
+//
+// 制品身份（`zerg version` 第三格）只认**源码面**：把它算成脏，会让每一趟门之后的
+// 重编都产出一枚 `+dirty` 制品，而正式面（命令页身份行 `Q-211`）按规矩拒收脏树产物
+// —— 即「跟踪一个跑门就变动的日志」= 制品结构性判不了绿（2026-10-09 实测：四页 drift
+// 全「无」、源码面「自 X 起无改动」，唯一红格就是后缀 `+dirty`）。
+const runLedgerRel = "scripts/gates/judge-run-ledger.jsonl"
+
 func gitSha(root string, env []string) string {
 	rev := exec.Command("git", "rev-parse", "--short", "HEAD")
 	rev.Dir, rev.Env = root, env
@@ -498,7 +506,8 @@ func gitSha(root string, env []string) string {
 	if err != nil || sha == "" {
 		return "unknown"
 	}
-	st := exec.Command("git", "status", "--porcelain")
+	// ★ 排除 runLedgerRel：台账每跑一趟门就追加 ⇒ 若计入，制品永远带 `+dirty`（见上方注）。
+	st := exec.Command("git", "status", "--porcelain", "--", ".", ":(exclude)"+runLedgerRel)
 	st.Dir, st.Env = root, env
 	if o, _ := st.Output(); len(strings.TrimSpace(string(o))) > 0 {
 		sha += "+dirty"
