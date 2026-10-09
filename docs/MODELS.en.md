@@ -122,3 +122,14 @@ If any of these is configured explicitly but the file does not exist → log a W
 **Slots and context**: on both machines measured, it is **4 slots per box × `n_ctx = 262144` per slot**, with a shared unified KV cache (`kv_unified`). The source of truth for engine launch arguments is the egg roster's **`cmd:`** — that whole command line **overrides** the adapter's default arguments wholesale (a commonly misread point, hence spelled out here).
 
 **Cold-load scale**: unloading and reloading a 35B-class model measured about **2.3 seconds** on the workstation (warm page cache); the first read from disk is noticeably slower.
+
+---
+
+## The engine-agnostic integration face
+
+Zerg **binds to no inference engine**: any engine that exposes an **OpenAI-compatible interface** (or can be launched from a command line and pointed at the gateway) can be integrated — llama.cpp's `llama-server`, this project's `ds4-server`, vLLM and others are treated alike. **The integration face does not vary with the engine**: the same model entries, the same slots and scheduling — switching engines is just switching an endpoint.
+
+A machine's tier and slot configuration lives in the **local source-of-truth file** `~/.zerg/contexts/<tier>.yaml` (**tier name = file name**; on this machine, `default.yaml`) — it is a **local artifact**, kept out of any git repo; `nodes:` records `host` / `port` / `os` / `kind` / `role` per machine, where `kind` takes values such as `ai` / `mini` / `work`, plus a `default_node` that names the default landing machine. The read-only CLI entry `zerg context ls` reads it (it prints a table even offline).
+
+The model roster is a separate source of truth: the `models:` section of the in-repo `gateway/fleet.yaml`; `zerg model ls` reads its projection (id / host / backend / modality / VRAM), and `zerg model show <model id>` shows one record in full.
+

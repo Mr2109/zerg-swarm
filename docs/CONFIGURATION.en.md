@@ -177,3 +177,19 @@ Beyond the token and the roster, a multi-machine deployment has one more piece o
 - **Overflow order**: `ai` → `mini` → `work`. While a better-kind candidate is present, a lower kind does not take the request.
 - The **source of truth** is a deployment-side context file (`kind` in `~/.zerg/contexts/default.yaml`); the master's fleet projection is generated from it. **An unset kind counts as `work`** (better to under-use than to squat on the AI box).
 - Machine kind is **deployment truth** and is not written into the control-layer rules file — control layer and scheduling policy are two different things.
+
+---
+
+## Runtime knobs (safety and acceptance surface)
+
+Beyond the paths and behaviour switches above, a few **runtime knobs** take effect only on a specific surface: give one and it moves that surface's landing point; leave it unset and the compile-time default is used. They are never written into a config file — they are read from the environment on the spot.
+
+| Knob | Default | Affects only | Notes |
+|---|---|---|---|
+| `ZERG_GATE_LOCK_DIR` | `${TMPDIR}/zerg-gate-instance/` | the gate run's single-instance lock directory | **For isolated co-running**: point a probe / sandbox at a private directory ⇒ two runs lock separately and never block each other; the lock directory is **outside the repo**, so the working tree stays clean |
+| `ZERG_GATE_NO_LOCK` (+ `ZERG_GATE_NO_LOCK_REASON`) | locking on | the single-instance gate's switch | Explicitly **open the gate**: any **non-empty** value means no lock is taken; it **must** carry a reason and be audited (an empty reason ⇒ **no verdict**, rc=2) |
+| `PARITY_BASE` | `/tmp/zerg-parity-<timestamp>` | the acceptance workspace of the two-instrument cross-check (`zerg publish verify`) | Only moves where the acceptance workspace lands, not the criteria |
+| `ZERG_MIRROR_ALLOW_PUSH` | unset | the mirror's push gate | **Double safety**: effective only when given **together** with the `--push` flag; by default no network, no push, and always non-force |
+
+**The dangerous tier's three states**: dangerous commands are **not open** by default and run for real only after **explicit confirmation** — `--dry-run` emits only a **plan artifact** (system state is byte-for-byte unchanged); the value of `--confirm=<target>` must match the target **verbatim** (a wrong value = a refusal, not "treated as unset"); at the highest tier (D3) `--yes` **must arrive together with `--confirm`**; non-interactively, with no TTY, a missing confirmation is fail-closed (never executed). For the current list, read the last line of `zerg help dangerous`: of **96** dangerous actions, **80 are open** (real execution once the confirmation states are complete) · **16 are not open** (a real run is always refused · exit 2 = no verdict, and only the `--dry-run` plan artifact is available).
+

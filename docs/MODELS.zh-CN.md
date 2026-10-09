@@ -121,3 +121,14 @@ zerg model add --host <机器名> --model <模型名> --file <GGUF 路径> --bac
 **槽位与上下文**：两机实测均为**每机 4 槽 × 每槽 `n_ctx = 262144`**，各槽共享统一 KV（`kv_unified`）。引擎的启动参数真源在**卵清单的 `cmd:`**——写在那里的整段命令行会**整体覆盖**适配器默认参数（这一点常被误解，特此写明）。
 
 **冷加载量级**：卸载后再加载一个 35B 级模型，工作机实测约 **2.3 秒**（页面缓存热态）；首次从磁盘读会明显更久。
+
+---
+
+## 引擎无关的接入面
+
+虫族对推理引擎**不做绑定**：只要引擎对外是 **OpenAI 兼容接口**（或能被命令行拉起并指向网关），就能接进来 —— llama.cpp 的 `llama-server`、本项目的 `ds4-server`、vLLM 等一视同仁。**接入面不随引擎而变**：同一套模型条目、同一套槽位与调度，换个引擎只是换一个端点。
+
+机器的档与槽位配置落在**本机真源件** `~/.zerg/contexts/<档>.yaml`（**档名 = 文件名**，本机为 `default.yaml`）—— 它是**本机物件**，不入任何 git 仓；`nodes:` 逐台记 `host` / `port` / `os` / `kind` / `role`，其中 `kind` 取值如 `ai` / `mini` / `work`，另有一个 `default_node` 指出默认落点。命令行只读入口 `zerg context ls` 现读它（离线也出表）。
+
+模型名册则是另一处真源：仓内 `gateway/fleet.yaml` 的 `models:` 段；`zerg model ls` 现读它的投影（id / host / backend / 模态 / 显存），`zerg model show <模型 id>` 看单枚全貌。
+

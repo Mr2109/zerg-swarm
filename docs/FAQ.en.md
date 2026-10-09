@@ -120,6 +120,26 @@ The command surface offers **no** `--no-verify` (bypassing is for a human to do 
 
 ---
 
+## Gates and the script surface
+
+**Q: Why does the repo still contain py/sh scripts?**
+
+A: The script surface is being Go-ified steadily — the **real body** of a judge already lives on the Go side (single entry point `zerg gate check <judge name>`), and only **73** registered py/sh files remain on disk, each one logged as a retirement exception.
+The registration source of truth is `retire_exceptions` in `core/internal/contract/adopt-retire.json`: each entry's `reason` first word must fall in one of a closed set of six — OS glue · ecosystem binding · bootstrap · not-yet-Go · hard-coded · vendor (as read now: 73 entries, 0 out of set).
+In other words: every file still here has a logged reason — none is a leftover.
+
+**Q: Where do I run a judge from? Can I just run the script directly?**
+
+A: Always through `zerg gate check <judge name>` — one command gets you one judge (exit code and output passed through verbatim).
+✗ Don't launch the `.py` / `.sh` under `scripts/gates/` directly: that bypasses the registration surface and the danger tier (a write-tool judge is forced to the danger tier and returns exit 2 without `--yes`), and you also lose the "not registered ⇒ refuse and list the available names" protection.
+
+**Q: What's the difference between `zerg gate run` and `zerg gate run --fast`?**
+
+A: It's **how many steps run**. The full tier reads **206 steps** now (one cold full run when sealing/wrapping up); the fast tier reads **43 steps** now (the subset used at commit time and for everyday edits — the "cheap and directly related to what you just changed" ones out of the full set).
+Both numbers are what you read live: the full step count is printed on the last line of `zerg gate ls`, the fast count on the header line of `zerg gate run --fast`.
+
+---
+
 ## Multi-machine and publishing
 
 **Q: Why must one session land on the same machine?**
@@ -129,3 +149,13 @@ A: Locally served models each hold their own KV cache and runtime state per box.
 **Q: Does `zerg publish run` push anything to a remote?**
 
 A: No. `zerg publish run` only builds the public mirror tree in the local artifact dir (allowlist + excludes + redaction) and **never touches the network**. Pushing to a remote is a separate, explicit action with its own confirmation. To see what it would do first, use `zerg publish run --dry-run`.
+
+**Q: What does publishing block on?**
+
+A: `zerg publish preflight <artifact-dir>` (read-only · no state is touched) blocks item by item:
+① **Private-surface gate** — any private-surface file appearing in the artifact tree is blocked;
+② **Full-history secret scan** (hard gate) — a blob matching a credential/secret shape aborts the **whole batch, not a single byte is pushed**;
+③ **Existing-debt ratchet** — the count of stale files in `publish/docs/` older than the version landing day **may only go down, never up** (an increase is judged red, not a report tier);
+④ **Generated-region consistency** — generated artifacts are compared byte-for-byte against the live files, and the **identity line** in the generated page header must be a clean identity (a `+dirty` **dirty-tree artifact is not carried** — commit first, then regenerate).
+There is also **allow-list discipline**: the explicit exemptions for a full-history mirror **must each carry a reason**, and hits are still **printed out one by one** in the report (exemption ≠ silence).
+Three-valued exit: `0` all clear ⇒ push allowed · `1` a gate is genuinely red · `2` no conclusion (missing file / cannot judge ⇒ also not allowed to push).

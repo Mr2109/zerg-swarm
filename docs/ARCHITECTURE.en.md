@@ -159,3 +159,14 @@ Safety design (`core/internal/agent`):
 Selection composes with the **machine-kind tiers** (`ai` → `mini` → `work`): while a better-tier candidate is present, it is not downgraded; a full tier counts as busy, and the workstation takes the request only last.
 
 **Failures stay visible**: the affinity binding is written back only on the path where forwarding **succeeded**. Failures, circuit breaks and diagnostics go through the existing loop (circuit-broken marker + diagnostic line) and are never disguised as "retrying elsewhere".
+
+---
+
+## Criteria surface and publish surface
+
+**Criteria surface**: a criterion is a **file**, not an ad-hoc script — its true body lives in Go (`core/cmd/zerg/check_*.go`), and it is always entered through the CLI: `zerg gate check <judge-name>` (the name is resolved conservatively to `scripts/gates/*.py|*.sh`, and the exit code and output are passed through **verbatim**); **do not** invoke the script directly. The step table is declared in **one place**, `scripts/gates/precommit-gates.sh` (line for line equal to `zerg gate ls`), in **two tiers**: the default **full** set (go / rust / public face / docs / the gates themselves / tools / slice …), and the **fast** subset run at commit time (the step count is whatever a live run prints). One independent log per step, the failure count is taken only from the results table, and a verdict is made only from the real exit code.
+
+**Publish surface**: the public tree is produced by the **per-commit mirror** `publish/mirror-public.sh` — the **real history, commit by commit** (the original message / author / committer / date are preserved, plus the provenance trailer `GitOrigin-RevId`), **not** a history flattened into a single commit; every commit must pass four hard gates: **whitelist / excludes / replace rules / per-blob secret scan**. The old **flattening snapshotter** `scripts/build/publish-public.sh` is **deprecated** (kept only as a two-instrument comparison and an emergency fallback, planned for removal in the next major version). Consistency between the two instruments is verified by `zerg publish verify`.
+
+**Private-surface isolation**: the mirroring process treats the private repo as **read-only** (it compares HEAD and the working-tree state before and after, and errors out on any mismatch); output lands only in a directory **outside the repo**; pushing is a separate **double-safety** action (effective only when `--push` and `ZERG_MIRROR_ALLOW_PUSH=1` are given together, and always non-force).
+
