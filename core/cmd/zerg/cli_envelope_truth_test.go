@@ -100,7 +100,7 @@ func TestEnvelopeTruth_SixKeysExactly(t *testing.T) {
 	cases := [][]string{
 		{"version", "--json", "name"},
 		{"repo", "status", "--json", "head"},
-		{"impact", impactZeroHitTarget(), "--json", "what", "--yes"},
+		{"impact", impactZeroHitTarget(t), "--json", "what", "--yes"},
 	}
 	for _, argv := range cases {
 		doc, _ := envelopeDoc(t, argv...)
@@ -207,7 +207,7 @@ func TestEnvelopeTruth_TruncatedAndWarningsPair(t *testing.T) {
 	}
 
 	// 成对负控（**没裁**）：零命中件 ⇒ 卡片一条不裁。
-	neg, _ := envelopeDoc(t, "impact", impactZeroHitTarget(), "--json", "what", "--yes")
+	neg, _ := envelopeDoc(t, "impact", impactZeroHitTarget(t), "--json", "what", "--yes")
 	if string(neg["truncated"]) != "false" {
 		t.Errorf("负控②失败：一条都没裁，包封 `truncated` = %s（要 false）", string(neg["truncated"]))
 	}

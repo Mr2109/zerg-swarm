@@ -250,6 +250,15 @@ func cmdBuildPassthrough(inv *invocation, stdout, stderr io.Writer) int {
 		openForExec = true
 		effect = "只重写 `dist/<版本>/release/` 的**清单与逐件 sha256** —— 不编译、不重打包、不拷进 `bin/`、不重签、不重启（碰不到正在跑的件）"
 	}
+	// ★ 2026-10-10（Mr2109 拍板「开 build release 换件档」）：换件档真跑本版**开放**。
+	//   为什么开：它是发布链的**唯一出口** —— `dist/<版本>/release/` 成品包只有这一条正门能出，
+	//   而 publish preflight 的闸④/⑥ 判的就是那个目录（判不了 ⇒ 不给结论 ⇒ 发布链无路可走）。
+	//   风险面 = 覆盖 `bin/` 里的在跑制品（属既定「换件直换、重启主控不必问」的授权面）。
+	//   ✗ 只开 `release` 这一条：`build all`（默认全套）/`--only core`/`--only compat` 仍一律拒执。
+	if action == "release" && !inv.manifestOnly {
+		openForExec = true
+		effect = "打包发布件（布局三件：dist 目录 + 校验 + 清单）—— 内含全量构建，会覆盖 `bin/` 里的在跑制品"
+	}
 	if inv.dryRun {
 		fmt.Fprintln(stdout, "计划件（--dry-run · 零副作用 —— 未执行、未改任何状态）")
 		fmt.Fprintf(stdout, "  动作     : %s build %s%s\n", progName, action, onlyNote(only))
@@ -280,7 +289,10 @@ func cmdBuildPassthrough(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "  它会调   : %s\n", buildCallShow(script, scriptArgs))
 		fmt.Fprintf(stdout, "  它会动   : %s\n", effect)
 		fmt.Fprintf(stdout, "  执行要   : --confirm=<主机名> 与 --yes 同时到\n")
-		if openForExec {
+		if openForExec && action == "release" {
+			fmt.Fprintf(stdout, "  本版状态 : **已开放**（Mr2109 2026-10-10 拍板「开 build release 换件档」—— 发布链唯一出口）\n")
+			fmt.Fprintf(stdout, "  下一步   : %s publish preflight dist/<版本>/release（只读复核 · 闸④/⑥ 应转绿）\n", progName)
+		} else if openForExec {
 			fmt.Fprintf(stdout, "  本版状态 : **已开放**（自举档 —— 只写 bin/zerg，不是换件）\n")
 		} else {
 			fmt.Fprintf(stdout, "  更小的档 : `%s build all --only cli`（只写 bin/zerg 一件 · **本版唯一开放执行**的档）\n", progName)
@@ -308,6 +320,11 @@ func cmdBuildPassthrough(inv *invocation, stdout, stderr io.Writer) int {
 		gateLevel = "D2"
 		gateSubject = "`build release --manifest-only` 会写 `dist/<版本>/release/`（**不碰 `bin/` 里的在跑件**）"
 		gateHint = fmt.Sprintf("%s build release --manifest-only --dry-run", progName)
+	}
+	if action == "release" && !inv.manifestOnly {
+		gateLevel = "D3"
+		gateSubject = "`build release` 换件档会**全量构建并覆盖 `bin/` 里的在跑制品**，再打包 `dist/<版本>/release/`"
+		gateHint = fmt.Sprintf("%s build release --dry-run", progName)
 	}
 	if !inv.confirmGiven {
 		msg := fmt.Sprintf("%s ⇒ 按 %s 档：**缺确认 ⇒ 不执行**", gateSubject, gateLevel)

@@ -295,12 +295,12 @@ func TestDevEditHook_FileTierUntrackedRisesToBlock(t *testing.T) {
 }
 
 // ⑥ 判据② 的负控：**已知无关件** ⇒ 不许打那三行（零影响时打三行 = 灌噪声）。
-// 目标件 = `impactZeroHitTarget()`（与 `A1/A2` 的零命中判据同一枚件 · 件名在测试件里也是拼出来的）；
+// 目标件 = `impactZeroHitTarget(t)`（与 `A1/A2` 的零命中判据同一枚件 · 仓内未跟踪合成件）；
 // 仓 = **真仓**（只读：`ZERG_STATE_DIR` / `ZERG_PROPOSAL_DIR` 都指到临时目录，审计与提案不落真仓）。
 func TestDevEditHook_ZeroImpactDoesNotPrintThreeLines(t *testing.T) {
 	repo := repoRootFromCLI(t)
 	prop, state := t.TempDir(), t.TempDir()
-	tgt := impactZeroHitTarget()
+	tgt := impactZeroHitTarget(t)
 	if _, err := os.Stat(filepath.Join(repo, filepath.FromSlash(tgt))); err != nil {
 		t.Skipf("零命中目标件不在盘上：%v", err)
 	}
