@@ -112,8 +112,8 @@ python3 scripts/wall/wall-macos-mutate.py     # 四条变异：改坏实现 ⇒ 
 能把这种漂移钉死的手段：
 
 ```bash
-python3 scripts/evals/compare-wall-argv.py             # 门禁：0 全绿 / 1 有不一致 / 2 硬失败
-python3 scripts/evals/compare-wall-argv.py --self-test # 先证「这面镜子能红」，再跑门禁
+zerg eval run compare-wall-argv --yes                # 门禁：0 全绿 / 1 有不一致 / 2 硬失败
+zerg eval run compare-wall-argv --yes -- --self-test # 先证「这面镜子能红」，再跑门禁
 ```
 
 - **配方**（两侧同读一批文件）：`wall/testdata/bridge-specs/*.json`，**文件名即期望值**
@@ -147,7 +147,7 @@ python3 scripts/wall/wall-macos-mutate.py     # 变异验证：改坏实现 ⇒ 
 **对拍门禁**（在**仓根**跑；需要 Go 工具链）：
 
 ```bash
-python3 scripts/evals/compare-wall-argv.py --self-test   # 0 全绿 / 1 有不一致 / 2 硬失败
+zerg eval run compare-wall-argv --yes -- --self-test   # 0 全绿 / 1 有不一致 / 2 硬失败
 python3 scripts/wall/wall-bridge-mutate.py              # 变异验证：两侧各改坏一次，门禁**必须红**
 ```
 

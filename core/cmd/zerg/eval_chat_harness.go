@@ -411,7 +411,7 @@ func chhSendTurn(core, sid, text, tok string, timeout time.Duration) (int, strin
 
 type chhFinding struct{ code, msg string }
 
-// chhX3Known —— EDGE-NODE 白名单（凡有名字的分类码即算可定位）。
+// chhX3Known —— 本系列码白名单（凡有名字的分类码即算可定位）。
 var chhX3Known = map[string]bool{
 	"upstream_timeout": true, "client_aborted": true, "stream_truncated": true,
 	"other_error": true, "upstream_fail": true, "stream_broken": true, "bad_request": true,

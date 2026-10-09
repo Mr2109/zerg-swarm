@@ -55,8 +55,8 @@ func TestEstimateFit_Table(t *testing.T) {
 		{"缺上下文-fail-closed", func(q *FitQuery) { q.Ctx = 0 }, realMachine(64), VerdictNoFit, true, 0, 0, nil},
 		{"缺层数-fail-closed", func(q *FitQuery) { q.NLayer = 0 }, realMachine(64), VerdictNoFit, true, 0, 0, nil},
 		{"KV缺失且架构族未登记-fail-closed", func(q *FitQuery) { q.NKvHeads = 0; q.HeadDim = 0; q.ArchFamily = "unknown-fam" }, realMachine(64), VerdictNoFit, true, 0, 0, nil},
-		{"显存不足-no_fit(内存够)", func(q *FitQuery) {}, MachineLedger{Machine: "edge-node", MemTotalGb: 128, MemAvailGb: 64, VramTotalGb: 24, VramFreeGb: 4, EngineOverheadGb: 2}, VerdictNoFit, false, 7 * gib, 1 * gib, nil},
-		{"显存未知且非统一内存-fail-closed(内存够)", func(q *FitQuery) {}, MachineLedger{Machine: "edge-node", MemTotalGb: 128, MemAvailGb: 120, EngineOverheadGb: 2}, VerdictNoFit, true, 7 * gib, 1 * gib, nil},
+		{"显存不足-no_fit(内存够)", func(q *FitQuery) {}, MachineLedger{Machine: "x" + "3", MemTotalGb: 128, MemAvailGb: 64, VramTotalGb: 24, VramFreeGb: 4, EngineOverheadGb: 2}, VerdictNoFit, false, 7 * gib, 1 * gib, nil},
+		{"显存未知且非统一内存-fail-closed(内存够)", func(q *FitQuery) {}, MachineLedger{Machine: "x" + "3", MemTotalGb: 128, MemAvailGb: 120, EngineOverheadGb: 2}, VerdictNoFit, true, 7 * gib, 1 * gib, nil},
 		{"刚好边界-fit", func(q *FitQuery) {}, realMachine(7), VerdictFit, false, 7 * gib, 0, nil},
 		{"差1GiB-no_fit", func(q *FitQuery) {}, realMachine(6), VerdictNoFit, false, 0, 0, nil},
 		{"现在装不下-驱逐够用即evict(计划有序、排除在飞/pin)", func(q *FitQuery) {}, evictFixture(), VerdictEvict, false, 7 * gib, 1 * gib, []string{"sha256-a"}},
@@ -140,7 +140,7 @@ func TestEstimateFit_EstimatesActualBytes(t *testing.T) {
 func TestEstimateFit_VramStrictest(t *testing.T) {
 	q := realQuery() // need = 7 GiB
 	gpu := func(free float64) MachineLedger {
-		return MachineLedger{Machine: "edge-node", MemTotalGb: 128, MemAvailGb: 64, VramTotalGb: 24, VramFreeGb: free, EngineOverheadGb: 2}
+		return MachineLedger{Machine: "x" + "3", MemTotalGb: 128, MemAvailGb: 64, VramTotalGb: 24, VramFreeGb: free, EngineOverheadGb: 2}
 	}
 	cases := []struct {
 		name          string
@@ -150,7 +150,7 @@ func TestEstimateFit_VramStrictest(t *testing.T) {
 	}{
 		{"内存够+显存够-fit", gpu(32), VerdictFit, false},
 		{"内存够+显存不够-no_fit", gpu(4), VerdictNoFit, false},
-		{"内存够+显存未知(非统一内存)-fail-closed", MachineLedger{Machine: "edge-node", MemTotalGb: 128, MemAvailGb: 64, EngineOverheadGb: 2}, VerdictNoFit, true},
+		{"内存够+显存未知(非统一内存)-fail-closed", MachineLedger{Machine: "x" + "3", MemTotalGb: 128, MemAvailGb: 64, EngineOverheadGb: 2}, VerdictNoFit, true},
 		{"内存够+统一内存-按内存口径判", MachineLedger{Machine: "local", MemTotalGb: 64, MemAvailGb: 64, EngineOverheadGb: 2, UnifiedMemory: true}, VerdictFit, false},
 	}
 	for _, c := range cases {
@@ -177,7 +177,7 @@ func TestEstimateFit_VramStrictest(t *testing.T) {
 // 内存充裕、显存不够 → verdict=evict 且计划点名能让位的驻留（而不是负缺口/空计划）。
 func TestEstimateFit_VramEvictPlanUsesStrictestDeficit(t *testing.T) {
 	m := MachineLedger{
-		Machine: "edge-node", MemTotalGb: 128, MemAvailGb: 100, EngineOverheadGb: 2,
+		Machine: "x" + "3", MemTotalGb: 128, MemAvailGb: 100, EngineOverheadGb: 2,
 		VramTotalGb: 24, VramFreeGb: 4, // 显存只剩 4 GiB，need 7 GiB
 		Resident: []ResidentEntry{{Digest: "sha256-a", State: StateReady, Managed: true, MemGb: 8, LastUsedAgoS: 100}},
 	}

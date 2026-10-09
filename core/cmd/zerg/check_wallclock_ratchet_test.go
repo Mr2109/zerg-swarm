@@ -1,16 +1,34 @@
-// check_wallclock_ratchet_test.go —— `check_wallclock_ratchet.go`（py `check-wallclock-ratchet.py` 的 Go 真搬）的
-// **定向单测 · 成对负控**（M2 · 墙钟棘轮族）。
+// check_wallclock_ratchet_test.go —— `check_wallclock_ratchet.go`（py `check-wallclock-ratchet.py` 的 Go 真搬）
+// 的**定向单测 · 成对负控 + 内化金标**（M2 · 墙钟棘轮族）。
 //
-// 口径：本用例对**同一 argv / cwd / env**跑两态（py 原件副本 ↔ 本件入口），逐字节比
+// 口径：逐格对**同一 argv / cwd / env** 现跑 Go 半，与**逐格冻结金标**逐字节比
 // **rc + stdout + stderr** 三面；写面另比**产物件字节**（baseline + 台账）。任一条判据被哑化
-// （棘轮只许下降 / 上调需 --allow-raise / 未标定不给结论 / 按档筛选 / 未知旗标拒收）⇒ **当场 FAIL**。
+// （棘轮只许下降 / 上调需 --allow-raise / 未标定不给结论 / 按档筛选 / 未知旗标拒收）⇒ **当场 FAIL（带行号）**。
 //
-// ★ 解释器钉死 /usr/bin/python3（GAP-20261001-61：✗ 不裸写 python3）；夹具一律落 t.TempDir()（仓外）。
-// ★ 时刻面：py 的「当前时刻」无注入旋钮 ⇒ 写面对拍先跑 py 读其 ts，再用 Go-only 旋钮 --now 把 Go 钉到**同一 ts**，
+// ★ 内化金标（本单：旧 py 对拍退场 ⇒ 逐格金标收 Go 常量 · ✗ 不 Skip）：
 //
-//	✗ 不靠掩码（另在本件内证明 py 连跑两发 ts 会变）。
+//	原「py 副本 ↔ Go 入口」两态逐字对拍（旧体例 `cwrTestRunPy` / `cwrTestParity`，其 Skip 落在本件第 173 行）
+//	的对拍源 `scripts/gates/check-wallclock-ratchet.py` 已退役（不在盘）⇒ 夹具不再落 py 副本 ⇒ `cwrPyPresent`
+//	恒 false ⇒ 对拍格**恒 Skip**（假绿、零保护）。照 `check_verify_cmd_real_test.go`（十五格冻结金标）·
+//	`atomic_write_test.go`（TestAwTwoStatesGoldenInternalized）· `check_flag_registry_parity_test.go`
+//	（TestFlagRegistryParityGoldenInternalized / GoldenTwoStates）先例，把金标真源**收回 Go 半现役行为本身**：
 //
-// ✗ 不进 main.go 命令树、不注册命令、不删 py 原件（M2 边界；已挂 gateCheckGoEntry["check-wallclock-ratchet"] ⇒ 走 inproc）。
+//	★ 金标计算式（✗ 不臆造 · 逐格由「Go 半现役行为现算」得到）：
+//	  逐格「输入（夹具 + argv ［＋ Go-only 旋钮 `--now`］）⇒ (rc, stdout, stderr ［, baseline 字节, 台账字节］)」
+//	  由 `checkWallclockRatchetMain` 现跑捕获（一次性现算 · 只读夹具 · ✗ 不落仓），冻成下表 want*；**墙钟/时点
+//	  类量**在比对前归一化（✗ 不冻结 —— 因其本非常量）：
+//	    ① 夹具根 `t.TempDir()`（随机路径 + macOS /var↔/private/var）⇒ `<FX>`；
+//	    ② `$TMPDIR` ⇒ `<TMP>`；
+//	    ③ 写通道「当前时刻」由 Go-only 旋钮 `--now` 钉死（✗ 不靠掩码），台账 `by` 由 `USER` 钉死为 `zerg-fx`。
+//
+//	两态（✗ 不许 Skip）：A 态 = 真仓（退役 py 不在盘）＋夹具无 py；B 态 = 合成「旧态」夹具（把退役 py 路径
+//	`scripts/gates/check-wallclock-ratchet.py` 放回）⇒ 两态对同一套金标逐字同命中，证 py 在/不在盘都不改
+//	判据结论（内化彻底 · 将来若有人让 Go 半重新去读 py，B 态当场分家）。
+//
+// ★ 哑化负控（"牙" · 见交付读数）：`-overlay` 把 `check_wallclock_ratchet.go` 的一臂哑化
+// ⇒ 金标用例必 FAIL 且带行号（✗ 不真改仓内源 · 免 `dev edit` 前的仓内污染）。
+//
+// ★ 解释器面 / 退役态：本件不再起任何 py 子进程（旧 `cwrTestPyExe` 已随对拍退场）；夹具一律落 t.TempDir()（仓外）。
 package main
 
 import (
@@ -18,16 +36,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
-// cwrTestPyExe —— 钉死的解释器（GAP-20261001-61：✗ 不用 PATH 上的 python3）。
-const cwrTestPyExe = "/usr/bin/python3"
-
-// cwrTestHelpSHA —— py -h stdout 的 sha256 golden（GAP-20261001-61 · 现读 /usr/bin/python3 3.9.6 定）。
+// cwrTestHelpSHA —— Go 半 -h stdout 的 sha256 golden（Go 常量真源 · 现读 Go 半现役行为定）。
 const cwrTestHelpSHA = "99e98652b65ba73431169a49195598f2d48c9cec8ad982f6c8ed8d5f5cbb5da2"
 
 const cwrTestBaseline = `{
@@ -56,6 +70,39 @@ var cwrTestBench = map[string]string{
 	"bench_bad.json":    `not json at all`,
 }
 
+// cwrGoldNow / cwrGoldUser —— 写面时点/身份钉死值（#③）：`--now` 钉「当前时刻」、USER 钉台账 `by`。
+const cwrGoldNow = "2026-10-01T00:00:00Z"
+const cwrGoldUser = "zerg-fx"
+
+// cwrGoldUnmeasuredBase —— 「未标定档」夹具（medium secs=null 且无 _not_a_wallclock）。
+const cwrGoldUnmeasuredBase = `{"schema": "wallclock-ratchet/1", "tiers": {"medium": {"secs": null, "_unmeasured": true, "note": "x"}}, "audit": "wallclock-audit.jsonl"}` + "\n"
+
+// cwrGoHalfRel —— 哨兵锚：Go 半（✗ 不锚已退场的 py —— 一退役即失锚）。
+const cwrGoHalfRel = "core/cmd/zerg/check_wallclock_ratchet.go"
+
+// cwrTestAnchorGoHalf —— 哨兵：由 cwd 上溯找含 Go 半的仓根；找不到 ⇒ fail-closed（缺件 ≠ 绿 · ✗ 不留 Skip）。
+// 旧版锚 py 副本（对拍真身）：该 py 已退役 ⇒ 上溯恒找不到 ⇒ 旧对拍格恒 Skip（假绿、零保护）。
+func cwrTestAnchorGoHalf(t *testing.T) string {
+	t.Helper()
+	d, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 8; i++ {
+		if st, err := os.Stat(filepath.Join(d, filepath.FromSlash(cwrGoHalfRel))); err == nil && st.Mode().IsRegular() {
+			return d
+		}
+		parent := filepath.Dir(d)
+		if parent == d {
+			break
+		}
+		d = parent
+	}
+	t.Fatalf("哨兵失守：上溯未见 Go 半 %s（不是真仓树）⇒ fail-closed（✗ 不留 Skip）", cwrGoHalfRel)
+	return ""
+}
+
+// cwrTestRepoRoot —— 由 cwd 上溯找仓根（判据 = 有 core/go.mod）；找不到 ⇒ Fatal。
 func cwrTestRepoRoot(t *testing.T) string {
 	t.Helper()
 	dir, err := os.Getwd()
@@ -74,23 +121,15 @@ func cwrTestRepoRoot(t *testing.T) string {
 	}
 }
 
-// cwrTestFixture 造仓外夹具（py 副本 + 基线 + 台账 + bench 件），返回夹具目录。
+// cwrTestFixture 造仓外夹具（基线 + 台账 + bench 件），返回夹具目录。
+// ★ 退役态（本件退件前置）：py 原件已退役 ⇒ 夹具**不落 py 副本**（本件不再起 py 子进程；金标真源 = Go 常量）。
 func cwrTestFixture(t *testing.T, baseline, audit string) string {
 	t.Helper()
-	root := cwrTestRepoRoot(t)
 	d := t.TempDir()
 	must := func(rel, body string) {
 		if err := os.WriteFile(filepath.Join(d, rel), []byte(body), 0o644); err != nil {
 			t.Fatal(err)
 		}
-	}
-	// ★ 退役态安全（类③ · 本件退件前置）：py 原件退役（不在盘）⇒ 夹具**不落** py 副本（✗ 不再 Fatal）——
-	// 依赖 py 两态对拍的格由 cwrTestRunPy 统一 Skip（与 check-doc-name 的 t.Skipf 同口径）；
-	// 只跑 Go 的格（HelpGolden / DefaultHereNotCwd）退役后仍照跑 ⇒ 退件后本包仍绿。
-	if src, rerr := os.ReadFile(filepath.Join(root, "scripts", "gates", "check-wallclock-ratchet.py")); rerr == nil {
-		must("check-wallclock-ratchet.py", string(src))
-	} else {
-		t.Logf("py 原件不在盘（%v）⇒ 夹具不落 py 副本（两态对拍格将 Skip）", rerr)
 	}
 	if baseline != "" {
 		must("wallclock-baseline.json", baseline)
@@ -104,35 +143,7 @@ func cwrTestFixture(t *testing.T, baseline, audit string) string {
 	return d
 }
 
-func cwrTestEnv(dir string) []string {
-	var env []string
-	for _, kv := range os.Environ() {
-		eq := strings.IndexByte(kv, '=')
-		k := kv
-		if eq >= 0 {
-			k = kv[:eq]
-		}
-		if k == "PYTHONPATH" || k == "ZERG_STATE_DIR" || k == "ZERG_DEVDOCS_ROOT" || k == "ZERG_NOW" ||
-			strings.HasPrefix(k, "ZERG_PST_") || strings.HasPrefix(k, "ZERG_DOCS") {
-			continue
-		}
-		env = append(env, kv)
-	}
-	return append(env, "ZERG_WALLCLOCK_HERE="+dir)
-}
-
-// cwrTestReset —— 把夹具文件复位（同一目录复用 ⇒ 两态路径逐字一致）。
-func cwrTestReset(t *testing.T, d, baseline, audit string) {
-	t.Helper()
-	if err := os.WriteFile(filepath.Join(d, "wallclock-baseline.json"), []byte(baseline), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(d, "wallclock-audit.jsonl"), []byte(audit), 0o644); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// cwrTestApplyEnv —— 把同一 env 口径落到进程（供 in-process Go 入口读）。
+// cwrTestApplyEnv —— 把同一 env 口径落到进程（供 in-process Go 入口读）；清掉会换真源的旋钮。
 func cwrTestApplyEnv(dir string) {
 	for _, kv := range os.Environ() {
 		eq := strings.IndexByte(kv, '=')
@@ -161,117 +172,393 @@ func cwrTestRunGo(dir string, argv []string) cwrTestRun {
 	return cwrTestRun{rc, out.String(), errb.String()}
 }
 
-// cwrPyPresent —— 夹具/仓侧 py 原件是否在盘（退役后 ⇒ false ⇒ 两态对拍格 Skip）。
-func cwrPyPresent(dir string) bool {
-	_, err := os.Stat(filepath.Join(dir, "check-wallclock-ratchet.py"))
-	return err == nil
+// ── 内化金标（现算再冻 · ✗ 不臆造）：逐格 Go 半现跑读数 ─────────────────────────────
+
+type cwrGoldCase struct {
+	name     string
+	kind     string   // read | bench | unmeasured | nobase | write
+	bench    string   // kind==bench：夹具里的件名
+	argv     []string // kind!=bench 的 argv
+	write    bool     // 追加 Go-only 旋钮 --now（钉死时刻 #③）
+	wantRC   int
+	wantOut  string // 归一化后（cwrNormGold 现算自证 · ✗ 手写）
+	wantErr  string
+	wantBase string // 非空 ⇒ 比 baseline 字节（归一化后）
+	wantAud  string // 非空 ⇒ 比台账字节（归一化后）
 }
 
-func cwrTestRunPy(t *testing.T, dir string, argv []string) cwrTestRun {
-	t.Helper()
-	if !cwrPyPresent(dir) {
-		t.Skipf("py 副本不在夹具（原件退役）⇒ 两态对拍格不适用")
+// cwrGoldCases —— 金标真源（35 格：读面 22 + bench 6 + 未标定/缺基线 2 + 写面 5）。
+func cwrGoldCases() []cwrGoldCase {
+	return []cwrGoldCase{
+		{
+			name: "在阈值下", kind: "read",
+			argv:    []string{"--measured", "1.0"},
+			wantRC:  0,
+			wantOut: "[daily] 现值 24.763s · 现测 1.0s\n✓ 现测 1.0s ≤ 现值 24.763s（棘轮 OK）\n",
+			wantErr: "",
+		},
+		{
+			name: "刚好等于阈值", kind: "read",
+			argv:    []string{"--measured", "24.763"},
+			wantRC:  0,
+			wantOut: "[daily] 现值 24.763s · 现测 24.763s\n✓ 现测 24.763s ≤ 现值 24.763s（棘轮 OK）\n",
+			wantErr: "",
+		},
+		{
+			name: "刚超阈值", kind: "read",
+			argv:    []string{"--measured", "24.7631"},
+			wantRC:  1,
+			wantOut: "[daily] 现值 24.763s · 现测 24.7631s\n",
+			wantErr: "✗ 现测 24.7631s > 现值 24.763s ⇒ **棘轮只许下降**（rc=1）\n",
+		},
+		{
+			name: "超阈值写无allow", kind: "read",
+			argv:    []string{"--measured", "24.764", "--write"},
+			wantRC:  2,
+			wantOut: "[daily] 现值 24.763s · 现测 24.764s\n",
+			wantErr: "✗ 上调 = 放宽判据：给了 --write 还要 --allow-raise 才写（rc=2 · fail-closed，不写）\n",
+		},
+		{
+			name: "超阈值写允许无理由", kind: "read",
+			argv:    []string{"--measured", "24.764", "--write", "--allow-raise"},
+			wantRC:  2,
+			wantOut: "[daily] 现值 24.763s · 现测 24.764s\n",
+			wantErr: "✗ 上调必须带 --reason（留痕）⇒ 不给结论(rc=2)\n",
+		},
+		{
+			name: "差档低于", kind: "read",
+			argv:    []string{"--measured", "20.0", "--diff"},
+			wantRC:  0,
+			wantOut: "[daily] 现值 24.763s · 现测 20.0s\n差 -4.76s —— 将降/持平（棘轮允许）\n",
+			wantErr: "",
+		},
+		{
+			name: "差档带json", kind: "read",
+			argv:    []string{"--measured", "20.0", "--diff", "--json", "x"},
+			wantRC:  0,
+			wantOut: "[daily] 现值 24.763s · 现测 20.0s\n差 -4.76s —— 将降/持平（棘轮允许）\n{\"tier\": \"daily\", \"cur\": 24.763, \"measured\": 20.0, \"delta\": -4.763000000000002}\n",
+			wantErr: "",
+		},
+		{
+			name: "差档高于", kind: "read",
+			argv:    []string{"--measured", "30.0", "--diff"},
+			wantRC:  0,
+			wantOut: "[daily] 现值 24.763s · 现测 30.0s\n差 +5.24s —— 将升（放宽判据，需 --allow-raise）\n",
+			wantErr: "",
+		},
+		{
+			name: "事后对账过", kind: "read",
+			argv:    []string{"--check"},
+			wantRC:  0,
+			wantOut: "✓ --check 过：daily 现值 24.763 == 台账里 `daily` 档最新一条 new\n",
+			wantErr: "",
+		},
+		{
+			name: "事后对账按档筛", kind: "read",
+			argv:    []string{"--check", "--tier", "medium"},
+			wantRC:  0,
+			wantOut: "✓ --check 过：medium 现值 158.865 == 台账里 `medium` 档最新一条 new\n",
+			wantErr: "",
+		},
+		{
+			name: "事后对账无记录", kind: "read",
+			argv:    []string{"--check", "--tier", "stamp"},
+			wantRC:  1,
+			wantOut: "",
+			wantErr: "✗ --check：台账 <FX>/wallclock-audit.jsonl 里**没有 `stamp` 档**的记录，而基线件有值 ⇒ 判红(1)\n",
+		},
+		{
+			name: "核章档不给结论", kind: "read",
+			argv:    []string{"--tier", "seal"},
+			wantRC:  2,
+			wantOut: "",
+			wantErr: "✗ `seal` 档**不计墙钟**（`_not_a_wallclock=true`：本档不真跑任何步，无「跑门耗时」这一项） ⇒ 不给结论(rc=2)：核章档的判据是章链覆盖与新鲜度，走 `scripts/gates/seal-ledger.py --verify`\n",
+		},
+		{
+			name: "未知档名", kind: "read",
+			argv:    []string{"--tier", "bogus"},
+			wantRC:  2,
+			wantOut: "",
+			wantErr: "usage: check-wallclock-ratchet.py [-h] [--tier {daily,seal,medium,stamp}]\n                                  [--measured MEASURED]\n                                  [--from-bench FROM_BENCH] [--diff] [--check]\n                                  [--write] [--reason REASON] [--allow-raise]\n                                  [--json JSON]\ncheck-wallclock-ratchet.py: error: argument --tier: invalid choice: 'bogus' (choose from 'daily', 'seal', 'medium', 'stamp')\n",
+		},
+		{
+			name: "未知旗标", kind: "read",
+			argv:    []string{"--bogus"},
+			wantRC:  2,
+			wantOut: "",
+			wantErr: "usage: check-wallclock-ratchet.py [-h] [--tier {daily,seal,medium,stamp}]\n                                  [--measured MEASURED]\n                                  [--from-bench FROM_BENCH] [--diff] [--check]\n                                  [--write] [--reason REASON] [--allow-raise]\n                                  [--json JSON]\ncheck-wallclock-ratchet.py: error: unrecognized arguments: --bogus\n",
+		},
+		{
+			name: "帮助", kind: "read",
+			argv:    []string{"-h"},
+			wantRC:  0,
+			wantOut: cwrHelpText,
+			wantErr: "",
+		},
+		{
+			name: "帮助长形", kind: "read",
+			argv:    []string{"--help"},
+			wantRC:  0,
+			wantOut: cwrHelpText,
+			wantErr: "",
+		},
+		{
+			name: "非法浮点", kind: "read",
+			argv:    []string{"--measured", "abc"},
+			wantRC:  2,
+			wantOut: "",
+			wantErr: "usage: check-wallclock-ratchet.py [-h] [--tier {daily,seal,medium,stamp}]\n                                  [--measured MEASURED]\n                                  [--from-bench FROM_BENCH] [--diff] [--check]\n                                  [--write] [--reason REASON] [--allow-raise]\n                                  [--json JSON]\ncheck-wallclock-ratchet.py: error: argument --measured: invalid float value: 'abc'\n",
+		},
+		{
+			name: "缺实参", kind: "read",
+			argv:    []string{"--tier"},
+			wantRC:  2,
+			wantOut: "",
+			wantErr: "usage: check-wallclock-ratchet.py [-h] [--tier {daily,seal,medium,stamp}]\n                                  [--measured MEASURED]\n                                  [--from-bench FROM_BENCH] [--diff] [--check]\n                                  [--write] [--reason REASON] [--allow-raise]\n                                  [--json JSON]\ncheck-wallclock-ratchet.py: error: argument --tier: expected one argument\n",
+		},
+		{
+			name: "给值给flag", kind: "read",
+			argv:    []string{"--diff=x"},
+			wantRC:  2,
+			wantOut: "",
+			wantErr: "usage: check-wallclock-ratchet.py [-h] [--tier {daily,seal,medium,stamp}]\n                                  [--measured MEASURED]\n                                  [--from-bench FROM_BENCH] [--diff] [--check]\n                                  [--write] [--reason REASON] [--allow-raise]\n                                  [--json JSON]\ncheck-wallclock-ratchet.py: error: argument --diff: ignored explicit argument 'x'\n",
+		},
+		{
+			name: "两样都不给", kind: "read",
+			argv:    []string{},
+			wantRC:  2,
+			wantOut: "",
+			wantErr: "✗ 既没给 --measured 也没给 --from-bench ⇒ 不给结论(2)（不许拿记忆充数）\n",
+		},
+		{
+			name: "前缀缩写", kind: "read",
+			argv:    []string{"--me", "1.0"},
+			wantRC:  0,
+			wantOut: "[daily] 现值 24.763s · 现测 1.0s\n✓ 现测 1.0s ≤ 现值 24.763s（棘轮 OK）\n",
+			wantErr: "",
+		},
+		{
+			name: "等号形态", kind: "read",
+			argv:    []string{"--t=daily", "--measured", "1.0"},
+			wantRC:  0,
+			wantOut: "[daily] 现值 24.763s · 现测 1.0s\n✓ 现测 1.0s ≤ 现值 24.763s（棘轮 OK）\n",
+			wantErr: "",
+		},
+		{
+			name: "bench-bench_items.json", kind: "bench",
+			bench:   "bench_items.json",
+			wantRC:  1,
+			wantOut: "[daily] 现值 24.763s · 现测 158.865s\n",
+			wantErr: "✗ 现测 158.865s > 现值 24.763s ⇒ **棘轮只许下降**（rc=1）\n",
+		},
+		{
+			name: "bench-bench_realms.json", kind: "bench",
+			bench:   "bench_realms.json",
+			wantRC:  0,
+			wantOut: "[daily] 现值 24.763s · 现测 5.0s\n✓ 现测 5.0s ≤ 现值 24.763s（棘轮 OK）\n",
+			wantErr: "",
+		},
+		{
+			name: "bench-bench_bare.json", kind: "bench",
+			bench:   "bench_bare.json",
+			wantRC:  1,
+			wantOut: "[daily] 现值 24.763s · 现测 31.4s\n",
+			wantErr: "✗ 现测 31.4s > 现值 24.763s ⇒ **棘轮只许下降**（rc=1）\n",
+		},
+		{
+			name: "bench-bench_steps.json", kind: "bench",
+			bench:   "bench_steps.json",
+			wantRC:  0,
+			wantOut: "[daily] 现值 24.763s · 现测 10.75s\n✓ 现测 10.75s ≤ 现值 24.763s（棘轮 OK）\n",
+			wantErr: "",
+		},
+		{
+			name: "bench-bench_bad.json", kind: "bench",
+			bench:   "bench_bad.json",
+			wantRC:  2,
+			wantOut: "",
+			wantErr: "✗ 读不了 --from-bench <FX>/bench_bad.json: could not convert string to float: 'not json at all' ⇒ 不给结论(2)\n",
+		},
+		{
+			name: "bench-nope.json", kind: "bench",
+			bench:   "nope.json",
+			wantRC:  2,
+			wantOut: "",
+			wantErr: "✗ 读不了 --from-bench <FX>/nope.json: [Errno 2] No such file or directory: '<FX>/nope.json' ⇒ 不给结论(2)\n",
+		},
+		{
+			name: "未标定档", kind: "unmeasured",
+			argv:    []string{"--tier", "medium"},
+			wantRC:  2,
+			wantOut: "",
+			wantErr: "✗ `medium` 档**未标定**（secs=None · _unmeasured=True） ⇒ 不给结论(rc=2)：先在有门跑窗口实测并 `--write` 标定，不许静默当绿\n",
+		},
+		{
+			name: "缺基线件", kind: "nobase",
+			argv:    []string{"--measured", "1.0"},
+			wantRC:  2,
+			wantOut: "",
+			wantErr: "✗ 缺基线件 <FX>/wallclock-baseline.json ⇒ 不给结论(rc=2)\n",
+		},
+		{
+			name: "write-0-[--measured 20.0 --write --reason fx]", kind: "write",
+			argv:     []string{"--measured", "20.0", "--write", "--reason", "fx"},
+			write:    true,
+			wantRC:   0,
+			wantOut:  "[daily] 现值 24.763s · 现测 20.0s\n✓ 已写 daily: 24.763 → 20.0 · 台账 +1 行（<FX>/wallclock-audit.jsonl）\n",
+			wantErr:  "",
+			wantBase: "{\n \"schema\": \"wallclock-ratchet/1\",\n \"chain\": [\n  \"daily\",\n  \"seal\",\n  \"medium\",\n  \"stamp\"\n ],\n \"tiers\": {\n  \"daily\": {\n   \"secs\": 20.0,\n   \"note\": \"fx-daily\",\n   \"updated\": \"2026-10-01T00:00:00Z\"\n  },\n  \"seal\": {\n   \"secs\": null,\n   \"_unmeasured\": true,\n   \"_not_a_wallclock\": true,\n   \"note\": \"fx-seal\"\n  },\n  \"medium\": {\n   \"secs\": 158.865,\n   \"note\": \"fx-medium\",\n   \"updated\": \"2026-09-29T18:33:00Z\"\n  },\n  \"stamp\": {\n   \"secs\": 729,\n   \"note\": \"fx-stamp\",\n   \"updated\": \"2026-09-29T21:33:48Z\"\n  }\n },\n \"audit\": \"wallclock-audit.jsonl\"\n}\n",
+			wantAud:  "{\"t\": \"2026-09-29T10:26:52Z\", \"tier\": \"daily\", \"old\": null, \"new\": 24.763, \"raise\": false, \"reason\": \"fx\", \"by\": \"fx\"}\n{\"t\": \"2026-09-29T18:33:00Z\", \"tier\": \"medium\", \"old\": null, \"new\": 158.865, \"raise\": false, \"reason\": \"fx\", \"by\": \"fx\"}\n{\"t\": \"2026-10-01T00:00:00Z\", \"tier\": \"daily\", \"old\": 24.763, \"new\": 20.0, \"raise\": false, \"reason\": \"fx\", \"by\": \"zerg-fx\"}\n",
+		},
+		{
+			name: "write-1-[--measured 30.0 --write --allow-raise --reason raise it]", kind: "write",
+			argv:     []string{"--measured", "30.0", "--write", "--allow-raise", "--reason", "raise it"},
+			write:    true,
+			wantRC:   0,
+			wantOut:  "[daily] 现值 24.763s · 现测 30.0s\n✓ 已写 daily: 24.763 → 30.0 · 台账 +1 行（<FX>/wallclock-audit.jsonl）\n",
+			wantErr:  "",
+			wantBase: "{\n \"schema\": \"wallclock-ratchet/1\",\n \"chain\": [\n  \"daily\",\n  \"seal\",\n  \"medium\",\n  \"stamp\"\n ],\n \"tiers\": {\n  \"daily\": {\n   \"secs\": 30.0,\n   \"note\": \"fx-daily\",\n   \"updated\": \"2026-10-01T00:00:00Z\"\n  },\n  \"seal\": {\n   \"secs\": null,\n   \"_unmeasured\": true,\n   \"_not_a_wallclock\": true,\n   \"note\": \"fx-seal\"\n  },\n  \"medium\": {\n   \"secs\": 158.865,\n   \"note\": \"fx-medium\",\n   \"updated\": \"2026-09-29T18:33:00Z\"\n  },\n  \"stamp\": {\n   \"secs\": 729,\n   \"note\": \"fx-stamp\",\n   \"updated\": \"2026-09-29T21:33:48Z\"\n  }\n },\n \"audit\": \"wallclock-audit.jsonl\"\n}\n",
+			wantAud:  "{\"t\": \"2026-09-29T10:26:52Z\", \"tier\": \"daily\", \"old\": null, \"new\": 24.763, \"raise\": false, \"reason\": \"fx\", \"by\": \"fx\"}\n{\"t\": \"2026-09-29T18:33:00Z\", \"tier\": \"medium\", \"old\": null, \"new\": 158.865, \"raise\": false, \"reason\": \"fx\", \"by\": \"fx\"}\n{\"t\": \"2026-10-01T00:00:00Z\", \"tier\": \"daily\", \"old\": 24.763, \"new\": 30.0, \"raise\": true, \"reason\": \"raise it\", \"by\": \"zerg-fx\"}\n",
+		},
+		{
+			name: "write-2-[--measured 30 --write --allow-raise --reason r]", kind: "write",
+			argv:     []string{"--measured", "30", "--write", "--allow-raise", "--reason", "r"},
+			write:    true,
+			wantRC:   0,
+			wantOut:  "[daily] 现值 24.763s · 现测 30.0s\n✓ 已写 daily: 24.763 → 30.0 · 台账 +1 行（<FX>/wallclock-audit.jsonl）\n",
+			wantErr:  "",
+			wantBase: "{\n \"schema\": \"wallclock-ratchet/1\",\n \"chain\": [\n  \"daily\",\n  \"seal\",\n  \"medium\",\n  \"stamp\"\n ],\n \"tiers\": {\n  \"daily\": {\n   \"secs\": 30.0,\n   \"note\": \"fx-daily\",\n   \"updated\": \"2026-10-01T00:00:00Z\"\n  },\n  \"seal\": {\n   \"secs\": null,\n   \"_unmeasured\": true,\n   \"_not_a_wallclock\": true,\n   \"note\": \"fx-seal\"\n  },\n  \"medium\": {\n   \"secs\": 158.865,\n   \"note\": \"fx-medium\",\n   \"updated\": \"2026-09-29T18:33:00Z\"\n  },\n  \"stamp\": {\n   \"secs\": 729,\n   \"note\": \"fx-stamp\",\n   \"updated\": \"2026-09-29T21:33:48Z\"\n  }\n },\n \"audit\": \"wallclock-audit.jsonl\"\n}\n",
+			wantAud:  "{\"t\": \"2026-09-29T10:26:52Z\", \"tier\": \"daily\", \"old\": null, \"new\": 24.763, \"raise\": false, \"reason\": \"fx\", \"by\": \"fx\"}\n{\"t\": \"2026-09-29T18:33:00Z\", \"tier\": \"medium\", \"old\": null, \"new\": 158.865, \"raise\": false, \"reason\": \"fx\", \"by\": \"fx\"}\n{\"t\": \"2026-10-01T00:00:00Z\", \"tier\": \"daily\", \"old\": 24.763, \"new\": 30.0, \"raise\": true, \"reason\": \"r\", \"by\": \"zerg-fx\"}\n",
+		},
+		{
+			name: "write-3-[--tier medium --measured 100.0 --write --reason r]", kind: "write",
+			argv:     []string{"--tier", "medium", "--measured", "100.0", "--write", "--reason", "r"},
+			write:    true,
+			wantRC:   0,
+			wantOut:  "[medium] 现值 158.865s · 现测 100.0s\n✓ 已写 medium: 158.865 → 100.0 · 台账 +1 行（<FX>/wallclock-audit.jsonl）\n",
+			wantErr:  "",
+			wantBase: "{\n \"schema\": \"wallclock-ratchet/1\",\n \"chain\": [\n  \"daily\",\n  \"seal\",\n  \"medium\",\n  \"stamp\"\n ],\n \"tiers\": {\n  \"daily\": {\n   \"secs\": 24.763,\n   \"note\": \"fx-daily\",\n   \"updated\": \"2026-09-29T10:26:52Z\"\n  },\n  \"seal\": {\n   \"secs\": null,\n   \"_unmeasured\": true,\n   \"_not_a_wallclock\": true,\n   \"note\": \"fx-seal\"\n  },\n  \"medium\": {\n   \"secs\": 100.0,\n   \"note\": \"fx-medium\",\n   \"updated\": \"2026-10-01T00:00:00Z\"\n  },\n  \"stamp\": {\n   \"secs\": 729,\n   \"note\": \"fx-stamp\",\n   \"updated\": \"2026-09-29T21:33:48Z\"\n  }\n },\n \"audit\": \"wallclock-audit.jsonl\"\n}\n",
+			wantAud:  "{\"t\": \"2026-09-29T10:26:52Z\", \"tier\": \"daily\", \"old\": null, \"new\": 24.763, \"raise\": false, \"reason\": \"fx\", \"by\": \"fx\"}\n{\"t\": \"2026-09-29T18:33:00Z\", \"tier\": \"medium\", \"old\": null, \"new\": 158.865, \"raise\": false, \"reason\": \"fx\", \"by\": \"fx\"}\n{\"t\": \"2026-10-01T00:00:00Z\", \"tier\": \"medium\", \"old\": 158.865, \"new\": 100.0, \"raise\": false, \"reason\": \"r\", \"by\": \"zerg-fx\"}\n",
+		},
+		{
+			name: "write-4-[--tier stamp --measured 700 --write --reason r]", kind: "write",
+			argv:     []string{"--tier", "stamp", "--measured", "700", "--write", "--reason", "r"},
+			write:    true,
+			wantRC:   0,
+			wantOut:  "[stamp] 现值 729s · 现测 700.0s\n✓ 已写 stamp: 729 → 700.0 · 台账 +1 行（<FX>/wallclock-audit.jsonl）\n",
+			wantErr:  "",
+			wantBase: "{\n \"schema\": \"wallclock-ratchet/1\",\n \"chain\": [\n  \"daily\",\n  \"seal\",\n  \"medium\",\n  \"stamp\"\n ],\n \"tiers\": {\n  \"daily\": {\n   \"secs\": 24.763,\n   \"note\": \"fx-daily\",\n   \"updated\": \"2026-09-29T10:26:52Z\"\n  },\n  \"seal\": {\n   \"secs\": null,\n   \"_unmeasured\": true,\n   \"_not_a_wallclock\": true,\n   \"note\": \"fx-seal\"\n  },\n  \"medium\": {\n   \"secs\": 158.865,\n   \"note\": \"fx-medium\",\n   \"updated\": \"2026-09-29T18:33:00Z\"\n  },\n  \"stamp\": {\n   \"secs\": 700.0,\n   \"note\": \"fx-stamp\",\n   \"updated\": \"2026-10-01T00:00:00Z\"\n  }\n },\n \"audit\": \"wallclock-audit.jsonl\"\n}\n",
+			wantAud:  "{\"t\": \"2026-09-29T10:26:52Z\", \"tier\": \"daily\", \"old\": null, \"new\": 24.763, \"raise\": false, \"reason\": \"fx\", \"by\": \"fx\"}\n{\"t\": \"2026-09-29T18:33:00Z\", \"tier\": \"medium\", \"old\": null, \"new\": 158.865, \"raise\": false, \"reason\": \"fx\", \"by\": \"fx\"}\n{\"t\": \"2026-10-01T00:00:00Z\", \"tier\": \"stamp\", \"old\": 729, \"new\": 700.0, \"raise\": false, \"reason\": \"r\", \"by\": \"zerg-fx\"}\n",
+		},
 	}
-	args := append([]string{filepath.Join(dir, "check-wallclock-ratchet.py")}, argv...)
-	cmd := exec.Command(cwrTestPyExe, args...)
-	cmd.Env = cwrTestEnv(dir)
-	var out, errb bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &errb
-	err := cmd.Run()
-	rc := 0
-	if err != nil {
-		if ee, ok := err.(*exec.ExitError); ok {
-			rc = ee.ExitCode()
-		} else {
-			t.Fatalf("跑 py 失败：%v", err)
+}
+
+// cwrNormGold —— 归一墙钟/时点类量（夹具根 + $TMPDIR）⇒ 金标跨机可复现（✗ 不靠掩码）。
+func cwrNormGold(s, fx string) string {
+	s = strings.ReplaceAll(s, fx, "<FX>")
+	if real, err := filepath.EvalSymlinks(fx); err == nil && real != fx {
+		s = strings.ReplaceAll(s, real, "<FX>")
+	}
+	if td := os.TempDir(); td != "" && td != fx {
+		s = strings.ReplaceAll(s, td, "<TMP>")
+	}
+	return s
+}
+
+// cwrRunGold —— 逐格现建夹具、现跑 Go 半、归一后与冻值逐字比；返回失配格数。
+// plant 非 nil 时在跑前往夹具落「旧态」py 件（两态用）。
+func cwrRunGold(t *testing.T, tag string, plant func(fx string)) int {
+	t.Helper()
+	t.Setenv("USER", cwrGoldUser) // #③ 台账 `by` 钉死 ⇒ 写面产物字节跨机可复现
+	mism := 0
+	for _, c := range cwrGoldCases() {
+		var fx string
+		switch c.kind {
+		case "unmeasured":
+			fx = cwrTestFixture(t, cwrGoldUnmeasuredBase, cwrTestAudit)
+		case "nobase":
+			fx = cwrTestFixture(t, "", cwrTestAudit)
+		default:
+			fx = cwrTestFixture(t, cwrTestBaseline, cwrTestAudit)
+		}
+		if plant != nil {
+			plant(fx)
+		}
+		argv := append([]string{}, c.argv...)
+		if c.kind == "bench" {
+			argv = []string{"--from-bench", filepath.Join(fx, c.bench)}
+		}
+		if c.write {
+			argv = append(argv, "--now", cwrGoldNow)
+		}
+		got := cwrTestRunGo(fx, argv)
+		gotOut, gotErr := cwrNormGold(got.out, fx), cwrNormGold(got.errb, fx)
+		if got.rc != c.wantRC {
+			mism++
+			t.Errorf("[%s/%s] rc=%d（冻值 %d）", tag, c.name, got.rc, c.wantRC)
+		}
+		if gotOut != c.wantOut {
+			mism++
+			t.Errorf("[%s/%s] stdout 漂移\n实得=%q\n冻值=%q", tag, c.name, gotOut, c.wantOut)
+		}
+		if gotErr != c.wantErr {
+			mism++
+			t.Errorf("[%s/%s] stderr 漂移\n实得=%q\n冻值=%q", tag, c.name, gotErr, c.wantErr)
+		}
+		if c.wantBase != "" {
+			b, _ := os.ReadFile(filepath.Join(fx, "wallclock-baseline.json"))
+			if gb := cwrNormGold(string(b), fx); gb != c.wantBase {
+				mism++
+				t.Errorf("[%s/%s] baseline 字节漂移\n实得=%q\n冻值=%q", tag, c.name, gb, c.wantBase)
+			}
+		}
+		if c.wantAud != "" {
+			a, _ := os.ReadFile(filepath.Join(fx, "wallclock-audit.jsonl"))
+			if ga := cwrNormGold(string(a), fx); ga != c.wantAud {
+				mism++
+				t.Errorf("[%s/%s] 台账字节漂移\n实得=%q\n冻值=%q", tag, c.name, ga, c.wantAud)
+			}
 		}
 	}
-	return cwrTestRun{rc, out.String(), errb.String()}
+	return mism
 }
 
-// cwrTestParity 两态逐字节比（rc + stdout + stderr）。
-func cwrTestParity(t *testing.T, dir string, argv []string) (cwrTestRun, cwrTestRun) {
-	t.Helper()
-	py := cwrTestRunPy(t, dir, argv)
-	goRun := cwrTestRunGo(dir, argv)
-	if py.rc != goRun.rc || py.out != goRun.out || py.errb != goRun.errb {
-		t.Fatalf("两态不符 argv=%q\npy rc=%d out=%q err=%q\ngo rc=%d out=%q err=%q",
-			argv, py.rc, py.out, py.errb, goRun.rc, goRun.out, goRun.errb)
+// TestWallclockRatchetGoldenInternalized —— 内化金标自证（A 态：真仓 · 退役 py 不在盘）。
+// 旧 py 对拍（恒 Skip、零保护）已删；本用例✗ 不 Skip、逐格给真断言（✗ 不放宽为「只判非空」）。
+func TestWallclockRatchetGoldenInternalized(t *testing.T) {
+	_ = cwrTestAnchorGoHalf(t) // 哨兵：锚 Go 半在盘 ⇒ fail-closed（✗ 不 Skip）
+	root := cwrTestRepoRoot(t)
+	py := filepath.Join(root, "scripts", "gates", "check-wallclock-ratchet.py")
+	if _, err := os.Stat(py); err == nil {
+		t.Fatalf("A 态前提破：退役原件竟在盘 %s（本件前提 = 内化后无 py）", py)
 	}
-	return py, goRun
-}
-
-func cwrTestRequirePy(t *testing.T) {
-	t.Helper()
-	if _, err := os.Stat(cwrTestPyExe); err != nil {
-		t.Skipf("无 %s ⇒ 本件不适用（GAP-20261001-61 钉死的那根）：%v", cwrTestPyExe, err)
+	if n := cwrRunGold(t, "A真仓无py", nil); n != 0 {
+		t.Fatalf("A 态金标失配 %d 格", n)
 	}
 }
 
-// TestCheckWallclockRatchetPort —— 两态逐字对拍网格（读面）。
-func TestCheckWallclockRatchetPort(t *testing.T) {
-	cwrTestRequirePy(t)
-	grid := []struct {
-		name string
-		argv []string
-	}{
-		{"在阈值下", []string{"--measured", "1.0"}},
-		{"刚好等于阈值", []string{"--measured", "24.763"}},
-		{"刚超阈值", []string{"--measured", "24.7631"}},
-		{"超阈值写无allow", []string{"--measured", "24.764", "--write"}},
-		{"超阈值写允许无理由", []string{"--measured", "24.764", "--write", "--allow-raise"}},
-		{"差档低于", []string{"--measured", "20.0", "--diff"}},
-		{"差档带json", []string{"--measured", "20.0", "--diff", "--json", "x"}},
-		{"差档高于", []string{"--measured", "30.0", "--diff"}},
-		{"事后对账过", []string{"--check"}},
-		{"事后对账按档筛", []string{"--check", "--tier", "medium"}},
-		{"事后对账无记录", []string{"--check", "--tier", "stamp"}},
-		{"核章档不给结论", []string{"--tier", "seal"}},
-		{"未知档名", []string{"--tier", "bogus"}},
-		{"未知旗标", []string{"--bogus"}},
-		{"帮助", []string{"-h"}},
-		{"帮助长形", []string{"--help"}},
-		{"非法浮点", []string{"--measured", "abc"}},
-		{"缺实参", []string{"--tier"}},
-		{"给值给flag", []string{"--diff=x"}},
-		{"两样都不给", []string{}},
-		{"前缀缩写", []string{"--me", "1.0"}},
-		{"等号形态", []string{"--t=daily", "--measured", "1.0"}},
+// TestWallclockRatchetGoldenTwoStates —— 两态逐字同：A 态 = 夹具无 py（真仓现态）；B 态 = 合成
+// 「旧态」夹具（把退役 py 路径 `scripts/gates/check-wallclock-ratchet.py` 放回）⇒ 两态对同一套金标
+// 逐字同命中（证 py 在/不在盘都不改判据结论 · ✗ 不 Skip）。
+func TestWallclockRatchetGoldenTwoStates(t *testing.T) {
+	_ = cwrTestAnchorGoHalf(t) // 哨兵：锚 Go 半在盘 ⇒ fail-closed（✗ 不 Skip）
+	if n := cwrRunGold(t, "A夹具无py", nil); n != 0 {
+		t.Fatalf("A 态金标失配 %d 格", n)
 	}
-	for _, c := range grid {
-		c := c
-		t.Run(c.name, func(t *testing.T) {
-			d := cwrTestFixture(t, cwrTestBaseline, cwrTestAudit)
-			cwrTestParity(t, d, c.argv)
-		})
+	plant := func(fx string) {
+		p := filepath.Join(fx, "check-wallclock-ratchet.py")
+		if err := os.WriteFile(p, []byte("#!/usr/bin/env python3\n# stub：造「旧态」——退役 py 在位（本件只证 py 在/不在盘不改判据结论）\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
-
-	// --from-bench 面：路径用**绝对**（两态 cwd 同 ⇒ 相对亦可，但绝对更稳且两态打印逐字同）。
-	for _, bf := range []string{"bench_items.json", "bench_realms.json", "bench_bare.json",
-		"bench_steps.json", "bench_bad.json", "nope.json"} {
-		bf := bf
-		t.Run("bench-"+bf, func(t *testing.T) {
-			d := cwrTestFixture(t, cwrTestBaseline, cwrTestAudit)
-			cwrTestParity(t, d, []string{"--from-bench", filepath.Join(d, bf)})
-		})
+	if n := cwrRunGold(t, "B旧态有py", plant); n != 0 {
+		t.Fatalf("B 态金标失配 %d 格（py 在盘不得改判据结论）", n)
 	}
-
-	// 未标定档（medium secs=null 且无 _not_a_wallclock）⇒ rc=2 不给结论。
-	t.Run("未标定档", func(t *testing.T) {
-		b := `{"schema": "wallclock-ratchet/1", "tiers": {"medium": {"secs": null, "_unmeasured": true, "note": "x"}}, "audit": "wallclock-audit.jsonl"}` + "\n"
-		d := cwrTestFixture(t, b, cwrTestAudit)
-		cwrTestParity(t, d, []string{"--tier", "medium"})
-	})
-	// 缺基线件 ⇒ rc=2。
-	t.Run("缺基线件", func(t *testing.T) {
-		d := cwrTestFixture(t, "", cwrTestAudit)
-		cwrTestParity(t, d, []string{"--measured", "1.0"})
-	})
 }
 
-// TestCheckWallclockRatchetHelpGolden —— -h stdout 的 sha256 钉 golden（GAP-20261001-61）。
+// TestCheckWallclockRatchetHelpGolden —— -h stdout 的 sha256 钉 golden（Go 常量真源）。
 func TestCheckWallclockRatchetHelpGolden(t *testing.T) {
+	_ = cwrTestAnchorGoHalf(t)
 	d := cwrTestFixture(t, cwrTestBaseline, cwrTestAudit)
 	r := cwrTestRunGo(d, []string{"-h"})
 	if r.rc != 0 || r.errb != "" {
@@ -283,95 +570,13 @@ func TestCheckWallclockRatchetHelpGolden(t *testing.T) {
 	}
 }
 
-// TestCheckWallclockRatchetWriteFace —— 写面：py 先跑读 ts ⇒ Go 用 --now 钉同 ts ⇒ stdout/stderr + 两产物件逐字节同。
-func TestCheckWallclockRatchetWriteFace(t *testing.T) {
-	cwrTestRequirePy(t)
-	cases := [][]string{
-		{"--measured", "20.0", "--write", "--reason", "fx"},
-		{"--measured", "30.0", "--write", "--allow-raise", "--reason", "raise it"},
-		{"--measured", "30", "--write", "--allow-raise", "--reason", "r"},
-		{"--tier", "medium", "--measured", "100.0", "--write", "--reason", "r"},
-		{"--tier", "stamp", "--measured", "700", "--write", "--reason", "r"},
-	}
-	for _, argv := range cases {
-		argv := argv
-		t.Run(strings.Join(argv, "_"), func(t *testing.T) {
-			d := cwrTestFixture(t, cwrTestBaseline, cwrTestAudit)
-			py := cwrTestRunPy(t, d, argv)
-			tier := "daily"
-			for i, a := range argv {
-				if a == "--tier" && i+1 < len(argv) {
-					tier = argv[i+1]
-				}
-			}
-			base0, _ := os.ReadFile(filepath.Join(d, "wallclock-baseline.json"))
-			aud0, _ := os.ReadFile(filepath.Join(d, "wallclock-audit.jsonl"))
-			ts := cwrTestExtractTS(t, string(base0), tier)
-			// 复位夹具，Go 走**同一目录**（路径逐字一致）。
-			cwrTestReset(t, d, cwrTestBaseline, cwrTestAudit)
-			goRun := cwrTestRunGo(d, append(append([]string{}, argv...), "--now", ts))
-			if py.rc != goRun.rc || py.out != goRun.out || py.errb != goRun.errb {
-				t.Fatalf("写面 stdio 不符 argv=%q\npy rc=%d out=%q err=%q\ngo rc=%d out=%q err=%q",
-					argv, py.rc, py.out, py.errb, goRun.rc, goRun.out, goRun.errb)
-			}
-			base1, _ := os.ReadFile(filepath.Join(d, "wallclock-baseline.json"))
-			aud1, _ := os.ReadFile(filepath.Join(d, "wallclock-audit.jsonl"))
-			if !bytes.Equal(base0, base1) {
-				t.Fatalf("写面 baseline 字节不符 argv=%q\npy=%s\ngo=%s", argv, base0, base1)
-			}
-			if !bytes.Equal(aud0, aud1) {
-				t.Fatalf("写面 台账字节不符 argv=%q\npy=%s\ngo=%s", argv, aud0, aud1)
-			}
-		})
-	}
-}
-
-func cwrTestExtractTS(t *testing.T, baseline, tier string) string {
-	t.Helper()
-	v, err := cwrParseJSON(baseline)
-	if err != nil {
-		t.Fatalf("解析 py 写后的基线件失败：%v", err)
-	}
-	tv := v.get("tiers")
-	if tv == nil {
-		t.Fatal("py 写后基线件无 tiers")
-	}
-	tierV := tv.get(tier)
-	if tierV == nil {
-		t.Fatalf("py 写后基线件无 %s 档", tier)
-	}
-	up := tierV.get("updated")
-	if up == nil || up.kind != 's' {
-		t.Fatalf("py 写后 %s 档无 updated", tier)
-	}
-	return up.str
-}
-
-// TestCheckWallclockRatchetTimeVaries —— 自证：py 的「当前时刻」连跑两发会变（⇒ 写面对拍必须钉时刻，✗ 非掩码）。
-func TestCheckWallclockRatchetTimeVaries(t *testing.T) {
-	cwrTestRequirePy(t)
-	argv := []string{"--measured", "20.0", "--write", "--reason", "fx"}
-	d1 := cwrTestFixture(t, cwrTestBaseline, cwrTestAudit)
-	cwrTestRunPy(t, d1, argv)
-	a, _ := os.ReadFile(filepath.Join(d1, "wallclock-baseline.json"))
-	ts1 := cwrTestExtractTS(t, string(a), "daily")
-	// 给足跨秒窗口。
-	d2 := cwrTestFixture(t, cwrTestBaseline, cwrTestAudit)
-	cwrTestRunPy(t, d2, argv)
-	b, _ := os.ReadFile(filepath.Join(d2, "wallclock-baseline.json"))
-	ts2 := cwrTestExtractTS(t, string(b), "daily")
-	if ts1 == ts2 {
-		t.Skipf("两发同秒（%s）⇒ 本档不适用（时刻面天然带秒粒度，重跑即可见差异）", ts1)
-	}
-}
-
-// TestCheckWallclockRatchetNegativeControls —— 判据有牙（哑化任一条 ⇒ 本组任一条会 FAIL）。
+// TestCheckWallclockRatchetNegativeControls —— 判据有牙（Go-only · ✗ 不靠 py）：哑化任一条 ⇒ 本组任一条会 FAIL。
 func TestCheckWallclockRatchetNegativeControls(t *testing.T) {
-	cwrTestRequirePy(t)
+	_ = cwrTestAnchorGoHalf(t)
 
 	t.Run("棘轮只许下降-rc1", func(t *testing.T) {
 		d := cwrTestFixture(t, cwrTestBaseline, cwrTestAudit)
-		_, goRun := cwrTestParity(t, d, []string{"--measured", "24.764"})
+		goRun := cwrTestRunGo(d, []string{"--measured", "24.764"})
 		if goRun.rc != 1 {
 			t.Fatalf("超阈值须判红 rc=1：得 rc=%d out=%q", goRun.rc, goRun.out)
 		}
@@ -379,7 +584,7 @@ func TestCheckWallclockRatchetNegativeControls(t *testing.T) {
 
 	t.Run("上调需allow-raise-rc2", func(t *testing.T) {
 		d := cwrTestFixture(t, cwrTestBaseline, cwrTestAudit)
-		_, goRun := cwrTestParity(t, d, []string{"--measured", "24.764", "--write"})
+		goRun := cwrTestRunGo(d, []string{"--measured", "24.764", "--write"})
 		if goRun.rc != 2 {
 			t.Fatalf("上调未给 --allow-raise 须 rc=2：得 rc=%d", goRun.rc)
 		}
@@ -388,7 +593,7 @@ func TestCheckWallclockRatchetNegativeControls(t *testing.T) {
 	t.Run("按档筛选-不取全台账末行", func(t *testing.T) {
 		// 台账末行是 medium，但 daily 现值与**daily 那条**相符 ⇒ --check daily 必须过（不是「有人手改」）。
 		d := cwrTestFixture(t, cwrTestBaseline, cwrTestAudit)
-		_, goRun := cwrTestParity(t, d, []string{"--check"})
+		goRun := cwrTestRunGo(d, []string{"--check"})
 		if goRun.rc != 0 {
 			t.Fatalf("按档筛选失效（假红）：rc=%d err=%q", goRun.rc, goRun.errb)
 		}
@@ -396,7 +601,7 @@ func TestCheckWallclockRatchetNegativeControls(t *testing.T) {
 
 	t.Run("未标定不给结论-rc2", func(t *testing.T) {
 		d := cwrTestFixture(t, cwrTestBaseline, cwrTestAudit)
-		_, goRun := cwrTestParity(t, d, []string{"--tier", "seal"})
+		goRun := cwrTestRunGo(d, []string{"--tier", "seal"})
 		if goRun.rc != 2 {
 			t.Fatalf("不计墙钟档须 rc=2：得 rc=%d", goRun.rc)
 		}
@@ -404,7 +609,7 @@ func TestCheckWallclockRatchetNegativeControls(t *testing.T) {
 
 	t.Run("未知旗标拒收-rc2", func(t *testing.T) {
 		d := cwrTestFixture(t, cwrTestBaseline, cwrTestAudit)
-		_, goRun := cwrTestParity(t, d, []string{"--bogus"})
+		goRun := cwrTestRunGo(d, []string{"--bogus"})
 		if goRun.rc != 2 || !strings.Contains(goRun.errb, "unrecognized arguments: --bogus") {
 			t.Fatalf("未知旗标须 rc=2 且逐字点名：rc=%d err=%q", goRun.rc, goRun.errb)
 		}
@@ -431,16 +636,17 @@ func TestCheckWallclockRatchetNegativeControls(t *testing.T) {
 // `repoRoot()` 推 `<仓根>/scripts/gates`，✗ 不落 cwd。
 // ★ 判据有牙（GAP-20261005-20 同族）：接线（入 `gateCheckGoEntry`）但 HERE 仍落 cwd 时，
 // inproc 档 cwd = 仓根 ⇒ 读 `<仓根>/wallclock-baseline.json` 缺件 ⇒ rc=2，本用例当场 FAIL。
+// ★ 哨兵/前置改锚真仓结构（✗ 不留 Skip）：repoRoot() 空或真基线件不在 ⇒ fail-closed。
 func TestCheckWallclockRatchetDefaultHereNotCwd(t *testing.T) {
 	t.Setenv("ZERG_WALLCLOCK_HERE", "")
 	t.Setenv("ZERG_REPO", "")
 	root := repoRoot()
 	if root == "" {
-		t.Skip("本机定位不到仓根 ⇒ 本件不适用（不给结论）")
+		t.Fatalf("哨兵失守：repoRoot() 空（不是真仓树）⇒ fail-closed（✗ 不留 Skip）")
 	}
 	base := filepath.Join(root, "scripts", "gates", "wallclock-baseline.json")
 	if _, err := os.Stat(base); err != nil {
-		t.Skipf("真基线件不在（%s）⇒ 本件不适用：%v", base, err)
+		t.Fatalf("A 态前提破：真基线件不在（%s）⇒ fail-closed（✗ 不留 Skip）：%v", base, err)
 	}
 	var out, errb bytes.Buffer
 	rc := checkWallclockRatchetMain(&out, &errb, []string{"--measured", "1.0"})
@@ -449,21 +655,5 @@ func TestCheckWallclockRatchetDefaultHereNotCwd(t *testing.T) {
 	}
 	if rc != 0 && rc != 1 {
 		t.Fatalf("默认 HERE 应读真基线 ⇒ rc∈{0,1}，得到 %d err=%q", rc, errb.String())
-	}
-}
-
-// TestCheckWallclockRatchetPyOptional —— 退役态安全（类③）：cwrPyPresent 是「两态对拍格
-// 是否适用」的唯一判据；py 副本不在 ⇒ false ⇒ cwrTestRunPy 统一 Skip（✗ 不 Fatal）。
-// ★ 哑化负控：把 cwrPyPresent 改成恒 `return true` ⇒ 本用例第一处 Fatalf 行当场 FAIL。
-func TestCheckWallclockRatchetPyOptional(t *testing.T) {
-	d := t.TempDir()
-	if cwrPyPresent(d) {
-		t.Fatalf("空夹具不得报 py 在场（退役态必须落 false）")
-	}
-	if err := os.WriteFile(filepath.Join(d, "check-wallclock-ratchet.py"), []byte("# py\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if !cwrPyPresent(d) {
-		t.Fatalf("落了 py 副本应报在场（true）")
 	}
 }

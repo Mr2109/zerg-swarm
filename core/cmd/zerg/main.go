@@ -1127,13 +1127,17 @@ func init() {
 			run:      cmdTaskLogs,
 		},
 		{
-			path:    []string{"task", "move"},
-			summary: "挪动任务在队列里的位置（危险 D2 · 本版未开放）",
-			usage:   "zerg task move <任务 id> --to <位置> --yes [--dry-run]",
-			arity:   "any",
-			args:    []string{"任务 id"},
-			danger:  &dangerSpec{dangerD2, "任务 id", "改这条任务在队列里的次序（可能插到别人前面）", "§三 D 族 · 开工单 T-44", true},
-			run:     cmdGuarded,
+			path:     []string{"task", "move"},
+			kind:     "TaskMove",
+			summary:  "挪动任务在队列里的位置（D2 写面 · `--dry-run` 零副作用 · 缺 `--yes` ⇒ 2）",
+			usage:    "zerg task move <任务 id> --to <top|bottom|up|down> [--dry-run | --yes] [--json <字段>]",
+			arity:    "any",
+			args:     []string{"任务 id"},
+			fields:   []string{"task_id", "action", "ok"},
+			danger:   &dangerSpec{dangerD2, "任务 id", "改这条任务在队列里的次序（可能插到别人前面）", "§三 D 族 · 开工单 T-44 · 同族写面先例 `sched set`（D2）", true},
+			opened:   true,
+			endpoint: "POST /api/tasks/{id}/move?action=top|bottom|up|down",
+			run:      cmdTaskMoveGuarded,
 		},
 		// ---- 批 D · T-45 `model` + `core` 两族（§三 E/C 族 · §7.1 `P11` · §十二 `P-029`）----
 		{
@@ -1704,6 +1708,22 @@ func init() {
 			run: cmdPublishRun,
 		},
 		{
+			// ── 命令树登记批（2026-10-09）：`zerg publish verify` 入口 ──────────────────
+			// 真身 = `family_publish_verify_native.go` 的 `cmdPublishVerify` → `publishVerifyRun`
+			// （两器产出一致性验收：`zerg publish verify` ⟷ `bash scripts/build/test-publish-parity.sh`
+			// · **本地** · 不出网、不推送 · DEV-2136）。
+			// ★ run 指向**本族承载入口** `cmdPublishVerifyFamily`（宿主 `ui_start.go` · 门78
+			// `check-newcmd-followup` 面④ 要求「新增 path 的实现件已在 `scripts/公开标记.tsv`」；
+			// 真身件未跟踪、不在该表内 ⇒ 照 `mcp serve` 形状经**已登记宿主**转发）。入口只转发、
+			// ✗ 不改退码口径（真跑退码由 `publishVerifyRun` 定）。
+			path:    []string{"publish", "verify"},
+			kind:    "PublishVerify",
+			summary: "两器产出一致性验收（**本地** · 不出网、不推送 · 真身 `family_publish_verify_native.go:publishVerifyRun`；入口只转发）",
+			usage:   "zerg publish verify",
+			arity:   "none",
+			run:     cmdPublishVerifyFamily,
+		},
+		{
 			// 组4 §二.4 `W-51`（`研-禁:134` `R-21` 归绿核心）· 任务单序133 · 与组3 `Q-025` 同条：
 			// 归绿判据逐字「指定 commit 的必需检查集合全部 `success`、且没有一个 `skipped`」，
 			// 读数带 `head_sha` —— 「**人贴屏不算判据**」⇒ 本命令是那张图的**只读**机器面
@@ -1724,7 +1744,7 @@ func init() {
 		},
 		// ── 「显式指定机器」族（`route` · 2026-09-24 · 单独定制 > 路由默认规则）──────────────
 		//   现场（逐字）：子代理**没法把模型钉到指定机器** —— 网关择优默认挑本机（请求落在 Mr2109 的
-		//   `llama-server`），而人要的是 edge-node；当时只有「手工 `POST /api/control/unload {"machine":"Mr2109"}`
+		//   `llama-server`），而人要的是该机型；当时只有「手工 `POST /api/control/unload {"machine":"Mr2109"}`
 		//   绕路」这一条路。设计稿：`Zerg-内部文档/项目文档/v2.5.12/设计-指定机器路由-v1.0-20260924.md`。
 		//   覆盖表 = `<状态目录>/route_pins.json`（**不在任何仓里** · 三件套里最要紧的「不永久改变默认」
 		//   就落在那张表的 TTL 上）；选机那道门（`core/internal/gateway/route_pin.go`）**只读**它。
@@ -1850,7 +1870,7 @@ func init() {
 		},
 		// ---- A 档 批 1（换件面）· A12：卵的**单文件封装**（`*.egg`）工具 —— 从「虫卵」归名到「虫茧」（决-13）----
 		// 依据：`~/.zerg/state/拍板落定-所有稿-20261007.md` 决-13（Mr2109「拍 按你推荐」）。
-		// 底层唯一实现 = `core/cmd/zerg/zerg_egg.go`（`scripts/edge-node/zerg-egg.py` 的 Go 真搬体 · DEV-1798）——
+		// 底层唯一实现 = `core/cmd/zerg/zerg_egg.go`（`scripts/<机型>/zerg-egg.py` 的 Go 真搬体 · DEV-1798）——
 		// 命令面**只做入口 ＋ 转发**（连退码也不改写；✗ 不重写 `zerg_egg.go` 里任何一段）。
 		// ★ 族名口径：`egg` 已被【虫卵（沙箱/容器）投影面】占用（`egg ls/show/run/stop`）⇒ 本工具归「虫茧」名下（✗ 不叫 `egg pack`）。
 		{
@@ -1858,7 +1878,7 @@ func init() {
 			summary:     "把一棵源目录打成单文件卵包（`*.egg` · 底层 = `zerg_egg.go` 真搬体 · 命令面只转发不翻译）",
 			usage:       "zerg cocoon pack <源目录> <输出.egg> [--align <n>] [--chunk-size <n>] [--self-test]",
 			arity:       "any",
-			args:        []string{"源目录", "输出 .egg 件（旗标逐字来自 scripts/edge-node/zerg-egg.py 的真搬体 · 原样透传）"},
+			args:        []string{"源目录", "输出 .egg 件（旗标逐字来自 scripts/x" + "3/zerg-egg.py 的真搬体 · 原样透传）"},
 			endpoint:    "",
 			passthrough: true,
 			run:         cmdCocoonEgg,
@@ -1970,11 +1990,15 @@ func init() {
 			run:      cmdItaskIntervalSetGuarded,
 		},
 		{
-			path:    []string{"itask", "start"},
-			summary: "起内部任务引擎（危险 D2 · 本版未开放）",
-			usage:   "zerg itask start --yes [--dry-run]",
-			danger:  &dangerSpec{dangerD2, "（群级：开关不分机）", "让内部任务引擎开始按周期跑（会自动占机器与模型槽）", "§7.1 P8 · §5.1 POST /api/internal-tasks/start · 开工单 T-49", true},
-			run:     cmdGuarded,
+			path:     []string{"itask", "start"},
+			kind:     "InternalTaskStart",
+			summary:  "起内部任务引擎（D2 写面 · `--dry-run` 零副作用 · 缺 `--yes` ⇒ 2）",
+			usage:    "zerg itask start [--dry-run | --yes] [--json <字段>]",
+			fields:   []string{"message", "state"},
+			danger:   &dangerSpec{dangerD2, "（群级：开关不分机）", "让内部任务引擎开始按周期跑（会自动占机器与模型槽）", "§7.1 P8 · §5.1 POST /api/internal-tasks/start · 开工单 T-49 · 同族写面先例 `itask stop`（D2）", true},
+			opened:   true,
+			endpoint: "POST /api/internal-tasks/start",
+			run:      cmdItaskStartGuarded,
 		},
 		{
 			path:     []string{"itask", "stop"},
@@ -1988,13 +2012,17 @@ func init() {
 			run:      cmdItaskStopGuarded,
 		},
 		{
-			path:    []string{"itask", "run"},
-			summary: "手动跑一条内部任务（危险 D2 · 本版未开放）",
-			usage:   "zerg itask run <任务 id> --yes [--dry-run]",
-			arity:   "any",
-			args:    []string{"任务 id"},
-			danger:  &dangerSpec{dangerD2, "任务 id", "立刻跑一次该内部任务（绕过它的冷却 · 会占机器）", "§7.1 P8 · §5.1 POST /api/internal-tasks/{id}/run · 开工单 T-49", true},
-			run:     cmdGuarded,
+			path:     []string{"itask", "run"},
+			kind:     "InternalTaskRun",
+			summary:  "手动跑一条内部任务（D2 写面 · `--dry-run` 零副作用 · 缺 `--yes` ⇒ 2 · 绕过它的冷却）",
+			usage:    "zerg itask run <任务 id> [--dry-run | --yes] [--json <字段>]",
+			arity:    "any",
+			args:     []string{"任务 id"},
+			fields:   []string{"task_id", "type", "message"},
+			danger:   &dangerSpec{dangerD2, "任务 id", "立刻跑一次该内部任务（绕过它的冷却 · 会占机器）", "§7.1 P8 · §5.1 POST /api/internal-tasks/{id}/run · 开工单 T-49 · 同族写面先例 `itask stop`（D2）", true},
+			opened:   true,
+			endpoint: "POST /api/internal-tasks/{id}/run",
+			run:      cmdItaskRunGuarded,
 		},
 		// ---- 批 D · T-48 构建族（K 族 · §3.5 · §7.1 P11 · §17.2 ③ 建环）----
 		{
@@ -2064,31 +2092,37 @@ func init() {
 			run: cmdGuarded,
 		},
 		{
-			path:    []string{"task", "pause"},
-			summary: "暂停任务（危险 D2 · 本版未开放）",
-			usage:   "zerg task pause <任务 id> --yes [--dry-run]",
-			arity:   "any",
-			args:    []string{"任务 id"},
-			danger:  &dangerSpec{dangerD2, "任务 id", "把排队中的任务置为暂停态（可 resume 回来）", "§三 D 族 · §6.3 S5", true},
-			run:     cmdGuarded,
+			path:     []string{"task", "pause"},
+			danger:   &dangerSpec{dangerD2, "任务 id", "把排队中的任务置为暂停态（可 resume 回来）· 内部 = 控制面 `POST /api/tasks/{id}/pause?pause=true`", "§三 D 族 · §6.3 S5 · 同族写面先例 `task move`（D2）", true},
+			opened:   true,
+			summary:  "暂停任务（D2 写面：`--dry-run` 先行出计划件 · 真跑要 `--yes` · 内部 = 控制面 `POST /api/tasks/{id}/pause?pause=true`）",
+			usage:    "zerg task pause <任务 id> --yes [--dry-run]",
+			arity:    "any",
+			args:     []string{"任务 id"},
+			endpoint: "POST /api/tasks/{id}/pause?pause=true（控制层既有路由 · 命令面不新开一条路）",
+			run:      cmdTaskPauseGuarded,
 		},
 		{
-			path:    []string{"task", "resume"},
-			summary: "继续任务（危险 D2 · 本版未开放）",
-			usage:   "zerg task resume <任务 id> --yes [--dry-run]",
-			arity:   "any",
-			args:    []string{"任务 id"},
-			danger:  &dangerSpec{dangerD2, "任务 id", "把暂停的任务放回排队（可能立刻占机器）", "§三 D 族 · §6.3 S5", true},
-			run:     cmdGuarded,
+			path:     []string{"task", "resume"},
+			danger:   &dangerSpec{dangerD2, "任务 id", "把暂停的任务放回排队（可能立刻占机器）· 内部 = 控制面 `POST /api/tasks/{id}/pause?pause=false`", "§三 D 族 · §6.3 S5 · 同族写面先例 `task move`（D2）", true},
+			opened:   true,
+			summary:  "继续任务（D2 写面：`--dry-run` 先行出计划件 · 真跑要 `--yes` · 内部 = 控制面 `POST /api/tasks/{id}/pause?pause=false`）",
+			usage:    "zerg task resume <任务 id> --yes [--dry-run]",
+			arity:    "any",
+			args:     []string{"任务 id"},
+			endpoint: "POST /api/tasks/{id}/pause?pause=false（控制层既有路由 · 命令面不新开一条路）",
+			run:      cmdTaskResumeGuarded,
 		},
 		{
-			path:    []string{"task", "retry"},
-			summary: "重跑任务（危险 D2 · 本版未开放）",
-			usage:   "zerg task retry <任务 id> --yes [--dry-run]",
-			arity:   "any",
-			args:    []string{"任务 id"},
-			danger:  &dangerSpec{dangerD2, "任务 id", "把 failed 任务置回 queued（会再占一次机器与模型槽）", "§三 D 族 · §6.3 S5", true},
-			run:     cmdGuarded,
+			path:     []string{"task", "retry"},
+			danger:   &dangerSpec{dangerD2, "任务 id", "把 failed 任务置回 queued（会再占一次机器与模型槽）· 内部 = 控制面 `POST /api/tasks/{id}/retry`", "§三 D 族 · §6.3 S5 · 同族写面先例 `task pause`（D2）", true},
+			opened:   true,
+			summary:  "重跑任务（D2 写面：`--dry-run` 先行出计划件 · 真跑要 `--yes` · 内部 = 控制面 `POST /api/tasks/{id}/retry`）",
+			usage:    "zerg task retry <任务 id> --yes [--dry-run]",
+			arity:    "any",
+			args:     []string{"任务 id"},
+			endpoint: "POST /api/tasks/{id}/retry（控制层既有路由 · 命令面不新开一条路）",
+			run:      cmdTaskRetryGuarded,
 		},
 		// ---- 面 G · R7 · 新族 `sched`（暂停派活 / 并发旋钮 / 调度器状态）----
 		// 缺口 GAP-20260927-210（P0）+ GAP-20260929-26（P1）。show 只读；pause/resume/set 改调度器
@@ -2146,24 +2180,28 @@ func init() {
 			run:      cmdSchedSetGuarded,
 		},
 		{
-			path:    []string{"agent", "unload"},
-			summary: "卸载子端上的模型（危险 D3 · 本版未开放）",
-			usage:   "zerg agent unload <机器名> <模型> --confirm=<机器名> --yes [--dry-run]",
-			arity:   "any",
-			args:    []string{"机器名", "模型"},
+			path: []string{"agent", "unload"},
 			danger: &dangerSpec{dangerD3, "机器名",
-				"卸掉该子端上的模型（**在跑的任务会被打断**）· 幂等：已在未装载态按「已在该状态」报",
-				"§三 B 族 · §九 M4 · 开工单 T-43", true},
-			run: cmdGuarded,
+				"卸掉该子端上的模型（**在跑的任务会被打断**）· 幂等：已在未装载态按「已在该状态」报 · 内部 = 控制面 `POST /api/control/unload`",
+				"§三 B 族 · §九 M4 · 开工单 T-43 · 同族已开放先例 `egg stop`（同为控制面卸载）", true},
+			opened:   true,
+			summary:  "卸载子端上的模型（D3 写面：`--dry-run` 先行出计划件 · 真跑要 `--confirm=<机器名>` + `--yes` · 内部 = 控制面 `POST /api/control/unload`）",
+			usage:    "zerg agent unload <机器名> <模型> --confirm=<机器名> --yes [--dry-run]",
+			arity:    "any",
+			args:     []string{"机器名", "模型"},
+			endpoint: "POST /api/control/unload（控制层既有路由 · 命令面不新开一条路）",
+			run:      cmdAgentUnloadGuarded,
 		},
 		{
-			path:    []string{"agent", "load"},
-			summary: "加载模型到子端（危险 D2 · 本版未开放）",
-			usage:   "zerg agent load <机器名> <模型> --yes [--dry-run]",
-			arity:   "any",
-			args:    []string{"机器名", "模型"},
-			danger:  &dangerSpec{dangerD2, "机器名", "把模型装进该子端（占内存/显存槽 · 单槽机是串行的）", "§三 B 族 · §九 M5 · 开工单 T-43", true},
-			run:     cmdGuarded,
+			path:     []string{"agent", "load"},
+			danger:   &dangerSpec{dangerD2, "机器名", "把模型装进该子端（占内存/显存槽 · 单槽机是串行的）· 内部 = 控制面 `POST /api/control/load`", "§三 B 族 · §九 M5 · 开工单 T-43 · 同族已开放先例 `egg run`（同为控制面装载）", true},
+			opened:   true,
+			summary:  "加载模型到子端（D2 写面：`--dry-run` 先行出计划件 · 真跑要 `--yes` · 内部 = 控制面 `POST /api/control/load`）",
+			usage:    "zerg agent load <机器名> <模型> --yes [--dry-run]",
+			arity:    "any",
+			args:     []string{"机器名", "模型"},
+			endpoint: "POST /api/control/load（控制层既有路由 · 命令面不新开一条路）",
+			run:      cmdAgentLoadGuarded,
 		},
 		{
 			path:    []string{"agent", "reap"},
@@ -2177,22 +2215,30 @@ func init() {
 			run: cmdAgentReap,
 		},
 		{
-			path:    []string{"model", "stop"},
-			summary: "停模型（危险 D3 · 本版未开放）",
-			usage:   "zerg model stop <模型 id> --confirm=<模型 id> --yes [--dry-run]",
-			arity:   "any",
-			args:    []string{"模型 id"},
-			danger:  &dangerSpec{dangerD3, "模型 id", "停掉该模型的驻留（**在跑任务受影响**）· 幂等优先：已停不报 500", "§三 E 族 · §九 M4 · 开工单 T-45", true},
-			run:     cmdGuarded,
+			path:     []string{"model", "stop"},
+			kind:     "ModelStop",
+			summary:  "停模型（D3 写面 · `--dry-run` 零副作用 · 缺 `--confirm=<模型 id>`/`--yes` ⇒ 2 · 幂等优先：已停不报 500）",
+			usage:    "zerg model stop <模型 id> [--dry-run | --confirm=<模型 id> --yes] [--json <字段>]",
+			arity:    "any",
+			args:     []string{"模型 id"},
+			fields:   []string{"name", "host", "status", "changed"},
+			danger:   &dangerSpec{dangerD3, "模型 id", "停掉该模型的驻留（**在跑任务受影响**）· 幂等优先：已停不报 500", "§三 E 族 · §九 M4 · 开工单 T-45 · 同族写面先例 `agent unload`（D3）", true},
+			opened:   true,
+			endpoint: "POST /api/models/{name}/stop",
+			run:      cmdModelStopGuarded,
 		},
 		{
-			path:    []string{"model", "start"},
-			summary: "起模型（危险 D2 · 本版未开放）",
-			usage:   "zerg model start <模型 id> --yes [--dry-run]",
-			arity:   "any",
-			args:    []string{"模型 id"},
-			danger:  &dangerSpec{dangerD2, "模型 id", "把模型装载起来（占槽位 · 单槽机要排队）", "§三 E 族 · §九 M5 · 开工单 T-45", true},
-			run:     cmdGuarded,
+			path:     []string{"model", "start"},
+			kind:     "ModelStart",
+			summary:  "起模型（D2 写面 · `--dry-run` 零副作用 · 缺 `--yes` ⇒ 2）",
+			usage:    "zerg model start <模型 id> [--dry-run | --yes] [--json <字段>]",
+			arity:    "any",
+			args:     []string{"模型 id"},
+			fields:   []string{"name", "host", "status", "changed"},
+			danger:   &dangerSpec{dangerD2, "模型 id", "把模型装载起来（占槽位 · 单槽机要排队）", "§三 E 族 · §九 M5 · 开工单 T-45 · 同族写面先例 `agent load`（D2）", true},
+			opened:   true,
+			endpoint: "POST /api/models/{name}/start",
+			run:      cmdModelStartGuarded,
 		},
 		{
 			path:    []string{"core", "stop"},
@@ -2204,11 +2250,13 @@ func init() {
 			run:     cmdGuarded,
 		},
 		{
-			path:    []string{"core", "reload"},
-			summary: "重载主控配置（危险 D2 · 本版未开放）",
-			usage:   "zerg core reload --yes [--confirm=<主机名>] [--dry-run]",
-			danger:  &dangerSpec{dangerD2, "主机名", "让主控重读配置（规则表/名册）—— 生效面即时", "§三 C 族 · §6.3 S5", true},
-			run:     cmdGuarded,
+			path:     []string{"core", "reload"},
+			danger:   &dangerSpec{dangerD2, "（群级：不点名主机）", "让主控重读配置（规则表/名册 · `POST /api/config/reload`）—— 生效面即时；不重启、不停任何进程、已加载模型不受影响 · 名册件解析不过 ⇒ 一个请求都不发；可逆：再热加载一次即回旧档", "§三 C 族 · §6.3 S5 · 同族已开放先例 `config reload`（同端点 · D2）· §九 M3 C1", false},
+			opened:   true,
+			summary:  "重载主控配置（D2 写面：`--dry-run` 先行出计划件 · 真跑要 `--yes` · 内部 = 控制面 `POST /api/config/reload`；先校验名册件，解析不过不发请求）",
+			usage:    "zerg core reload [--dry-run] --yes",
+			endpoint: "POST /api/config/reload（路由已在跑的主控上 ⇒ 主控零改动）",
+			run:      cmdCoreReloadGuarded,
 		},
 		{
 			path:    []string{"core", "update"},
@@ -3350,13 +3398,13 @@ func init() {
 			run:         cmdSandboxNegctl,
 		},
 		{
-			path:    []string{"sandbox", "test"},
-			layer:   "host",
-			summary: "虫卵验收夹具（**未接**：`test <fleet|relay|setup|update>` 归批3 —— 依赖被测件正门 + 夹具环境）",
-			usage:   "zerg sandbox test <fleet|relay|setup|update>",
-			arity:   "any",
-			refuses: true,
-			run:     cmdSandboxTest,
+			path:        []string{"sandbox", "test"},
+			layer:       "host",
+			summary:     "虫卵验收夹具（子动作分派：`relay` 已接 —— 底层只调 scripts/sandbox/test-relay-sandbox.sh，命令面不重写逻辑；`fleet`/`setup`/`update` 归批3 未接 · fail-closed）",
+			usage:       "zerg sandbox test <relay|fleet|setup|update>",
+			arity:       "any",
+			passthrough: true,
+			run:         cmdSandboxTest,
 		},
 		// ---- L1 批2（2026-10-08）：`zerg wall` 真动作分派（茧壁证据 2 · 壳转账）＋ 茧壁变异 2（危险档 · 未接）----
 		// 依据：`~/.zerg/state/沙登茧壁组-接线预扫-20261008.tsv` 批2（茧壁证据 ×2 ＋ 茧壁变异 ×2）·
@@ -3404,6 +3452,23 @@ func init() {
 			usage:   "zerg fleet ls",
 			refuses: true,
 			run:     cmdFamilyNotWired,
+		},
+		// ── 命令树登记批（2026-10-09）：`zerg fleet logs` 入口（原占位只到 `fleet ls`）──────
+		// 真身 = `fleet_logs.go` 的 `fleetLogsGateMain`（`gateway/scripts/fleet_logs.py` 的 Go 真搬 ·
+		// 四子命令 query/trace/errors/stats · 打主控 :8580 只读端点 · 已 inproc 登记
+		// `gate_inproc_table.go:166` 键 `fleet-logs`）。入口 `cmdFleetLogs`（宿主 `ui_start.go` ·
+		// 门78 面④ 同 `mcp serve` 理由）**只转发**：✗ 不重写它任何一段 · 退码原样转出
+		// （0 成功 / 1 调用或 HTTP 失败 / 2 用法错）。
+		{
+			path:        []string{"fleet", "logs"},
+			kind:        "FleetLogs",
+			layer:       "host",
+			summary:     "机群日志查询（query/trace/errors/stats · 打主控 :8580 只读端点 · 真身 `fleet_logs.go:fleetLogsGateMain`；入口只转发）",
+			usage:       "zerg fleet logs [--controller <地址>] [--token-file <件>] <query|trace|errors|stats> [旗标…]",
+			arity:       "any",
+			args:        []string{"子命令与旗标逐字来自 gateway/scripts/fleet_logs.py（原样透传 · 0 成功 / 1 调用或 HTTP 失败 / 2 用法错）"},
+			passthrough: true,
+			run:         cmdFleetLogs,
 		},
 		// ---- L1 批3（2026-10-08）：`zerg mcp` 真动作分派（★ 真 Go 化 · 非壳搬运 · 占位 `mcp ls` 下架）----
 		// 依据：`mcp_zerg_server-真Go化-先期设计-20261008.md` §五 步3（命令树接线）· §三（真 Go 化路径）。
@@ -5145,23 +5210,27 @@ func isHelpTopic(name string) bool {
 //	① 只**加出口**：命令树计数（141）不动 —— 这不是一条新命令，是 `help` 这条既有命令在
 //	   「主题名」之外多认一种输入（族名）；`zerg <族> --help` 的两态**一字不改**（族名仍不在册 ⇒ 退 2）。
 //	② **主题表先判**（`cmdHelp` 里那一步）：`version` / `watch` / `config` 既是族名又是主题名 ⇒
-//	   主题面赢（既有面一字不动），族面只兜主题表没有的名字（`model` / `egg` / `impact` …）。
+//	   主题面赢（专题正文为准 · ✗ 不改名、✗ 不改成族面赢）；2026-10-09 起于专题正文**之后追加**该族
+//	   的动作清单（`appendFamilyActions`），族面只兜主题表没有的名字（`model` / `egg` / `impact` …）。
 //	③ 族名**认不出** ⇒ 返回 `done=false`，交回主题面报「未知帮助主题」+ 列可用主题（K14 第三件），
 //	   退码照旧 `2` —— 不新增第三种错误形状。
 //
 // 内容真源 = 命令树（`catalog()`，名字序稳定）：逐条**用法行逐字**来自 `command.usage`，
 // 危险档成员照实带档位标记（不隐藏、也不与 `help dangerous` 打架 —— 那一条判的是三态，这里只标档）。
-func renderFamilyHelp(family string, stdout io.Writer) (int, bool) {
+// familyMembers —— 现算某族的**全部动作**（命令树 `catalog()` 是唯一真源 · 名字序稳定）。
+func familyMembers(family string) []*command {
 	var members []*command
 	for _, c := range catalog() {
 		if len(c.path) > 0 && c.path[0] == family {
 			members = append(members, c)
 		}
 	}
-	if len(members) == 0 {
-		return exitOK, false
-	}
-	open, danger, refused := 0, 0, 0
+	return members
+}
+
+// familyTally —— 三档**各归各的**计数（已开放 / 拒执 / 危险档 · 危险档优先）：与 `renderFamilyHelp`
+// 同一口径。「已开放」那一档的逐条真源 = `openedForRun`（别在第二处再判一次）。
+func familyTally(members []*command) (open, refused, danger int) {
 	for _, c := range members {
 		switch {
 		case c.danger != nil:
@@ -5172,14 +5241,12 @@ func renderFamilyHelp(family string, stdout io.Writer) (int, bool) {
 			refused++
 		}
 	}
-	// 计数口径（缺口 序33 · 2026-09-24 已拍）：**三档各归各的** —— 已开放 / 拒执 / 危险档，
-	// 三者之和恒等于 `len(members)`（修前拿 `danger == nil` 当「已开放」的代理 ⇒ 真跑拒执的那条
-	// 既算「已开放」、又不进危险档 ⇒ **双计**，而 6 = 3 + 3 看着还是自洽的 ⇒ 肉眼看不出病）。
-	// 「已开放」那一档的逐条真源 = `openedForRun`（本函数**不再自己判一次**）。
-	fmt.Fprintf(stdout, "%s %s —— 族级用法（动作 %d 条 · 已开放 %d · 拒执 %d · 危险档 %d）\n",
-		progName, family, len(members), open, refused, danger)
-	fmt.Fprintf(stdout, "（本页只从这个族名出帮助；逐条 `%s %s <动作> --help` 出该条用法串。名字与用法逐字来自命令树。）\n\n",
-		progName, family)
+	return open, refused, danger
+}
+
+// renderFamilyActionList —— 逐条动作的用法行（`renderFamilyHelp` 与「专题面后追加族动作」**共用同一渲染**）：
+// 用法串逐字来自 `command.usage`（续行照缩进），危险档照实带档位标记，末尾接该条 summary。
+func renderFamilyActionList(members []*command, stdout io.Writer) {
 	for _, c := range members {
 		usage := strings.TrimSpace(c.usage)
 		if usage == "" {
@@ -5201,9 +5268,42 @@ func renderFamilyHelp(family string, stdout io.Writer) (int, bool) {
 		}
 		fmt.Fprintln(stdout)
 	}
+}
+
+func renderFamilyHelp(family string, stdout io.Writer) (int, bool) {
+	members := familyMembers(family)
+	if len(members) == 0 {
+		return exitOK, false
+	}
+	// 计数口径（缺口 序33 · 2026-09-24 已拍）：**三档各归各的** —— 已开放 / 拒执 / 危险档，
+	// 三者之和恒等于 `len(members)`（修前拿 `danger == nil` 当「已开放」的代理 ⇒ 真跑拒执的那条
+	// 既算「已开放」、又不进危险档 ⇒ **双计**，而 6 = 3 + 3 看着还是自洽的 ⇒ 肉眼看不出病）。
+	// 「已开放」那一档的逐条真源 = `openedForRun`（`familyTally` **不再自己判一次**）。
+	open, refused, danger := familyTally(members)
+	fmt.Fprintf(stdout, "%s %s —— 族级用法（动作 %d 条 · 已开放 %d · 拒执 %d · 危险档 %d）\n",
+		progName, family, len(members), open, refused, danger)
+	fmt.Fprintf(stdout, "（本页只从这个族名出帮助；逐条 `%s %s <动作> --help` 出该条用法串。名字与用法逐字来自命令树。）\n\n",
+		progName, family)
+	renderFamilyActionList(members, stdout)
 	fmt.Fprintf(stdout, "\n见 '%s help' 看命令树 · '%s help dangerous' 看危险档三态 · '%s help <主题>' 看专题。\n",
 		progName, progName, progName)
 	return exitOK, true
+}
+
+// appendFamilyActions —— 名字**既是族名又是主题名**时（`version` / `watch` / `config`），于**专题正文之后
+// 追加**该族的动作清单（保留「主题面赢」的拍板：专题正文在前、族动作清单在后；✗ 不改名、✗ 不改成族面赢）：
+// 此前这族的动作在帮助面**双路全瞎** —— `zerg config` 与 `zerg config --help` 都退 2 指到
+// `zerg help config`，而后者只出专题正文、一条用法行都没有 ⇒ 族动作 `config reload` 全不可见。
+// 无该族 ⇒ **一个字节都不打**（名字只是主题、不是族名的那些，行为一字不动）。渲染与 `renderFamilyHelp` 同源。
+func appendFamilyActions(family string, stdout io.Writer) {
+	members := familyMembers(family)
+	if len(members) == 0 {
+		return
+	}
+	open, refused, danger := familyTally(members)
+	fmt.Fprintf(stdout, "\n`%s %s` 同时是一个命令族（动作 %d 条 · 已开放 %d · 拒执 %d · 危险档 %d）—— 本族动作：\n\n",
+		progName, family, len(members), open, refused, danger)
+	renderFamilyActionList(members, stdout)
 }
 
 func cmdHelp(inv *invocation, stdout, stderr io.Writer) int {
@@ -5219,12 +5319,21 @@ func cmdHelp(inv *invocation, stdout, stderr io.Writer) int {
 	}
 	if len(inv.args) > 0 {
 		// 主题表在 `topics.go`（**唯一真源**：分派与「可用主题」列清单同一处）。
-		// ★ 2026-09-24（缺口 `Q-149`）：主题表**先判**（表里有的名字一字不动）；表里没有 ⇒ 再看
+		// ★ 2026-09-24（缺口 `Q-149`）：主题表**先判**（表里有的名字：专题正文为准）；表里没有 ⇒ 再看
 		//   「**族名**」（命令树里某条命令路径的第一段）—— 族级帮助此前没有出口，见 `renderFamilyHelp`。
-		if !isHelpTopic(inv.args[0]) {
-			if rc, done := renderFamilyHelp(inv.args[0], stdout); done {
-				return rc
+		// ★ 2026-10-09：名字**既是族名又是主题名**（`version` / `watch` / `config`）⇒ **保留「主题面赢」**
+		//   （✗ 不改名、✗ 不改成族面赢），于**专题正文之后追加**那一族的动作清单 —— 修前这族动作在帮助面
+		//   **双路全瞎**（`zerg config` 与 `zerg config --help` 都退 2 指到 `zerg help config`，而后者只出
+		//   专题正文、一条用法行都没有 ⇒ 族动作 `config reload` 全不可见）。追加面见 `appendFamilyActions`。
+		if isHelpTopic(inv.args[0]) {
+			rc := renderHelpTopic(inv.args[0], stdout, stderr)
+			if rc == exitOK {
+				appendFamilyActions(inv.args[0], stdout)
 			}
+			return rc
+		}
+		if rc, done := renderFamilyHelp(inv.args[0], stdout); done {
+			return rc
 		}
 		return renderHelpTopic(inv.args[0], stdout, stderr)
 	}

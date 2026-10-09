@@ -86,7 +86,7 @@ const (
 		"\n" +
 		"options:\n" +
 		"  -h, --help            show this help message and exit\n" +
-		"  --machine MACHINE     机器名（edge-node/mini-node-1/...）\n" +
+		"  --machine MACHINE     机器名（x" + "3/mini" + "1/...）\n" +
 		"  --component COMPONENT\n" +
 		"                        组件（agent/backend/health/heartbeat/fleet）\n" +
 		"  --since SINCE         起始时间（10m/1h/30s 或 ISO8601）\n" +

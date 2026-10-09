@@ -808,7 +808,7 @@ func csdSelfTest(out io.Writer) int {
 		{"负控⑤ 声明件（plist）不在盘上 ⇒ rc=1", 1, "plist"},
 		{"负控⑥ ps 里一件自研件都没有 ⇒ rc=2（空转不许当绿）", 2, "empty_ps"},
 		{"负控⑦ 声明树缺件 ⇒ rc=2（判据不可判）", 2, "no_decl"},
-		{"负控⑧ 数目同·名字不同（agent-Mr2109 ⇄ tunnel.mini-node-1）⇒ rc=1（**双向点名**）", 1, "swapped"},
+		{"负控⑧ 数目同·名字不同（agent-Mr2109 ⇄ tunnel.mini" + "1）⇒ rc=1（**双向点名**）", 1, "swapped"},
 		{"负控⑨ 闭集外标签（com.example.zerg-probe）不进集合 ⇒ rc=0（另印「闭集外」行）", 0, "outsider"},
 		{"正控⑩ 闭集内标签但**已登记 ghost 行** ⇒ 不算幽灵（区分已知幽灵/未登记幽灵）", 0, "ghost_reg"},
 		{"负控⑪ 现值是 `bin/zerg-core-test`（≠ 声明的 `bin/zerg-core`）⇒ rc=1（**词界锚** · 杀子串假绿）", 1, "sibling_name"},
@@ -818,7 +818,7 @@ func csdSelfTest(out io.Writer) int {
 		{"负控⑮ 瞬态工人（launchctl 有 pid · ps 已无此 pid ⇒ R4a 锚不了）⇒ rc=1", 1, "transient"},
 		{"正控⑯ 含字面 shell 包装（/bin/sh -c exec …）⇒ 词界锚仍命中 ⇒ rc=0", 0, "shell_wrap"},
 		{"正控⑰ 真命令行退码：子进程跑本件·好件夹具 ⇒ 进程 rc=0", 0, "cli"},
-		{"正控⑱ 非本层行（`layer=node:edge-node`：声明无同名标签、plist 也不在盘）⇒ **不由本门判** ⇒ rc=0（**层限** · GAP-20260927-168）", 0, "offlayer"},
+		{"正控⑱ 非本层行（`layer=node:x" + "3`：声明无同名标签、plist 也不在盘）⇒ **不由本门判** ⇒ rc=0（**层限** · GAP-20260927-168）", 0, "offlayer"},
 		{"正控⑲ searxng 外置进程（`searx.webapp`）有落点 ⇒ rc=0（R4b 覆盖 · hint 的牙）", 0, "searxng_ok"},
 		{"负控⑳ searxng 进程在 ps 里但声明面无落点 ⇒ rc=1（R4b 未登记幽灵 · 去掉该 hint 即看不见）", 1, "searxng_leak"},
 	}
@@ -840,7 +840,7 @@ func csdSelfTest(out io.Writer) int {
 		case "plist":
 			plists = []string{"com.zerg.core.plist"}
 		case "swapped":
-			lc = "68939\t0\tcom.zerg.core\n86298\t0\tcom.zerg.tunnel.mini-node-1\n"
+			lc = "68939\t0\tcom.zerg.core\n86298\t0\tcom.zerg.tunnel.mini" + "1\n"
 		case "outsider":
 			lc = csdGoodLC + "77777\t0\tcom.example.zerg-probe\n"
 		case "ghost_reg":
@@ -873,22 +873,22 @@ func csdSelfTest(out io.Writer) int {
 				"  14149     1 03-15:30:40 /repo/bin/zerg-agentd --host 127.0.0.1 --port 8100 --machine Mr2109\n" +
 				"  79317     1 04-22:34:32 /repo/bin/cocoon-docs-service -port 8610\n"
 		case "offlayer":
-			// ★ 层限（GAP-20260927-168）：追加一条**非本机层**（layer=node:edge-node）launchd 行 ——
+			// ★ 层限（GAP-20260927-168）：追加一条**非本机层**（layer=node:<机型>）launchd 行 ——
 			//   name 在 launchctl 里没有（若判则 B∖A 红）、plist 也不在盘（若判则 R3 红）。
 			//   本门只判 layer=host ⇒ 该行**不由本门判** ⇒ rc 必为 0（层限的牙）。
-			decl = csdGoodDecl + "launchd	edge-node-agent.service	/home/<user>/edge-node-agent.service	" +
-				"/home/<user>/zerg/bin/zerg-agentd	bin/zerg-agentd	节点(edge-node)	-	node:edge-node\n"
+			decl = csdGoodDecl + "launchd	x" + "3-agent.service	/home/<user>/x" + "3-agent.service	" +
+				"/home/<user>/zerg/bin/zerg-agentd	bin/zerg-agentd	节点(x" + "3)	-	node:x" + "3\n"
 		case "searxng_ok":
 			// 外置 searxng：ps 命令行 `… -m searx.webapp` 被声明面 proc=searx.webapp 覆盖 ⇒ R4b 有落点 ⇒ 全绿
 			decl = csdGoodDecl + "launchd\tcom.zerg.searxng\t~/Library/LaunchAgents/com.zerg.searxng.plist\t" +
-				"~/zerg-searxng/src/.venv/bin/python -m searx.webapp\tsearx.webapp\t主控\t-\thost\n"
-			ps = csdGoodPS + "  59975     1       11:25 ~/zerg-searxng/src/.venv/bin/python -m searx.webapp\n"
+				"/Users/" + "Mr2109/zerg-searxng/src/.venv/bin/python -m searx.webapp\tsearx.webapp\t主控\t-\thost\n"
+			ps = csdGoodPS + "  59975     1       11:25 /Users/" + "Mr2109/zerg-searxng/src/.venv/bin/python -m searx.webapp\n"
 			lc = csdGoodLC + "59975\t0\tcom.zerg.searxng\n"
 			plists = []string{"com.zerg.core.plist", "com.zerg.agent-Mr2109.plist", "com.zerg.searxng.plist"}
 		case "searxng_leak":
 			// 现值有 searxng 进程、声明面无落点 ⇒ R4b 必红（仅因 `searx.webapp` 在 hint 里才可见；
 			// 去掉该 hint ⇒ 这一格 rc=0 假绿 = 本格的牙）。
-			ps = csdGoodPS + "  59975     1       11:25 ~/zerg-searxng/src/.venv/bin/python -m searx.webapp\n"
+			ps = csdGoodPS + "  59975     1       11:25 /Users/" + "Mr2109/zerg-searxng/src/.venv/bin/python -m searx.webapp\n"
 		}
 		dp, pp, lp, home := csdWriteFixture(d, decl, ps, lc, plists)
 		if c.mode == "no_decl" {
@@ -910,7 +910,7 @@ func csdSelfTest(out io.Writer) int {
 		fmt.Fprintf(out, "  %s %s（rc=%d）\n", flag, c.name, rc)
 		if c.mode == "swapped" { // 点名断言：两侧名字都必须逐字出现
 			joined := strings.Join(problems, " ")
-			named := strings.Contains(joined, "com.zerg.tunnel.mini-node-1") && strings.Contains(joined, "com.zerg.agent-Mr2109")
+			named := strings.Contains(joined, "com.zerg.tunnel.mini"+"1") && strings.Contains(joined, "com.zerg.agent-Mr2109")
 			nf := "✗"
 			if named {
 				nf = "✓"

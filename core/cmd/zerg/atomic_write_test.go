@@ -1,6 +1,6 @@
 // atomic_write_test.go —— 件 core/cmd/zerg/atomic_write.go（scripts/dev/atomic-write.sh 的 Go 真搬）
 // 的回归牙：① 入口三档（help/用法错/正常换件/首建/越界/回读不符/中途被改）② 自检档 15 格
-// ③ ★ 两态对拍（sh 直跑 ⟷ Go · 噪声归一后逐字同）。
+// ③ ★ 金标内化（旧 sh 对拍退场 ⇒ 逐格金标收成 Go 常量 · 两态 · ✗ 不 Skip）。
 //
 // 两态夹具一律落**仓外**（t.TempDir() ⇒ $TMPDIR · ✗ 不落仓内：门76 会把盘上任何新件算进分母）。
 package main
@@ -8,7 +8,6 @@ package main
 import (
 	"bytes"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -197,22 +196,116 @@ func TestAwSelfTest(t *testing.T) {
 	}
 }
 
-// ── 两态对拍（sh 直跑 ⟷ Go · 噪声归一后逐字同）───────────────────────────────────
+// ── 内化金标：旧 sh 对拍（恒 Skip · 零保护）的逐格金标收成 Go 常量 ──────────────────
+//
+// 为什么这么测（M2 口径 · 与 `check_manifest_freshness_test.go` 的
+// `TestCheckManifestFreshnessGoldenInternalized` / `...GoldenTwoStates` 同族，并照
+// `archive_mount_test.go:241 TestArchiveMountRunsWithoutScript` 的两态体例）：本件原
+// 「sh 真身 ⟷ Go 真搬」逐字对拍（旧名 `TestAwTwoStateParity`）的对拍源
+// `scripts/dev/atomic-write.sh` 已退场（DEV-1910 M2 批）⇒ 对拍源消失、断言恒 Skip
+// （假绿、零保护）。按 DEV-2143 先例把金标真源**收回 Go 半现役行为本身**：
+//
+//	★ 金标计算式（✗ 不臆造 · 逐格由「Go 半现役行为现算」得到）：
+//	  逐格「输入（seed + argv + neg/drop）⇒ (rc, stdout+stderr)」由 `awRunIn` 现跑捕获
+//	  （一次性现算、只读夹具、✗ 不落仓），冻成下表 `wantRC/wantOut`；**本机时点类量**在比对前
+//	  归一化（✗ 不冻结 —— 因其本非常量）：
+//	    ① 夹具根 `t.TempDir()`（随机路径 + macOS /var↔/private/var）⇒ `<FX>`；
+//	    ② 留档名时间戳 `.bak-YYYYMMDD-HHMMSS`（含同名冲突的 `.<pid>` 后缀）⇒ `.bak-<STAMP>`；
+//	    ③ `$TMPDIR` ⇒ `<TMP>`；自检临时名 `aw-selftest.<6 位随机>` ⇒ `aw-selftest.<RND>`。
+//
+// 两态（✗ 不许 Skip）：A 态 = 真仓（退役 sh 不在盘）＋夹具无 sh；B 态 = 合成「旧态」夹具
+// （把退役 sh 路径 `scripts/dev/atomic-write.sh` 放回）⇒ 两态**对同一套金标逐字同命中**，证
+// sh 在/不在盘都不改判据结论（内化彻底 · 将来若有人让 `awRunIn` 重新去读 sh，B 态当场分家）。
+//
+// ★ 哑化负控（"牙" · 见交付读数）：`-overlay` 把 `atomic_write.go` 的回读校验一臂哑化
+// （`awArchivePrev` 的 `h != src` 判据 → 恒不红）⇒ 本用例**必 FAIL 且带行号**
+// （✗ 不真改仓内源 · 免 `dev edit` 前的仓内污染）。
+
+// awT_shRel —— 对拍真身（已退场 sh）的仓根相对路径；金标两态就钉在它「在 / 不在盘」。
+const awT_shRel = "scripts/dev/atomic-write.sh"
+
+type awGoldenCase struct {
+	name    string
+	seed    func(dir string)
+	argv    func(dir string) []string
+	neg     string
+	drop    string
+	wantRC  int
+	wantOut string // stdout + stderr 归一化后（现算自证 · ✗ 手写）
+}
+
+// awGoldenScens —— 金标真源（17 格）。seed/argv/neg/drop 与原对拍逐格同；
+// wantRC/wantOut 由 `awRunIn` 现跑捕获（见件头金标计算式）。
+func awGoldenScens(t *testing.T) []awGoldenCase {
+	t.Helper()
+	seedDemo := func(dir string) {
+		awSeed(t, dir, "scripts/gates/demo.sh", "OLD v1\n")
+		awSeed(t, dir, "outside/new2.sh", "NEW v2\n")
+	}
+	return []awGoldenCase{
+		{name: "help", argv: func(d string) []string { return []string{"--help"} }, wantRC: 0, wantOut: "用法\n  bash scripts/dev/atomic-write.sh --target <仓内相对路径> --from <仓外新件绝对路径>\n  bash scripts/dev/atomic-write.sh --help\n  bash scripts/dev/atomic-write.sh --self-test\n说明\n  --target  要换的件（仓内相对路径，例 scripts/gates/precommit-gates.sh）\n  --from    新内容（仓外新件的绝对路径）\n  步骤：算旧件 sha256 -> 落 scripts/gates/_history/<件名>.bak-<时间戳> -> 回读校验\n        -> 失败即拒写（目标件一个字节不动）-> 写前预校 -> 临时件落目标 -> 写后回读对拍\n退码\n  0 换件成功 · 1 拒写（越界/留档失败/回读不符/写后对拍不符）· 2 不给结论（用法错/缺件/自检不过/预校发现中途被改）\n"},
+		{name: "bogus", argv: func(d string) []string { return []string{"--bogus"} }, wantRC: 2, wantOut: "用法错：未知旗标 --bogus（见 --help）\n"},
+		{name: "positional", argv: func(d string) []string { return []string{"foo"} }, wantRC: 2, wantOut: "用法错：多余的位置参数 foo（见 --help）\n"},
+		{name: "target_missing_arg", argv: func(d string) []string { return []string{"--target"} }, wantRC: 2, wantOut: "用法错：--target 缺实参（见 --help）\n"},
+		{name: "from_missing_arg", argv: func(d string) []string { return []string{"--from"} }, wantRC: 2, wantOut: "用法错：--from 缺实参（见 --help）\n"},
+		{name: "missing_target", argv: func(d string) []string { return []string{"--from", d + "/outside/new2.sh"} }, wantRC: 2, wantOut: "用法错：缺 --target（见 --help）\n"},
+		{name: "missing_from", seed: seedDemo, argv: func(d string) []string { return []string{"--target", "scripts/gates/demo.sh"} }, wantRC: 2, wantOut: "用法错：缺 --from（见 --help）\n"},
+		{name: "from_relative", seed: seedDemo, argv: func(d string) []string { return []string{"--target", "scripts/gates/demo.sh", "--from", "new2.sh"} }, wantRC: 2, wantOut: "用法错：--from 要绝对路径（见 --help）\n"},
+		{name: "from_absent", seed: seedDemo, argv: func(d string) []string {
+			return []string{"--target", "scripts/gates/demo.sh", "--from", d + "/outside/nope.sh"}
+		}, wantRC: 2, wantOut: "用法错：--from 件不存在：<FX>/outside/nope.sh\n"},
+		{name: "target_dir_absent", seed: seedDemo, argv: func(d string) []string {
+			return []string{"--target", "scripts/nope/demo.sh", "--from", d + "/outside/new2.sh"}
+		}, wantRC: 2, wantOut: "用法错：--target 目录不存在（见 --help）\n"},
+		{name: "replace_fresh", seed: seedDemo, argv: func(d string) []string {
+			return []string{"--target", "scripts/gates/demo.sh", "--from", d + "/outside/new2.sh"}
+		}, wantRC: 0, wantOut: "   🗄  已留档旧件：scripts/gates/_history/demo.sh.bak-<STAMP>（7 字节 · sha256 02bb0d3832a943f15a0d584829983fafb3dbe192062e1af54d51dab139e76292）\n✅ 换件成功：scripts/gates/demo.sh（7 字节 · sha256 3d000f7a5aa81a3733017a8a87a78ac651584f193b3d5a319c2d712f9fab5bfa）\n   旧件 sha256 02bb0d3832a943f15a0d584829983fafb3dbe192062e1af54d51dab139e76292 → 新件 sha256 3d000f7a5aa81a3733017a8a87a78ac651584f193b3d5a319c2d712f9fab5bfa（旧件已在 scripts/gates/_history/ 留档）\n"},
+		{name: "create_first", seed: func(dir string) { awSeed(t, dir, "outside/new.sh", "NEW\n") }, argv: func(d string) []string {
+			return []string{"--target", "scripts/gates/new.sh", "--from", d + "/outside/new.sh"}
+		}, wantRC: 0, wantOut: "✅ 换件成功：scripts/gates/new.sh（4 字节 · sha256 21998928836741932680bb7ef8fb3fe2d8709b5afdf896752642d10595f9a610）\n   首建（无旧件可留档）\n"},
+		{name: "archive_skip_same_sha", seed: func(dir string) {
+			awSeed(t, dir, "scripts/gates/demo.sh", "OLD v1\n")
+			awSeed(t, dir, "scripts/gates/_history/demo.sh.bak-20200101-000000", "OLD v1\n")
+			awSeed(t, dir, "outside/new3.sh", "NEW v3\n")
+		}, argv: func(d string) []string {
+			return []string{"--target", "scripts/gates/demo.sh", "--from", d + "/outside/new3.sh"}
+		}, wantRC: 0, wantOut: "   🗄  留档跳过：demo.sh 与已有留档 demo.sh.bak-<STAMP> 逐字节相同（sha256 02bb0d3832a943f15a0d584829983fafb3dbe192062e1af54d51dab139e76292）—— 不重复留、不覆盖\n✅ 换件成功：scripts/gates/demo.sh（7 字节 · sha256 1469b962e2d11775ab69d13db2b9ea927e9528efccbd19a3d2cab95a8729baf6）\n   旧件 sha256 02bb0d3832a943f15a0d584829983fafb3dbe192062e1af54d51dab139e76292 → 新件 sha256 1469b962e2d11775ab69d13db2b9ea927e9528efccbd19a3d2cab95a8729baf6（旧件已在 scripts/gates/_history/ 留档）\n"},
+		{name: "drop_out_of_bounds", seed: seedDemo, drop: "bin", argv: func(d string) []string {
+			return []string{"--target", "scripts/gates/demo.sh", "--from", d + "/outside/new2.sh"}
+		}, wantRC: 1, wantOut: "   ✗ 留档落点 bin/demo.sh.bak-<STAMP> 不在 scripts/gates/_history/ 之下 ⇒ 判红、拒写（目标件一个字节不动）\n留档失败/落点越界 ⇒ 拒写（scripts/gates/demo.sh 一个字节未动）\n"},
+		{name: "corrupt_archive", seed: func(dir string) {
+			awSeed(t, dir, "scripts/gates/demo.sh", "OLD v9 unique\n")
+			awSeed(t, dir, "outside/new2.sh", "NEW v2\n")
+		}, neg: "corrupt_archive", argv: func(d string) []string {
+			return []string{"--target", "scripts/gates/demo.sh", "--from", d + "/outside/new2.sh"}
+		}, wantRC: 1, wantOut: "   ✗ 留档回读 sha 与旧件不同（e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 ≠ 97f9bc06223b90a6281380b941837a35e65033fbd170eac1d785e5885f0f035c）：demo.sh.bak-<STAMP> ⇒ 拒写\n留档失败/落点越界 ⇒ 拒写（scripts/gates/demo.sh 一个字节未动）\n"},
+		{name: "mutate_target", seed: func(dir string) {
+			awSeed(t, dir, "scripts/gates/demo.sh", "OLD v1\n")
+			awSeed(t, dir, "outside/x.sh", "NEW vX\n")
+		}, neg: "mutate_target", argv: func(d string) []string {
+			return []string{"--target", "scripts/gates/demo.sh", "--from", d + "/outside/x.sh"}
+		}, wantRC: 2, wantOut: "   🗄  已留档旧件：scripts/gates/_history/demo.sh.bak-<STAMP>（7 字节 · sha256 02bb0d3832a943f15a0d584829983fafb3dbe192062e1af54d51dab139e76292）\n   ✗ 写前预校失败：目标件现值 sha 与第①步读到的旧件 sha 不同\n     记忆旧件 sha256 02bb0d3832a943f15a0d584829983fafb3dbe192062e1af54d51dab139e76292\n     目标件现 sha256 ecaba77e1d5e56d765c97ce30fe35ac7a807e02b04974b7ec5d57140c1ef8fce\n     ⇒ 有人在本件开工后中途改过 scripts/gates/demo.sh ⇒ 拒写、不给结论（目标件一个字节不动）\n   cmp：目标件与预校时刻读数逐字节相同（cmp -s ⇒ rc=0）⇒ 本件未写一个字节\n"},
+		{name: "self_test", argv: func(d string) []string { return []string{"--self-test"} }, wantRC: 0, wantOut: "  —— atomic-write.sh --self-test（合成夹具 · 全在 <TMP>/aw-selftest.<RND> 下）——\n    ✅ ① 正常换件 ⇒ rc=0\n    ✅ ① 目标件 == 新件内容\n    ✅ ① _history 命中 1 枚\n    ✅ ② 留档件 sha == 旧件现算 sha（两串相同）\n    ✅ ①b 同名同 sha 已存在 ⇒ 跳过不重写（仍 1 枚）\n    ✅ ③ 中途被改 ⇒ rc=2（非零）\n    ✅ ③ 目标件未被写入新内容（未动）\n    ✅ ③ 回执里有 cmp 证明行\n    ✅ ④ 落点越界 ⇒ rc=1\n    ✅ ④ 落点越界 ⇒ 逐字点名（不在 …/_history/ 之下）\n    ✅ ⑤ 未知旗标 ⇒ rc=2\n    ✅ ⑤ 未知旗标 ⇒ 逐字点名\n    ✅ ⑥ 留档回读不符 ⇒ rc=1（拒写）\n    ✅ ⑥ 回读不符 ⇒ 目标件未被覆盖\n    ✅ ⑥ 回读不符 ⇒ 逐字点名\n  —— 自检：15 格过 · 0 格红（夹具 <TMP>/aw-selftest.<RND>）——\n"},
+	}
+}
 
 var (
 	awReBak = regexp.MustCompile(`\.bak-\d{8}-\d{6}(\.\d+)?`)
 	awReTmp = regexp.MustCompile(`aw-selftest\.[A-Za-z0-9]{6}`)
 )
 
-func awNorm(s string, roots ...string) string {
-	for _, r := range roots {
-		s = strings.ReplaceAll(s, r, "<FX>")
+// awNormGolden —— 归一本机时点类量（夹具根 / $TMPDIR / 留档时间戳 / 自检临时名）⇒ 金标跨机可复现。
+func awNormGolden(s, fx string) string {
+	s = strings.ReplaceAll(s, fx, "<FX>")
+	if td := os.TempDir(); td != "" && td != fx {
+		s = strings.ReplaceAll(s, td, "<TMP>")
 	}
 	s = awReBak.ReplaceAllString(s, ".bak-<STAMP>")
-	s = awReTmp.ReplaceAllString(s, "aw-selftest.<TMP>")
+	s = awReTmp.ReplaceAllString(s, "aw-selftest.<RND>")
 	return s
 }
 
+// awTestRepoRoot —— 由 cwd 上溯找仓根（判据 = 有 core/internal/version/version.go）。
 func awTestRepoRoot(t *testing.T) string {
 	t.Helper()
 	wd, err := os.Getwd()
@@ -232,152 +325,54 @@ func awTestRepoRoot(t *testing.T) string {
 	}
 }
 
-type awScen struct {
-	name string
-	seed func(dir string)
-	argv func(dir string) []string
-	neg  string
-	drop string
-}
-
-func awRunSh(t *testing.T, script, dir string, argv []string, neg, drop string) (int, string) {
+// awRunGolden —— 逐格现跑 Go 半（夹具在 $TMPDIR · 仓外），归一后与冻值逐字比；返回失配格数。
+func awRunGolden(t *testing.T, tag string, mkFixture func(*testing.T) string) int {
 	t.Helper()
-	cmd := exec.Command("bash", append([]string{script}, argv...)...)
-	cmd.Dir = dir
-	env := []string{}
-	for _, kv := range os.Environ() {
-		if strings.HasPrefix(kv, "ATOMIC_WRITE_") {
-			continue
+	mism := 0
+	for _, c := range awGoldenScens(t) {
+		fx := mkFixture(t)
+		if c.seed != nil {
+			c.seed(fx)
 		}
-		env = append(env, kv)
+		rc, out, errb := awRunIn(fx, c.drop, c.neg, c.argv(fx)...)
+		got := awNormGolden(out+errb, fx)
+		if rc != c.wantRC {
+			mism++
+			t.Errorf("[%s/%s] rc=%d（冻值 %d）", tag, c.name, rc, c.wantRC)
+		}
+		if got != c.wantOut {
+			mism++
+			t.Errorf("[%s/%s] 输出漂移\n实得=%q\n冻值=%q", tag, c.name, got, c.wantOut)
+		}
 	}
-	if neg != "" {
-		env = append(env, "ATOMIC_WRITE_NEG="+neg)
-	}
-	if drop != "" {
-		env = append(env, "ATOMIC_WRITE_DROP_REL="+drop)
-	}
-	cmd.Env = env
-	var so, se bytes.Buffer
-	cmd.Stdout = &so
-	cmd.Stderr = &se
-	err := cmd.Run()
-	rc := 0
-	if ee, ok := err.(*exec.ExitError); ok {
-		rc = ee.ExitCode()
-	} else if err != nil {
-		t.Fatalf("起 bash 失败：%v", err)
-	}
-	return rc, so.String() + se.String()
+	return mism
 }
 
-// awT_pyRel / awT_goHalfRel —— 两态对拍所依赖的 sh 原件与其同源 Go 半（本件实现件）的仓根相对路径。
-const (
-	awT_pyRel     = "scripts/dev/atomic-write.sh"
-	awT_goHalfRel = "core/cmd/zerg/atomic_write.go"
-)
-
-// awT_fileIsFile —— 存在且是普通文件（退役判定的两缀之一）。
-func awT_fileIsFile(p string) bool {
-	st, err := os.Stat(p)
-	return err == nil && st.Mode().IsRegular()
-}
-
-func TestAwTwoStateParity(t *testing.T) {
+// TestAwTwoStatesGoldenInternalized —— A 态（真仓无 sh）金标自证（✗ 不 Skip · 逐格真断言 ·
+// ✗ 不放宽为「只判非空」）。
+func TestAwTwoStatesGoldenInternalized(t *testing.T) {
 	root := awTestRepoRoot(t)
-	script := filepath.Join(root, "scripts", "dev", "atomic-write.sh")
-	if _, err := os.Stat(script); err != nil {
-		// ★ 三段式回退腿（先例 `check_public_face_anchor_test.go:106` / `check_wallclock_ratchet_test.go:173`
-		//   的「退役态 ⇒ 对拍格无对象，容忍跳过」）：sh 原件缺席而其 **Go 半**在盘 ⇒ 退役态
-		//   —— 两态对拍没有对拍对象 ⇒ **体面跳过**（✗ 不判失败、✗ 不把断言改宽成永真）。
-		//   Go 半自身的断言由本包其余用例（TestAwHelp / TestAwReplaceFresh / TestAwCreateFirst /
-		//   TestAwArchiveSkipSameSha / TestAwDropOutOfBounds / TestAwCorruptArchive / TestAwMutateTarget /
-		//   TestAwSelfTest）**照常覆盖**。两半皆缺（真消失）⇒ fail-closed（缺件 ≠ 绿），照旧判红。
-		if awT_fileIsFile(filepath.Join(root, awT_goHalfRel)) {
-			t.Skipf("退役态：sh 原件 %s 已退场（其 Go 半 %s 在盘）⇒ 两态对拍格无对象，容忍跳过", awT_pyRel, awT_goHalfRel)
-		}
-		t.Fatalf("原件不在盘：%s", script)
+	sh := filepath.Join(root, awT_shRel)
+	if _, err := os.Stat(sh); err == nil {
+		t.Fatalf("A 态前提破：退役 sh 竟在盘 %s（本件前提 = 内化后无 sh）", sh)
 	}
-	seedDemo := func(dir string) {
-		awSeed(t, dir, "scripts/gates/demo.sh", "OLD v1\n")
-		awSeed(t, dir, "outside/new2.sh", "NEW v2\n")
+	if n := awRunGolden(t, "A真仓无sh", awMkFixture); n != 0 {
+		t.Fatalf("A 态金标失配 %d 格", n)
 	}
-	scens := []awScen{
-		{name: "help", argv: func(d string) []string { return []string{"--help"} }},
-		{name: "bogus", argv: func(d string) []string { return []string{"--bogus"} }},
-		{name: "positional", argv: func(d string) []string { return []string{"foo"} }},
-		{name: "target_missing_arg", argv: func(d string) []string { return []string{"--target"} }},
-		{name: "from_missing_arg", argv: func(d string) []string { return []string{"--from"} }},
-		{name: "missing_target", argv: func(d string) []string { return []string{"--from", d + "/outside/new2.sh"} }},
-		{name: "missing_from", seed: seedDemo, argv: func(d string) []string { return []string{"--target", "scripts/gates/demo.sh"} }},
-		{name: "from_relative", seed: seedDemo, argv: func(d string) []string {
-			return []string{"--target", "scripts/gates/demo.sh", "--from", "new2.sh"}
-		}},
-		{name: "from_absent", seed: seedDemo, argv: func(d string) []string {
-			return []string{"--target", "scripts/gates/demo.sh", "--from", d + "/outside/nope.sh"}
-		}},
-		{name: "target_dir_absent", seed: seedDemo, argv: func(d string) []string {
-			return []string{"--target", "scripts/nope/demo.sh", "--from", d + "/outside/new2.sh"}
-		}},
-		{name: "replace_fresh", seed: seedDemo, argv: func(d string) []string {
-			return []string{"--target", "scripts/gates/demo.sh", "--from", d + "/outside/new2.sh"}
-		}},
-		{name: "create_first", seed: func(dir string) {
-			awSeed(t, dir, "outside/new.sh", "NEW\n")
-		}, argv: func(d string) []string {
-			return []string{"--target", "scripts/gates/new.sh", "--from", d + "/outside/new.sh"}
-		}},
-		{name: "archive_skip_same_sha", seed: func(dir string) {
-			awSeed(t, dir, "scripts/gates/demo.sh", "OLD v1\n")
-			awSeed(t, dir, "scripts/gates/_history/demo.sh.bak-20200101-000000", "OLD v1\n")
-			awSeed(t, dir, "outside/new3.sh", "NEW v3\n")
-		}, argv: func(d string) []string {
-			return []string{"--target", "scripts/gates/demo.sh", "--from", d + "/outside/new3.sh"}
-		}},
-		{name: "drop_out_of_bounds", seed: seedDemo, drop: "bin", argv: func(d string) []string {
-			return []string{"--target", "scripts/gates/demo.sh", "--from", d + "/outside/new2.sh"}
-		}},
-		{name: "corrupt_archive", seed: func(dir string) {
-			awSeed(t, dir, "scripts/gates/demo.sh", "OLD v9 unique\n")
-			awSeed(t, dir, "outside/new2.sh", "NEW v2\n")
-		}, neg: "corrupt_archive", argv: func(d string) []string {
-			return []string{"--target", "scripts/gates/demo.sh", "--from", d + "/outside/new2.sh"}
-		}},
-		{name: "mutate_target", seed: func(dir string) {
-			awSeed(t, dir, "scripts/gates/demo.sh", "OLD v1\n")
-			awSeed(t, dir, "outside/x.sh", "NEW vX\n")
-		}, neg: "mutate_target", argv: func(d string) []string {
-			return []string{"--target", "scripts/gates/demo.sh", "--from", d + "/outside/x.sh"}
-		}},
-		{name: "self_test", argv: func(d string) []string { return []string{"--self-test"} }},
+}
+
+// TestAwTwoStatesGoldenTwoStates —— 两态逐字同：A 态 = 夹具无 sh（真仓现态）；B 态 = 合成
+// 「旧态」夹具（`scripts/dev/atomic-write.sh` 在位）⇒ 两态对同一套金标逐字同命中（✗ 不 Skip）。
+func TestAwTwoStatesGoldenTwoStates(t *testing.T) {
+	if n := awRunGolden(t, "A夹具无sh", awMkFixture); n != 0 {
+		t.Fatalf("A 态金标失配 %d 格", n)
 	}
-	for _, s := range scens {
-		t.Run(s.name, func(t *testing.T) {
-			fxA := awMkFixture(t) // Go 侧
-			fxB := awMkFixture(t) // sh 侧
-			if s.seed != nil {
-				s.seed(fxA)
-				s.seed(fxB)
-			}
-			// sh 侧须把原件复制进夹具（原件以自身位置上溯定仓根 ⇒ 直接跑原件判的是真仓）。
-			if !awCopyP(script, filepath.Join(fxB, "scripts/dev/atomic-write.sh")) {
-				t.Fatal("复制原件进 sh 夹具失败")
-			}
-			argvA := s.argv(fxA)
-			argvB := s.argv(fxB)
-			rcGo, outGo, errGo := awRunIn(fxA, s.drop, s.neg, argvA...)
-			rcSh, outSh := awRunSh(t, filepath.Join(fxB, "scripts/dev/atomic-write.sh"), fxB, argvB, s.neg, s.drop)
-			// 产物面（目标件内容）也要比。
-			prodA, _ := os.ReadFile(filepath.Join(fxA, "scripts/gates/demo.sh"))
-			prodB, _ := os.ReadFile(filepath.Join(fxB, "scripts/gates/demo.sh"))
-			gotGo := awNorm(outGo+errGo, fxA)
-			gotSh := awNorm(outSh, fxB)
-			if rcGo != rcSh || gotGo != gotSh {
-				t.Fatalf("两态不同：\n  Go rc=%d out=%q\n  sh rc=%d out=%q", rcGo, gotGo, rcSh, gotSh)
-			}
-			if string(prodA) != string(prodB) {
-				t.Fatalf("产物不同：Go=%q sh=%q", string(prodA), string(prodB))
-			}
-		})
+	mkOld := func(t *testing.T) string {
+		d := awMkFixture(t)
+		awSeed(t, d, awT_shRel, "#!/bin/sh\n# stub：造「旧态」——退役 sh 在位（本件只证 sh 在/不在盘不改判据结论）\n")
+		return d
+	}
+	if n := awRunGolden(t, "B旧态有sh", mkOld); n != 0 {
+		t.Fatalf("B 态金标失配 %d 格（sh 在盘不得改判据结论）", n)
 	}
 }

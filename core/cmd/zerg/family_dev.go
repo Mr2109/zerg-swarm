@@ -218,8 +218,8 @@ func cmdDevProposalNew(inv *invocation, stdout, stderr io.Writer) int {
 	if why := evidenceNotInLedgerWhy(rec.Evidence); why != "" {
 		inv.setErr("usage", "evidence_not_in_ledger", why)
 		fmt.Fprintf(stderr, "%s: %s\n", progName, why)
-		fmt.Fprintf(stderr, "口径（§17.3 铁律② · 与 `--criterion` 同档）：出处要**在册** —— `%s gap ls` 的账里、或在册提案件里查得到；"+
-			"查不到的出处 = 挂空的证据 ⇒ 不给结论\n", progName)
+		fmt.Fprintf(stderr, "口径（§17.3 铁律② · 与 `--criterion` 同档）：**id 形状**的出处（`GAP-…`/`DEV-…`）要**在册** —— `%s gap ls` 的账里、或在册提案件里查得到；"+
+			"查不到的 id = 挂空的证据 ⇒ 不给结论（GAP-20261009-09：描述性证据——无前缀的自由文本——直接收，不走本闸）\n", progName)
 		return exitUsage
 	}
 	if rec.By == "" {
@@ -971,9 +971,24 @@ func eggSuffix(egg string) string {
 
 // ---- 出处**在册**（`GAP-20260927-254`）----
 
-// evidenceNotInLedgerWhy 判每条出处 id 是否**在册**：缺口账（`zerg gap ls` 的真源）或在册提案件里查得到。
+// evidenceIsIDShaped —— 出处是不是**账内 id 形状**：带 `GAP-`（缺口账 id）或 `DEV-`（在册提案号）前缀。
+//
+// ★ `GAP-20261009-09`：`--evidence` 认两类证据 ——
+//
+//	① **id 形状**（`GAP-…` / `DEV-…`）⇒ 仍须**在册**（下面逐条查缺口账 / 在册件）；
+//	② **描述性证据**（无前缀的自由文本）⇒ 按其本义收，**不**要求在册。
+//
+// 这一格只判「长得像不像账内 id」——**不放宽**对真 id 的校验（id 形状仍必在册），也不让不存在的 id 蒙混。
+func evidenceIsIDShaped(e string) bool {
+	k := strings.ToUpper(strings.TrimSpace(e))
+	return strings.HasPrefix(k, "GAP-") || strings.HasPrefix(k, "DEV-")
+}
+
+// evidenceNotInLedgerWhy 判每条**出处 id** 是否**在册**：缺口账（`zerg gap ls` 的真源）或在册提案件里查得到。
 // 返回**第一条查不到的**（空串 = 全部在册）。
 //
+// ★ `GAP-20261009-09`：只对 **id 形状** 的出处判在册（`evidenceIsIDShaped`）；描述性证据
+// （无 `GAP-`/`DEV-` 前缀的自由文本）**直接收** —— 证据面由此有了「描述性文本」的投放处。
 // ★ 真源只走读面：缺口账走 `readGapLedger`（与 `gap ls` **同一份式子**，不另抄一份账），
 //
 //	在册件走 `loadProposals`（与 `dev proposal list` 同源）—— 不新立第二套「在册」判据。
@@ -981,6 +996,17 @@ func eggSuffix(egg string) string {
 // ★ 「账读不到」**不**退化成「放行」（与 §九 M9「读不到不当没有」同口径）：读不动 ⇒ 不给结论（rc=2）。
 // ★ 大小写折叠只为**容错书写**（`gap show` 面 id 全大写）；判的是「查得到/查不到」，不改 id 本身。
 func evidenceNotInLedgerWhy(ev []string) string {
+	// ★ GAP-20261009-09：只对 **id 形状** 的出处判在册；描述性证据直接收。
+	//   先筛：全无 id 形状 ⇒ 无须读账（描述性证据不依赖缺口账 ⇒ 账读不到也不该拦它）。
+	var ids []string
+	for _, e := range ev {
+		if evidenceIsIDShaped(e) {
+			ids = append(ids, e)
+		}
+	}
+	if len(ids) == 0 {
+		return ""
+	}
 	led, err := readGapLedger()
 	if err != nil {
 		return fmt.Sprintf("缺口账读不出来（%v）⇒ 出处**无法校验** ⇒ 不给结论（退码 2）", err)
@@ -995,9 +1021,9 @@ func evidenceNotInLedgerWhy(ev []string) string {
 			inProposal[strings.ToUpper(strings.TrimSpace(r.ID))] = true
 		}
 	}
-	for _, e := range ev {
+	for _, e := range ids {
 		key := strings.ToUpper(strings.TrimSpace(e))
-		if key == "" || inLedger[key] || inProposal[key] {
+		if inLedger[key] || inProposal[key] {
 			continue
 		}
 		return fmt.Sprintf("出处 %q 在缺口账 / 在册件里**查不到** ⇒ 不给结论（退码 2）—— 挂不存在出处的提案不许提", e)

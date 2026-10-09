@@ -37,6 +37,10 @@ var ppfRulesBase = []string{
 	"example-35b-v2\texample-35b-v2",
 	"L1VzZXJzL2Z1enowMS8uY29uZmlnL3plcmcvdG9rZW4=\tL1VzZXJzL2Z1enowMS8uY29uZmlnL3plcmcvdG9rZW4=",
 	"Zerg-内部文档\tZerg-内部文档",
+	"regex:(^|[^-0-9A-Za-z_\\[])\\bx3($|[^-0-9A-Za-z_])\t\\1edge-node\\2\t机群机型名（低端机型·小写·通称）",
+	"regex:(^|[^-0-9A-Za-z_\\[\\\"])\\bX3($|[^-0-9A-Za-z_-])\t\\1EDGE-NODE\\2\t机群机型名（低端机型·大写·通称）",
+	"regex:(^|[^-0-9A-Za-z_\\[])\\bmini1($|[^-0-9A-Za-z_])\t\\1mini-node-1\\2\t机群机型名（迷你子端 1·通称）",
+	"regex:(^|[^-0-9A-Za-z_\\[])\\bmini2($|[^-0-9A-Za-z_])\t\\1mini-node-2\\2\t机群机型名（迷你子端 2·通称）",
 	"!夹具\tcore/internal/obs/redact/*_test.go",
 }
 

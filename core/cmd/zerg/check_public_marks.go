@@ -171,7 +171,7 @@ func cpmIsSpace(r rune) bool { return unicode.IsSpace(r) }
 // cpmBadDotDigit = py `(?<![0-9.])` 的「前一字 ∈ [0-9.]」判定。
 func cpmBadDotDigit(r rune) bool { return (r >= '0' && r <= '9') || r == '.' }
 
-// cpmBadHostChar = py `[A-Za-z0-9_.-]` 单字符判定（edge-node 形态用）。
+// cpmBadHostChar = py `[A-Za-z0-9_.-]` 单字符判定（机型 host 形态用）。
 func cpmBadHostChar(r rune) bool {
 	return (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') ||
 		(r >= '0' && r <= '9') || r == '_' || r == '.' || r == '-'
@@ -561,10 +561,10 @@ func cpmBuildPatterns() []cpmPat {
 		{"内网地址 172.16–31.x", cpmReFind(reIP172, cpmBadDotDigit, nil)},
 		{"账户：Gitee 镜像账号", cpmLitFinder([]string{"A72" + "109"}, cpmIsWord, cpmIsWord)},
 		{"机群机型名 Mr2109", cpmLitFinder([]string{"ms" + "01"}, cpmIsWord, cpmIsWord)},
-		{"机群机型名 edge-node", cpmLitFinder([]string{"edge-node"}, cpmBadHostChar, cpmBadHostChar)},
-		{"机群机型名 EDGE-NODE（大写）", cpmLitFinder([]string{"EDGE-NODE"}, cpmBadHostChar, cpmBadHostChar)},
-		{"机群机型名 edge-node-（edge-node 后接连字符的 host 形态）", cpmLitFinder([]string{"edge-node-", "X3-"}, cpmBadHostChar, nil)},
-		{"机群机型名 miniN", cpmLitFinder([]string{"mini-node-1", "mini-node-2", "mini3"}, cpmIsWord, cpmIsWord)},
+		{"机群机型名 小端机型", cpmLitFinder([]string{"x" + "3"}, cpmBadHostChar, cpmBadHostChar)},
+		{"机群机型名 小端机型（大写）", cpmLitFinder([]string{"X" + "3"}, cpmBadHostChar, cpmBadHostChar)},
+		{"机群机型名 小端机型-（后接连字符的 host 形态）", cpmLitFinder([]string{"x" + "3-", "X" + "3-"}, cpmBadHostChar, nil)},
+		{"机群机型名 miniN", cpmLitFinder([]string{"mini" + "1", "mini" + "2", "mini" + "3"}, cpmIsWord, cpmIsWord)},
 		{"私有项目名", cpmReFind(reProj, nil, nil)},
 		{"GitHub 令牌", cpmReFind(reGH, nil, nil)},
 		{"API 密钥（sk-）", cpmReFind(reSk, nil, nil)},

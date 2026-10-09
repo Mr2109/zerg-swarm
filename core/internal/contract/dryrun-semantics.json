@@ -184,13 +184,6 @@
    "备注": "对拍件"
   },
   {
-   "file": "scripts/evals/chat-harness.py",
-   "类": "脚本侧（评测）",
-   "语义": "dryrun.v1",
-   "零副作用判据": "`--dry-run` ⇒ 只建会话与读观测，**不发消息**（模型侧零调用）",
-   "备注": "评测件：干跑用来量「观测面通不通」"
-  },
-  {
    "file": "core/cmd/zerg/eval_chat_harness.go",
    "类": "脚本侧（评测）· Go 真搬（`scripts/evals/chat-harness.py` 的 Go 真身 · B 组接线 `GoMain`）",
    "语义": "dryrun.v1",
@@ -950,6 +943,27 @@
    "语义": "dryrun.v1",
    "零副作用判据": "干跑那一态断言 rc=0 且出计划件、日志零写；真跑档只走**函数级接缝**（单测绝不真跑六闸）；夹具在 `t.TempDir()`（仓外），本件自身不碰真仓。",
    "备注": "登记依据 = 门⑩ `R1 未登记件`（现跑命中即红）：命中是**调用 argv / 对拍夹具串**，不是第五套语义 —— 同 `writer_lock_test.go` 先例。"
+  },
+  {
+   "file": "core/cmd/zerg/family_publish_public_native.go",
+   "类": "命令面三态（`publish run` 的 **Go 真身** · `scripts/build/publish-public.sh` 的 Go 真搬 · 同一套语义）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "`opts.DryRun` 那一档：跑完导出/变换/扫描后只 `ppSay`「dry-run：…停在 git 之前」并退 0 —— **不 `git init`／不建仓／不提交／不推送**（真跑 `--push` 才推）；`--check-excludes-parity` 亦只读对拍。",
+   "备注": "登记依据 = 门⑩ `R1 未登记件`。本件是已登记真站点 `scripts/build/publish-public.sh`（`语义: dryrun.v1`）的 **Go 真搬**（解析 `DryRun` 并据此行事）⇒ **继承被搬件的既有语义 id**，不另立第五套。"
+  },
+  {
+   "file": "core/cmd/zerg/family_mirror_public_native.go",
+   "类": "命令面（发布面 · `publish/mirror-public.sh` 的 **Go 真身** · Go 真搬 · 同一套语义 · 接线在途）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "`--dry-run` 那一档（第 225-227 行 `case \"--dry-run\": push = 0` · 真解析并据此行事）：跑完编排后走 5/5 的 else 支只打「（dry-run：全部做完但**未推送**）」并退 0 —— **一个字节都不推**（真推要 `--push` ＋ 环境 `ZERG_MIRROR_ALLOW_PUSH=1` 双保险）；`--list-only`/`--check` 更是只列清单（不建产出仓 · 不写盘 · 不联网 · 不推送）；镜像全程对私有仓只读（4/5 现读 HEAD 与工作树逐字不变）。",
+   "备注": "登记依据 = 门⑩ `R1 未登记件`。本件是 `publish/mirror-public.sh`（镜器真源 · 该件**不在扫描面** core/agent/scripts/wall/gateway/ui ⇒ 本表无其独立条目）的 **Go 真搬**（解析 `--dry-run` 并据此行事）⇒ 继承本门唯一语义 id `dryrun.v1`（同 `family_publish_public_native.go` 先例），不另立第五套。★ 本件随 DEV-2141 落盘；CLI 接线（main.go 命令树）另路在途，登记只为 R1。"
+  },
+  {
+   "file": "core/cmd/zerg/family_mirror_public_pyblocks.go",
+   "类": "数据面：**字样引用**（不是干跑语义站点 —— 本件是 `const` 常量数据件，不解析、不据 `--dry-run` 行事；全件唯一命中 = 第 1468 行 `mpHelpBody`（旧壳 `publish/mirror-public.sh` 的 `-h` 正文逐字节副本）注释里提到 dry-run 字样）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "纯 `const` 字符串常量（镜像引擎 `publish/mirror-public-lib.py` 的 URL-safe base64 逐字节副本 `mpPyLibB64` ＋ 旧壳 `-h` 正文 `mpHelpBody`）：不读件、不 exec、不写盘、无任何行为。",
+   "备注": "登记依据 = 门⑩ `R1 未登记件`：命中是**引文**（`-h` 正文逐字节照抄里提到 dry-run 字样 · 3 处子命中同在 1468 这一物理行），不是语义站点 —— 同 `family_lsface.go` / `family_code.go` / `family_publish_public_pyblocks.go` 的「字样引用」处置。"
   }
 
  ]

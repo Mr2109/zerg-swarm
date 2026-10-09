@@ -62,18 +62,20 @@ func cmfTestFixture(t *testing.T, withTruth bool) string {
 	copyIfPresent("check-manifest-freshness-two-criteria.py")
 	copyIfPresent("precommit-gates.sh")
 	if withTruth {
-		b, err := os.ReadFile(filepath.Join(src, "scripts", "gates", "check-manifest-freshness.py"))
+		// ★ 内化金标哨兵（DEV-2143 同口径 · 甲类同族三处之一）：真源 `check-manifest-freshness.py`
+		// 已退场（2026-10-07 M2 退役批）⇒ 旧哨兵「真源 py 缺席 ∧ Go 半在盘 ⇒ t.Skipf」恒真（整测零断言）。
+		// 改锚其 **Go 半** `core/cmd/zerg/check_manifest_freshness.go`（本门已在进程内重建其 diagnose()）；
+		// 找不到 = 真仓结构被破 ⇒ **fail-closed**（✗ 不留 Skip）。夹具落 Go 半 ⇒ 入口 `cmfTruthRetired`
+		// 判「已退役」⇒ truthPresent=true · C3 改读 Go 半源码 ⇒ 判据照常出结论。
+		b, err := os.ReadFile(filepath.Join(src, "core", "cmd", "zerg", "check_manifest_freshness.go"))
 		if err != nil {
-			// 真源（邻件）退役容忍（缺口 `GAP-20261007-16`）：真源 py 退役（不在盘）∧ 其 Go 半在盘 ⇒
-			// 夹具无真源对象 ⇒ 容忍跳过（与同族 `TestCheckManifestFreshnessDifferential` 的 Skip 同口径 ·
-			// ✗ 不 fail-closed）。
-			if cmfFileExists(filepath.Join(src, "core", "cmd", "zerg", "check_manifest_freshness.go")) {
-				t.Skipf("退役态：真源 %s 已退场（其 Go 半 core/cmd/zerg/check_manifest_freshness.go 在盘）⇒ 需真源的夹具无对象，容忍跳过", cmfTruthRelPath)
-			}
-			// 两半皆不在盘（真消失）⇒ fail-closed（缺件 ≠ 绿）。
-			t.Fatalf("真源原件与 Go 半皆不在盘 ⇒ fail-closed：%v", err)
+			t.Fatalf("真源 Go 半不在盘 ⇒ fail-closed：%v（✗ 不留 Skip）", err)
 		}
-		if err := os.WriteFile(filepath.Join(g, "check-manifest-freshness.py"), b, 0o644); err != nil {
+		gd := filepath.Join(root, "core", "cmd", "zerg")
+		if err := os.MkdirAll(gd, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(gd, "check_manifest_freshness.go"), b, 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -130,7 +132,7 @@ func TestCheckManifestFreshnessTwoCriteriaGatePort(t *testing.T) {
 		t.Fatalf("--json 子集失败：rc=%d out=%q", rcJ, outJ)
 	}
 	rcJA, outJA, _ := cmfTestRun(t, "--root", root, "--json", "rc,criteria,source_lines")
-	if rcJA != 0 || !strings.Contains(outJA, `{"rc": 0, "criteria": {"source_sha_ne_head": true, "commit_ne_source_sha": true}, "source_lines": {"a": [9, 99, 193], "b": [111, 116, 185]}}`) {
+	if rcJA != 0 || !strings.Contains(outJA, `{"rc": 0, "criteria": {"source_sha_ne_head": true, "commit_ne_source_sha": true}, "source_lines": {"a": [185, 345], "b": [199, 204, 332]}}`) {
 		t.Fatalf("--json 全集失败：rc=%d out=%q", rcJA, outJA)
 	}
 
@@ -325,5 +327,88 @@ func TestCheckManifestFreshnessTwoCriteriaTruthRetired(t *testing.T) {
 	rcP, outP, _ := cmfTestRun(t, "--root", fxPy)
 	if rcP != 0 || !strings.Contains(outP, "check-manifest-freshness.py（在场）") {
 		t.Fatalf("③ py 在盘应 rc=0 且读 py 源，得 rc=%d out=%s", rcP, outP)
+	}
+}
+
+// ── 内化金标（DEV-2143 同口径）：旧 py 对拍退场 ⇒ 逐格金标收 Go 常量 · 两态自证（✗ 不 Skip）─────
+//
+// 为什么这么测（与 `check_manifest_freshness_test.go` 的 `TestCheckManifestFreshnessGoldenInternalized`
+// / `...GoldenTwoStates` 同族）：本件金标原经「真源 py 在盘」这一前置才成立（夹具拷 `check-manifest-freshness.py`）；
+// 该 py 已退场（2026-10-07 M2 退役批）⇒ C3 源级分列改读真源 **Go 半**（`cmfTruthRetired` 内化）。
+// 按 DEV-2143 先例把金标真源**收回 Go 半现役行为本身**：
+//
+//	★ 金标计算式（✗ 不臆造 · 由「Go 半现役行为」现算再冻）：逐块「输入（合成清单 + argv `--root`）
+//	  ⇒ (rc, stdout 关键块)」由 `cmfTestRun` 现跑捕获（一次性现算、只读夹具、✗ 不落仓），冻成下表；
+//	  **本机时点类量**比对前归一化（✗ 不冻结）：夹具根（t.TempDir() 随机路径）⇒ `<FX>`。
+//	  其中 C3 两行 `[185, 345]` / `[199, 204, 332]` = 真源 Go 半里两条判据标记所在的**现役源码行**。
+//
+// 两态（✗ 不许 Skip）：A 态 = 夹具真源 **Go 半**在盘（退役 py 不在盘）；B 态 = 合成「旧态」夹具
+// （退役真源 py 以**两行打标桩**放回 · 两条判据分列于不同源码行）⇒ 两态**判据结论同**（rc 同 · 判决尾行逐字同）。
+//
+// ★ 哑化负控（"牙" · 见交付读数）：抽掉 `check_manifest_freshness_two_criteria.go:188` 的
+//   `|| cmfTruthRetired(repoRoot)` 一支 ⇒ `TestCheckManifestFreshnessTwoCriteriaTruthRetired` ① 断言当场红（rc=2 · 带行号）。
+
+// cmfGoldenNorm —— 归一本机时点量（夹具绝对路径）⇒ 金标跨机可复现。
+func cmfGoldenNorm(s, root string) string {
+	if root != "" {
+		s = strings.ReplaceAll(s, root, "<FX>")
+	}
+	return s
+}
+
+// cmfRunGolden —— 金标自证：现建夹具（真源 Go 半）现跑本入口 · 归一 ⇒ 返回 (rc, 归一化 stdout)。
+// stub != "" ⇒ 合成「旧态」：把退役真源 py 以打标桩放回（造「py 在盘」那一态）。
+func cmfRunGolden(t *testing.T, stub string) (int, string) {
+	t.Helper()
+	root := cmfTestFixture(t, true)
+	if stub != "" {
+		if err := os.WriteFile(filepath.Join(root, "scripts", "gates", "check-manifest-freshness.py"), []byte(stub), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cmfTestGitInit(t, root)
+	rc, out, _ := cmfTestRun(t, "--root", root)
+	return rc, cmfGoldenNorm(out, root)
+}
+
+// TestCheckManifestFreshnessTwoCriteriaGoldenInternalized —— 内化金标自证（A 态：真仓 · 退役 py 不在盘）。
+// ✗ 不 Skip、逐块真断言（✗ 不放宽为「只判非空」）。
+func TestCheckManifestFreshnessTwoCriteriaGoldenInternalized(t *testing.T) {
+	rc, out := cmfRunGolden(t, "")
+	if rc != 0 {
+		t.Fatalf("金标 rc=%d（冻值 0）\n%s", rc, out)
+	}
+	// 金标块（现算自证 · ✗ 手写）：真源内化面 / C1 结论 / C3 源级分列行号 / 判据尾行。
+	want := []string{
+		"真源：core/cmd/zerg/check_manifest_freshness.go（在场）",
+		"   结论：green —— 两条判据分列（①1 行 · ②1 行 · 合并 0 行）",
+		"   判据①「另一棵树」源码行：[185, 345]",
+		"   判据②「声明身份与真实来源不一致」源码行：[199, 204, 332]",
+		"   ✓ 两条在**不同源码行**（源头就是两条 statement）",
+		"⇒ 两条判据分列=green · 源级分列=✓ · 真源自检=0 · rc=0",
+	}
+	for _, w := range want {
+		if !strings.Contains(out, w+"\n") {
+			t.Errorf("金标行缺失：%q\n--- 实得 ---\n%s", w, out)
+		}
+	}
+}
+
+// TestCheckManifestFreshnessTwoCriteriaGoldenTwoStates —— 两态判据结论同：A 态 = 夹具真源 Go 半（退役 py 不在盘）；
+// B 态 = 合成「旧态」夹具（退役真源 py 以两行打标桩放回）⇒ rc 同 · 判决尾行逐字同（✗ 不 Skip）。
+func TestCheckManifestFreshnessTwoCriteriaGoldenTwoStates(t *testing.T) {
+	rcA, outA := cmfRunGolden(t, "")
+	// 打标桩：两条判据各占一行（源级分列成立）⇒ B 态判决与 A 态同。
+	stub := "# 判据① 另一棵树\n# 判据② 声明身份与真实来源不一致\n"
+	rcB, outB := cmfRunGolden(t, stub)
+	if rcA != rcB {
+		t.Fatalf("两态 rc 不同：A=%d B=%d\n--- A ---\n%s\n--- B ---\n%s", rcA, rcB, outA, outB)
+	}
+	tail := "⇒ 两条判据分列=green · 源级分列=✓ · 真源自检=0 · rc=0\n"
+	if !strings.Contains(outA, tail) {
+		t.Fatalf("A 态判决尾行不符：\n%s", outA)
+	}
+	if !strings.Contains(outB, tail) {
+		t.Fatalf("B 态判决尾行不符（py 在盘不得改判据结论）：\n%s", outB)
 	}
 }

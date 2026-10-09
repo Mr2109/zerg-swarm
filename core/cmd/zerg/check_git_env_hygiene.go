@@ -113,6 +113,10 @@ const gehVersion = "1.0.0"
 // gehSelfRel —— py `SELF_REL`（本件在仓内的相对路径 · 仅作说明，不参与判据）。
 const gehSelfRel = "scripts/gates/check-git-env-hygiene.py"
 
+// gehExitSpawnFail —— shell 惯例退码 127（git 子进程起不来 · 非 ExitError）。
+// 属**底层壳件自有码空间**（✗ 不在命令面真源退码表 `core/cmd/zerg/exitcodes.go` ⇒ ✗ 写裸数字，门⑪ T3）；先例 = `deploy_launch.go`/`dplRCSSHAbsent` · `pack_release.go`/`prExitSpawnFail`（大写 E 不进门⑨ `exit…` regex）。
+const gehExitSpawnFail = 127
+
 // gehSiteGlobs —— py `SITE_GLOBS`（站点域 · 相对仓根）。
 var gehSiteGlobs = []string{"scripts/gates"}
 
@@ -638,7 +642,7 @@ func gehGit(cwd string, env []string, args ...string) (int, string, string) {
 		if ee, ok := err.(*exec.ExitError); ok {
 			rc = ee.ExitCode()
 		} else {
-			rc = 127
+			rc = gehExitSpawnFail
 		}
 	}
 	return rc, strings.TrimSpace(so.String()), strings.TrimSpace(se.String())

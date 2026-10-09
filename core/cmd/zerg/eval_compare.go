@@ -1,7 +1,7 @@
 // eval_compare.go —— 件 scripts/evals/compare.py（97 行 · sha16 94d08f03ce1f0872）的 Go 真搬
 // （批-5 载荷/探针面 · 入口 evalCompareGateMain）。
 //
-// 为什么有这件：批-5 是「载荷与探针」档（scripts/evals · sandbox* · wall · calib · dev · edge-node · ui · core）。
+// 为什么有这件：批-5 是「载荷与探针」档（scripts/evals · sandbox* · wall · calib · dev · node · ui · core）。
 // 本件是该档里现读**唯一零 subprocess / 零联网 / 零真 TTY / 零写面**的纯静态只读件（同档的 sandbox 探针
 // 如 conn_jit/jitprobe/miniprobe/lx2-linux 一律自带 socket|mmap-RWX|ctypes，verify-two-states/negctl 真跑子进程，
 // writeout-probe 自带仓外写面且不自回收，egg-prototype-pack 写仓内 —— 逐件现读后均不适格，见回执）。

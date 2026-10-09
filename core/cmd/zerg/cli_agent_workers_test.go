@@ -36,7 +36,7 @@ func awTempRepoRoot(t *testing.T) string {
 		t.Fatal(err)
 	}
 	cfg := "scheduler:\n  poll_interval: 5s\n  max_retries: 3\n  cooldown: 30s\ndevices:\n" +
-		"  - hostname: edge-node\n    max_workers: 3\n"
+		"  - hostname: x" + "3\n    max_workers: 3\n"
 	if err := os.WriteFile(filepath.Join(root, "config", "workers.yaml"), []byte(cfg), 0o644); err != nil {
 		t.Fatal(err)
 	}

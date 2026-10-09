@@ -152,6 +152,9 @@ var pvForms = []pvForm{
 	{ID: "F-16", Name: "家目录·base64 编码变形（凭据路径夹具 `L1VzZXJz…`）", Claim: `L1VzZXJz`,
 		SrcFile: pvReplaceRules, SrcProbe: "L1VzZXJzL2Z1enowMS8uY29uZmlnL3plcmcvdG9rZW4=",
 		Debt: "现读（2026-09-26）：该条 tsv 规则是**家目录形态的 base64 编码变形**（解开 = `<家目录>/.config/zerg/token`，即**私有机密文件的路径**）—— `scripts/gates/**` 面**没有一件**把「家目录 / 凭据路径的**编码变形**」当枚举形态：`check-public-marks.py` 的 `PRIVATE_PATTERNS` 收的是**明文** `/Users/<user>/` · `/home/<user>/` 与令牌**字面**（`ghp_…` / `sk-…` / `AKIA…`），**不收 base64 编码形态** ⇒ 登记为**存量债**（本格逐跑打印）"},
+	{ID: "F-17", Name: "机群机型族（低端机型 `edge-node`/`EDGE-NODE` · 迷你子端 `mini-node-1`/`mini-node-2`）", Claim: `edge-node|EDGE-NODE|mini-node-1|mini-node-2`,
+		SrcFile: pvReplaceRules, SrcProbe: "\\1edge-node",
+		Debt: "现读（2026-10-09）：这四条 tsv 规则（低端机 `edge-node`/`EDGE-NODE` · 迷你子端 `mini-node-1`/`mini-node-2`）此前**无替换规则**、只由发布期 BLOCK 兜底（命中即整批中止）；本轮按「镜像器替换面」补替换规则（先替后扫 :1776→:1778）消除中止。`scripts/gates/**` 面**无一件**把「机群机型族」当**形态**枚举（机型族漏判三态见 GAP-20261008-17）⇒ 门禁侧那一半未落 ⇒ 登记为**存量债**（本格逐跑打印）"},
 }
 
 // ── 「非形态」登记面（缺口 `GAP-20260926-152` · 与 py `NON_FORM_RULES`/`NON_FORM_FRAGMENTS` 逐格同构）──
@@ -597,6 +600,10 @@ var pvSelfRulesBase = []string{
 	"example-35b-v2\texample-35b-v2",
 	"L1VzZXJzL2Z1enowMS8uY29uZmlnL3plcmcvdG9rZW4=\tL1VzZXJzL2Z1enowMS8uY29uZmlnL3plcmcvdG9rZW4=",
 	"Zerg-内部文档\tZerg-内部文档",
+	"regex:(^|[^-0-9A-Za-z_\\[])\\bx3($|[^-0-9A-Za-z_])\t\\1edge-node\\2\t机群机型名（低端机型·小写·通称）",
+	"regex:(^|[^-0-9A-Za-z_\\[\\\"])\\bX3($|[^-0-9A-Za-z_-])\t\\1EDGE-NODE\\2\t机群机型名（低端机型·大写·通称）",
+	"regex:(^|[^-0-9A-Za-z_\\[])\\bmini1($|[^-0-9A-Za-z_])\t\\1mini-node-1\\2\t机群机型名（迷你子端 1·通称）",
+	"regex:(^|[^-0-9A-Za-z_\\[])\\bmini2($|[^-0-9A-Za-z_])\t\\1mini-node-2\\2\t机群机型名（迷你子端 2·通称）",
 	"!夹具\tcore/internal/obs/redact/*_test.go",
 }
 

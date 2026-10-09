@@ -2,13 +2,14 @@
 // 成对负控。断言全是「只有实现对才过」的**逐字**等式（哑化任一语义面必红 —— 见回执的
 // 仓外副本哑化实证：把主件语义改坏 ⇒ 本件 FAIL 带行号）＋ 空值/缺输入/两态各成一子用例。
 //
-// ★ stderr 面钉法（件头 ⑨ · 未覆盖面）：`TestGglPyParityPinnedInterpreter` 按**仓约定解释器**
+// ★ 金标内化（件头 ⑨ · 未覆盖面）：原 `TestGglPyParityPinnedInterpreter`（py 真身 ⟷ 本入口
 //
-//	`/usr/bin/python3`（3.9.6 · 见 `baseline_ratchet_test.go:21 pyInterp`）把 py 真身与本入口
-//	摆到同一 argv 下**三面逐字对拍** —— 该版本 ≤3.11 ⇒ py 真身**不发** `gen-gap-ledger.py:29`
-//	的 `SyntaxWarning` ⇒ 两态 stderr **皆空 · 逐字同**；哑化本件（让 Go 侧合成该解释器告警）
-//	 ⇒ 本条 stderr 断言必红（带行号）。★ `--help` 不入对拍集：其正文逐**解释器版本**变
-//	（≤3.9 `optional arguments:` ⟷ ≥3.10 `options:`）⇒ 归件头 ① 的**未覆盖面（环境依赖）**。
+//	三面逐字对拍）的对拍源 `scripts/docs/gen-gap-ledger.py` 已退场（M2 批）⇒ 断言恒 Skip（假绿、
+//	零保护）。按先例（atomic_write_test.go / pack_release_test.go / eval_run_all_test.go）把金标
+//	真源**收回 Go 半现役行为本身**：逐格 argv ⇒ (rc, stdout, stderr) 由 `genGapLedgerGateMain`
+//	现跑捕获、冻成 Go 常量（见 `TestGenGapLedgerGoldenInternalized` 段）。`--help` **不入金标集**：
+//	其正文逐**解释器版本**变（≤3.9 `optional arguments:` ⟷ ≥3.10 `options:`）⇒ 归件头 ① 的
+//	**未覆盖面（环境依赖）**，本集只用**版本无关** argv。
 //
 // ★ 无 TestMain / 无包级 init（撞名规避，照 `gen_tools_md_test.go` 同规）；helper 一律 `ggl` 前缀。
 package main
@@ -17,7 +18,6 @@ import (
 	"bytes"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -331,66 +331,153 @@ func TestGglQidCheckMode(t *testing.T) {
 	}
 }
 
-// ── py⟷Go 三面逐字对拍（钉 stderr 面 · 解释器钉仓约定 /usr/bin/python3）─────────────
+// ── 内化金标：旧 py 对拍（恒 Skip · 零保护）的逐格金标收成 Go 常量（现算现冻 · ✗ 不臆造）──────
+//
+// ★ 金标计算式（✗ 不臆造 · 逐格由「Go 半现役行为现算」得到）：逐格「argv ⇒ (rc, stdout,
+//   stderr)」由 `genGapLedgerGateMain` 现跑捕获（一次性现算、✗ 不落仓），冻成下表 `gglGoldenCases`。
+//   本组 argv 均**版本无关**、输出**不含时刻/随机路径** ⇒ 无归一化需求（照实记录：本组无本机
+//   时点类量可比，故不设归一函数）。
+//
+// 两态（✗ 不许 Skip）：A 态 = 合成夹具无 py 真身（= 真仓现态）；B 态 = 合成「旧态」夹具把退役 py
+//   路径 `scripts/docs/gen-gap-ledger.py` 的 stub 放回 ⇒ 两态对同一套金标逐字同命中（Go 真身
+//   ✗ 读 py）。
+//
+// ★ 哑化负控（"牙" · 见交付读数）：`-overlay` 把 gen_gap_ledger.go 的一条出口臂哑化 ⇒ 本用例
+//   **必 FAIL 且带行号**（✗ 不真改仓内源 · 免 `dev edit` 前的仓内污染）。
 
-func gglTestRepoRoot(t *testing.T) string {
+// gglGoHalfRel —— 哨兵锚：Go 半（✗ 不锚已退场的 py —— 一退役即失锚）。
+const gglGoHalfRel = "core/cmd/zerg/gen_gap_ledger.go"
+
+// gglPyRetiredRel —— 已退场 py 真身的仓根相对路径；「两态」就钉在它「在 / 不在盘」。
+const gglPyRetiredRel = "scripts/docs/gen-gap-ledger.py"
+
+// gglGoldenSelfTestOut —— `--self-test` 档的冻结 stdout（由 `genGapLedgerGateMain` 现跑捕获 ·
+// 见段头金标计算式；`gglSelfTest` 只打固定行、无时刻/随机路径 ⇒ 逐字节可复现）。
+const gglGoldenSelfTestOut = "  ✓ 版本线挑选（v2.5.13 > v2.5.9 · 豁免件不算）（got='v2.5.13' · want='v2.5.13'）\n" +
+	"  ✓ 落点形状（got='项目文档/v2.5.13/缺口总账-20260926.md' · want='项目文档/v2.5.13/缺口总账-20260926.md'）\n" +
+	"  ✓ 日期取读（首行称日期）（got='20260926' · want='20260926'）\n" +
+	"  ✓ 日期取读（取不到 ⇒ None · 不给结论）（got=None · want=None）\n" +
+	"  ✓ 空文档仓 ⇒ 版本线判不出（got=None · want=None）\n" +
+	"  ✓ qid 未启用 ⇒ enabled=False · rc=None（不判红）（got=(False, None) · want=(False, None)）\n" +
+	"  ✓ qid 合法 ⇒ rc=0 · 计 2/3（got=(True, 0, 2) · want=(True, 0, 2)）\n" +
+	"  ✓ qid 形态非法 ⇒ rc=1 · 两处点名（got=(1, [('a', 'Q1'), ('b', 'q-002')]) · want=(1, [('a', 'Q1'), ('b', 'q-002')])）\n" +
+	"  ✓ qid 重号 ⇒ rc=1 · 点名 Q-007×2（got=(1, [('Q-007', ['a', 'b'])]) · want=(1, [('Q-007', ['a', 'b'])])）\n" +
+	"  ✓ 非 JSON 行 ⇒ 不给结论（rows=None · 有说明）（got=(True, True) · want=(True, True)）\n" +
+	"  ✓ 真源不存在 ⇒ 不给结论（got=(True, True) · want=(True, True)）\n" +
+	"自检结论: 全过\n"
+
+// gglSentinel —— 哨兵：上溯找 **Go 半**（本件真源 · 编译进测试二进制）。找不到 ⇒ fail-closed
+// （✗ 不留 Skip）：上溯见不到它 = 真仓结构被破 ⇒ 硬错。旧版对上溯不到 py 就 `t.Skipf`（恒 Skip ·
+// 零保护）—— 本改把它换成硬前置。
+func gglSentinel(t *testing.T) string {
 	t.Helper()
-	abs, err := filepath.Abs(filepath.Join("..", "..", ".."))
+	want := filepath.FromSlash(gglGoHalfRel)
+	dir, err := os.Getwd()
 	if err != nil {
-		t.Fatalf("仓根解析失败：%v", err)
+		t.Fatalf("取 cwd 失败：%v", err)
 	}
-	return abs
+	for i := 0; i < 8; i++ {
+		if st, e := os.Stat(filepath.Join(dir, want)); e == nil && st.Mode().IsRegular() {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	t.Fatalf("哨兵失守：上溯未见 Go 半 %s（不是真仓树）", gglGoHalfRel)
+	return ""
 }
 
-// TestGglPyParityPinnedInterpreter —— 件头 ⑨ 的**机器钉**：同一 argv 下，本入口 ⟷ py 真身
-// （解释器钉仓约定 `/usr/bin/python3` = 3.9.6）三面 rc/stdout/stderr **逐字同**。
-//
-// 该解释器 ≤3.11 ⇒ py 真身**不发** `gen-gap-ledger.py:29` 的 `SyntaxWarning`（该告警只在 ≥3.12
-// 出现 · 且 3.12/3.13 与 3.14 正文不同）⇒ 两侧 stderr **皆空**。★ 成对负控：哑化本件（让
-// `genGapLedgerGateMain` 向 stderr 多写一字节 —— 例如"复刻"该解释器告警）⇒ 本条 stderr 断言
-// **必红带行号**（见回执的仓外 overlay 哑化实证）。
-//
-// ★ `--help` **不入对拍集**：其正文随解释器版本变（≤3.9 `optional arguments:` ⟷ ≥3.10 `options:`）
-// ⇒ 归件头 ① 的未覆盖面（环境依赖），不在本面承诺内；本集只用**版本无关** argv。
-func TestGglPyParityPinnedInterpreter(t *testing.T) {
-	py := filepath.Join(gglTestRepoRoot(t), "scripts", "docs", "gen-gap-ledger.py")
-	if _, err := os.Stat(py); err != nil {
-		t.Skipf("py 真身不在（可能已退场）：%s", py)
-	}
-	const pyInterp = "/usr/bin/python3" // 仓约定解释器（3.9.6 · 见 baseline_ratchet_test.go:21 pyInterp）
-	if _, err := os.Stat(pyInterp); err != nil {
-		t.Skipf("钉死的解释器不在：%s", pyInterp)
-	}
-	cases := [][]string{
-		{"--self-test"}, {"--version"}, {"--nope"}, {"--docs-root"}, {"--emit=1"},
-	}
-	for _, args := range cases {
-		args := args
-		t.Run(strings.Join(args, "_"), func(t *testing.T) {
-			var so, se bytes.Buffer
-			rcG := genGapLedgerGateMain(&so, &se, args)
+// gglIsFile —— 判在盘且是普通件（哨兵腿用）。
+func gglIsFile(p string) bool {
+	st, err := os.Stat(p)
+	return err == nil && st.Mode().IsRegular()
+}
 
-			cmd := exec.Command(pyInterp, append([]string{py}, args...)...)
-			var po, pe bytes.Buffer
-			cmd.Stdout = &po
-			cmd.Stderr = &pe
-			err := cmd.Run()
-			rcP := 0
-			if ee, ok := err.(*exec.ExitError); ok {
-				rcP = ee.ExitCode()
-			} else if err != nil {
-				t.Fatalf("跑 py 真身失败：%v", err)
-			}
-			if rcG != rcP {
-				t.Fatalf("退码失配：py=%d go=%d\npy.stderr=%q\ngo.stderr=%q", rcP, rcG, pe.String(), se.String())
-			}
-			if po.String() != so.String() {
-				t.Fatalf("stdout 失配：\n--py--\n%s\n--go--\n%s", po.String(), so.String())
-			}
-			if pe.String() != se.String() {
-				t.Fatalf("stderr 失配（件头 ⑨：≤3.11 解释器应两侧皆空 · 哑化本件可致此红）：\n--py--\n%q\n--go--\n%q",
-					pe.String(), se.String())
-			}
-		})
+type gglGoldenCase struct {
+	name    string
+	argv    []string
+	wantRC  int
+	wantOut string // 现算自证（由 Go 半现跑捕获）· ✗ 手写猜
+	wantErr string
+}
+
+// gglGoldenCases —— 金标真源（5 格 · 与旧对拍逐格同 argv）。want* 由 `genGapLedgerGateMain`
+// 现跑捕获（见段头金标计算式）。复用 `gglVersion` / `gglUsage` / `gglSelfName` 常量（✗ 不手抄，
+// 免双份漂移）。
+var gglGoldenCases = []gglGoldenCase{
+	{name: "self-test", argv: []string{"--self-test"}, wantRC: 0, wantOut: gglGoldenSelfTestOut, wantErr: ""},
+	{name: "version", argv: []string{"--version"}, wantRC: 0, wantOut: gglVersion + "\n", wantErr: ""},
+	{name: "nope", argv: []string{"--nope"}, wantRC: 2, wantOut: "",
+		wantErr: gglUsage + gglSelfName + ": error: unrecognized arguments: --nope\n"},
+	{name: "docs-root-missing-arg", argv: []string{"--docs-root"}, wantRC: 2, wantOut: "",
+		wantErr: gglUsage + gglSelfName + ": error: argument --docs-root: expected one argument\n"},
+	{name: "emit-explicit-arg", argv: []string{"--emit=1"}, wantRC: 2, wantOut: "",
+		wantErr: gglUsage + gglSelfName + ": error: argument --emit: ignored explicit argument '1'\n"},
+}
+
+// gglGoldenFixture —— 仓外金标夹具（= cwd）；withPy 时把退役 py 的合成 stub 落回（B 态「旧态」）。
+func gglGoldenFixture(t *testing.T, withPy bool) string {
+	t.Helper()
+	fx := t.TempDir()
+	if withPy {
+		p := filepath.Join(fx, filepath.FromSlash(gglPyRetiredRel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("#!/usr/bin/env python3\n# [退役占位] scripts/docs/gen-gap-ledger.py —— 真件已退场（Go 半承载）；stub 仅保夹具形状。\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return fx
+}
+
+// gglRunGoldenIn —— 逐格现跑 Go 半（cwd = 夹具根），与冻值逐字比；返回失配格数。
+func gglRunGoldenIn(t *testing.T, tag, root string) int {
+	t.Helper()
+	t.Chdir(root)
+	mism := 0
+	for _, c := range gglGoldenCases {
+		var so, se bytes.Buffer
+		rc := genGapLedgerGateMain(&so, &se, c.argv)
+		if rc != c.wantRC {
+			mism++
+			t.Errorf("[%s/%s] rc=%d（冻值 %d）", tag, c.name, rc, c.wantRC)
+		}
+		if so.String() != c.wantOut {
+			mism++
+			t.Errorf("[%s/%s] stdout 漂移\n实得=%q\n冻值=%q", tag, c.name, so.String(), c.wantOut)
+		}
+		if se.String() != c.wantErr {
+			mism++
+			t.Errorf("[%s/%s] stderr 漂移\n实得=%q\n冻值=%q", tag, c.name, se.String(), c.wantErr)
+		}
+	}
+	return mism
+}
+
+// TestGenGapLedgerGoldenInternalized —— A 态（真仓 · 退役 py 不在盘）金标自证
+// （✗ 不 Skip · 逐格真断言 · ✗ 不放宽为「只判非空」）。
+func TestGenGapLedgerGoldenInternalized(t *testing.T) {
+	repo := gglSentinel(t) // 哨兵：锚 Go 半在盘 ⇒ fail-closed（✗ 不 Skip）
+	if gglIsFile(filepath.Join(repo, filepath.FromSlash(gglPyRetiredRel))) {
+		t.Fatalf("A 态前提破：退役 py 竟在盘 %s（本件前提 = 内化后无 py）", gglPyRetiredRel)
+	}
+	if n := gglRunGoldenIn(t, "A夹具无py", gglGoldenFixture(t, false)); n != 0 {
+		t.Fatalf("A 态金标失配 %d 格", n)
+	}
+}
+
+// TestGenGapLedgerGoldenTwoStates —— 两态逐字同：A 态 = 夹具无 py（= 真仓现态）；B 态 = 合成「旧态」
+// 夹具（把退役 py 路径 `scripts/docs/gen-gap-ledger.py` 的 stub 放回）⇒ 两态对同一套金标逐字同
+// 命中（✗ 不 Skip）。证 py 在/不在盘都不改 Go 半读数（Go 真身 ✗ 读 py）。
+func TestGenGapLedgerGoldenTwoStates(t *testing.T) {
+	if n := gglRunGoldenIn(t, "A夹具无py", gglGoldenFixture(t, false)); n != 0 {
+		t.Fatalf("A 态金标失配 %d 格", n)
+	}
+	if n := gglRunGoldenIn(t, "B旧态有py", gglGoldenFixture(t, true)); n != 0 {
+		t.Fatalf("B 态金标失配 %d 格（py 在盘不得改判据结论）", n)
 	}
 }

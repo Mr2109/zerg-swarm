@@ -3,9 +3,9 @@
 // 收编依据（**逐件照抄上一枚的四类归属表，一件都不自编**）：`scripts/evals/` 的 22 件
 // 按 `Zerg-内部文档/项目文档/v2.5.10/归属-收编与退役-20260920.md` §④「脚本 27 条」那一组的逐件归属拆成三档：
 //
-//	① **收编为命令（5 件 · 2026-10-08 按意见扩至 18 件）** —— 它们本身是**可复用的判据工具**（自带用法、只读或自带 `--self-test`）⇒
-//	   有命令面上的名字：`zerg eval show|run <名>`。原 ④「维持待拍」13 件同批收编入 ①（现读 ① 18 / ④ 0）。
-//	② **保留为内部实现（4 件）** —— 已经被别的入口接线在跑（`pack-release.sh` / CI / `zerg eval run-all`）⇒
+//	① **收编为命令（6 件 · 2026-10-08 按意见扩至 18 件 · 2026-10-09 ab-campaigns 接线入 19 件）** —— 它们本身是**可复用的判据工具**（自带用法、只读或自带 `--self-test`）⇒
+//	   有命令面上的名字：`zerg eval show|run <名>`。原 ④「维持待拍」13 件同批收编入 ①（现读 ① 19 / ④ 0）。
+//	② **保留为内部实现（3 件）** —— 已经被别的入口接线在跑（`pack-release.sh` / CI / `zerg eval run-all`）⇒
 //	   命令面**只做投影**、**不开 run 面**（开了就是两份真相）。
 //	④ **维持待拍（0 件 · 原 13 件 2026-10-08 收编入 ①）** —— 2026-08-13 的历史一次性任务集 · 仓内零调用方
 //	   （登记非死件 ⇒ 无第二入口）⇒ 收编为 ①；**仍不许 AI 判退役**（✗）。
@@ -65,7 +65,7 @@ type evalEntry struct {
 
 // evalRoster —— 评测线 22 件（**逐件归属照抄 · 一件不自编**）。
 var evalRoster = []evalEntry{
-	// ── ① 收编为命令（5 件）────────────────────────────────────────────────────────────
+	// ── ① 收编为命令（6 件）────────────────────────────────────────────────────────────
 	{
 		Name: "compare-wall-argv", File: "scripts/evals/compare-wall-argv.py", Run: "python3", Class: evalClassAdopt,
 		Why: "迁移桥门禁：同一批卵配方两侧 argv 逐条对拍（Go `BuildBwrapArgv` ↔ Rust `zerg-wall plan`）· 判据写在文件名里 · 自带 `--self-test`（自检不过 rc=2）",
@@ -96,7 +96,13 @@ var evalRoster = []evalEntry{
 		// 真搬 = core/cmd/zerg/eval_compare.go（inproc 键 `compare`）。
 		GoMain: evalCompareGateMain,
 	},
-	// ── ② 保留为内部实现（4 件）────────────────────────────────────────────────────────
+	{
+		Name: "ab-campaigns", File: "scripts/evals/ab-campaigns.py", Run: "python3", Class: evalClassAdopt,
+		Why: "① 收编（2026-10-09 接线）：实验编排（要**跑着的**生产对话面 + 真任务）· 真身在盘 ⇒ 真跑走 **Go 真身**（与 `zerg gate check <名>` 同源）",
+		// 真搬 = core/cmd/zerg/eval_ab_campaigns.go（入口 evalABCampaignsGateMain）。
+		GoMain: evalABCampaignsGateMain,
+	},
+	// ── ② 保留为内部实现（3 件）────────────────────────────────────────────────────────
 	{
 		Name: "make-manifest", File: "scripts/evals/make-manifest.py", Run: "python3", Class: evalClassInternal,
 		Why: "发布清单生成器，**已接线**在 `scripts/build/pack-release.sh:87` + CI `release-agent.yml:160` ⇒ 收编即两份真相 ⇒ 只做投影",
@@ -108,12 +114,6 @@ var evalRoster = []evalEntry{
 	{
 		Name: "v25_complex_tasks", File: "scripts/evals/_archive/v25_complex_tasks.py", Run: "python3", Class: evalClassInternal,
 		Why: "层 3 的**在跑实现**（批跑入口 `zerg eval run-all` · 同上）⇒ 同上",
-	},
-	{
-		Name: "ab-campaigns", File: "scripts/evals/ab-campaigns.py", Run: "python3", Class: evalClassInternal,
-		Why: "实验编排（要**跑着的**生产对话面 + 真任务）⇒ 只做投影、不开 run 面",
-		// 真搬 = core/cmd/zerg/eval_ab_campaigns.go（入口 evalABCampaignsGateMain）。
-		GoMain: evalABCampaignsGateMain,
 	},
 	// ── ① 收编（续 · 原 ④ 待拍 13 件 · 2026-10-08 按意见同批收编 ① · 现读 ① 18 / ④ 0）─────────
 	{

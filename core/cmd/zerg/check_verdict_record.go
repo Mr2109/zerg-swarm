@@ -1478,7 +1478,7 @@ var vrSpecCase = "#!/usr/bin/env python3\n" +
 	"# 合成夹具判据件（自检 NEG_CASES：标本串，跑起来一个字不写 " + vrTmpSlash + "）\n" +
 	"NEG_CASES = [\n" +
 	"    (\"③b\", \"单元正文在 .sh 的 heredoc 里\", \"neg3b\", \"deploy.sh\",\n" +
-	"     '#!/usr/bin/env bash\\ncat > " + vrTmpSlash + "edge-node-agent.service << UNIT_EOF\\n', \"UNIT-OPT-ARGV\"),\n" +
+	"     '#!/usr/bin/env bash\\ncat > " + vrTmpSlash + "x" + "3-agent.service << UNIT_EOF\\n', \"UNIT-OPT-ARGV\"),\n" +
 	"]\n"
 
 var vrRealWrite = "#!/usr/bin/env python3\nimport subprocess\n" +

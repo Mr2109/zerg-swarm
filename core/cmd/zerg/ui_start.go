@@ -438,6 +438,9 @@ var sandboxProbeRoster = []struct{ Name, File string }{
 const (
 	sandboxVerifyRel = "scripts/sandbox-probes/verify-two-states.py"
 	sandboxNegctlRel = "scripts/sandbox-probes/negctl-two-states.sh"
+	// sandboxTestRelayRel —— `sandbox test relay` 的底层唯一实现（B5.1 主控镜像中继验收套件 ·
+	// 离线自足：全在 /tmp 沙箱 + 假 ssh 里跑 · 命令面只做入口 ＋ 转发，✗ 不重写它任何一段）。
+	sandboxTestRelayRel = "scripts/sandbox/test-relay-sandbox.sh"
 )
 
 // sandboxProbeScript —— 按**逐字名**取探针脚本（模糊匹配等于没匹配 ⇒ 不猜）。
@@ -532,13 +535,44 @@ func cmdSandboxNegctl(inv *invocation, stdout, stderr io.Writer) int {
 	return sandboxRunScript(inv, stdout, stderr, "bash", sandboxNegctlRel, tail)
 }
 
-// cmdSandboxTest —— `zerg sandbox test <套件>`：沙箱夹具（fleet/relay/setup/update）归**批3**
-// （依赖被测件正门 + 夹具环境）⇒ 本版**未接**，fail-closed 退 `2` ＋ 逐字报「未接」（✗ 绝不静默返回 0）。
+// cmdSandboxTest —— `zerg sandbox test <子动作>`：虫卵验收夹具的**子动作分派**。
+//
+// 子动作 `relay` 已接线：命令面只做入口 ＋ 转发 —— 底层唯一实现 = `scripts/sandbox/test-relay-sandbox.sh`
+// （B5.1 主控镜像中继验收套件 · 离线自足：全在 /tmp 沙箱 + 假 ssh 里跑 ⇒ ✗ 不重写脚本任何一段 ·
+// 退码原样转出）。其余子动作（`fleet` / `setup` / `update`）归**批3**（依赖被测件正门 + 夹具环境）⇒
+// 本版**未接**，fail-closed 退 `2` ＋ 逐字报「未接」（✗ 绝不静默返回 0）。
 func cmdSandboxTest(inv *invocation, stdout, stderr io.Writer) int {
-	inv.setErr("usage", "sandbox_test_not_wired", "沙箱夹具动作未接（批3）")
-	fmt.Fprintf(stderr, "%s: `sandbox test` **未接** —— 沙箱夹具（fleet/relay/setup/update）归批3（依赖被测件正门 + 夹具环境）⇒ 不给结论（退码 2）\n", progName)
-	fmt.Fprintf(stderr, "error.kind=usage · detail=sandbox_test_not_wired · retryable=false\n")
-	return exitUsage
+	sub := ""
+	if len(inv.args) > 0 {
+		sub = strings.TrimSpace(inv.args[0])
+	}
+	switch sub {
+	case "":
+		inv.setErr("usage", "sandbox_test_subaction_required", "缺子动作")
+		fmt.Fprintf(stderr, "%s: `sandbox test` 要一个子动作（`relay` 已接；`fleet`/`setup`/`update` 归批3 未接）⇒ 不给结论（退码 2）\n", progName)
+		fmt.Fprintf(stderr, "error.kind=usage · detail=sandbox_test_subaction_required · retryable=false\n")
+		return exitUsage
+	case "relay":
+		tail := []string{}
+		if len(inv.orig) > len(inv.path) {
+			// 子动作名已消费（`relay` 只是分派键）⇒ 其后的实参原样转给夹具脚本。
+			tail = inv.orig[len(inv.path):]
+			if len(tail) > 0 {
+				tail = tail[1:]
+			}
+		}
+		return sandboxRunScript(inv, stdout, stderr, "bash", sandboxTestRelayRel, tail)
+	case "fleet", "setup", "update":
+		inv.setErr("usage", "sandbox_test_not_wired", "沙箱夹具动作未接（批3）")
+		fmt.Fprintf(stderr, "%s: `sandbox test %s` **未接** —— 归批3（依赖被测件正门 + 夹具环境）⇒ 不给结论（退码 2）\n", progName, sub)
+		fmt.Fprintf(stderr, "error.kind=usage · detail=sandbox_test_not_wired · retryable=false\n")
+		return exitUsage
+	default:
+		inv.setErr("usage", "sandbox_test_unknown_subaction", "未知子动作")
+		fmt.Fprintf(stderr, "%s: `sandbox test` 认的子动作：relay（已接）| fleet | setup | update（后三者归批3 未接）（给的是 %q）⇒ 不给结论（退码 2）\n", progName, sub)
+		fmt.Fprintf(stderr, "error.kind=usage · detail=sandbox_test_unknown_subaction · retryable=false\n")
+		return exitUsage
+	}
 }
 
 // ── L1 批2（2026-10-08）：`zerg wall` 茧壁证据真动作分派（壳转账 · 只转发、不翻译）──────────────
@@ -679,4 +713,29 @@ func cmdBuildWallFamily(inv *invocation, stdout, stderr io.Writer) int {
 
 func cmdScriptInventoryVerifyFamily(inv *invocation, stdout, stderr io.Writer) int {
 	return cmdScriptInventoryVerify(inv, stdout, stderr)
+}
+
+// ── 命令树登记批（2026-10-09）：`zerg publish verify` / `zerg fleet logs` 入口承载（只转发）──
+//
+// 依据：命令树登记批（命令名已拍）。真身各自在
+// `family_publish_verify_native.go`（`cmdPublishVerify` → `publishVerifyRun` · DEV-2136）与
+// `fleet_logs.go`（`fleetLogsGateMain` · 已 inproc 登记 `gate_inproc_table.go:166` 键 `fleet-logs`）。
+// 两个入口**只转发**：✗ 不重写它们任何一段 · ✗ 不改退码口径。
+//
+// ★ 为什么承载宿主在本件（与 `cmdMCPServeFamily`/`cmdSandboxProbe`/`cmdWallEvidence` 同一条理由）：
+// 门78 `check-newcmd-followup` **面④** 要求「新增 path 的实现件**已在** `scripts/公开标记.tsv`」——
+// 本件是**已登记**（`public=yes` · `脚本标记.tsv:159`）的宿主 ⇒ `main.go` 的 `run:` 指向本件的桥，
+// ✗ 不去登记未跟踪的真身件（本单铁律禁碰那张表）。
+func cmdPublishVerifyFamily(inv *invocation, stdout, stderr io.Writer) int {
+	return cmdPublishVerify(inv, stdout, stderr)
+}
+
+// cmdFleetLogs —— `zerg fleet logs [<透传实参…>]`：把 `fleet logs` 之后的实参**原样**交给
+// `fleetLogsGateMain`（inproc 口径：argv **不含程序名** —— 与 `zerg gate check` 走该键时同形）。
+func cmdFleetLogs(inv *invocation, stdout, stderr io.Writer) int {
+	var argv []string
+	if inv != nil && len(inv.orig) > len(inv.path) {
+		argv = inv.orig[len(inv.path):]
+	}
+	return fleetLogsGateMain(stdout, stderr, argv)
 }

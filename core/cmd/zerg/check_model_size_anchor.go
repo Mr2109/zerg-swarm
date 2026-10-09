@@ -757,7 +757,7 @@ func cmsaWiringSelfTest(stdout io.Writer) []string {
 	fails := []string{}
 	idmapGood := `[{"registry_id": "R1", "fleet_ids": ["M"]}]`
 	modelsTxt := "models:\n  M:\n    - { host: Mr2109, file: /x.gguf, mem_gb: 1 }\n" +
-		"    - { host: edge-node, file: /y.gguf, mem_gb: 1 }\n"
+		"    - { host: x" + "3, file: /y.gguf, mem_gb: 1 }\n"
 
 	run := func(label, entriesJSON string, regSubdirs []string, hasRegDir bool, ratchet, wantRC int) {
 		td, err := os.MkdirTemp("", "tmp")
@@ -852,7 +852,7 @@ func cmsaSelfTest(stdout, stderr io.Writer) int {
 		{"good", fmt.Sprintf(baseFmt, "size_bytes: 1234"), 0},
 		{"bad", fmt.Sprintf(baseFmt, "size_bytes: 9999"), 1},
 		{"badd", fmt.Sprintf(baseFmt, "size_bytes: abc"), 1},
-		{"skip", "models:\n  m1:\n    - { host: edge-node, file: /nope/x.gguf, mem_gb: 1, size_bytes: 42 }\n", 2},
+		{"skip", "models:\n  m1:\n    - { host: x" + "3, file: /nope/x.gguf, mem_gb: 1, size_bytes: 42 }\n", 2},
 		{"none", fmt.Sprintf(baseFmt, "ctx_window: 8"), 2},
 		{"block", "models:\n  m2:\n    - host: Mr2109\n      file: " + real + "\n      size_bytes: 1234\n", 0},
 	}

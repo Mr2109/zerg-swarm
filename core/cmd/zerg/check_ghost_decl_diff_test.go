@@ -80,29 +80,39 @@ func tgFixture(t *testing.T, plists []string) []string {
 	return []string{d, dp, pp, lp, home}
 }
 
+// tgRepoRootFrom —— 由 dir 上溯找仓根锚：门⑧ 同源件的**口径真源所在件**
+// `core/cmd/zerg/check_service_declaration.go`（Go 半）。找不到 ⇒ 返回 ""（纯函数 · 供两态自证）。
+// ★ 旧版锚 `scripts/gates/check-service-declaration.py`（门⑧ py 半）：该 py 已退役（G17 · 2026-10-07
+// 退役批）⇒ 上溯恒找不到，只能靠「退役容忍」放行（Skip 档 · 零保护）。现哨兵**改锚 Go 半**。
+func tgRepoRootFrom(dir string) string {
+	for n := 0; n < 10; n++ {
+		if st, err := os.Stat(filepath.Join(dir, "core", "cmd", "zerg", "check_service_declaration.go")); err == nil && !st.IsDir() {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	return ""
+}
+
+// tgRepoRoot —— 哨兵：由 cwd 上溯找含门⑧ Go 半的仓根；找不到 ⇒ fail-closed（缺件 ≠ 绿 · ✗ 不留 Skip）。
+// ★ 旧版对「仓根未定位（py 未定位/退役容忍）」就 `t.Skip`（恒真候选）⇒ 锚一移即**静默跳过对拍**、零保护；
+//
+//	本改把它换成硬前置：Go 半是编译进本测试二进制的真源，上溯找不到它 = 真仓结构被破 ⇒ 硬错。
 func tgRepoRoot(t *testing.T) string {
 	t.Helper()
 	d, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
 	}
-	for n := 0; n < 10; n++ {
-		if st, err := os.Stat(filepath.Join(d, "scripts", "gates", "check-service-declaration.py")); err == nil && !st.IsDir() {
-			return d
-		}
-		// ★ 退役态（G17 · 2026-10-07 退役批）：同源件 py 退役 ⇒ 改认其 **Go 半**所在件做仓根锚
-		//   （口径真源换人后仓根仍可定位）·✗ 不再 t.Fatal。
-		if st, err := os.Stat(filepath.Join(d, "core", "cmd", "zerg", "check_service_declaration.go")); err == nil && !st.IsDir() {
-			return d
-		}
-		p := filepath.Dir(d)
-		if p == d {
-			break
-		}
-		d = p
+	root := tgRepoRootFrom(d)
+	if root == "" {
+		t.Fatalf("哨兵失守：上溯未见门⑧ Go 半 core/cmd/zerg/check_service_declaration.go（不是真仓树）⇒ fail-closed（✗ 不留 Skip）")
 	}
-	t.Skip("仓根未定位到同源件（check-service-declaration.py 或 Go 半）⇒ 跳过对拍（退役容忍）")
-	return ""
+	return root
 }
 
 func tgRun(argv []string) (int, string, string) {
@@ -302,5 +312,38 @@ func TestGddSiblingGoHalfRetiredFallback(t *testing.T) {
 	}
 	if why := gddLoadSibling(root, ""); why == "" {
 		t.Fatal("负控：Go 半缺符号该仍不给结论")
+	}
+}
+
+// TestGddRepoRootAnchorGoHalf —— G17（2026-10-07 退役批）哨兵**改锚 Go 半**的两态自证（✗ 不 Skip）：
+//
+//	① 含门⑧ Go 半的合成树 ⇒ 命中仓根（Go 半是真源所在件）；
+//	② 只有退役 py（无 Go 半）⇒ 判「找不到」（✗ 退役容忍 ⇒ 哨兵据此 fail-closed）。
+//
+// ★ 哑化负控：把 tgRepoRootFrom 的 Go 半支去掉 ⇒ ① 断言红（带行号）。
+func TestGddRepoRootAnchorGoHalf(t *testing.T) {
+	withGo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(withGo, "core", "cmd", "zerg"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(withGo, "core", "cmd", "zerg", "check_service_declaration.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := tgRepoRootFrom(filepath.Join(withGo, "core", "cmd", "zerg")); got != withGo {
+		t.Fatalf("含 Go 半的合成树应命中仓根 %s，得 %q（哨兵未改锚 Go 半）", withGo, got)
+	}
+
+	onlyPy := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(onlyPy, "core", "cmd", "zerg"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(onlyPy, "scripts", "gates"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(onlyPy, "scripts", "gates", "check-service-declaration.py"), []byte("# stub\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := tgRepoRootFrom(filepath.Join(onlyPy, "core", "cmd", "zerg")); got != "" {
+		t.Fatalf("只有退役 py（无 Go 半）应判「找不到」（✗ 退役容忍），得 %q", got)
 	}
 }

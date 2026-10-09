@@ -193,11 +193,11 @@ func TestPingModel_SnapshotUnhealthy(t *testing.T) {
 	isolateTasksFile(t)
 	isolateTaskRoot(t)
 	mock := &mockStoreReader{snapshots: map[string]*FleetSnapshotLite{
-		"local": {Healthy: false, Model: "Qwen3.8-27B"},
-		"edge-node":    {Healthy: true, Model: "example-35b"},
+		"local":   {Healthy: false, Model: "Qwen3.8-27B"},
+		"x" + "3": {Healthy: true, Model: "example-35b"},
 	}}
 	s := NewMasterScheduler("", 1, mock)
-	// local unhealthy 且 edge-node 未加载目标——快照不通过——走网络探测（网关可能不可达——分类错误）
+	// local unhealthy 且该机型未加载目标——快照不通过——走网络探测（网关可能不可达——分类错误）
 	ok, err := s.pingModel("Qwen3.8-27B")
 	_ = ok
 	if err != nil && !strings.Contains(err.Error(), "[") {

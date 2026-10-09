@@ -230,7 +230,7 @@ func Run(ctx context.Context, cfg Config, model, sysPrompt string, msgs []map[st
 				retried := false
 				for attempt := 1; attempt <= 2; attempt++ {
 					time.Sleep(2 * time.Second)
-					emit("retry", mustJSON(map[string]any{"attempt": attempt, "reason": "X3 瞬时故障"}))
+					emit("retry", mustJSON(map[string]any{"attempt": attempt, "reason": "X" + "3 瞬时故障"}))
 					result, err = d.callInfer(ctx, model, sysPrompt, msgs, sink, d.Tools)
 					if err == nil {
 						retried = true

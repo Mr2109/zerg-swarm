@@ -1,13 +1,14 @@
 // check_flag_registry_parity_test.go —— Go 真搬的**成对负控**定向单测（M2-0 · 4.2 附加四条之「负控成对」）。
 //
 // ✗ 禁恒绿：本件同时断言「必然判绿」「必然判红」「不给结论」三态 —— 任一态被写死都必失败。
-// 用例名：TestCheckFlagRegistryParityGatePort（定向：go test -run TestCheckFlagRegistryParityGatePort）。
+// 用例名：TestCheckFlagRegistryParityGatePort（定向：go test -run TestCheckFlagRegistryParityGatePort）·
+// TestFlagRegistryParityGoldenInternalized（内化金标：旧 py 对拍退场 ⇒ 逐格金标收成 Go 常量 · ✗ 不 Skip）·
+// TestFlagRegistryParityGoldenTwoStates（两态逐字同：夹具无 py ⟷ 合成旧态有 py）。
 package main
 
 import (
 	"bytes"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -126,16 +127,23 @@ func TestCheckFlagRegistryParityGatePort(t *testing.T) {
 	}
 }
 
-// frpFindRepoRoot —— 从 cwd 上溯找含 py 半件的仓根；找不到返回 ""（✗ 不 Fatal —— 退役态合法）。
-func frpFindRepoRoot(t *testing.T) string {
+// ── 哨兵（锚 Go 半 · fail-closed）─────────────────────────────────────────────
+
+// frpGoHalfRel —— 哨兵锚：Go 半（✗ 不锚已退场的 py —— 一退役即失锚）。
+const frpGoHalfRel = "core/cmd/zerg/check_flag_registry_parity.go"
+
+// frpTestRepoRoot —— 哨兵：由 cwd 上溯找含 Go 半的仓根；找不到 ⇒ fail-closed（缺件 ≠ 绿 · ✗ 不留 Skip）。
+// 旧版锚 `scripts/gates/check-flag-registry-parity.py`（对拍真身）：该 py 已退役 ⇒ 上溯恒找不到 ⇒
+// 旧 `TestFlagRegistryParityGoPyDifferential` 恒 Skip（假绿、零保护）；跳因「不在真仓内」名不副实
+// （整测零断言）。改锚 Go 半后它在盘（与本测试同包）⇒ 真跑断言。
+func frpTestRepoRoot(t *testing.T) string {
 	t.Helper()
-	wd, err := os.Getwd()
+	d, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
 	}
-	d := wd
 	for i := 0; i < 8; i++ {
-		if _, err := os.Stat(filepath.Join(d, "scripts", "gates", "check-flag-registry-parity.py")); err == nil {
+		if st, err := os.Stat(filepath.Join(d, filepath.FromSlash(frpGoHalfRel))); err == nil && st.Mode().IsRegular() {
 			return d
 		}
 		parent := filepath.Dir(d)
@@ -144,95 +152,126 @@ func frpFindRepoRoot(t *testing.T) string {
 		}
 		d = parent
 	}
+	t.Fatalf("哨兵失守：上溯未见 Go 半 %s（不是真仓树）⇒ fail-closed（✗ 不留 Skip）", frpGoHalfRel)
 	return ""
 }
 
-// frpHasPyHalf —— 给定根下 py 半件（对拍真源）在不在盘。★ 退役态（判据件退役前置 ③ ·
-// GAP-20261007-16）：件已退役 ⇒ ("", false)；调用方据此走「对拍不可用」档（skip），
-// ✗ 不得 Fatal、✗ 不得因缺 py 判 rc=2。
-func frpHasPyHalf(root string) (string, bool) {
-	if root == "" {
-		return "", false
-	}
-	p := filepath.Join(root, "scripts", "gates", "check-flag-registry-parity.py")
-	if st, err := os.Stat(p); err != nil || st.IsDir() {
-		return "", false
-	}
-	return p, true
+// ── 内化金标：旧 py 对拍的逐格金标收成 Go 常量（现算现冻 · ✗ 不臆造）────────────────
+//
+// 为什么这么测（M2 口径 · 与 `atomic_write_test.go` 的 `TestAwTwoStatesGoldenInternalized` /
+// `check_manifest_freshness_test.go` 的 `TestCheckManifestFreshnessGoldenInternalized` /
+// `check_verify_cmd_real_test.go` 的 `TestCheckVerifyCmdRealGoldenInternalized` 同族）：本件原
+// 「py 真身 ⟷ Go 真搬」逐字对拍（旧名 `TestFlagRegistryParityGoPyDifferential`）的对拍源
+// `scripts/gates/check-flag-registry-parity.py` 已退场（M2 批）⇒ 对拍源消失、断言恒 Skip（假绿、
+// 零保护）。照 `atomic_write_test.go`（体例最新）＋ `check_verify_cmd_real_test.go` 把金标真源
+// **收回 Go 半现役行为本身**：
+//
+//	★ 金标计算式（✗ 不臆造 · 逐格由「Go 半现役行为现算」得到）：
+//	  逐格「合成夹具 + argv ⇒ (rc, stdout, stderr)」由 `flagRegistryParityGateMain` 现跑捕获
+//	  （一次性现算 · 只读夹具 · ✗ 不落仓），冻成下表 wantRC/wantOut/wantErr；**本机位置类量**在
+//	  比对前归一化（✗ 不冻结 —— 因其本非常量）：
+//	    ① 夹具根 `t.TempDir()`（随机路径 + macOS /var↔/private/var）⇒ `<FX>`；
+//	    ② `$TMPDIR` ⇒ `<TMP>`。
+//
+// 两态（✗ 不许 Skip）：A 态 = 夹具无 py（真仓现态）；B 态 = 合成「旧态」夹具（把退役 py 路径
+// `scripts/gates/check-flag-registry-parity.py` 放回）⇒ 两态对同一套金标逐字同命中，证 py
+// 在/不在盘都不改判据结论（内化彻底 · 将来若有人让 Go 半重新去读 py，B 态当场分家）。
+//
+// ★ 哑化负控（"牙" · 见交付读数）：`-overlay` 把 `check_flag_registry_parity.go` 的一臂哑化
+// ⇒ 金标用例必 FAIL 且带行号（✗ 不真改仓内源 · 免 `dev edit` 前的仓内污染）。
+
+type frpGoldenCase struct {
+	name    string
+	argv    func(fx string) []string
+	wantRC  int
+	wantOut string // 归一化后（frpNormGolden 现算自证 · ✗ 手写）
+	wantErr string
 }
 
-// TestFlagRegistryParityGoPyDifferential —— **Go 半 ⟷ py 半 逐字节对拍**（缺口账 `GAP-20260927-325`
-// 的「只改一边 ⇒ 对拍必须 FAIL」那道保险）。四态：`--self-test` / `--list-rules` / `-h` / 未知旗标。
-// 解释器钉 `/usr/bin/python3`（argparse 帮助正文随解释器大版本变 —— 见 `GAP-20261002-07`）。
-// ★ 本测试**不需要真仓**（`--self-test` 走合成夹具；`--list-rules`/`-h` 是常量面）⇒ 两半搬同一份输入。
-func TestFlagRegistryParityGoPyDifferential(t *testing.T) {
-	root := frpFindRepoRoot(t)
-	py, ok := frpHasPyHalf(root)
-	if !ok {
-		t.Skip("py 半已退役（scripts/gates/check-flag-registry-parity.py 不在盘）⇒ 对拍不可用（✗ 不 Fatal / ✗ 不 rc=2）；Go 面由 TestCheckFlagRegistryParityGatePort 自证")
-	}
-	python := "/usr/bin/python3"
-	if _, err := os.Stat(python); err != nil {
-		t.Fatalf("钉住的解释器不在盘：%s（对拍要有确定输入面，不许换解释器）", python)
-	}
-	// ★ 真跑面（带 `--root` 夹具）：**读者面（面④）只在这一路出现** ⇒ 不加它 ⇒ 对拍治不到新腿。
-	fx := frpMkFixture(filepath.Join(t.TempDir(), "diffroot"))
-	cases := [][]string{{"--self-test"}, {"--list-rules"}, {"-h"}, {"--no-such-flag"},
-		{"--root", fx}, {"--root", fx, "--json"}}
-	for _, argv := range cases {
-		var gOut, gErr bytes.Buffer
-		grc := flagRegistryParityGateMain(&gOut, &gErr, argv)
-
-		cmd := exec.Command(python, append([]string{py}, argv...)...)
-		var pOut, pErr bytes.Buffer
-		cmd.Stdout, cmd.Stderr = &pOut, &pErr
-		err := cmd.Run()
-		prc := 0
-		if ee, ok := err.(*exec.ExitError); ok {
-			prc = ee.ExitCode()
-		} else if err != nil {
-			t.Fatalf("py 半起不来 argv=%v：%v", argv, err)
-		}
-		if grc != prc {
-			t.Errorf("对拍 FAIL（rc）argv=%v：go=%d py=%d", argv, grc, prc)
-		}
-		if gOut.String() != pOut.String() {
-			t.Errorf("对拍 FAIL（stdout）argv=%v：\n--go--\n%s\n--py--\n%s", argv, gOut.String(), pOut.String())
-		}
-		if gErr.String() != pErr.String() {
-			t.Errorf("对拍 FAIL（stderr）argv=%v：\n--go--\n%s\n--py--\n%s", argv, gErr.String(), pErr.String())
-		}
+// frpGoldenCases —— 金标真源（6 格：原对拍六组 argv 逐格同 · want* 由现跑捕获）。
+func frpGoldenCases() []frpGoldenCase {
+	return []frpGoldenCase{
+		{name: "self_test", argv: func(string) []string { return []string{"--self-test"} }, wantRC: 0, wantOut: "门73 自检（成对负控 · 合成夹具）：断言 16 条 · 失败 0 条\n  PASS ①对齐 ⇒ 无分家项\n  PASS ①' 透传命令的旗标不进判红（--scope 不在解析面）\n  PASS ②缺一处（表里删 --desc）⇒ 判红且**点名 --desc**\n  PASS ③多一处（表里加一枚没人写的名）⇒ 判红且**点名 --zz-new**\n  PASS ④形态（用法串取值改裸形）⇒ 判红且**点名 --slice-id**\n  PASS ⑤命令树真源不在盘 ⇒ 判不了（Bail ⇒ rc=2）\n  PASS ⑥命令树零条 ⇒ 判不了（不给结论）\n  PASS ⑦注释里的旗标名不被读成登记（面② 不含 --zzz-注释）\n  PASS ⑧豁免行必须带原因（EXEMPT 逐行有值）\n  PASS ⑨判据只有一处定义（本件内 RULES 与三档退码常量在位）\n  PASS ④读者面（负控）：run 指不到实现件 ⇒ 非全局 usage 旗标列缺读者\n  PASS ④读者面（正控）：实现件读全 ⇒ 该命令不再列缺读者\n  PASS ⑤反读面（负控）：实现按取值读但 usage 没列 ⇒ 列出该命令\n  PASS ⑤反读面（正控）：usage 列了该旗标 ⇒ 该命令不再列\n  PASS ⑥运行期用法行面（负控）：运行期用法行漏列命令树旗标（--zz-b）⇒ 点名该命令\n  PASS ⑥运行期用法行面（正控）：运行期用法行把命令树旗标列全 ⇒ 该命令不再列\n"},
+		{name: "list_rules", argv: func(string) []string { return []string{"--list-rules"} }, wantRC: 0, wantOut: "面① 用法串 = 命令树 usage:（非字面量按包内常量名现读）；面② 名字表 = valueFlagName 体；面③ 解析面 = valueFlagName ∪ parseInvocation 专用 case。甲 缺一处 = 用法串取值形态的旗标 ∉ 面③（透传型命令不计）；乙 多一处 = 面② 的名字在全部用法串里零提及；丙 形态 = 面② 的名字在用法串里只写裸形。 存量豁免表逐条带原因（棘轮 · 只许下调）；新增分家项 ⇒ rc=1。面④ 读者面（按命令 · 报告档 · 不进退码）= 某命令 usage 串里的旗标 ⇒ 该命令的实现件（定义其 run: 处理函数的包内 .go 件 · 先剥注释）必读它（字面 \"--F\" 或类型化字段 inv.<field>）—— 缺口账 `GAP-20260927-325`（全局「零读者」是错的判据）。面⑤ 反读面（按命令 · 报告档 · 不进退码）= 某命令实现按**取值**读了（`inv.flagVal`）某旗标 ⇒ 该命令的 usage 串必列它（面④ 的另一向 —— 「实现读 ⇒ 用法必列」，缺口 `GAP-20261005-15`）；拒执守卫（同一函数里 `inv.flagVals`/`inv.hasFlag` 存在性检查）与别处已列 不计。面⑥ 运行期用法行面（按命令 · 报告档 · 不进退码）= 件内运行期 stderr 用法行的旗标集 ⟷ 面① 命令树同命令用法串旗标集（双向对拍 · 全局选项不计 · 命令需精确同名）—— 差集非空逐条列（缺口 `GAP-20260928-183`）。\n退码：0=对齐 · 1=有新的分家项（逐条点名）· 2=取数面拿不到（不给结论）\n存量豁免 0 项：\n面④ 读者面（按命令 · 报告档 · 不进退码）：RULES 末句 —— 「某命令 usage 串里的旗标 ⇒ 该命令的实现件必读」（缺口账 `GAP-20260927-325`）\n面⑤ 反读面（按命令 · 报告档 · 不进退码 · 缺口账 `GAP-20261005-15`）：RULES 末句 —— 「某命令实现按取值读了某旗标 ⇒ 该命令的 usage 串必列它」（面④ 的另一向）\n面⑥ 运行期用法行面（按命令 · 报告档 · 不进退码 · 缺口账 `GAP-20260928-183`）：件内运行期 stderr 用法行的旗标集 ⟷ 面① 命令树同命令用法串旗标集（双向对拍）\n"},
+		{name: "help", argv: func(string) []string { return []string{"-h"} }, wantRC: 0, wantOut: "usage: check-flag-registry-parity.py [-h] [--root ROOT_OPT] [--json]\n                                     [--list-rules] [--self-test]\n                                     [root]\n\n门73 旗标两处登记面对拍（只读）\n\npositional arguments:\n  root             仓根（默认当前目录）\n\noptional arguments:\n  -h, --help       show this help message and exit\n  --root ROOT_OPT  同位置参数（显式档）\n  --json           末尾追加机器面一行\n  --list-rules     打判据 / 取数口径 / 退码\n  --self-test      只跑自检（合成夹具 · 不碰真目标）\n"},
+		{name: "unknown", argv: func(string) []string { return []string{"--no-such-flag"} }, wantRC: 2, wantErr: "usage: check-flag-registry-parity.py [-h] [--root ROOT_OPT] [--json]\n                                     [--list-rules] [--self-test]\n                                     [root]\ncheck-flag-registry-parity.py: error: unrecognized arguments: --no-such-flag\n"},
+		{name: "root", argv: func(fx string) []string { return []string{"--root", fx} }, wantRC: 0, wantOut: "门73 旗标两处登记面对拍（用法串 ⟷ valueFlagName 名字表 + 实现件读者面）· v1.0.0\n仓根：<FX>\n取数：命令树条数=2 · 名字表项数=2 · 解析面项数=2 · 用法串旗标数=6 · 透传命令=['gate/run']\n判据：面① 用法串 = 命令树 usage:（非字面量按包内常量名现读）；面② 名字表 = valueFlagName 体；面③ 解析面 = valueFlagName ∪ parseInvocation 专用 case。甲 缺一处 = 用法串取值形态的旗标 ∉ 面③（透传型命令不计）；乙 多一处 = 面② 的名字在全部用法串里零提及；丙 形态 = 面② 的名字在用法串里只写裸形。 存量豁免表逐条带原因（棘轮 · 只许下调）；新增分家项 ⇒ rc=1。面④ 读者面（按命令 · 报告档 · 不进退码）= 某命令 usage 串里的旗标 ⇒ 该命令的实现件（定义其 run: 处理函数的包内 .go 件 · 先剥注释）必读它（字面 \"--F\" 或类型化字段 inv.<field>）—— 缺口账 `GAP-20260927-325`（全局「零读者」是错的判据）。面⑤ 反读面（按命令 · 报告档 · 不进退码）= 某命令实现按**取值**读了（`inv.flagVal`）某旗标 ⇒ 该命令的 usage 串必列它（面④ 的另一向 —— 「实现读 ⇒ 用法必列」，缺口 `GAP-20261005-15`）；拒执守卫（同一函数里 `inv.flagVals`/`inv.hasFlag` 存在性检查）与别处已列 不计。面⑥ 运行期用法行面（按命令 · 报告档 · 不进退码）= 件内运行期 stderr 用法行的旗标集 ⟷ 面① 命令树同命令用法串旗标集（双向对拍 · 全局选项不计 · 命令需精确同名）—— 差集非空逐条列（缺口 `GAP-20260928-183`）。\n新分家项 0 项：两面（除存量豁免）对齐。\n读者面（按命令 · 报告档 · 不进退码 · 缺口账 `GAP-20260927-325`）：「某命令 usage 串里的旗标 ⇒ 该命令的实现件必读」——本命令实现件不读的 3 项：\n  · zerg task submit · --all · 实现件 （取不到实现件）\n  · zerg task submit · --desc · 实现件 （取不到实现件）\n  · zerg task submit · --slice-id · 实现件 （取不到实现件）\n反读面（按命令 · 报告档 · 不进退码 · 缺口账 `GAP-20261005-15`）：「某命令实现按取值读（`inv.flagVal`）了某旗标 ⇒ 该命令的 usage 串必列它」（面④ 的另一向；拒执守卫 / 别处已列 不计）——本命令实现读了而 usage 没列的 0 项：\n运行期用法行面（按命令 · 报告档 · 不进退码 · 缺口 `GAP-20260928-183`）：「件内运行期 stderr 用法行的旗标集 ⟷ 面① 命令树同命令用法串旗标集（双向对拍 · 全局选项不计 · 命令精确同名）」—— 差集非空的 0 项：\n存量豁免 0 项（棘轮 · 逐条打印 · 不进退码）：\n退码：0=对齐 · 1=有新的分家项（逐条点名）· 2=取数面拿不到（不给结论）\n"},
+		{name: "root_json", argv: func(fx string) []string { return []string{"--root", fx, "--json"} }, wantRC: 0, wantOut: "门73 旗标两处登记面对拍（用法串 ⟷ valueFlagName 名字表 + 实现件读者面）· v1.0.0\n仓根：<FX>\n取数：命令树条数=2 · 名字表项数=2 · 解析面项数=2 · 用法串旗标数=6 · 透传命令=['gate/run']\n判据：面① 用法串 = 命令树 usage:（非字面量按包内常量名现读）；面② 名字表 = valueFlagName 体；面③ 解析面 = valueFlagName ∪ parseInvocation 专用 case。甲 缺一处 = 用法串取值形态的旗标 ∉ 面③（透传型命令不计）；乙 多一处 = 面② 的名字在全部用法串里零提及；丙 形态 = 面② 的名字在用法串里只写裸形。 存量豁免表逐条带原因（棘轮 · 只许下调）；新增分家项 ⇒ rc=1。面④ 读者面（按命令 · 报告档 · 不进退码）= 某命令 usage 串里的旗标 ⇒ 该命令的实现件（定义其 run: 处理函数的包内 .go 件 · 先剥注释）必读它（字面 \"--F\" 或类型化字段 inv.<field>）—— 缺口账 `GAP-20260927-325`（全局「零读者」是错的判据）。面⑤ 反读面（按命令 · 报告档 · 不进退码）= 某命令实现按**取值**读了（`inv.flagVal`）某旗标 ⇒ 该命令的 usage 串必列它（面④ 的另一向 —— 「实现读 ⇒ 用法必列」，缺口 `GAP-20261005-15`）；拒执守卫（同一函数里 `inv.flagVals`/`inv.hasFlag` 存在性检查）与别处已列 不计。面⑥ 运行期用法行面（按命令 · 报告档 · 不进退码）= 件内运行期 stderr 用法行的旗标集 ⟷ 面① 命令树同命令用法串旗标集（双向对拍 · 全局选项不计 · 命令需精确同名）—— 差集非空逐条列（缺口 `GAP-20260928-183`）。\n新分家项 0 项：两面（除存量豁免）对齐。\n读者面（按命令 · 报告档 · 不进退码 · 缺口账 `GAP-20260927-325`）：「某命令 usage 串里的旗标 ⇒ 该命令的实现件必读」——本命令实现件不读的 3 项：\n  · zerg task submit · --all · 实现件 （取不到实现件）\n  · zerg task submit · --desc · 实现件 （取不到实现件）\n  · zerg task submit · --slice-id · 实现件 （取不到实现件）\n反读面（按命令 · 报告档 · 不进退码 · 缺口账 `GAP-20261005-15`）：「某命令实现按取值读（`inv.flagVal`）了某旗标 ⇒ 该命令的 usage 串必列它」（面④ 的另一向；拒执守卫 / 别处已列 不计）——本命令实现读了而 usage 没列的 0 项：\n运行期用法行面（按命令 · 报告档 · 不进退码 · 缺口 `GAP-20260928-183`）：「件内运行期 stderr 用法行的旗标集 ⟷ 面① 命令树同命令用法串旗标集（双向对拍 · 全局选项不计 · 命令精确同名）」—— 差集非空的 0 项：\n存量豁免 0 项（棘轮 · 逐条打印 · 不进退码）：\n{\"gate\": \"flag-registry-parity\", \"version\": \"1.0.0\", \"violations\": [], \"exempt\": [], \"stale_exempt\": [], \"exempt_without_reason\": [], \"counts\": {\"命令树条数\": 2, \"名字表项数\": 2, \"解析面项数\": 2, \"用法串旗标数\": 6, \"透传命令\": [\"gate/run\"]}, \"no_reader\": [{\"command\": \"task/submit\", \"flag\": \"--all\", \"impl\": \"（取不到实现件）\"}, {\"command\": \"task/submit\", \"flag\": \"--desc\", \"impl\": \"（取不到实现件）\"}, {\"command\": \"task/submit\", \"flag\": \"--slice-id\", \"impl\": \"（取不到实现件）\"}], \"no_usage\": [], \"runtime_drift\": [], \"runtime_unmatched\": []}\n退码：0=对齐 · 1=有新的分家项（逐条点名）· 2=取数面拿不到（不给结论）\n"},
 	}
 }
 
-// TestFlagRegistryParityRetired —— 退役态（判据件退役前置 ③ · GAP-20261007-16）：py 半不在盘时，
-// 对拍可用性判据必须判「不可用」（skip 档），✗ 不得 Fatal / 不得 rc=2。全在**仓外夹具**上做。
-func TestFlagRegistryParityRetired(t *testing.T) {
-	// ① 空树（连仓根都找不到）⇒ 不可用。
-	empty := t.TempDir()
-	if p, ok := frpHasPyHalf(empty); ok {
-		t.Fatalf("空树应判「无 py 半」，实得 ok=true path=%s", p)
+// frpNormGolden —— 归一夹具根（t.TempDir() 随机路径 + macOS /var↔/private/var）⇒ 金标跨机可复现。
+func frpNormGolden(s, fx string) string {
+	if fx != "" {
+		s = strings.ReplaceAll(s, fx, "<FX>")
 	}
-	if p, ok := frpHasPyHalf(frpFindRepoRoot(t)); ok && p == "" {
-		t.Fatalf("仓根存在却给空 py 路径：%q", p)
+	if td := os.TempDir(); td != "" && td != fx {
+		s = strings.ReplaceAll(s, td, "<TMP>")
 	}
-	// ② 有 py 半（桩件）⇒ 可用；随后把桩件移开（= 退役）⇒ 立刻回到不可用（✗ 不 Fatal）。
-	withPy := t.TempDir()
-	dir := filepath.Join(withPy, "scripts", "gates")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
+	return s
+}
+
+// frpRunGolden —— 逐格现建夹具、现跑 Go 半、归一后与冻值逐字比；返回失配格数。
+// plant 非 nil 时在跑前往夹具落「旧态」py 件（两态用）。
+func frpRunGolden(t *testing.T, tag string, plant func(fx string)) int {
+	t.Helper()
+	mism := 0
+	for _, c := range frpGoldenCases() {
+		fx := frpMkFixture(filepath.Join(t.TempDir(), "diffroot"))
+		if plant != nil {
+			plant(fx)
+		}
+		var ob, eb bytes.Buffer
+		rc := flagRegistryParityGateMain(&ob, &eb, c.argv(fx))
+		gotOut := frpNormGolden(ob.String(), fx)
+		gotErr := frpNormGolden(eb.String(), fx)
+		if rc != c.wantRC {
+			mism++
+			t.Errorf("[%s/%s] rc=%d（冻值 %d）", tag, c.name, rc, c.wantRC)
+		}
+		if gotOut != c.wantOut {
+			mism++
+			t.Errorf("[%s/%s] stdout 漂移\n实得=%q\n冻值=%q", tag, c.name, gotOut, c.wantOut)
+		}
+		if gotErr != c.wantErr {
+			mism++
+			t.Errorf("[%s/%s] stderr 漂移\n实得=%q\n冻值=%q", tag, c.name, gotErr, c.wantErr)
+		}
 	}
-	stub := filepath.Join(dir, "check-flag-registry-parity.py")
-	if err := os.WriteFile(stub, []byte("#!/usr/bin/env python3\n"), 0o644); err != nil {
-		t.Fatal(err)
+	return mism
+}
+
+// TestFlagRegistryParityGoldenInternalized —— A 态（真仓 · 退役 py 不在盘）金标自证（✗ 不 Skip ·
+// 逐格真断言 · ✗ 不放宽为「只判非空」）。
+func TestFlagRegistryParityGoldenInternalized(t *testing.T) {
+	repo := frpTestRepoRoot(t)
+	py := filepath.Join(repo, "scripts", "gates", "check-flag-registry-parity.py")
+	if st, err := os.Stat(py); err == nil && !st.IsDir() {
+		t.Fatalf("A 态前提破：退役 py 竟在盘 %s（本件前提 = 内化后无 py）", py)
 	}
-	if p, ok := frpHasPyHalf(withPy); !ok || p != stub {
-		t.Fatalf("有 py 半应判可用：ok=%v path=%q want %q", ok, p, stub)
+	if n := frpRunGolden(t, "A真仓无py", nil); n != 0 {
+		t.Fatalf("A 态金标失配 %d 格", n)
 	}
-	if err := os.Remove(stub); err != nil {
-		t.Fatal(err)
+}
+
+// TestFlagRegistryParityGoldenTwoStates —— 两态逐字同：A 态 = 夹具无 py（真仓现态）；B 态 = 合成
+// 「旧态」夹具（把退役 py 路径 `scripts/gates/check-flag-registry-parity.py` 放回）⇒ 两态对同一套
+// 金标逐字同命中（证 py 在/不在盘都不改判据结论 · ✗ 不 Skip）。
+func TestFlagRegistryParityGoldenTwoStates(t *testing.T) {
+	_ = frpTestRepoRoot(t) // 哨兵：锚 Go 半在盘 ⇒ fail-closed（✗ 不 Skip）
+	if n := frpRunGolden(t, "A夹具无py", nil); n != 0 {
+		t.Fatalf("A 态金标失配 %d 格", n)
 	}
-	if p, ok := frpHasPyHalf(withPy); ok {
-		t.Fatalf("退役态（桩件移开）应判不可用，实得 ok=true path=%s", p)
+	plant := func(fx string) {
+		p := filepath.Join(fx, "scripts", "gates", "check-flag-registry-parity.py")
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("#!/usr/bin/env python3\n# stub：造「旧态」——退役 py 在位（本件只证 py 在/不在盘不改判据结论）\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := frpRunGolden(t, "B旧态有py", plant); n != 0 {
+		t.Fatalf("B 态金标失配 %d 格（py 在盘不得改判据结论）", n)
 	}
 }

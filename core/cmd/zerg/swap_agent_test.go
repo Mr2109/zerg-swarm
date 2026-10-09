@@ -202,7 +202,7 @@ func TestSwapAgentReportAndSelfTestVerbatim(t *testing.T) {
 	if rc3 == exitBlocked {
 		t.Fatalf("退役态 `--check` **不得**退 8：rc=%d", rc3)
 	}
-	if rc1 != rc3 || out1 != out3 || err1 != err3 {
+	if rc1 != rc3 || sagTNorm(root, out1) != sagTNorm(root, out3) || err1 != err3 {
 		t.Fatalf("`--check` 退役态三面不逐字同：在盘 %d/%dB/%q · 退役 %d/%dB/%q",
 			rc1, len(out1), err1, rc3, len(out3), err3)
 	}
@@ -210,7 +210,7 @@ func TestSwapAgentReportAndSelfTestVerbatim(t *testing.T) {
 	if rc4 == exitBlocked {
 		t.Fatalf("退役态 `--self-test` **不得**退 8：rc=%d", rc4)
 	}
-	if rc2 != rc4 || out2 != out4 || err2 != err4 {
+	if rc2 != rc4 || sagTNorm(root, out2) != sagTNorm(root, out4) || err2 != err4 {
 		t.Fatalf("`--self-test` 退役态三面不逐字同：在盘 %d/%dB/%q · 退役 %d/%dB/%q",
 			rc2, len(out2), err2, rc4, len(out4), err4)
 	}

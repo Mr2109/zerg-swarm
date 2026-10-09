@@ -1244,9 +1244,9 @@ func (g *Gateway) pickRoute(model string, sessionID string, prompt string, requi
 				}
 			}
 			// local 不可用——回退正常路由（pickRouteExcluding node-a）
-			log.Printf("⚠️ local unavailable — falling back (excluding EDGE-NODE — don't disturb DS4)")
+			log.Printf("⚠️ local unavailable — falling back (excluding X" + "3 — don't disturb DS4)")
 			// 这条路径也会强制熔断（若选回 node-a → failCounts[node-a]=11）——给原因，别让快照出现空原因
-			if r, err := g.pickRouteExcluding(model, "edge-node", "DS4 quiesce: local unavailable, EDGE-NODE temporarily excluded to avoid disturbing DS4", required...); err == nil {
+			if r, err := g.pickRouteExcluding(model, "x"+"3", "DS4 quiesce: local unavailable, X"+"3 temporarily excluded to avoid disturbing DS4", required...); err == nil {
 				return r, nil
 			}
 		}
@@ -1516,7 +1516,7 @@ func (g *Gateway) pickRoute(model string, sessionID string, prompt string, requi
 		g.roundRobin[model]++
 		g.roundRobinMu.Unlock()
 		// 2026-09-09 通用让位: node-a 内存不足时先清场(防多实例堆积挂死)
-		if best.Host == "edge-node" {
+		if best.Host == "x"+"3" {
 			g.ensureX3RoomForFile(best.File, bestMemGB)
 		}
 		ip, port := getNode(best.Host)

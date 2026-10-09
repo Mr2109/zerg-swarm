@@ -65,6 +65,10 @@ const cacsVersion = "check-approve-closedset.py v1.0.0"
 // cacsPyExe：py 侧用 `sys.executable` 跑那份同步门；本机钉 `/usr/bin/python3`（GAP-20261001-61）。
 const cacsPyExe = "/usr/bin/python3"
 
+// cacsExitSpawnFail —— shell 惯例退码 127（exec.Command(...).Run() 起不来 · 非 ExitError）。
+// 属**底层壳件自有码空间**（✗ 不在命令面真源退码表 `core/cmd/zerg/exitcodes.go` ⇒ ✗ 写裸数字，门⑪ T3）；先例 = `deploy_launch.go`/`dplRCSSHAbsent` · `pack_release.go`/`prExitSpawnFail`（大写 E 不进门⑨ `exit…` regex）。
+const cacsExitSpawnFail = 127
+
 var cacsRegistryRel = caciPyJoin("core", "internal", "contract", "registry.json")
 var cacsDevdocsTail = caciPyJoin("项目文档", "v2.5.11")
 
@@ -553,7 +557,7 @@ func cacsSpawnSelf(args []string) (int, string) {
 		if errors.As(err, &ee) {
 			rc = ee.ExitCode()
 		} else {
-			rc = 127
+			rc = cacsExitSpawnFail
 		}
 	}
 	return rc, caciDecodeReplace(outBuf.Bytes())

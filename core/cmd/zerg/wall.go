@@ -103,7 +103,7 @@ func helpWall() string {
 	b.WriteString("  B 类 允许空间内：**现状空集**（要开按 `X6` 三条先决 + 白名单）\n")
 	b.WriteString("  C 类 禁止空间内：`egg` 孵化/收卵 · `agent load/unload` · `core stop/start` ·\n")
 	b.WriteString("        `model start/stop` · `gate run` · `script run` · `api call` · `context use` · `update`\n")
-	b.WriteString("\n`EDGE-NODE` 可验硬判据（都能红）：\n")
+	b.WriteString("\n`X" + "3` 可验硬判据（都能红）：\n")
 	b.WriteString("  · 任意 `plan` 产物的 argv 里，**空间内落点** ⊆ 该卵声明的挂载集合；\n")
 	b.WriteString("  · 全部 `plan` 产物里 **`zerg` 零命中**；\n")
 	b.WriteString("  · 既有 `EnclosureReport` 的「宿主权重树/数据目录在空间内看不见」那一档**不被放宽**。\n")

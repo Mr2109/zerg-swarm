@@ -4622,7 +4622,7 @@
    "argv": [
     "calib",
     "run",
-    "calib-x3"
+    "calib-nosuch"
    ],
    "command": "calib run",
    "id": "calib/run#未知名（给最像的）",
@@ -4634,7 +4634,7 @@
    "argv": [
     "calib",
     "run",
-    "calib-x3-model"
+    "calib-local-model"
    ],
    "command": "calib run",
    "id": "calib/run#缺 --yes（D2 · 脚本一次都没跑）",
@@ -4642,7 +4642,7 @@
    "want_rc_public": 8,
    "want_stdout_bytes": 0,
    "why": "D2 缺 `--yes` ⇒ fail-closed 2（§九 M3 C2）· 计划件走 stderr、**不 exec 任何脚本**",
-   "why_public": "公开面 `scripts/calib/` 目录在、件一件不在（两处现读：公开仓 clone 里没有 scripts/calib；发布器产出树里 scripts/calib 是空目录）⇒ `calib run calib-x3-model` 先撞「件不在盘上」退 **8**，走不到「缺 --yes ⇒ 2」那一格"
+   "why_public": "公开面 `scripts/calib/` 目录在、件一件不在（两处现读：公开仓 clone 里没有 scripts/calib；发布器产出树里 scripts/calib 是空目录）⇒ `calib run calib-local-model` 先撞「件不在盘上」退 **8**，走不到「缺 --yes ⇒ 2」那一格"
   },
   {
    "argv": [
@@ -5897,7 +5897,7 @@
     "--model",
     "m",
     "--machine",
-    "edge-node",
+    "local",
     "--yes"
    ],
    "command": "route pin",
@@ -5913,7 +5913,7 @@
     "--model",
     "m",
     "--machine",
-    "edge-node",
+    "local",
     "--ttl",
     "0",
     "--yes"
@@ -5931,7 +5931,7 @@
     "--model",
     "m",
     "--machine",
-    "edge-node",
+    "local",
     "--ttl",
     "--yes"
    ],
@@ -5948,7 +5948,7 @@
     "--model",
     "m",
     "--machine",
-    "edge-node",
+    "local",
     "--ttl",
     "好久",
     "--yes"
@@ -6051,6 +6051,31 @@
    "want_rc": 2,
    "want_stdout_bytes": 0,
    "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "argv": [
+    "publish",
+    "verify",
+    "--nosuchflag-zz"
+   ],
+   "command": "publish verify",
+   "id": "publish/verify#未知旗标",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标（`publish verify` 非透传型 ⇒ 全局解析面收口 · 实现体 ui_start.go:cmdPublishVerifyFamily 转发 family_publish_verify_native.go:cmdPublishVerify）"
+  },
+  {
+   "argv": [
+    "publish",
+    "verify",
+    "--schema",
+    "zerg/v9"
+   ],
+   "command": "publish verify",
+   "id": "publish/verify#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
   },
   {
    "argv": [
@@ -6497,7 +6522,7 @@
     "--model",
     "example-35b-v2",
     "--machine",
-    "edge-node",
+    "local",
     "--ttl",
     "2h",
     "--dry-run",
@@ -6554,8 +6579,8 @@
    "argv": [
     "agent",
     "bootstrap",
-    "edge-node",
-    "--confirm=edge-node",
+    "local",
+    "--confirm=local",
     "--dry-run",
     "--yes"
    ],
@@ -6569,7 +6594,7 @@
    "argv": [
     "agent",
     "load",
-    "edge-node",
+    "local",
     "m",
     "--dry-run",
     "--yes"
@@ -6584,7 +6609,7 @@
    "argv": [
     "agent",
     "registry",
-    "edge-node",
+    "local",
     "--list",
     "--dry-run",
     "--yes"
@@ -6599,9 +6624,9 @@
    "argv": [
     "agent",
     "unload",
-    "edge-node",
+    "local",
     "m",
-    "--confirm=edge-node",
+    "--confirm=local",
     "--dry-run",
     "--yes"
    ],
@@ -6642,7 +6667,7 @@
    "argv": [
     "core",
     "start",
-    "--confirm=edge-node",
+    "--confirm=local",
     "--dry-run",
     "--yes"
    ],
@@ -6656,7 +6681,7 @@
    "argv": [
     "core",
     "stop",
-    "--confirm=edge-node",
+    "--confirm=local",
     "--dry-run",
     "--yes"
    ],
@@ -6670,7 +6695,7 @@
    "argv": [
     "core",
     "update",
-    "--confirm=edge-node",
+    "--confirm=local",
     "--dry-run",
     "--yes"
    ],
@@ -7030,7 +7055,7 @@
   {
    "argv": [
     "update",
-    "--confirm=edge-node",
+    "--confirm=local",
     "--dry-run",
     "--yes"
    ],
@@ -8919,10 +8944,34 @@
     "test"
    ],
    "command": "sandbox test",
-   "id": "sandbox/test#未接",
+   "id": "sandbox/test#缺子动作",
    "want_rc": 2,
    "want_stdout_bytes": 0,
-   "why": "L1 批1：`sandbox test`（沙箱夹具 fleet/relay/setup/update）归批3、本版**未接** ⇒ fail-closed 退 2「未接」· stdout 0 字节（✗ 不许静默返回 0 · 实现体 ui_start.go:cmdSandboxTest）"
+   "why": "`sandbox test` 不给子动作 ⇒ 用法错 退 2（`relay` 已接、`fleet`/`setup`/`update` 归批3 未接）· stdout 0 字节（✗ 不许静默返回 0 · 实现体 ui_start.go:cmdSandboxTest 子动作分派）"
+  },
+  {
+   "argv": [
+    "sandbox",
+    "test",
+    "fleet"
+   ],
+   "command": "sandbox test",
+   "id": "sandbox/test#未接子动作",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "`sandbox test fleet`（沙箱夹具 · 依赖被测件正门 + 夹具环境）归批3、本版**未接** ⇒ fail-closed 退 2「未接」· stdout 0 字节（`relay` 已接线、其余子动作仍未接）"
+  },
+  {
+   "argv": [
+    "sandbox",
+    "test",
+    "zz-nosuch"
+   ],
+   "command": "sandbox test",
+   "id": "sandbox/test#未知子动作",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "不在册的子动作名 ⇒ 用法错 退 2 并逐字列出可用子动作 · stdout 0 字节（执行前判 · 不触底层脚本）"
   },
   {
    "argv": [
@@ -8960,6 +9009,30 @@
    "want_rc": 2,
    "want_stdout_bytes": 0,
    "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "argv": [
+    "fleet",
+    "logs",
+    "--schema",
+    "zerg/v9"
+   ],
+   "command": "fleet logs",
+   "id": "fleet/logs#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判（透传型命令也照判）"
+  },
+  {
+   "argv": [
+    "fleet",
+    "logs"
+   ],
+   "command": "fleet logs",
+   "id": "fleet/logs#缺子命令",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "透传型：`fleet logs` 后无实参 ⇒ 真身 fleet_logs.go:fleetLogsGateMain 认「缺子命令」fail-closed 退 2（usage 走 stderr）· stdout 0 字节"
   },
   {
    "argv": [

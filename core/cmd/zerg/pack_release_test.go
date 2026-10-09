@@ -1,23 +1,38 @@
 // pack_release_test.go —— `pack_release.go`（`scripts/build/pack-release.sh` 的 Go 真身）的
-// **两态三面**对拍 ＋ 退役态（脚本移出仓）验证。
+// **金标内化**回归 ＋ 退役态（脚本移出仓）验证。
 //
-// 判据（与派单口径一致）：
+// ★ 内化缘起（DEV-2143 / DEV-2145 / DEV-2146 同族 · 甲类「两件三处」之一）：本件原「sh 真身 ⟷
+// Go 真搬」逐字对拍（旧名 TestPackReleaseFixtureParity / TestPackReleaseRepoReadOnlyParity）的
+// 对拍源 `scripts/build/pack-release.sh` 已退场（M2 批）⇒ 对拍源消失、两格恒 Skip（假绿、零保护）。
+// 照 `atomic_write_test.go`（体例最新）＋`check_verify_cmd_real_test.go` 把金标真源**收回 Go 半
+// 现役行为本身**。
 //
-//	① **脚本在盘** ⇒ Go 半逐档 rc/stdout/stderr 与 `bash <脚本> <档>` **逐字节同**
-//	   （档：通用计划件 / 清单计划件 / 跳过构建计划件 / 校验计划件 / 清单档 / 校验档 / 未知参）。
-//	② **脚本移出仓**（仓外夹具里把脚本副本删掉）⇒ 同一批档的 rc/stdout/stderr 与
-//	   「在盘」时**逐字同**（✗ 不得退 2 —— ✗ 不得因脚本不在而变脸）。
-//	③ 成对负控（有牙）：把脚本换成**毒脚本**（打印 POISON · 退 99）⇒ Go 半读数**一字不动**
-//	   （证「真搬」：不再 exec 那个脚本），而直跑脚本时毒脚本的 99/POISON 必须出现。
+// 判据：
 //
-// ★ 夹具一律落**仓外**（`t.TempDir()` · 且 `EvalSymlinks` 消解 `/var` ⟷ `/private/var` 符号
-// 链接，避免 py/shell 词法路径与 Go 半物理路径错位）；✗ 不往仓内写任何件。
-// ★ **不硬读 shell 半真件**（退役态安全 · 先例 `atomic_write_test.go:286-300` · `isolate_ro_test.go:245-255`）：
-// 真件在盘 ⇒ 逐字节复制它（保住「与真件对拍」）；缺席（退役态）⇒ 夹具落**合成副本 stub**（`prSynthShell`），
-// 依赖真件的对拍格（FixtureParity / RepoReadOnlyParity）按 `prShellInRepo` **体面跳过**，PoisonControl
-// 照跑（它自带毒脚本覆写夹具里那一件）⇒ 件移出仓后本件仍绿/得体面（✗ 不 rc=2）；**两半皆缺**
-// （`prHalvesGuard`：shell 半与其 Go 半皆不在盘）⇒ fail-closed（缺件 ≠ 绿）。
-// ★ 本件含「干跑」旗标 ⇒ 用 `prDryTok` **拆写常量**（与主件同处置 · 见门⑩ 自指面）。
+//	① 金标内化（A 态 · 真仓无 sh）：逐档 (rc, stdout, stderr) 与现算现冻的**逐字**比；哨兵锚
+//	   Go 半 `core/cmd/zerg/pack_release.go`（✗ 不锚 sh —— 已退场即失锚），找不到 ⇒ `t.Fatalf`
+//	   fail-closed（✗ 不留 Skip）。
+//	② 两态逐字同（B 态 · 合成「旧态」夹具把退役 sh 路径放回）：sh 在/不在盘都不改判据结论。
+//	③ 真仓只读档金标（plan-* 干跑 / 未知参）：不写 `dist/`、不碰 `bin/`。
+//	④ 成对负控「有牙」：毒脚本不影响 Go 半（证真搬 · `TestPackReleasePoisonControl`）；
+//	   哑化被测判据一臂（`-overlay`）⇒ 金标用例必 FAIL 且带行号（见交付读数）。
+//
+// ★ 金标计算式（✗ 不臆造 · 逐格由「Go 半现役行为现算」得到）：逐格「夹具/真仓 + argv ⇒
+// (rc, stdout, stderr)」由 `prRunGo` 现跑捕获、归一后冻结为常量；**本机时点/位置类量**在比对前
+// 归一化（✗ 不冻结 —— 因其本非常量）：
+//
+//	① 夹具/真仓根（`t.TempDir()` 物理路径 + macOS `/var`⟷`/private/var` 符号链接）⇒ `<FX>` / `<REPO>`；
+//	② 版本号（`core/internal/version/version.go` 的 `const Version`，随收版漂）⇒ `<VER>`；
+//	③ `$TMPDIR` ⇒ `<TMP>`。
+//
+// ★ `manifest-only` 档委派外部 `python3 scripts/evals/make-manifest.py`（件头声明的**外部工具链面**）
+// ⇒ 本机无 `python3` 时该格如实 log「不适用」（✗ 不当绿 · ✗ 不 Skip 整测试）。
+// ★ **未覆盖面**（✗ 不声称逐字对齐）：build/pack 真跑档（真编译 / 真签名）不走本件（外部工具链面）。
+//
+// ★ 夹具一律落**仓外**（`t.TempDir()` · 且 `EvalSymlinks` 消解 `/var`⟷`/private/var` 符号链接，
+// 避免 sh 词法路径与 Go 半物理路径错位）；✗ 不往仓内写任何件。
+// ★ 本件含「干跑」旗标 ⇒ 用 `prDryTok` **拆写常量**（与主件同处置 · 见门⑩ 自指面；金标里的该旗标
+// 亦逐处拆写拼接）。
 package main
 
 import (
@@ -47,8 +62,7 @@ type prCase struct {
 	argv []string
 }
 
-// prShellDeps —— 脚本侧/Go 侧都要 `bash`（脚本本体）与 `python3`（清单生成器与校验段前的
-// 清单档）。缺 `python3` ⇒ 只覆盖计划件/未知参那几档（如实报「不适用」，✗ 不当绿）。
+// prHasExe —— 本机是否有某可执行件（`python3` 缺失时重档如实「不适用」）。
 func prHasExe(name string) bool {
 	_, err := exec.LookPath(name)
 	return err == nil
@@ -97,16 +111,28 @@ func prCopyIn(t *testing.T, src, dst string) {
 	prWriteFile(t, dst, b)
 }
 
-// prShellInRepo —— shell 半真身（`scripts/build/pack-release.sh`）是否在盘。
-// （`prIsFile` 复用 `pack_release.go:637` 那枚同包件 —— 语义同 shell 的 `[ -f ]`。）
+// prGoHalfRel —— 哨兵锚：Go 半（✗ 不锚已退场的 sh —— 一退役即失锚）。
+const prGoHalfRel = "core/cmd/zerg/pack_release.go"
+
+// prShRel —— 已退场 shell 半的仓根相对路径；「两态」就钉在它「在 / 不在盘」。
+const prShRel = "scripts/build/pack-release.sh"
+
+// prShellInRepo —— shell 半真身是否在盘（仅用于 `prHalvesGuard` 的 fail-closed 腿）。
 func prShellInRepo(repo string) bool {
 	return prIsFile(filepath.Join(repo, "scripts", "build", "pack-release.sh"))
 }
 
-// prHalvesGuard —— 退役态**三段式回退腿**的 fail-closed 腿（与先例 `atomic_write_test.go:286-300` ·
-// `isolate_ro_test.go:245-255` 同口径）：shell 半（`scripts/build/pack-release.sh`）**与其 Go 半**
-// （`core/cmd/zerg/pack_release.go`）**皆缺** ⇒ 真消失（✗ 不是退役态）⇒ fail-closed（缺件 ≠ 绿）。
-// 只缺 shell 半（Go 半在盘）= 退役态 ⇒ 调用方照 `prShellInRepo` 走「体面跳过 / 只跑 Go 半」那一路。
+// prAnchorGoHalf —— 哨兵：锚 **Go 半**在盘（✗ 不再锚已退场 sh）；找不到 ⇒ fail-closed（缺件 ≠ 绿 ·
+// ✗ 不留 Skip）。旧版对上溯不到 sh 就 `t.Skipf`（恒 Skip · 零保护）—— 本改把它换成硬前置。
+func prAnchorGoHalf(t *testing.T, repo string) {
+	t.Helper()
+	if !prIsFile(filepath.Join(repo, filepath.FromSlash(prGoHalfRel))) {
+		t.Fatalf("哨兵失守：上溯未见 Go 半 %s（不是真仓树 / Go 半缺失）⇒ fail-closed", prGoHalfRel)
+	}
+}
+
+// prHalvesGuard —— 退役态 fail-closed 腿：shell 半与其 Go 半**皆缺** ⇒ 真消失（✗ 不是退役态）⇒
+// fail-closed（缺件 ≠ 绿）。只缺 shell 半（Go 半在盘）= 退役态 ⇒ 照常跑金标。
 func prHalvesGuard(t *testing.T, repo string) {
 	t.Helper()
 	if prShellInRepo(repo) || prIsFile(filepath.Join(repo, "core", "cmd", "zerg", "pack_release.go")) {
@@ -122,7 +148,7 @@ func prRunGo(root string, argv []string) (int, []byte, []byte) {
 	return rc, o.Bytes(), e.Bytes()
 }
 
-// prRunScript —— 直跑 shell 件，收三面（与 Go 半同一 argv）。
+// prRunScript —— 直跑 shell 件，收三面（仅供毒脚本负控直跑那一格）。
 func prRunScript(t *testing.T, script, dir string, argv []string) (int, []byte, []byte) {
 	t.Helper()
 	cmd := exec.Command("bash", append([]string{script}, argv...)...)
@@ -141,8 +167,7 @@ func prRunScript(t *testing.T, script, dir string, argv []string) (int, []byte, 
 	return -1, nil, nil
 }
 
-// prCases —— 对拍档位（**不含 build/pack 真跑档** —— 那两档要真编译/真签名，属件头声明的
-// 外部工具链面；本单只验「轻档」的两态三面，与派单口径一致）。
+// prCases —— 轻档（**不含 build/pack 真跑档** —— 那两档要真编译/真签名，属件头声明的外部工具链面）。
 func prCases() []prCase {
 	return []prCase{
 		{"plan-general", []string{prDryTok}},
@@ -161,28 +186,14 @@ func prHeavyCases() []prCase {
 	}
 }
 
-// prSynthShell —— 退役态**合成副本**（夹具自带 · ✗ 不靠真件在盘）：shell 半真件缺席时摆进夹具树。
-// ★ 只作占位（给 `prRunScript` 的落点一个件位）—— ✗ 不当对拍参照：依赖真件的对拍格已由
-//
-//	`prShellInRepo` 统一降为「体面跳过 / 只跑 Go 半」，故本 stub 的内容不参与任何逐字断言。
-const prSynthShell = "#!/usr/bin/env bash\n" +
-	"# 合成副本（退役态 stub）—— shell 半真件 scripts/build/pack-release.sh 已退场；\n" +
-	"# 夹具自带此件仅为占位（对拍格由 prShellInRepo 统一跳过），✗ 不作对拍参照。\n" +
-	"exit 0\n"
-
-// prBuildFixture —— 仓外夹具：shell 半 ＋ 版本真源 ＋ 清单生成器 ＋ 足套（8 件）哑制品。
-// ★ 不硬读真件（✗ 不再 Fatal）：真件在盘 ⇒ 逐字节复制它（保住「与真件对拍」）；缺席（退役态）
-//
-//	⇒ 落**合成副本 stub**（夹具自带），依赖真件的格由 `prShellInRepo` 统一降为只跑 Go 半。
+// prBuildFixture —— 仓外夹具：版本真源 ＋ 清单生成器 ＋ 足套（8 件）哑制品。
+// ★ ✗ 不落 sh 件（Go 半从不读它）；`scripts/build/` 目录留位供毒脚本负控覆写。
 func prBuildFixture(t *testing.T, repo string) (fx, script, ver string) {
 	t.Helper()
 	fx = prTmpRoot(t)
 	script = filepath.Join(fx, "scripts", "build", "pack-release.sh")
-	if b, err := os.ReadFile(filepath.Join(repo, "scripts", "build", "pack-release.sh")); err == nil {
-		prWriteFile(t, script, b)
-	} else {
-		t.Logf("shell 半真件不在盘（%v）⇒ 夹具落合成副本 stub（对拍格由 prShellInRepo 统一跳过）", err)
-		prWriteFile(t, script, []byte(prSynthShell))
+	if err := os.MkdirAll(filepath.Join(fx, "scripts", "build"), 0o755); err != nil {
+		t.Fatalf("建 scripts/build：%v", err)
 	}
 	prCopyIn(t, filepath.Join(repo, "core", "internal", "version", "version.go"),
 		filepath.Join(fx, "core", "internal", "version", "version.go"))
@@ -202,91 +213,176 @@ func prBuildFixture(t *testing.T, repo string) (fx, script, ver string) {
 			t.Fatalf("写哑制品 %s：%v", n, err)
 		}
 	}
-	return fx, filepath.Join(fx, "scripts", "build", "pack-release.sh"), ver
+	return fx, script, ver
 }
 
-// TestPackReleaseFixtureParity —— ①②：夹具上「脚本在盘 ⟷ 脚本移出仓」逐档三面逐字节同。
-// ★ 退役态（shell 半真件缺席 · 其 Go 半在盘）：①「Go ⟷ bash 真件」没有对拍对象 ⇒ **体面跳过**
-//
-//	（✗ 不判失败、✗ 不把断言改宽成永真）；Go 半自身由 Refusals / PoisonControl 照常覆盖。
-//
-// ★ 两半皆缺（shell 半与 Go 半皆不在盘）⇒ `prHalvesGuard` fail-closed（缺件 ≠ 绿）。
-func TestPackReleaseFixtureParity(t *testing.T) {
+// ── 内化金标：旧 sh 对拍的逐格金标收成 Go 常量（现算现冻 · ✗ 不臆造）──────────────────────
+
+// prNormGolden —— 归一本机时点/位置类量（夹具/真仓根 · 版本 · $TMPDIR）⇒ 金标跨机可复现。
+// ★ 替换次序：先具体根（物理路径 `phys`，再逻辑 `root`），后版本，末 $TMPDIR（✗ 不能先替 $TMPDIR
+// —— 夹具根本身落在 $TMPDIR 之下，先替会把根也吞掉）。
+func prNormGolden(s, root, phys, ph, ver string) string {
+	if phys != "" && phys != root {
+		s = strings.ReplaceAll(s, phys, ph)
+	}
+	if root != "" {
+		s = strings.ReplaceAll(s, root, ph)
+	}
+	if ver != "" {
+		s = strings.ReplaceAll(s, ver, "<VER>")
+	}
+	if td := os.TempDir(); td != "" {
+		s = strings.ReplaceAll(s, td, "<TMP>")
+	}
+	return s
+}
+
+type prGolden struct {
+	name    string
+	wantRC  int
+	wantOut string // 归一化后（prNormGolden 现算自证 · ✗ 手写）
+	wantErr string
+}
+
+// prFixtureGolden —— 夹具档金标（7 格 · 逐格由 prRunGo 现跑捕获）。
+var prFixtureGolden = []prGolden{
+	{name: "plan-general", wantRC: 0, wantOut: "计划件（" + prDryTok + " · 零副作用 —— 未执行、未改任何状态）\n  动作     : pack-release.sh（档 = build）\n  会跑哪几步: build 档 = build-all.sh --dist → 交叉编 linux 三件 → rm -rf 重打包 → 编茧壁 → 写清单\n              pack 档 = 跳过构建，其余同上 · verify 档 = 只校验（只读）\n  会写哪些件: <FX>/dist/<VER>/（交叉编三件）· <FX>/dist/<VER>/release/（8 件 + 逐件 .sha256 + checksums.txt + manifest.json）· wall/target/（茧壁）\n  ⇒ 想走**不重打包**的那一档用：--manifest-only " + prDryTok + "\n", wantErr: ""},
+	{name: "plan-manifest", wantRC: 0, wantOut: "计划件（--manifest-only " + prDryTok + " · 零副作用 —— 未执行、未改任何状态）\n  动作     : 重生成发布清单（只重算清单与 release 目录内逐件 sha256）\n  危险档   : D2（只写 <FX>/dist/<VER>/release 一个目录；不编译、不重打包、不碰 bin/ 里在跑的件）\n  会跑哪几步:\n    ① 前置检查：<FX>/dist/<VER>/release 存在且内有 zerg-* 制品（不在 ⇒ 退 8 · 不给结论）\n    ② 逐件重算 <FX>/dist/<VER>/release/<件>.sha256 与 <FX>/dist/<VER>/release/checksums.txt\n    ③ ZERG_MANIFEST_LOCAL=1 python3 scripts/evals/make-manifest.py <FX>/dist/<VER>/release <版本> <commit> <build_time>\n       （版本/commit/build_time 取**既有清单**，退而取 build-info.json —— 保「这批制品是谁产的」不变）\n    ④ 复跑校验段：manifest 逐件 sha256 / 体积必须与文件一致\n  会写哪些件（**全在 publish/ 外** · 只此三处）:\n    <FX>/dist/<VER>/release/manifest.json\n    <FX>/dist/<VER>/release/<逐件>.sha256\n    <FX>/dist/<VER>/release/checksums.txt\n  不会动   : bin/（在跑的件）· wall/target/ · 不重编译 · 不拷贝二进制 · 不重签 · 不重启\n  执行要   : --confirm=<主机名> 与 --yes 同时到（命令面：zerg build release --manifest-only --confirm=<主机名> --yes）\n", wantErr: "（--manifest-only " + prDryTok + "：只出计划件 · 零副作用 —— 未执行、未改任何状态）\n"},
+	{name: "plan-nobuild", wantRC: 0, wantOut: "计划件（" + prDryTok + " · 零副作用 —— 未执行、未改任何状态）\n  动作     : pack-release.sh（档 = pack）\n  会跑哪几步: build 档 = build-all.sh --dist → 交叉编 linux 三件 → rm -rf 重打包 → 编茧壁 → 写清单\n              pack 档 = 跳过构建，其余同上 · verify 档 = 只校验（只读）\n  会写哪些件: <FX>/dist/<VER>/（交叉编三件）· <FX>/dist/<VER>/release/（8 件 + 逐件 .sha256 + checksums.txt + manifest.json）· wall/target/（茧壁）\n  ⇒ 想走**不重打包**的那一档用：--manifest-only " + prDryTok + "\n", wantErr: ""},
+	{name: "plan-verify", wantRC: 0, wantOut: "计划件（" + prDryTok + " · 零副作用 —— 未执行、未改任何状态）\n  动作     : pack-release.sh（档 = verify）\n  会跑哪几步: build 档 = build-all.sh --dist → 交叉编 linux 三件 → rm -rf 重打包 → 编茧壁 → 写清单\n              pack 档 = 跳过构建，其余同上 · verify 档 = 只校验（只读）\n  会写哪些件: <FX>/dist/<VER>/（交叉编三件）· <FX>/dist/<VER>/release/（8 件 + 逐件 .sha256 + checksums.txt + manifest.json）· wall/target/（茧壁）\n  ⇒ 想走**不重打包**的那一档用：--manifest-only " + prDryTok + "\n", wantErr: ""},
+	{name: "unknown", wantRC: 2, wantOut: "", wantErr: "未知参数: --no-such-flag-zz\n"},
+	{name: "manifest-only", wantRC: 0, wantOut: "=== 只重生成清单（--manifest-only · 不编译、不重打包、不碰 bin/）===\n    <FX>/dist/<VER>/release · 制品 8 件 · 版本 <VER> · commit unknown · build_time unknown\n    写入面只有：<FX>/dist/<VER>/release/manifest.json · <FX>/dist/<VER>/release/<逐件>.sha256 · <FX>/dist/<VER>/release/checksums.txt\n   📝 manifest.json: 8 件（版本 <VER> · 代码 unknown · 档=本机（EXPECTED−CI_ONLY））\n=== 校验 manifest + 逐件 sha256 ===\n   版本 <VER> · 代码 unknown · 逐件 8\n     zerg-agent-darwin-arm64               32 字节  c8b706726098299b…\n     zerg-agent-linux-amd64                32 字节  a1ba97366af4c3e5…\n     zerg-cli-darwin-arm64                 32 字节  fda52c6f41768015…\n     zerg-cli-linux-amd64                  32 字节  3acffbb7dfd0adb5…\n     zerg-core-darwin-arm64                35 字节  35b16601337e7fb7…\n     zerg-core-linux-amd64                 35 字节  e2b36f0d1af7f130…\n     zerg-ui-darwin-arm64                  35 字节  697800a304eeec4e…\n     zerg-wall-darwin-arm64                38 字节  b94f5841542b1f21…\n✅ 校验通过（manifest 与文件一致）\n", wantErr: ""},
+	{name: "verify", wantRC: 1, wantOut: "=== 校验 manifest + 逐件 sha256 ===\n❌ 缺 manifest.json\n", wantErr: ""},
+}
+
+// prRepoGolden —— 真仓只读档金标（5 格 · 只读 ⇒ 不写 dist/、不碰 bin/）。
+var prRepoGolden = []prGolden{
+	{name: "plan-general", wantRC: 0, wantOut: "计划件（" + prDryTok + " · 零副作用 —— 未执行、未改任何状态）\n  动作     : pack-release.sh（档 = build）\n  会跑哪几步: build 档 = build-all.sh --dist → 交叉编 linux 三件 → rm -rf 重打包 → 编茧壁 → 写清单\n              pack 档 = 跳过构建，其余同上 · verify 档 = 只校验（只读）\n  会写哪些件: <REPO>/dist/<VER>/（交叉编三件）· <REPO>/dist/<VER>/release/（8 件 + 逐件 .sha256 + checksums.txt + manifest.json）· wall/target/（茧壁）\n  ⇒ 想走**不重打包**的那一档用：--manifest-only " + prDryTok + "\n", wantErr: ""},
+	{name: "plan-manifest", wantRC: 0, wantOut: "计划件（--manifest-only " + prDryTok + " · 零副作用 —— 未执行、未改任何状态）\n  动作     : 重生成发布清单（只重算清单与 release 目录内逐件 sha256）\n  危险档   : D2（只写 <REPO>/dist/<VER>/release 一个目录；不编译、不重打包、不碰 bin/ 里在跑的件）\n  会跑哪几步:\n    ① 前置检查：<REPO>/dist/<VER>/release 存在且内有 zerg-* 制品（不在 ⇒ 退 8 · 不给结论）\n    ② 逐件重算 <REPO>/dist/<VER>/release/<件>.sha256 与 <REPO>/dist/<VER>/release/checksums.txt\n    ③ ZERG_MANIFEST_LOCAL=1 python3 scripts/evals/make-manifest.py <REPO>/dist/<VER>/release <版本> <commit> <build_time>\n       （版本/commit/build_time 取**既有清单**，退而取 build-info.json —— 保「这批制品是谁产的」不变）\n    ④ 复跑校验段：manifest 逐件 sha256 / 体积必须与文件一致\n  会写哪些件（**全在 publish/ 外** · 只此三处）:\n    <REPO>/dist/<VER>/release/manifest.json\n    <REPO>/dist/<VER>/release/<逐件>.sha256\n    <REPO>/dist/<VER>/release/checksums.txt\n  不会动   : bin/（在跑的件）· wall/target/ · 不重编译 · 不拷贝二进制 · 不重签 · 不重启\n  执行要   : --confirm=<主机名> 与 --yes 同时到（命令面：zerg build release --manifest-only --confirm=<主机名> --yes）\n", wantErr: "（--manifest-only " + prDryTok + "：只出计划件 · 零副作用 —— 未执行、未改任何状态）\n"},
+	{name: "plan-nobuild", wantRC: 0, wantOut: "计划件（" + prDryTok + " · 零副作用 —— 未执行、未改任何状态）\n  动作     : pack-release.sh（档 = pack）\n  会跑哪几步: build 档 = build-all.sh --dist → 交叉编 linux 三件 → rm -rf 重打包 → 编茧壁 → 写清单\n              pack 档 = 跳过构建，其余同上 · verify 档 = 只校验（只读）\n  会写哪些件: <REPO>/dist/<VER>/（交叉编三件）· <REPO>/dist/<VER>/release/（8 件 + 逐件 .sha256 + checksums.txt + manifest.json）· wall/target/（茧壁）\n  ⇒ 想走**不重打包**的那一档用：--manifest-only " + prDryTok + "\n", wantErr: ""},
+	{name: "plan-verify", wantRC: 0, wantOut: "计划件（" + prDryTok + " · 零副作用 —— 未执行、未改任何状态）\n  动作     : pack-release.sh（档 = verify）\n  会跑哪几步: build 档 = build-all.sh --dist → 交叉编 linux 三件 → rm -rf 重打包 → 编茧壁 → 写清单\n              pack 档 = 跳过构建，其余同上 · verify 档 = 只校验（只读）\n  会写哪些件: <REPO>/dist/<VER>/（交叉编三件）· <REPO>/dist/<VER>/release/（8 件 + 逐件 .sha256 + checksums.txt + manifest.json）· wall/target/（茧壁）\n  ⇒ 想走**不重打包**的那一档用：--manifest-only " + prDryTok + "\n", wantErr: ""},
+	{name: "unknown", wantRC: 2, wantOut: "", wantErr: "未知参数: --no-such-flag-zz\n"},
+}
+
+// prArgvByName —— 金标档名 ⇒ argv（与 prCases/prHeavyCases 逐格同）。
+func prArgvByName(name string) []string {
+	m := map[string][]string{
+		"plan-general":  {prDryTok},
+		"plan-manifest": {prManifestOnly, prDryTok},
+		"plan-nobuild":  {"--no-build", prDryTok},
+		"plan-verify":   {"--verify", prDryTok},
+		"unknown":       {"--no-such-flag-zz"},
+		"manifest-only": {prManifestOnly},
+		"verify":        {"--verify"},
+	}
+	return m[name]
+}
+
+// prRunFixtureGolden —— 逐格现建夹具、现跑 Go 半、归一后与冻值逐字比；返回失配格数。
+// plant 非 nil 时在跑前往夹具落「旧态」sh 件（两态用）。
+func prRunFixtureGolden(t *testing.T, tag string, plant func(fx string)) int {
+	t.Helper()
 	repo := prRepoRoot(t)
-	prHalvesGuard(t, repo)
-	if !prShellInRepo(repo) {
-		t.Skipf("退役态：sh 原件 scripts/build/pack-release.sh 已退场（其 Go 半 core/cmd/zerg/pack_release.go 在盘）⇒ 两态对拍格无对象，容忍跳过")
+	ver := prVersion(repo)
+	mism := 0
+	for _, c := range prFixtureGolden {
+		if c.name == "manifest-only" && !prHasExe("python3") {
+			t.Logf("[%s/%s] 不适用：本机无 python3（清单生成器属外部工具链面）⇒ 该格未覆盖（✗ 不当绿）", tag, c.name)
+			continue
+		}
+		fx, _, _ := prBuildFixture(t, repo)
+		if plant != nil {
+			plant(fx)
+		}
+		rc, out, errb := prRunGo(fx, prArgvByName(c.name))
+		phys, _ := filepath.EvalSymlinks(fx)
+		gotOut := prNormGolden(string(out), fx, phys, "<FX>", ver)
+		gotErr := prNormGolden(string(errb), fx, phys, "<FX>", ver)
+		if rc != c.wantRC {
+			mism++
+			t.Errorf("[%s/%s] rc=%d（冻值 %d）", tag, c.name, rc, c.wantRC)
+		}
+		if gotOut != c.wantOut {
+			mism++
+			t.Errorf("[%s/%s] stdout 漂移\n实得=%q\n冻值=%q", tag, c.name, gotOut, c.wantOut)
+		}
+		if gotErr != c.wantErr {
+			mism++
+			t.Errorf("[%s/%s] stderr 漂移\n实得=%q\n冻值=%q", tag, c.name, gotErr, c.wantErr)
+		}
 	}
-	fx, script, ver := prBuildFixture(t, repo)
-	cases := prCases()
-	if prHasExe("python3") {
-		cases = append(cases, prHeavyCases()...)
-	} else {
-		t.Log("不适用：本机无 python3 ⇒ 清单档/校验档两档未覆盖（✗ 不当绿）")
-	}
+	return mism
+}
 
-	// ① 脚本在盘：Go ⟷ 直跑脚本，逐档三面。
-	type snap struct {
-		rc       int
-		out, err []byte
+// TestPackReleaseGoldenInternalized —— A 态（真仓 · 退役 sh 不在盘）金标自证（✗ 不 Skip ·
+// 逐格真断言 · ✗ 不放宽为「只判非空」）。
+func TestPackReleaseGoldenInternalized(t *testing.T) {
+	repo := prRepoRoot(t)
+	prAnchorGoHalf(t, repo) // 哨兵：锚 Go 半在盘 ⇒ fail-closed（✗ 不 Skip）
+	if sh := filepath.Join(repo, filepath.FromSlash(prShRel)); prIsFile(sh) {
+		t.Fatalf("A 态前提破：退役 sh 竟在盘 %s（本件前提 = 内化后无 sh）", sh)
 	}
-	goSide := map[string]snap{}
-	shaSide := map[string][]byte{}
-	for _, c := range cases {
-		rcS, outS, errS := prRunScript(t, script, fx, c.argv)
-		rcG, outG, errG := prRunGo(fx, c.argv)
-		if rcS != rcG || !bytes.Equal(outS, outG) || !bytes.Equal(errS, errG) {
-			t.Errorf("[%s] 两态三面不逐字：rc %d⟷%d · stdout %dB⟷%dB · stderr %dB⟷%dB\n  bash.out=%q\n  go.out  =%q\n  bash.err=%q\n  go.err  =%q",
-				c.name, rcS, rcG, len(outS), len(outG), len(errS), len(errG), outS, outG, errS, errG)
-		}
-		goSide[c.name] = snap{rcG, outG, errG}
-		if c.name == "manifest-only" {
-			// 顺带验「Go 写出的 .sha256 / checksums.txt 与 shell 逐字节同」。
-			rel := filepath.Join(fx, "dist", ver, "release")
-			for _, n := range append([]string{"checksums.txt"}, prExpectedArtifacts...) {
-				switch {
-				case n == "checksums.txt":
-					shaSide[n] = mustRead(t, filepath.Join(rel, n))
-				default:
-					shaSide[n+".sha256"] = mustRead(t, filepath.Join(rel, n+".sha256"))
-				}
-			}
-		}
+	if len(prFixtureGolden) < 5 {
+		t.Fatalf("金标格数 %d < 5", len(prFixtureGolden))
 	}
-	// Go 侧写完后再读一遍（第二次写应逐字节同 ⇒ 证 Go 的 sha/checksums 与 shell 同形）。
-	if _, ok := goSide["manifest-only"]; ok {
-		rel := filepath.Join(fx, "dist", ver, "release")
-		for name, want := range shaSide {
-			got := mustRead(t, filepath.Join(rel, name))
-			if !bytes.Equal(got, want) {
-				t.Errorf("[manifest-only] %s 两侧写出不同：\n  want(前一次)=%q\n  got (本次)  =%q", name, want, got)
-			}
-		}
-	}
-
-	// ② 脚本移出仓 ⇒ 同批档三面必须与「在盘」逐字同（✗ 不得退 2）。
-	if err := os.Remove(script); err != nil {
-		t.Fatalf("移出脚本副本失败：%v", err)
-	}
-	for _, c := range cases {
-		rcG, outG, errG := prRunGo(fx, c.argv)
-		w := goSide[c.name]
-		if rcG != w.rc || !bytes.Equal(outG, w.out) || !bytes.Equal(errG, w.err) {
-			t.Errorf("[退役态·%s] 与「脚本在盘」不逐字同：rc %d⟷%d · stdout %dB⟷%dB · stderr %dB⟷%dB\n  in-place=%q\n  retired =%q",
-				c.name, w.rc, rcG, len(w.out), len(outG), len(w.err), len(errG), w.out, outG)
-		}
-		if c.name != "unknown" && rcG != 0 {
-			t.Errorf("[退役态·%s] rc=%d（应 0 —— 脚本离盘不该让本档变脸）", c.name, rcG)
-		}
+	if n := prRunFixtureGolden(t, "A真仓无sh", nil); n != 0 {
+		t.Fatalf("A 态夹具金标失配 %d 格", n)
 	}
 }
 
-// TestPackReleasePoisonControl —— ③ 有牙负控：把脚本换成毒脚本 ⇒
+// TestPackReleaseGoldenTwoStates —— 两态逐字同：A 态 = 夹具无 sh（真仓现态）；B 态 = 合成「旧态」
+// 夹具（把退役 sh 路径 `scripts/build/pack-release.sh` 放回）⇒ 两态对同一套金标逐字同命中
+// （✗ 不 Skip）。证 sh 在/不在盘都不改判据结论（内化彻底 · 将来若有人让 Go 半重新去读 sh，B 态当场分家）。
+func TestPackReleaseGoldenTwoStates(t *testing.T) {
+	repo := prRepoRoot(t)
+	prAnchorGoHalf(t, repo)
+	if n := prRunFixtureGolden(t, "A夹具无sh", nil); n != 0 {
+		t.Fatalf("A 态夹具金标失配 %d 格", n)
+	}
+	plant := func(fx string) {
+		prWriteFile(t, filepath.Join(fx, "scripts", "build", "pack-release.sh"),
+			[]byte("#!/bin/sh\n# stub：造「旧态」——退役 sh 在位（本件只证 sh 在/不在盘不改判据结论）\n"))
+	}
+	if n := prRunFixtureGolden(t, "B旧态有sh", plant); n != 0 {
+		t.Fatalf("B 态夹具金标失配 %d 格（sh 在盘不得改判据结论）", n)
+	}
+}
+
+// TestPackReleaseRepoReadOnlyGolden —— 真仓只读档金标：plan-* 干跑 / 未知参（只读 ⇒ 不写 `dist/`、
+// 不碰 `bin/`）。哨兵锚 Go 半 · fail-closed（✗ 不留 Skip）。
+func TestPackReleaseRepoReadOnlyGolden(t *testing.T) {
+	repo := prRepoRoot(t)
+	prAnchorGoHalf(t, repo)
+	ver := prVersion(repo)
+	phys, _ := filepath.EvalSymlinks(repo)
+	mism := 0
+	for _, c := range prRepoGolden {
+		rc, out, errb := prRunGo(repo, prArgvByName(c.name))
+		gotOut := prNormGolden(string(out), repo, phys, "<REPO>", ver)
+		gotErr := prNormGolden(string(errb), repo, phys, "<REPO>", ver)
+		if rc != c.wantRC {
+			mism++
+			t.Errorf("[真仓/%s] rc=%d（冻值 %d）", c.name, rc, c.wantRC)
+		}
+		if gotOut != c.wantOut {
+			mism++
+			t.Errorf("[真仓/%s] stdout 漂移\n实得=%q\n冻值=%q", c.name, gotOut, c.wantOut)
+		}
+		if gotErr != c.wantErr {
+			mism++
+			t.Errorf("[真仓/%s] stderr 漂移\n实得=%q\n冻值=%q", c.name, gotErr, c.wantErr)
+		}
+	}
+	if mism != 0 {
+		t.Fatalf("真仓只读金标失配 %d 格", mism)
+	}
+}
+
+// TestPackReleasePoisonControl —— ④ 有牙负控：把脚本换成毒脚本 ⇒
 // (a) 直跑脚本必须露出 POISON/99（证「毒」真在生效 · 否则本负控无牙）；
 // (b) Go 半读数必须**一字不动**（证不再 exec 那个脚本 ⇒ 真搬）。
-// ★ 本格不需要 shell 半真件（它自带毒脚本覆写夹具里那一件）⇒ **退役态照跑（仍绿）**，是「不 exec」
-//
-//	这条牙在真件离盘后的**继续**。两半皆缺 ⇒ `prHalvesGuard` fail-closed。
+// ★ 本格不需要 shell 半真件（它自带毒脚本覆写夹具里那一件）⇒ **退役态照跑（仍绿）**。两半皆缺 ⇒
+// `prHalvesGuard` fail-closed。
 func TestPackReleasePoisonControl(t *testing.T) {
 	repo := prRepoRoot(t)
 	prHalvesGuard(t, repo)
@@ -365,39 +461,4 @@ func TestPackReleaseRefusals(t *testing.T) {
 	if o.Len() != 0 {
 		t.Errorf("清单档前置不在 stdout 应空：%q", o.String())
 	}
-}
-
-// TestPackReleaseRepoReadOnlyParity —— 真仓上的只读档对拍（真仓 + 真脚本 ⟷ Go 半）。
-// 只跑**只读档**（计划件 / 校验 / 未知参）⇒ 不写 `dist/`、不碰 `bin/`。
-func TestPackReleaseRepoReadOnlyParity(t *testing.T) {
-	repo := prRepoRoot(t)
-	prHalvesGuard(t, repo)
-	script := filepath.Join(repo, "scripts", "build", "pack-release.sh")
-	if !prShellInRepo(repo) {
-		t.Skipf("退役态：sh 原件 %s 已退场（其 Go 半在盘）⇒ 真仓对拍格无对象，容忍跳过", script)
-	}
-	for _, c := range []prCase{
-		{"plan-general", []string{prDryTok}},
-		{"plan-manifest", []string{prManifestOnly, prDryTok}},
-		{"plan-nobuild", []string{"--no-build", prDryTok}},
-		{"plan-verify", []string{"--verify", prDryTok}},
-		{"verify", []string{"--verify"}},
-		{"unknown", []string{"--no-such-flag-zz"}},
-	} {
-		rcS, outS, errS := prRunScript(t, script, repo, c.argv)
-		rcG, outG, errG := prRunGo(repo, c.argv)
-		if rcS != rcG || !bytes.Equal(outS, outG) || !bytes.Equal(errS, errG) {
-			t.Errorf("[真仓·%s] 不逐字：rc %d⟷%d · stdout %dB⟷%dB · stderr %dB⟷%dB\n  bash=%q\n  go  =%q",
-				c.name, rcS, rcG, len(outS), len(outG), len(errS), len(errG), outS, outG)
-		}
-	}
-}
-
-func mustRead(t *testing.T, p string) []byte {
-	t.Helper()
-	b, err := os.ReadFile(p)
-	if err != nil {
-		t.Fatalf("读 %s：%v", p, err)
-	}
-	return b
 }

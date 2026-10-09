@@ -761,12 +761,12 @@ func ctaNegCases() []ctaNegCase {
 			"#!/usr/bin/env bash\ncurl -s -m 4 \"$U\" -H \"X-Auth-" + "Token: *** \"", "HDR-ARGV"},
 		{"②", "URL 查询串带令牌", "neg2-url-querystring", "probe.sh",
 			"#!/usr/bin/env bash\ncurl -s -m 4 \"$API/user?access_" + "token=$T\"\n", "QS-ARGV"},
-		{"③", "systemd ExecStart「选项名+值」", "neg3-systemd-execstart", "edge-node-agent.service",
-			"[Service]\nEnvironmentFile=-/home/<user>/agent/edge-node-agent.env\n" +
+		{"③", "systemd ExecStart「选项名+值」", "neg3-systemd-execstart", "x" + "3-agent.service",
+			"[Service]\nEnvironmentFile=-/home/<user>/agent/x" + "3-agent.env\n" +
 				"ExecStart=/usr/bin/python3 /home/<user>/agent/agent.py --controller http://<cluster-ip>:8580 " +
 				"--tok" + "en 9f3c1d7a5b2e4f60\n", "UNIT-OPT-ARGV"},
 		{"③", "单元正文在 .sh 的 heredoc 里（卵里生成）", "neg3b-unit-in-heredoc", "deploy_x3.sh",
-			"#!/usr/bin/env bash\ncat > ${D}/edge-node-agent.service << UNIT_EOF\n[Service]\n" +
+			"#!/usr/bin/env bash\ncat > ${D}/x" + "3-agent.service << UNIT_EOF\n[Service]\n" +
 				"ExecStart=/usr/bin/python3 ${D}/agent.py --host 0.0.0.0 --tok" + "en=9f3c1d7a5b2e4f60\n" +
 				"UNIT_EOF\n", "UNIT-OPT-ARGV"},
 		{"④", "launchd plist「选项名+值」（两串）", "neg4-launchd-plist", "com.x3gw.agent.plist",
@@ -777,7 +777,7 @@ func ctaNegCases() []ctaNegCase {
 			"<?xml version=\"1.0\"?>\n<array>\n  <str" + "ing>--api-" + "key=9f3c1d7a5b2e4f60</str" + "ing>\n</array>\n",
 			"PLIST-OPT-ARGV"},
 		{"⑤", "sudo -S 口令经 argv（echo|管道）", "neg5-sudo-stdin-value", "probe.sh",
-			"#!/usr/bin/env bash\necho 'S3cr3t-Pw!' | su" + "do -S systemctl restart edge-node-agent\n", "PW-SUDO-ARGV"},
+			"#!/usr/bin/env bash\necho 'S3cr3t-Pw!' | su" + "do -S systemctl restart x" + "3-agent\n", "PW-SUDO-ARGV"},
 		{"⑤", "ssh" + "pass -p 字面口令", "neg6-sshpass-literal", "probe.sh",
 			"#!/usr/bin/env bash\nssh" + "pass -p 'Passw0rd!' ssh root@<cluster-ip> true\n", "PW-SSHPASS-ARGV"},
 		{"⑤", "ssh" + "pass -p 纯变量（命令行展开）", "neg7-sshpass-pure-variable", "probe.sh",
@@ -793,8 +793,8 @@ func ctaPosCases() []ctaPosCase {
 			"#!/usr/bin/env bash\nTOKEN_FILE=\"$HOME/.zerg/token\"\n" +
 				"curl_tok() { printf 'X-Auth-" + "Token: *** %s\\n' \"$(cat \"$TOKEN_FILE\")\" | curl -H @- \"$@\"; }\n" +
 				"curl_tok -s -m 4 \"$U\"\n", 0},
-		{"pos2-unit-envfile-clean", "edge-node-agent.service",
-			"[Service]\nUser=g01\nEnvironmentFile=-/home/<user>/agent/edge-node-agent.env\n" +
+		{"pos2-unit-envfile-clean", "x" + "3-agent.service",
+			"[Service]\nUser=g01\nEnvironmentFile=-/home/<user>/agent/x" + "3-agent.env\n" +
 				"ExecStart=/usr/bin/python3 /home/<user>/agent/agent.py --host 0.0.0.0 " +
 				"--registry /home/<user>/agent/agent_models.yaml\n", 0},
 		{"pos3-plist-token-in-xml-comment", "com.x3gw.agent.plist",

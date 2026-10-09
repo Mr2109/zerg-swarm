@@ -105,7 +105,7 @@ func TestCheckVerdictRecordGatePort(t *testing.T) {
 	}
 
 	// ── 正控⑦：夹具合成标本串 ⇒ 走登记豁免 ⇒ rc=0（逐条打印理由 + 悬空不判红）──
-	spec := "NEG_CASES = [\n    (\"b\", \"x\", \"n\", \"deploy.sh\",\n     '#!/usr/bin/env bash\\ncat > " + tmp + "edge-node.service << UNIT_EOF\\n', \"UNIT-1\"),\n]\n"
+	spec := "NEG_CASES = [\n    (\"b\", \"x\", \"n\", \"deploy.sh\",\n     '#!/usr/bin/env bash\\ncat > " + tmp + "x" + "3.service << UNIT_EOF\\n', \"UNIT-1\"),\n]\n"
 	root7, st7 := vrtMk(t, vrtGate, true, "check-token-argv.py", spec)
 	rc7, out7, _ := vrtRun(t, "--root", root7, "--state-dir", st7)
 	if rc7 != 0 || !strings.Contains(out7, "夹具登记豁免") || !strings.Contains(out7, "悬空登记") {

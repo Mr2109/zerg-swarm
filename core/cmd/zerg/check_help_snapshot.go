@@ -18,8 +18,10 @@
 // （脚本上溯三级 = 仓根）；Go 入口**无 `__file__` 语境** ⇒ 本件默认从**当前工作目录**上溯 ≤6 层、找
 // 含 `scripts/gates/` 的目录，找不到回落 cwd。落在**同一真仓、cwd=仓根**时两者读数逐字相同；
 // 「脚本位置 ≠ cwd」时**路径推导面不同** ⇒ 这一面**不属逐字对齐承诺**，对拍一律显式传 `--repo-root`。
-// 另有**有意旋钮面差**：快照缺省档（不传 `--snapshot`）走 `os.walk` 找 mtime 最新的一份 ——
-// 那是**输入会随文档仓变动**的档 ⇒ 确定化必须显式钉版；缺省档只保「选中的是 (mtime, 路径) 最大者」。
+// 另有**有意旋钮面差（确定性选档）**：快照缺省档（不传 `--snapshot`）**不再**取全树 mtime 最新者
+// （那会因任何人碰旧档/新增文件而漂）⇒ 改为**由现役版本真源决定的当前版本目录**内的 (mtime, 路径)
+// 最大者（版本号现读 `core/internal/version/version.go` 的 `const Version` ⇒ 目录名 `v<Version>`，
+// 如 `v2.5.13`）；该版本目录不存在或无快照时才回落全树；`--snapshot` 永远优先。
 //
 // 出厂声明 (b) **自指检查 —— 判定为「真」**：本件落 `core/cmd/zerg/`，正落在下列三门的扫描面内
 // （都现跑 `core/cmd/zerg/*.go` 的非测试件）：
@@ -433,59 +435,55 @@ func hsOSErrorStr(err error, path string) string {
 	return err.Error()
 }
 
-// hsNewestSnapshot —— py `newest_snapshot()`：文档仓里最新的快照（按 (mtime, 路径) 最大）。
-//
-//	行序决定者：**不是**遍历序 —— py `hits.sort()` 按 (mtime, 路径) 排序取末项 ⇒ 遍历序不进输出。
-//	本件仍按 os.walk 形态（readdir 原序 · 先当前层文件后按 dirs 原序下钻）枚举，但结论由排序定。
-func hsNewestSnapshot(docsRoot string) (string, string) {
-	type hit struct {
-		mtime int64
-		path  string
+// hsSnapHit —— 一个快照候选（(mtime, 路径) 排序用）。
+type hsSnapHit struct {
+	mtime int64
+	path  string
+}
+
+// hsCollectSnapshots —— 递归收集 dir 下的快照件（py os.walk 形态：**先当前层文件后按 dirs 原序下钻**
+// · 跟随链用 os.Stat 判目录 ✗ 非 e.IsDir()）。排序取末项在 hsPickNewest 里做，遍历序不进结论。
+func hsCollectSnapshots(dir string, hits *[]hsSnapHit) {
+	f, err := os.Open(dir)
+	if err != nil {
+		return
 	}
-	var hits []hit
-	var walk func(dir string)
-	walk = func(dir string) {
-		f, err := os.Open(dir)
-		if err != nil {
-			return
-		}
-		ents, err := f.ReadDir(-1) // -1 ⇒ 一次读全，保持 readdir 原序
-		_ = f.Close()
-		if err != nil {
-			return
-		}
-		var dirs, files []string
-		for _, e := range ents {
-			name := e.Name()
-			// 跟随链：用 os.Stat 判目录（✗ 非 e.IsDir()）
-			p := hsPyJoin(dir, name)
-			if fi, serr := os.Stat(p); serr == nil && fi.IsDir() {
-				dirs = append(dirs, name)
-			} else {
-				files = append(files, name)
-			}
-		}
-		// 先产出当前层**全部文件**
-		for _, fn := range files {
-			if strings.HasPrefix(fn, hsSnapGlob) && strings.HasSuffix(fn, ".md") {
-				full := hsPyJoin(dir, fn)
-				if fi, serr := os.Stat(full); serr == nil {
-					hits = append(hits, hit{mtime: fi.ModTime().UnixNano(), path: full})
-				}
-			}
-		}
-		// 再按 dirs **原序**下钻（✗ 早钻）
-		for _, dn := range dirs {
-			switch dn {
-			case ".git", "node_modules", "__pycache__":
-				continue
-			}
-			walk(hsPyJoin(dir, dn))
+	ents, err := f.ReadDir(-1) // -1 ⇒ 一次读全，保持 readdir 原序
+	_ = f.Close()
+	if err != nil {
+		return
+	}
+	var dirs, files []string
+	for _, e := range ents {
+		name := e.Name()
+		p := hsPyJoin(dir, name)
+		if fi, serr := os.Stat(p); serr == nil && fi.IsDir() {
+			dirs = append(dirs, name)
+		} else {
+			files = append(files, name)
 		}
 	}
-	walk(docsRoot)
+	for _, fn := range files {
+		if strings.HasPrefix(fn, hsSnapGlob) && strings.HasSuffix(fn, ".md") {
+			full := hsPyJoin(dir, fn)
+			if fi, serr := os.Stat(full); serr == nil {
+				*hits = append(*hits, hsSnapHit{mtime: fi.ModTime().UnixNano(), path: full})
+			}
+		}
+	}
+	for _, dn := range dirs {
+		switch dn {
+		case ".git", "node_modules", "__pycache__":
+			continue
+		}
+		hsCollectSnapshots(hsPyJoin(dir, dn), hits)
+	}
+}
+
+// hsPickNewest —— 取 (mtime, 路径) 最大者（行序决定者 = 排序，✗ 不是遍历序）。
+func hsPickNewest(hits []hsSnapHit, scope string) (string, string) {
 	if len(hits) == 0 {
-		return "", "文档仓里找不到快照（`" + hsSnapGlob + "*.md`）—— 先跑 `zerg help export`"
+		return "", "找不到快照（`" + hsSnapGlob + "*.md`）—— 先跑 `zerg help export`（查过 " + scope + "）"
 	}
 	sort.SliceStable(hits, func(i, j int) bool {
 		if hits[i].mtime != hits[j].mtime {
@@ -494,6 +492,89 @@ func hsNewestSnapshot(docsRoot string) (string, string) {
 		return hits[i].path < hits[j].path
 	})
 	return hits[len(hits)-1].path, ""
+}
+
+// hsNewestSnapshot —— py `newest_snapshot()`：**全树** (mtime, 路径) 最大者（现仅作确定性选档的**回落**）。
+//
+//	行序决定者：**不是**遍历序 —— py `hits.sort()` 按 (mtime, 路径) 排序取末项 ⇒ 遍历序不进输出。
+func hsNewestSnapshot(docsRoot string) (string, string) {
+	var hits []hsSnapHit
+	hsCollectSnapshots(docsRoot, &hits)
+	return hsPickNewest(hits, docsRoot)
+}
+
+// hsVersionRE —— 版本真源 `core/internal/version/version.go` 的 `const Version = "..."`。
+var hsVersionRE = regexp.MustCompile(`Version\s*=\s*"([^"]+)"`)
+
+// hsCurrentVersion —— 现役版本真源：现读 `core/internal/version/version.go` 的 const Version
+// （与 `auCurrentVersion` 同锚 · 取不到 ⇒ 空串 ⇒ 选档回落全树）。
+func hsCurrentVersion(repoRoot string) string {
+	b, err := os.ReadFile(filepath.Join(repoRoot, "core", "internal", "version", "version.go"))
+	if err != nil {
+		return ""
+	}
+	if m := hsVersionRE.FindSubmatch(b); m != nil {
+		return string(m[1])
+	}
+	return ""
+}
+
+// hsFindVersionDir —— 在 docsRoot 下递归找 **base name == tag**（如 `v2.5.13`）的目录；返回首个命中
+// （正常只有一枚）。✗ 不硬编码路径 —— tag 由版本真源决定，落档换名不受影响。
+func hsFindVersionDir(docsRoot, tag string) string {
+	f, err := os.Open(docsRoot)
+	if err != nil {
+		return ""
+	}
+	ents, err := f.ReadDir(-1)
+	_ = f.Close()
+	if err != nil {
+		return ""
+	}
+	var dirs []string
+	for _, e := range ents {
+		name := e.Name()
+		p := hsPyJoin(docsRoot, name)
+		if fi, serr := os.Stat(p); serr == nil && fi.IsDir() {
+			if name == tag {
+				return p
+			}
+			dirs = append(dirs, name)
+		}
+	}
+	for _, dn := range dirs {
+		switch dn {
+		case ".git", "node_modules", "__pycache__":
+			continue
+		}
+		if d := hsFindVersionDir(hsPyJoin(docsRoot, dn), tag); d != "" {
+			return d
+		}
+	}
+	return ""
+}
+
+// hsDefaultSnapshot —— **确定性默认选档**（取代旧「全树 mtime 最新」的隐式选择 · 见件头旋钮面差）：
+//
+//	① 由现役版本真源（`core/internal/version/version.go`）算出当前版本目录名 `v<Version>`（如 `v2.5.13`）；
+//	② 在文档仓里定位同名目录，取**其中** (mtime, 路径) 最大的一份快照（目录内仍按 mtime ⇒ 落档换名不受影响）；
+//	③ 该版本目录不存在 / 其中无快照 ⇒ 回落全树 (mtime, 路径) 最大者（保不引入新的拒执面）。
+//
+//	返回 (快照路径, 理由, 选档来源标签)；路径为空 ⇔ 取不到。
+func hsDefaultSnapshot(docsRoot, repoRoot string) (string, string, string) {
+	if ver := hsCurrentVersion(repoRoot); ver != "" {
+		tag := "v" + ver
+		if vdir := hsFindVersionDir(docsRoot, tag); vdir != "" {
+			var hits []hsSnapHit
+			hsCollectSnapshots(vdir, &hits)
+			if len(hits) > 0 {
+				p, why := hsPickNewest(hits, vdir)
+				return p, why, "版本目录 " + tag
+			}
+		}
+	}
+	p, why := hsNewestSnapshot(docsRoot)
+	return p, why, "全树回落"
 }
 
 // hsCompareLines —— py `compare_lines()`：逐行比 ⇒ (相等吗, 判词表)。
@@ -569,7 +650,7 @@ const hsListRules = `判据（两半 · 波6 序70）
 不假装覆盖（照实登记）
 ----------------------
   · 只对拍**命令名**那一列（说明 / 字段面 / 端点 / 层级的逐字对拍不在本格）
-  · 快照取「文档仓里 mtime 最新的那一份」；要钉版用 ` + "`--snapshot`" + `
+  · 快照缺省选「当前版本目录内 (mtime, 路径) 最大者」（版本目录由 ` + "`core/internal/version/version.go`" + ` 决定）；要钉版用 ` + "`--snapshot`" + `
   · 本件**不挂门**（只单跑）—— 挂门那一半 = 另一条（不在本笔）
 
 退码
@@ -861,13 +942,15 @@ func checkHelpSnapshotGateMain(stdout, stderr io.Writer, argv []string) int {
 		return 2
 	}
 	snapPath := a.snapshot
+	hsSelNote := ""
 	if !a.snapSet {
-		var swhy string
-		snapPath, swhy = hsNewestSnapshot(docsRoot)
+		var swhy, sel string
+		snapPath, swhy, sel = hsDefaultSnapshot(docsRoot, repoRoot)
 		if snapPath == "" {
 			fmt.Fprintf(stdout, "⛔ 不给结论（rc=2）：%s\n", swhy)
 			return 2
 		}
+		hsSelNote = "（选档 = " + sel + "）"
 	}
 	snap, snwhy := hsSnapshotRows(snapPath)
 	if snap == nil {
@@ -880,7 +963,7 @@ func checkHelpSnapshotGateMain(stdout, stderr io.Writer, argv []string) int {
 		fmt.Fprintf(stdout, "⛔ 不给结论（rc=2）：%s\n", snwhy)
 		return 2
 	}
-	fmt.Fprintf(stdout, "  快照 = %s（%d 行）· 现跑 = %d 行\n", snapPath, len(snap), len(live))
+	fmt.Fprintf(stdout, "  快照%s = %s（%d 行）· 现跑 = %d 行\n", hsSelNote, snapPath, len(snap), len(live))
 
 	var bad []string
 	var itemBad []string

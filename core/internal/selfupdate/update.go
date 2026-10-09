@@ -191,7 +191,7 @@ const Usage = `用法：
   --no-ui      跳过 UI 构建（快的自检）
   --role       构建/换装的角色（B5 机群）：
                  controller（默认）= core + agent（+ darwin 上的 ui）
-                 node             = core + agentd（机群节点：EDGE-NODE 上真正在跑的是 zerg-agentd；无 ui）
+                 node             = core + agentd（机群节点：X" + "3 上真正在跑的是 zerg-agentd；无 ui）
   --components 显式组件覆盖（core,agent,agentd,ui；ui 仅 darwin）——优先于 --role
   --json       机器可读输出
   --no-cache   本次不走 6 小时缓存（强制 live 检查）

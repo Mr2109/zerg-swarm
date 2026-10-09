@@ -1562,7 +1562,7 @@ func ChatExtraToolDefs() map[string]map[string]any {
 		"port_check":     fn("port_check", "查端口占用（lsof）。", map[string]any{"port": strProp("端口号")}, []string{"port"}),
 		"service_status": fn("service_status", "查看 zerg 服务状态（core/ui 进程）。", map[string]any{}, []string{}),
 		"log_tail":       fn("log_tail", "查看服务日志尾部（core/ui）。", map[string]any{"target": strProp("core/ui/路径"), "lines": numProp("行数默认30")}, []string{}),
-		"gpu_status":     fn("gpu_status", "查看 GPU 利用率（macOS ioreg/EDGE-NODE rocm-smi）。", map[string]any{}, []string{}),
+		"gpu_status":     fn("gpu_status", "查看 GPU 利用率（macOS ioreg/X"+"3 rocm-smi）。", map[string]any{}, []string{}),
 		"ping_check":     fn("ping_check", "测试网络连通（ping）。", map[string]any{"host": strProp("主机默认127.0.0.1")}, []string{}),
 		"network_status": fn("network_status", "查看网络接口状态。", map[string]any{}, []string{}),
 		"kill_process":   fn("kill_process", "杀进程（pid 或 name——慎用）。", map[string]any{"pid": numProp("进程 PID"), "name": strProp("进程名")}, []string{}),

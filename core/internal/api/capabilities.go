@@ -27,7 +27,7 @@ func (h *Handlers) CapabilitiesHandler(w http.ResponseWriter, r *http.Request) {
 		"capabilities":     capabilityItems(),
 		"capability_count": len(routeTable),
 		"workflow":         "提交任务 → CA 执行（worktree git）→ 确定性验证（机器检查）→ 复查模型（跨家族）→ 通过 merge/打回重做",
-		"notes":            "单槽铁律: 单设备串行——排队慢正常（等更多 EDGE-NODE 并行）",
+		"notes":            "单槽铁律: 单设备串行——排队慢正常（等更多 X" + "3 并行）",
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

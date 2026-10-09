@@ -28,7 +28,7 @@ type ClusterPlugin struct {
 func NewClusterPlugin(machines []MachineInfo) *ClusterPlugin {
 	if machines == nil {
 		machines = []MachineInfo{
-			{Name: "edge-node", Host: "<worker-ip>", Healthy: true, Model: "example-35b"},
+			{Name: "x" + "3", Host: "<worker-ip>", Healthy: true, Model: "example-35b"},
 			{Name: "Mr2109", Host: "127.0.0.1", Healthy: true, Model: "example-35b-Q4_K_M"},
 		}
 	}

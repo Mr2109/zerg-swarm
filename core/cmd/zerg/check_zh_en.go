@@ -133,14 +133,17 @@ var chzeTermExt = append([]string{".go"}, chzeFullwExt...)
 var chzeFullw = "，。：；（）！？“”‘’　"
 
 // chzeForbidKV —— 有序对（复刻 py dict 插入序）。键以 `\u` 转义构造 ⇒ 源码行不含裸字面量（自指处置）。
-type chzeForbidKV struct{ k, v string }
+type chzeForbidKV struct {
+	k, v      string
+	commentOK bool // 整行注释内是否豁免禁用词：术语「词选择」组 = true；私有称谓「保密」组 = false（任何上下文都点名）
+}
 
 var chzeForbid = []chzeForbidKV{
-	{"\u866b\u5de2", "术语铁律：只有「虫茧」"},
-	{"\u96c6\u88c5\u7bb1", "术语铁律：只有「虫茧」"},
-	{"\u8001\u53e8", "私有称谓：署名只用 GitHub 用户名 Mr2109"},
-	{"\u8111(Hermes)", "私有称谓：署名只用 GitHub 用户名 Mr2109"},
-	{"\u8111\uff08Hermes\uff09", "私有称谓：署名只用 GitHub 用户名 Mr2109"},
+	{"\u866b\u5de2", "术语铁律：只有「虫茧」", true},
+	{"\u96c6\u88c5\u7bb1", "术语铁律：只有「虫茧」", true},
+	{"\u8001\u53e8", "私有称谓：署名只用 GitHub 用户名 Mr2109", false},
+	{"\u8111(Hermes)", "私有称谓：署名只用 GitHub 用户名 Mr2109", false},
+	{"\u8111\uff08Hermes\uff09", "私有称谓：署名只用 GitHub 用户名 Mr2109", false},
 }
 
 // chzeSelfRel —— 本件相对路径（自指形态①：本件落在自己扫面内 ⇒ 列入白名单，与 py 白名单自身同规）。
@@ -307,6 +310,49 @@ func chzeMaskHeredocsChk(text string) (string, []int) {
 func chzeMaskHeredocs(text string) string {
 	m, _ := chzeMaskHeredocsChk(text)
 	return m
+}
+
+// chzeMaskXMLComments —— 单行清洗层原先不认 XML 注释（`<!-- … -->` 可跨行）⇒ 注释里的全角/术语
+// 被当「代码区」抓成误报。本层把注释内每个非换行码点置空格、换行原样保留（行号不变），
+// 使注释内容不再参与术语/全角/旧角色词判定（✗ 不加白名单了事 · 是让扫描器真不认识注释里的东西）。
+func chzeMaskXMLComments(text string) string {
+	var b strings.Builder
+	i, n := 0, len(text)
+	in := false
+	for i < n {
+		if !in && i+4 <= n && text[i:i+4] == "<!--" {
+			in = true
+			b.WriteString("    ")
+			i += 4
+			continue
+		}
+		if in {
+			if i+3 <= n && text[i:i+3] == "-->" {
+				in = false
+				b.WriteString("   ")
+				i += 3
+				continue
+			}
+			if text[i] == '\n' {
+				b.WriteByte('\n')
+			} else {
+				b.WriteByte(' ')
+			}
+			i++
+			continue
+		}
+		b.WriteByte(text[i])
+		i++
+	}
+	return b.String()
+}
+
+// chzeXMLMaskIf —— 仅对可能含 XML 注释的 .plist/.conf 走 XML 注释剥离；其余 ext 原样返回。
+func chzeXMLMaskIf(raw, ext string) string {
+	if ext == ".plist" || ext == ".conf" {
+		return chzeMaskXMLComments(raw)
+	}
+	return raw
 }
 
 // chzeOpenQuote —— py `_open_quote`：返回该行留下的未闭合引号字符（0 = 行内成对）。
@@ -544,6 +590,21 @@ func chzeHasForbid(s string) bool {
 	return false
 }
 
+// chzeCommentLine —— 整行注释判定：trim 掉行首空白后，以该 ext 的注释标记起头。
+// 注释标记口径与 chzeStripNoncode 一致（`//` 通用；`#` 只对 sh/py/yaml/yml/toml/conf/plist）。
+// 用于禁用词扫面：整行注释内的术语「词选择」引用属非代码区 ⇒ 不报（✗ 不落库、✗ 不加白名单）。
+func chzeCommentLine(l, ext string) bool {
+	t := strings.TrimLeft(l, " \t")
+	if strings.HasPrefix(t, "//") {
+		return true
+	}
+	switch ext {
+	case ".sh", ".py", ".yaml", ".yml", ".toml", ".conf", ".plist":
+		return strings.HasPrefix(t, "#")
+	}
+	return false
+}
+
 // ── 单行清洗 ─────────────────────────────────────────────────────────────────────────────
 
 // chzeStripNoncode —— py `strip_noncode`：剥掉单行注释与单行字符串，返回「代码区」子串。
@@ -602,7 +663,7 @@ func chzeBodyOf(path, ext string) string {
 		return chzeStripBlocks(raw)
 	}
 	if ext == ".sh" || ext == ".plist" || ext == ".conf" {
-		return chzeMaskMultilineQuotes(chzeMaskHeredocs(raw))
+		return chzeMaskMultilineQuotes(chzeMaskHeredocs(chzeXMLMaskIf(raw, ext)))
 	}
 	return raw
 }
@@ -793,7 +854,7 @@ func chzeScan(root string, errw io.Writer) (int, *chzeHits) {
 					chzeMaskPyqUnclosed = append(chzeMaskPyqUnclosed, [2]interface{}{p, blind})
 				}
 			case ".sh", ".plist", ".conf":
-				masked, unclosed := chzeMaskHeredocsChk(raw)
+				masked, unclosed := chzeMaskHeredocsChk(chzeXMLMaskIf(raw, ext))
 				if len(unclosed) > 0 {
 					chzeMaskUnclosed = append(chzeMaskUnclosed, [2]interface{}{p, unclosed})
 				}
@@ -809,10 +870,14 @@ func chzeScan(root string, errw io.Writer) (int, *chzeHits) {
 				ln := i + 1
 				why, fp := chzeFpHit(p, l)
 				if !chzeWhitelist[p] {
+					isComment := chzeCommentLine(l, ext)
 					for _, kv := range chzeForbid {
 						if strings.Contains(l, kv.k) {
 							if fp {
 								chzeFpRow(h, p, ln, l, why)
+							} else if isComment && kv.commentOK {
+								// 整行注释内的术语「词选择」引用（注释里说明术语表/负控）：非代码区 ⇒ 不报。
+								// ★ 私有称谓组 commentOK=false：保密面，注释里出现仍点名。
 							} else {
 								h.m["禁用词"] = append(h.m["禁用词"], fmt.Sprintf("%s:%d  [%s]  %s", p, ln, kv.v, chzeRuneSlice(strings.TrimSpace(l), 70)))
 							}

@@ -101,9 +101,9 @@ func TestCheckPublicFaceAnchorPort_Parity(t *testing.T) {
 		t.Fatalf("上溯 8 层两半皆不在盘（py 真身 %s 与 Go 半 %s）⇒ fail-closed（缺件 ≠ 绿）", cpfaT_pyRel, cpfaT_goHalfRel)
 	}
 	if !pyOnDisk {
-		// 退役态（B轨 · 2026-10-07）：py 真身已退场 ⇒ 对拍台无对拍对象；容忍跳过
-		// （与同族 `cicgProfileRetired` / `cpfpRetiredExceptions` 同口径 · ✗ 不 fail-closed）。
-		t.Skipf("退役态：py 真身 %s 已退场（其 Go 半 %s 在盘）⇒ 对拍格无对象，容忍跳过", cpfaT_pyRel, cpfaT_goHalfRel)
+		// 退役态（py 真身已退场 · 对拍台无对象）⇒ 改跑 Go 半现役三态金标（✗ 不留 Skip · fail-closed）。
+		cpfaRetiredGoAssertions(t)
+		return
 	}
 	pyPath := filepath.Join(repo, "scripts", "gates", "check-public-face-anchor.py")
 	py, err := exec.LookPath("python3")
@@ -115,7 +115,7 @@ func TestCheckPublicFaceAnchorPort_Parity(t *testing.T) {
 		py, err = "/usr/bin/python3", nil
 	}
 	if err != nil {
-		t.Skip("无 python3，跳过对拍")
+		t.Fatalf("哨兵失守：无 python3（✗ 不留 Skip · fail-closed）")
 	}
 
 	// ── 夹具（git 合成仓）────────────────────────────────────────────────
@@ -210,6 +210,33 @@ func TestCheckPublicFaceAnchorPort_Parity(t *testing.T) {
 		}
 	}
 	t.Logf("对拍格数=%d 失配=%d", len(cells), mismatch)
+}
+
+// cpfaRetiredGoAssertions —— 退役态（py 真身退场 · 对拍台无对象）改跑 Go 半现役三态金标（✗ 不留 Skip）。
+// 三态取自 Go 半现役行为（现算现冻）：干净对 rc=0 · 漂移 rc=1 · 未成对 rc=2；且入口自检 16 格仍全过。
+// ★ 哑化负控（"牙" · 带行号）：`-overlay` 把 cpfaJudge 的漂移判红一臂哑化 ⇒ 本断言（rc=1 那格）必 FAIL。
+func cpfaRetiredGoAssertions(t *testing.T) {
+	t.Helper()
+	green := cpfaT_fixturePair(t, "ret-green")
+	drift := cpfaT_fixturePair(t, "ret-drift")
+	cpfaTouch(drift, "A.en.md", "只改了译文这一行\n")
+	unpair, ok := cpfaMkFixture(filepath.Join(t.TempDir(), "ret-unpair"),
+		map[string]string{"E.zh-CN.md": "# E\n"})
+	if !ok {
+		t.Fatal("夹具 ret-unpair 建不起来")
+	}
+	if rc, _, _ := cpfaJudge(green, cpfaFaceDefault, "HEAD", cpfaExceptions); rc != 0 {
+		t.Fatalf("退役态 Go 半：干净对 ⇒ rc=0，得 %d", rc)
+	}
+	if rc, _, _ := cpfaJudge(drift, cpfaFaceDefault, "HEAD", cpfaExceptions); rc != 1 {
+		t.Fatalf("退役态 Go 半：漂移 ⇒ rc=1，得 %d", rc)
+	}
+	if rc, _, _ := cpfaJudge(unpair, cpfaFaceDefault, "HEAD", cpfaExceptions); rc != 2 {
+		t.Fatalf("退役态 Go 半：未成对 ⇒ rc=2，得 %d", rc)
+	}
+	if rc, so, se := cpfaT_run([]string{"--self-test"}); rc != 0 || !strings.Contains(so, "自检结论: 全过（断言 **16** 格") {
+		t.Fatalf("退役态 --self-test 应 rc=0 且 16 格全过：rc=%d stderr=%q", rc, se)
+	}
 }
 
 // ── 自检面（16 格 · 与 py `--self-test` 同文本）──────────────────────────────────

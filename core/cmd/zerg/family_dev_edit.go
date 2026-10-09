@@ -1123,6 +1123,16 @@ func applyReplacements(before []byte, replacePath string) ([]byte, error) {
 		}
 		n := strings.Count(cur, p.Old)
 		if n != 1 {
+			// ★ GAP-20261009-10 ②：命中 0 次时**消歧** —— 若这一格的 `new` **已在件里**（改前文本已不在盘上、
+			//   改后文本已在盘上）⇒ 多半是**本改动已落盘**（手改 / 直写批），此时 `old` 已被吃掉、`--replace`
+			//   **回放不了**；替掉原句误导性的「改成更长的上下文」（它默认 old 只是太短，对 0 次不成立）。
+			//   给替补路线：把**真前态**还原回盘、再用 `--from <改后整件>` 补走正门 ⇒ 审计留真 before→after。
+			if n == 0 && p.New != "" && strings.Contains(string(before), p.New) {
+				return nil, fmt.Errorf("第 %d 格的 `old` 在件里命中 0 次、而它的 `new` **已在件里**："+
+					"本改动多半**已落盘**（改前文本已不在盘上）⇒ `--replace` **回放不了**（old 已被吃掉）—— "+
+					"替补路线：把**真前态**（`git show HEAD:<件>` / 仓外前态快照）还原回盘，再用 `--from <改后整件>` 补走正门"+
+					"（✗ 别直接拿现盘整件喂 `--from` ⇒ 那是 before==after 空动作，真前态指纹会永久丢失）", i+1)
+			}
 			return nil, fmt.Errorf("第 %d 格的 `old` 在件里命中 %d 次（要**恰好 1 次**）⇒ 拒执："+
 				"改成更长的上下文，别用会命中多处的模式", i+1, n)
 		}

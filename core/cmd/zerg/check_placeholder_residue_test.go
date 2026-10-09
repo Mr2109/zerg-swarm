@@ -8,7 +8,29 @@
 //	④ **用法三态**（代 null/缺键面 · 本件无 JSON 入参）：缺省 / 空串 / 显式第二位置参数。
 //	⑤ **词法同构钉格**：`PyJoin` / `PyNormpath`（双前导斜杠）/ `PyDirname` 各一枚。
 //	⑥ **码点面钉格**：定义列判据按**码点**判邻位（中文前缀不得劈半）。
-//	⑦ **两环境对拍**（乙 · 仅当 py 原件与**钉死**的 `/usr/bin/python3` 在盘）：仓外夹具 ＋ **每夹具自放 py 副本**。
+//	⑦ **内化金标**（乙 · 旧 py 对拍退场 ⇒ 逐格金标收 Go 常量 · 见下）。
+//
+// ── 内化缘起（甲类·两件两处内化 · 照 atomic_write_test.go / pack_release_test.go）──
+//
+// 本件原「py 原件 ⟷ Go 真搬」两环境对拍（旧名 `TestPlaceholderResidueParityWithPy`）的对拍
+// 真身定位 = 仓内 `scripts/gates/check-placeholder-residue.py` 在盘（不在即 `t.Skip`）＋ 钉死
+// 解释器 `/usr/bin/python3` 在盘；该 py 已退场（`10910224` M2 退役批）⇒ Skip 条件恒真、对拍归零
+// （假绿、零保护）。⇒ 把金标真源**收回 Go 半现役行为本身**：
+//
+//	① 哨兵改锚 **Go 半** `core/cmd/zerg/check_placeholder_residue.go`（✗ 不锚已退场 py ——
+//	   一退役即失锚）；找不到 ⇒ `cprAnchorGoHalf` `t.Fatalf` **fail-closed**（✗ 不留 Skip）。
+//	② ★ 金标计算式（✗ 不臆造 · 逐格由「Go 半现役行为现算」得到）：逐格「夹具正文 + argv ⇒
+//	   (rc, stdout, stderr)」由 `cprRunEntry` 现跑捕获（一次性现算、只读仓外夹具、✗ 不落仓），
+//	   归一后冻成下表 `cprGoldenTable`；**本机位置类量**在比对前归一化（✗ 不冻结 —— 因其本非常量）：
+//	     夹具根（`t.TempDir()`/`$TMPDIR` 随机路径 + macOS /var⟷/private/var 符号链接）⇒ `<FX>`。
+//	   ★ 自指纪律：金标里连成一串的完整占位符形态一律以 `{PH}` token 存放，比对前/建夹具时由
+//	     `cprPlaceholder()` 现拼（✗ 源码文本里不落整串 —— 否则本件会命中自己的扫描面）。
+//	③ 两态（✗ 不许 Skip）：A 态 = 夹具无 py（真仓现态）；B 态 = 合成「旧态」夹具（把退役 py
+//	   路径 `scripts/gates/check-placeholder-residue.py` 放回夹具并提交）⇒ 两态**对同一套金标
+//	   逐字同命中**，证 py 在/不在盘都不改判据结论（内化彻底）。
+//	④ ★ 哑化负控（"牙" · 见交付读数）：`-overlay` 把 `check_placeholder_residue.go` 的判据一臂
+//	   （`cprIsResidue` 恒返回 false）哑化 ⇒ `..._GoldenInternalized` **必 FAIL 且带行号**
+//	   （✗ 不真改仓内源 · 免 `dev edit` 前的仓内污染）。
 package main
 
 import (
@@ -20,16 +42,26 @@ import (
 	"testing"
 )
 
-// cprTestPyExe —— 对拍用的解释器**钉死**（缺口 `GAP-20261001-61`：✗ 不用 PATH 上的裸 `python3`）。
-//
-//	PATH 一漂（3.9 的 `optional arguments:` ⟷ 3.14 的 `options:`）对拍即恒红，且与实现无关；
-//	⇒ 与同族件同规（`cicgTestPython` / `ccatTestPyExe` / `cacsPyExe` / `tsmPython` 一律 `/usr/bin/python3`）。
-const cprTestPyExe = "/usr/bin/python3"
-
 // cprPhTest —— 占位符形态（拼接构造 ⇒ 源码里不落整串 · 本件落在自己扫描面内）。
 func cprPhTest() string { return "<volume-" + "path>" }
 
-// cprRepoRootFromTest —— 从测试 cwd（包目录）上溯三层取仓根（不写死绝对路径）。
+// cprGoHalfRel / cprRetiredPyRel —— 哨兵锚（Go 半）与已退场对拍真身（py）的仓根相对路径。
+const (
+	cprGoHalfRel    = "core/cmd/zerg/check_placeholder_residue.go"
+	cprRetiredPyRel = "scripts/gates/check-placeholder-residue.py"
+)
+
+// cprAnchorGoHalf —— 哨兵：锚 **Go 半**在盘（✗ 不锚已退场 py）；找不到 ⇒ fail-closed（缺件 ≠ 绿）。
+func cprAnchorGoHalf(t *testing.T, root string) {
+	t.Helper()
+	fi, err := os.Stat(filepath.Join(root, filepath.FromSlash(cprGoHalfRel)))
+	if err != nil || fi.IsDir() {
+		t.Fatalf("哨兵失守：上溯未见 Go 半 %s（root=%s err=%v）⇒ fail-closed（✗ 不留 Skip）",
+			cprGoHalfRel, root, err)
+	}
+}
+
+// cprRepoRootFromTest —— 从测试 cwd（包目录）上溯三层取仓根；哨兵锚 Go 半 ⇒ fail-closed（✗ 不 Skip）。
 func cprRepoRootFromTest(t *testing.T) string {
 	t.Helper()
 	wd, err := os.Getwd()
@@ -40,6 +72,7 @@ func cprRepoRootFromTest(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
+	cprAnchorGoHalf(t, abs)
 	return abs
 }
 
@@ -211,41 +244,103 @@ func TestPlaceholderResidueSelfTestFlag(t *testing.T) {
 	}
 }
 
-// ── 两环境对拍（乙 · 仓外夹具 ＋ 每夹具自放 py 副本）────────────────────────────────────────
-func TestPlaceholderResidueParityWithPy(t *testing.T) {
-	pySrc := filepath.Join(cprRepoRootFromTest(t), "scripts", "gates", "check-placeholder-residue.py")
-	if _, err := os.Stat(pySrc); err != nil {
-		t.Skip("py 原件不在盘 ⇒ 跳过对拍")
-	}
-	if _, err := os.Stat(cprTestPyExe); err != nil {
-		t.Skipf("%s 不在盘 ⇒ 跳过对拍（GAP-20261001-61：钉解释器，✗ 不掉进 PATH 上的裸 python3）", cprTestPyExe)
-	}
-	ph := cprPhTest()
-	d := cprFixture(t, "parity", "配置在 "+ph+" 中文字目录/示例.json 里\n", true, true)
-	pyCopy := filepath.Join(d, "scripts", "gates", "check-placeholder-residue.py")
+// ── 内化金标：旧 py 对拍的逐格金标收成 Go 常量 · 现算自证（✗ 不 Skip）────────────────────────
 
-	runPy := func(prog string, argv ...string) (int, string, string) {
-		cmd := exec.Command(cprTestPyExe, append([]string{prog}, argv...)...)
-		cmd.Env = cprTestEnv()
-		cmd.Dir = d
-		var so, se bytes.Buffer
-		cmd.Stdout, cmd.Stderr = &so, &se
-		err := cmd.Run()
-		rc := 0
-		if err != nil {
-			if ee, ok := err.(*exec.ExitError); ok {
-				rc = ee.ExitCode()
-			} else {
-				t.Fatalf("起 python3 失败：%v", err)
-			}
+// cprGoldenTable —— 金标真源（3 格 · 逐格由 `cprRunEntry` 现跑捕获 · 见件头金标计算式）。
+// ★ 输出里的完整占位符形态以 `{PH}` token 存放（自指纪律，见件头 ②）。
+var cprGoldenTable = []struct {
+	name    string
+	wantRC  int
+	wantOut string // stdout 归一化（夹具根 ⇒ `<FX>` · 占位符 ⇒ `{PH}`）后
+	wantErr string
+}{
+	{name: "残留_余部路径样", wantRC: 1, wantOut: "   ✓ want=False got=False | 规则表定义（模式文本，非残留）                            | \n   ✓ want=True  got=True  | 截断残留（带空格续部）                                | {PH} 中文字目录/示例.json\n   ✓ want=False got=False | 正常正文：后面是普通词                                | \n   ✓ want=False got=False | 纯占位符，无余部                                   | \n   ✓ want=True  got=True  | 无空格直连的续部                                   | {PH}/中文字目录/示例\n   ✓ want=True  got=True  | 无空格直连的中文目录（含斜杠，形态成立）                       | {PH}中文字目录/示例.md\n   ✓ want=False got=False | 规则表定义列（占位符自成列 · 说明含斜杠）                     | \n   自测: 全过\n结果: 不通过——发现 1 处残留（1 个文件）：\n   HEAD:说明.md\n      1:{PH} 中文字目录/示例.json\n", wantErr: ""},
+	{name: "干净_余部非路径样", wantRC: 0, wantOut: "   ✓ want=False got=False | 规则表定义（模式文本，非残留）                            | \n   ✓ want=True  got=True  | 截断残留（带空格续部）                                | {PH} 中文字目录/示例.json\n   ✓ want=False got=False | 正常正文：后面是普通词                                | \n   ✓ want=False got=False | 纯占位符，无余部                                   | \n   ✓ want=True  got=True  | 无空格直连的续部                                   | {PH}/中文字目录/示例\n   ✓ want=True  got=True  | 无空格直连的中文目录（含斜杠，形态成立）                       | {PH}中文字目录/示例.md\n   ✓ want=False got=False | 规则表定义列（占位符自成列 · 说明含斜杠）                     | \n   自测: 全过\n结果: 通过——未发现残留（扫 <FX> mode=HEAD）\n", wantErr: ""},
+	{name: "定义列_占位符自成列", wantRC: 0, wantOut: "   ✓ want=False got=False | 规则表定义（模式文本，非残留）                            | \n   ✓ want=True  got=True  | 截断残留（带空格续部）                                | {PH} 中文字目录/示例.json\n   ✓ want=False got=False | 正常正文：后面是普通词                                | \n   ✓ want=False got=False | 纯占位符，无余部                                   | \n   ✓ want=True  got=True  | 无空格直连的续部                                   | {PH}/中文字目录/示例\n   ✓ want=True  got=True  | 无空格直连的中文目录（含斜杠，形态成立）                       | {PH}中文字目录/示例.md\n   ✓ want=False got=False | 规则表定义列（占位符自成列 · 说明含斜杠）                     | \n   自测: 全过\n结果: 通过——未发现残留（扫 <FX> mode=HEAD）\n", wantErr: ""},
+}
+
+// cprBodyByName —— 金标档名 ⇒ 夹具正文（占位符现拼 · ✗ 源码不落整串）。
+func cprBodyByName(name, ph string) string {
+	switch name {
+	case "残留_余部路径样":
+		return "配置在 " + ph + " 中文字目录/示例.json 里\n"
+	case "干净_余部非路径样":
+		return "路径见 " + ph + " 即可（后面是普通词，无余部）\n"
+	case "定义列_占位符自成列":
+		return "regex:/Volumes/" + `(AHZ|BXC)*` + "\t" + ph + "\t私有卷路径（停在引号/反引号/换行）\n"
+	}
+	return ""
+}
+
+// cprPhMask —— 把现拼的占位符掩成 `{PH}` token（与冻值同形 · ✗ 源码不落整串）。
+func cprPhMask(s string) string { return strings.ReplaceAll(s, cprPlaceholder(), "{PH}") }
+
+// cprRunGolden —— 逐格现建夹具、现跑 Go 半、归一（夹具根 ⇒ `<FX>` · 占位符 ⇒ `{PH}`）后与冻值逐字比；
+// 返回失配格数。plant 非 nil 时在建夹具后落「旧态」py（两态用）。
+func cprRunGolden(t *testing.T, tag string, plant func(d string)) int {
+	t.Helper()
+	ph := cprPlaceholder()
+	mism := 0
+	for _, c := range cprGoldenTable {
+		d := cprFixture(t, "fx", cprBodyByName(c.name, ph), true, false)
+		if plant != nil {
+			plant(d)
 		}
-		return rc, so.String(), se.String()
+		rc, out, errb := cprRunEntry(d, "HEAD")
+		gotOut := cprPhMask(strings.ReplaceAll(out, d, "<FX>"))
+		gotErr := cprPhMask(strings.ReplaceAll(errb, d, "<FX>"))
+		if rc != c.wantRC {
+			mism++
+			t.Errorf("[%s/%s] rc=%d（冻值 %d）", tag, c.name, rc, c.wantRC)
+		}
+		if gotOut != c.wantOut {
+			mism++
+			t.Errorf("[%s/%s] stdout 漂移\n实得=%q\n冻值=%q", tag, c.name, gotOut, c.wantOut)
+		}
+		if gotErr != c.wantErr {
+			mism++
+			t.Errorf("[%s/%s] stderr 漂移\n实得=%q\n冻值=%q", tag, c.name, gotErr, c.wantErr)
+		}
 	}
+	return mism
+}
 
-	prc, pout, perr := runPy(pyCopy, d, "HEAD")
-	grc, gout, gerr := cprRunEntry(d, "HEAD")
-	if prc != grc || pout != gout || perr != gerr {
-		t.Fatalf("两环境对拍失配：\n py rc=%d\n go rc=%d\n py out=%q\n go out=%q\n py err=%q\n go err=%q",
-			prc, grc, pout, gout, perr, gerr)
+// TestPlaceholderResidueParityGoldenInternalized —— A 态（真仓 · 退役 py 不在盘）金标自证
+// （✗ 不 Skip · 逐格真断言 · ✗ 不放宽为「只判非空」）。
+func TestPlaceholderResidueParityGoldenInternalized(t *testing.T) {
+	root := cprRepoRootFromTest(t) // 哨兵：锚 Go 半在盘 ⇒ fail-closed（✗ 不留 Skip）
+	if _, err := os.Stat(filepath.Join(root, cprRetiredPyRel)); err == nil {
+		t.Fatalf("A 态前提破：退役 py 竟在盘 %s（本件前提 = 内化后无 py）", cprRetiredPyRel)
+	}
+	if len(cprGoldenTable) < 3 {
+		t.Fatalf("金标格数 %d < 3", len(cprGoldenTable))
+	}
+	if n := cprRunGolden(t, "A真仓无py", nil); n != 0 {
+		t.Fatalf("A 态金标失配 %d 格", n)
+	}
+}
+
+// TestPlaceholderResidueParityGoldenTwoStates —— 两态逐字同：A 态 = 夹具无 py（真仓现态）；
+// B 态 = 合成「旧态」夹具（把退役 py 路径 `scripts/gates/check-placeholder-residue.py` 放回
+// 夹具并提交）⇒ 两态对同一套金标逐字同命中（✗ 不 Skip）。证 py 在/不在盘都不改判据结论。
+func TestPlaceholderResidueParityGoldenTwoStates(t *testing.T) {
+	cprRepoRootFromTest(t) // 哨兵锚 Go 半（✗ 不留 Skip）
+	if n := cprRunGolden(t, "A夹具无py", nil); n != 0 {
+		t.Fatalf("A 态金标失配 %d 格", n)
+	}
+	plant := func(d string) {
+		pd := filepath.Join(d, "scripts", "gates")
+		if err := os.MkdirAll(pd, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(pd, "check-placeholder-residue.py"),
+			[]byte("# stub：造「旧态」——退役 py 在位（本件只证 py 在/不在盘不改判据结论）\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		cprGitIn(t, d, "add", "-A")
+		cprGitIn(t, d, "commit", "-q", "-m", "old-state-py")
+	}
+	if n := cprRunGolden(t, "B旧态有py", plant); n != 0 {
+		t.Fatalf("B 态金标失配 %d 格（py 在盘不得改判据结论）", n)
 	}
 }
