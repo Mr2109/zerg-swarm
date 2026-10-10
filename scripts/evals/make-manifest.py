@@ -160,7 +160,11 @@ def main() -> int:
         # 消费侧看到 source_sha 与当前分支头不一致、或 generated_at 过旧 ⇒ **只告警不拒绝**（标 stale）。
         "source_sha": _git(["rev-parse", "HEAD"]),
         "source_sha_short": _git(["rev-parse", "--short", "HEAD"]),
-        "dirty": bool(_git(["status", "--porcelain"])),
+        # ★ 2026-10-10（与 zerg-build-all 的 gitSha() 同一治法）：排除跑门台账 ——
+        #   它「每跑一趟门就追加一行」⇒ 工作树永远带它一个改动 ⇒ 不排除则 dirty 恒 true，
+        #   下游闸⑥ 清单新鲜度恒告警「该批资产无法从提交复现」（结构性地判不了绿）。
+        "dirty": bool(_git(["status", "--porcelain", "--", ".",
+                            ":(exclude)scripts/gates/judge-run-ledger.jsonl"])),
         # 构建自证（2026-09-16 加固①）：本机构建路线下"下件+校官方摘要"不存在 ⇒
         # 唯一判据是"同源同环境 ⇒ 逐字节相同"，故把**当时的环境与工具链**如实记下来。
         # 取不到就如实缺席（空串），不编造。
