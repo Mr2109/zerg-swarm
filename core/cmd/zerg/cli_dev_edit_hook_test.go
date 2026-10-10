@@ -316,7 +316,7 @@ func TestDevEditHook_ZeroImpactDoesNotPrintThreeLines(t *testing.T) {
 	if rc != 0 {
 		t.Fatalf("零影响的干跑仍应退 0（只有钩子「必拦」才退 2），得到 %d · stderr=%s", rc, errb)
 	}
-	for _, head := range []string{"会牵动：", "会红：", "建议："} {
+	for _, head := range []string{"会牵动：", "预测会红：", "建议："} {
 		if strings.Contains(errb, head) {
 			t.Errorf("已知无关件**不许**打三行（出现了 %q）—— 零影响时打三行 = 灌噪声", head)
 		}
@@ -375,12 +375,98 @@ func TestDevEditHook_RealWriteAuditCarriesDigest(t *testing.T) {
 		t.Errorf("同一仓态下：审计里的指纹 %s ≠ 干跑打出的 %s（同一枚摘要 ⇒ 同一枚指纹）", got, dry)
 	}
 	// **只留指纹**：审计里**不许**出现卡片 / 摘要正文（红线）。
-	for _, leak := range []string{"会牵动：", "impact_card", "摘要正文"} {
+	for _, leak := range []string{"会牵动：", "预测会红：", "impact_card", "摘要正文"} {
 		if strings.Contains(string(ab), leak) {
 			t.Errorf("审计里不许留卡片全文（只留指纹）：出现了 %q", leak)
 		}
 	}
 	if _, ok := line["impact_actual"]; ok {
 		t.Log("`impact_actual` 已出现（属 `B3`；本批只立字段、不填值 ⇒ 现在应当没有这一格）")
+	}
+}
+
+// TestDevEditHook_RedHeadSelfDeclaresPrediction —— `GAP-20260927-257` 的自检：让干跑「会红」行
+// **自证是提示**（字头明写「预测」），并证明判定口对「把提示误标成判据」**有牙**。
+//
+//	正控①：人面第 2 行字头**逐字**=「预测会红：」（明写「预测」⇒ 自证是**预测**不是**判据**）· 无「必红」字样；
+//	正控②（人面与机器面**同源**）：人面那一行里的红契约 id 与机器面 `red_contracts` **逐字一致**；
+//	负控①：把提示误标成判据（旧字头「会红：」）⇒ 判定口**必红**（判据③ 的字头闸有牙）；
+//	负控②：机器面**不因此丢字段 / 不改退码**（六键包封仍在 · `red_contracts`/`contract_hits` 仍在 · rc 恒 0）。
+func TestDevEditHook_RedHeadSelfDeclaresPrediction(t *testing.T) {
+	repo := repoRootFromCLI(t)
+	target := filepath.Join("core", "cmd", "zerg", "main.go") // 命中契约 `S-g` 的现成件
+	if _, err := os.Stat(filepath.Join(repo, target)); err != nil {
+		t.Skipf("目标件不在盘上：%v", err)
+	}
+	prop, state := t.TempDir(), t.TempDir()
+	writeEditProposal(t, prop, "DEV-9110", target)
+	cur, err := os.ReadFile(filepath.Join(repo, target))
+	if err != nil {
+		t.Fatalf("读不了目标件：%v", err)
+	}
+	from := filepath.Join(t.TempDir(), "after.go")
+	mustWrite(t, from, string(cur)+"\n// GAP-20260927-257 自检：动一个字节（类=改 ⇒ 只记 · rc=0）\n")
+
+	rc, out, errb := hookRun(t, repo, prop, state, "--proposal", "DEV-9110", "--file", target,
+		"--from", from, "--dry-run", "--json", "result,red_contracts,contract_hits")
+	if rc != 0 {
+		t.Fatalf("干跑该退 0（类=改 ⇒ 只记），得到 %d · stderr=%s", rc, errb)
+	}
+
+	// 正控①：人面第 2 行字头**逐字**=「预测会红：」。
+	red := lineOf(errb, "预测会红：")
+	if red == "" {
+		t.Fatalf("人面没有「预测会红：」那一行 —— 该行未自证是提示（仍会被读成判据）：\n%s", errb)
+	}
+	if !strings.HasPrefix(red, impactHeads[1]) {
+		t.Errorf("那一行的字头不是逐字 %q：%q", impactHeads[1], red)
+	}
+	if strings.Contains(red, "必红") {
+		t.Errorf("「预测会红」行里**不许**出现「必红」（那是判据口气）：%q", red)
+	}
+
+	// 正控②（人面与机器面**同源**）：机器面 `red_contracts` 的每个 id 都要逐字进人面那一行。
+	// ★ 机器面 = stdout 的**末行**（上面是计划件正文 · 六键包封 JSON 落在最后一行 —— 别整段 unmarshal）。
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	jsonLine := strings.TrimSpace(lines[len(lines)-1])
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(jsonLine), &doc); err != nil {
+		t.Fatalf("机器面不是包封 JSON（stdout 末行）：%v · 末行=%q", err, jsonLine)
+	}
+	var items []map[string]string
+	if err := json.Unmarshal(doc["items"], &items); err != nil || len(items) != 1 {
+		t.Fatalf("机器面 `items` 形状变了：err=%v · items=%v", err, items)
+	}
+	redCell := strings.TrimSpace(items[0]["red_contracts"])
+	if redCell == "" {
+		t.Fatalf("机器面 `red_contracts` 空 —— 这一跑没取到红契约（该换一件命中契约的目标）")
+	}
+	for _, id := range strings.Split(redCell, ",") {
+		if id = strings.TrimSpace(id); id != "" && !strings.Contains(red, id) {
+			t.Errorf("正控②（同源破）：机器面红契约 %q 未进人面那一行：%q", id, red)
+		}
+	}
+
+	// 负控①：**把提示误标成判据**（旧字头「会红：」）⇒ 判定口**必红**（字头闸有牙 · 真红）。
+	goodFace := impactHeads[0] + "受影响包 0 个\n" + impactHeads[1] + "契约 S-g\n" + impactHeads[2] + "zerg gate run --fast\n"
+	if err := judgeImpactHuman(goodFace, impactHeads); err != nil {
+		t.Fatalf("负控① 前置不成立：新字头三行竟判不过：%v", err)
+	}
+	oldFace := impactHeads[0] + "受影响包 0 个\n会红：契约 S-g（`change_class=B`）\n" + impactHeads[2] + "zerg gate run --fast\n"
+	if err := judgeImpactHuman(oldFace, impactHeads); err == nil {
+		t.Error("负控① 没牙：把提示误标成判据（旧字头「会红：」）竟判过 —— 判定口判不出这一格")
+	}
+
+	// 负控②：机器面**不因此丢字段 / 不改退码**（六键包封仍在 · 两格仍在 · rc 恒 0）。
+	for _, k := range []string{"schema", "kind", "items", "meta", "warnings", "truncated"} {
+		if _, ok := doc[k]; !ok {
+			t.Errorf("负控② 破：机器面丢了包封键 %q", k)
+		}
+	}
+	if _, ok := items[0]["contract_hits"]; !ok {
+		t.Errorf("负控② 破：机器面丢了 `contract_hits` 那一格（%v）", items[0])
+	}
+	if rc != 0 {
+		t.Errorf("负控② 破：退码变了 = %d（有影响面 + 类=改 ⇒ 恒 0）", rc)
 	}
 }

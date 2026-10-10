@@ -61,7 +61,7 @@ func cdfRunIn(t *testing.T, root string, argv ...string) (int, string, string) {
 // 用于夹具格；self-test 格必须在**默认**取根下跑（见件头 (a)·(b)）。
 func cdfWithSibling(t *testing.T, root string) {
 	t.Helper()
-	v := filepath.Join(root, "Zerg-内部文档", "项目文档", cdfSlugVersionDir)
+	v := filepath.Join(root, "Zerg-内部文档", "项目文档", "v2.5.10")
 	if err := os.MkdirAll(v, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +181,7 @@ func TestCheckDocFreshnessGatePort(t *testing.T) {
 
 	// ── ⑬ --self-test 自身必须全过（防恒绿/恒红）⇒ rc=0 + 末行自印组数 ───────
 	rcST, outST, _ := cdfRunIn(t, good, "--self-test")
-	if rcST != 0 || !strings.Contains(outST, "self-test：45 条通过 / 0 条失败") {
+	if rcST != 0 || !strings.Contains(outST, "self-test：48 条通过 / 0 条失败") {
 		t.Fatalf("--self-test 失败：得 rc=%d out=%q", rcST, outST)
 	}
 }

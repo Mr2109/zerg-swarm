@@ -972,6 +972,69 @@
    "语义": "dryrun.v1",
    "零副作用判据": "干跑那一档（判据①现跑）：断言 rc=0 且 stderr 点明「基线回放」、目标件字节逐字不变、`<state>/edit_audit.jsonl` **不出现**（没写就不记账）；真写那一档只落 `t.TempDir()` 的合成仓根/状态目录（`ZERG_REPO`/`ZERG_STATE_DIR` 指临时目录）；本测试件自身不碰真仓、不碰真状态目录、不删 / 不推 / 不改 git 状态。",
    "备注": "登记依据 = 门⑩ `R1 未登记件`（本波新开正门 `dev edit --base`（DEV-2215）带来新测试件 ⇒ 命中行带 `--dry-run` 字面进扫描面）。它走的是既有的 `dryrun.v1` 一套语义（`--dry-run` ⇒ 计划件 · 零副作用），**不是第五套语义** —— 命中是**调用 argv / 对拍夹具串**（同族先例 `cli_dev_edit_approval_test.go` / `cli_dev_edit_hook_test.go`：测试面，非语义站点）。"
+  },
+  {
+   "file": "core/cmd/zerg/family_gate_run_dry.go",
+   "类": "实现站点：`zerg gate run --dry-run` 门跑干跑档（缺口 `GAP-20260927-02` · P1 · 命令面）—— 只摆出「本趟将跑 vs 被跳过」的步表（步名/档位/形态）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "`bin/zerg gate run [--fast | --scope <值> | --step <步名>] --dry-run` ⇒ 退码 0 · stdout 只有计划件（档位 + 步数 + 日志落点 + 逐行 `scope 档位 步名` + 被跳过步与其理由）+ **不起任何子进程、立即返回**（纯 `os.ReadFile` 脚本 + 打印）· **不写任何件**（不落趟目录/逐步日志/`freshness.json`、不追加 `judge-run-ledger.jsonl` —— 判据：跑前跑后脚步/台账 sha 逐字不变）· 步表真源 = 脚本 `add_step` 声明（现读默认集 206 / 快速档 43 / `--scope gates` 128，均与脚本 `--list` 逐数相符）· 用法错（`--fast` 与 `--scope` 同用 / 未知 scope 值 / 步名不存在或歧义）⇒ 2；脚本读不到 ⇒ 8。",
+   "备注": "登记依据 = 门⑩ `R1 未登记件`（现跑命中即红）。走既有的 `dryrun.v1` 一套语义（干跑 ⇒ 计划件 · 零副作用 · 退码同表），**不是第五套语义**。"
+  },
+  {
+   "file": "core/cmd/zerg/family_agent_bootstrap.go",
+   "类": "实现站点：`zerg agent bootstrap --dry-run` 子端引导的**域选择只读判定 + 可打印计划**（缺口 `GAP-20260925-22` · P1 · 命令面 ·「agent bootstrap-user-domain」）—— 用户域 LaunchAgent vs 系统域 LaunchDaemon + 四坑（拨号地址 / `0.0.0.0` / 签名）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "`zerg agent bootstrap <机> --dry-run` ⇒ 退码 0 · stdout 只有计划件（域选择 + 四格只读判定 + 步骤）· **不真动本机用户/组/权限/launchd、不真下发、不真起引擎**（只读扫本仓 `deploy/` 与 `gateway/deploy/*.plist` 夹具）· 取不到夹具 ⇒ 退码 8（不给结论）；真跑分支原样转 `cmdGuarded`（未开放 ⇒ 退码 2），真跑行为与改前逐字同。",
+   "备注": "登记依据 = 门⑩ `R1 未登记件`（现跑命中即红）。走既有的 `dryrun.v1` 一套语义（干跑 ⇒ 计划件 · 零副作用 · 退码同表），**不是第五套语义**（命中 = 本件处理 `--dry-run` 档的实义站点）。"
+  },
+  {
+   "file": "core/cmd/zerg/family_agent_bootstrap_test.go",
+   "类": "测试面：`agent bootstrap --dry-run` 域选择判据的正/负控夹具（同族先例 `cli_dev_edit_approval_test.go` / `cli_dev_edit_hook_test.go`：测试面，非语义站点）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "本测试件只调纯判据函数与 `cmdAgentBootstrap(--dry-run)` 于进程内合成 `invocation`（不碰真仓写面、不碰真状态目录、不起引擎）；命中 = 调用 argv 字面 `--dry-run`。",
+   "备注": "登记依据 = 门⑩ `R1 未登记件`（现跑命中即红）。走既有的 `dryrun.v1` 一套语义，**不是第五套语义**（测试面命中 = argv 字面，非语义站点）。"
+  },
+  {
+   "file": "core/cmd/zerg/family_model_put.go",
+   "类": "实现站点：`model put <模型@机> --to <路径>` 的 D2 三态写门（`--dry-run` / 缺 `--yes` / `--yes`）· 与 guard.go / family_h.go 同一套语义",
+   "语义": "dryrun.v1",
+   "零副作用判据": "`bin/zerg model put <模型@机> --to <路径> --dry-run` ⇒ 退码 0 · stdout 只有计划件（对象/源件/落点/传输/对拍/授权判据/它会动/来源）+ stderr 一行「（--dry-run：只出计划件 · 零副作用 —— 未传输、未回读、未改任何状态）」· **一次 rsync/ssh 都不发、不读不写名册件**（真传输只在 `--yes` 那一支；缺 `--yes` ⇒ 退 2 且计划件走 stderr）· 本件命中 = 第 201 行 `if inv.dryRun {` 真解析该档并据此分行。",
+   "备注": "登记依据 = 门⑩ `R1 未登记件`（现跑命中即红）。本件是 `zerg model put`（缺口 GAP-20260925-25 · §三 E 族 D2 写面）的**实现站点**（第 198 行 `dryRunYesConflict` + 第 201 行 `if inv.dryRun` 解析并据此行事），走既有的 `dryrun.v1` 一套语义，**不是第五套语义**（口径照同族写面先例 `family_config.go` 的 `model add`（D2））。判据件 = `core/cmd/zerg/family_model_put_test.go` 现跑钉住。"
+  },
+  {
+   "file": "core/cmd/zerg/family_model_put_test.go",
+   "类": "命令面测试件（`model put` D2 三态真跑的**消费者 / 对拍件**：`--dry-run` rc=0 出计划件零传输 / `--yes` 双侧对拍 sha 一致 / 坏值 rc=2）—— 测试面，非干跑语义站点（本件只把 `--dry-run` 原样交给 `cmdModelPut` 并断言，自身一行干跑逻辑都没有）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "本件是**消费者 / 对拍件**：`mputRun` 进程内直调 `cmdModelPut`（第 87-88 行 `case \"--dry-run\": inv.dryRun = true` 只按 argv 置该位），断言干跑那一档 rc=0 且出计划件（零传输 · 替身夹具 `MPUT_STUB`）；真跑那一档只打替身（不真 ssh/rsync）；本测试件自身不碰真仓、不碰真状态目录。",
+   "备注": "登记依据 = 门⑩ `R1 未登记件`（现跑命中即红）：命中行是**调用 argv / 夹具串**（`--dry-run` 字面入参），不是第五套语义 —— 同 `adopt_retire_test.go` / `writer_lock_test.go` / `cli_agent_workers_test.go` 的「测试面，非语义站点」处置（上件伴生测试）。"
+  },
+  {
+   "file": "core/cmd/zerg/eggmax_timeout_test.go",
+   "类": "命令面测试件（`task submit --timeout` → `egg_max_s` 白盒判据 · 端到端那一格走既有 `--dry-run` 零网络档）—— 测试面，非干跑语义站点（本件只把 `dryRun: true` 置进合成 `invocation` 并断言，自身一行干跑逻辑都没有）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "本件是**测试件 / 对拍件**：第 83/93 行以 `&invocation{dryRun: true, …}` 进程内直调 `cmdTaskSubmit`，断言干跑那一档退 0 且计划件请求体带 `egg_max_s`；零网络（干跑只出计划件、不发请求）；不碰真仓、不碰真状态目录。",
+   "备注": "登记依据 = 门⑩ `R1 未登记件`（现跑命中即红）：命中行是**注释 / 测试名 / 判词串**（第 8 / 80 / 81 / 87 行），不是第五套语义 —— 同 `adopt_retire_test.go` / `writer_lock_test.go` 的「测试面，非语义站点」处置；它消费的是已登记的 `family_task.go` 的 `task submit --dry-run` 那一套。"
+  },
+  {
+   "file": "core/cmd/zerg/cli_agent_port_precheck_test.go",
+   "类": "命令面测试件（`agent load` 端口预检三态的对拍 —— 端口空闲放行 0 / 被占冲突 14 / lsof 取不到不给结论 8）—— 测试面，非干跑语义站点（本件只把 `--dry-run` 原样交给已编二进制并断言，自身一行干跑逻辑都没有）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "本件是**消费者 / 对拍件**：`execAgentLoad` 起 `zergBinaryFromSource` 出的二进制、argv 带 `--dry-run`（第 82 / 95 / 113 行），断言的是端口预检三态（非干跑语义本身）；夹具仓根在 `t.TempDir()`、不碰真仓/真状态。",
+   "备注": "登记依据 = 门⑩ `R1 未登记件`（现跑命中即红）：命中行是**调用 argv 字面**（`agent load … --dry-run`），不是第五套语义 —— 同 `adopt_retire_test.go` / `cli_agent_workers_test.go` 的「测试面，非语义站点」处置；它消费的是 `agent load` 既有的干跑档。"
+  },
+  {
+   "file": "core/cmd/zerg/cli_dev_edit_literal_text_test.go",
+   "类": "命令面测试件（`dev edit --literal-text` 三条语义硬线的成对自检 —— 回执可见 / 不带不出现 / 不放宽任何闸）—— 测试面，非干跑语义站点（`--dry-run` 在本件只作 argv 入参与干跑零副作用断言，自身一行干跑逻辑都没有）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "本件是**消费者 / 对拍件**：`runDevEdit`（`zerg.RunForTest`，跑当前源码）argv 带 `--dry-run`（第 33 / 46 / 56 / 57 行），断言的正是干跑那一档零副作用（第 40-42 行：件一个字节不许动）；夹具仓根/状态目录全在 `t.TempDir()`，不碰真仓。",
+   "备注": "登记依据 = 门⑩ `R1 未登记件`（本波新开正门 `dev edit --literal-text`（缺口 GAP-20260927-234）带来新测试件 ⇒ 命中行带 `--dry-run` 字面进扫描面）。它走的是既有的 `dryrun.v1` 一套语义，**不是第五套语义** —— 命中是**调用 argv / 对拍夹具串**（同族先例 `cli_dev_edit_base_test.go` / `cli_dev_edit_approval_test.go`：测试面，非语义站点）。"
+  },
+  {
+   "file": "core/cmd/zerg/cli_model_add_cmd_test.go",
+   "类": "命令面测试件（`model add --cmd` 自定义启动命令的干跑零字节 / 真写落名册件 / V016 缺格退 2 的对拍）—— 测试面，非干跑语义站点（本件只把 `--dry-run` 原样交给 CLI 并断言，自身一行干跑逻辑都没有）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "本件是**消费者 / 对拍件**：`runCapture(\"model\", \"add\", … \"--dry-run\")`（第 31 / 61 / 82 / 102 行），断言干跑那一档 rc=0 且名册件 sha 逐字不变（第 38-40 行）；夹具名册件在 `t.TempDir()`、不碰真 `gateway/fleet.yaml`。",
+   "备注": "登记依据 = 门⑩ `R1 未登记件`（现跑命中即红）：命中行是**调用 argv 字面**（`model add … --dry-run`），不是第五套语义 —— 同 `cli_model_add_test.go` / `cli_agent_workers_test.go` 的「测试面，非语义站点」处置；它消费的是已登记的 `family_config.go` 的 `model add --dry-run` 那一套。"
   }
 
  ]

@@ -4,9 +4,26 @@ package adapters
 
 import (
 	"fmt"
+	"log"
+	"path/filepath"
 
+	"github.com/Mr2109/zerg-swarm/core/internal/config"
 	"github.com/Mr2109/zerg-swarm/core/internal/plugin"
+	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 )
+
+// fleetHost 取集群机器地址——真源 = gateway/fleet.yaml 的 fleet 段（config.NodeAddr，
+// 与 gateway/agent 包同一读取口径）。真源不可得 ⇒ 出声并返回空串（✗ 不回落硬编码地址）。
+func fleetHost(name string) string {
+	fleetYAML := filepath.Join(statepath.WorkspaceRoot(), "gateway", "fleet.yaml")
+	cfg, err := config.LoadFleetConfig(fleetYAML)
+	if err != nil {
+		log.Printf("cluster: 读 fleet.yaml 失败(%s)——机器 %q 地址不可解析: %v", fleetYAML, name, err)
+		return ""
+	}
+	host, _ := config.NodeAddr(cfg.Fleet, name)
+	return host
+}
 
 // MachineInfo 集群机器信息。
 type MachineInfo struct {
@@ -28,7 +45,7 @@ type ClusterPlugin struct {
 func NewClusterPlugin(machines []MachineInfo) *ClusterPlugin {
 	if machines == nil {
 		machines = []MachineInfo{
-			{Name: "x" + "3", Host: "<worker-ip>", Healthy: true, Model: "example-35b"},
+			{Name: "x" + "3", Host: fleetHost("x" + "3"), Healthy: true, Model: "example-35b"},
 			{Name: "Mr2109", Host: "127.0.0.1", Healthy: true, Model: "example-35b-Q4_K_M"},
 		}
 	}

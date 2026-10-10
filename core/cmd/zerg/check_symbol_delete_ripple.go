@@ -527,6 +527,14 @@ func symbolDeleteRippleGateMain(stdout, stderr io.Writer, argv []string) int {
 	src, how := sdrResolvePlanSource(plan)
 	explicit := plan != "" || os.Getenv("ZERG_R28_PLAN") != ""
 	fmt.Fprintf(stdout, "门㉜ 删前波纹门（`R28` · 分档版）· 单的来源：%s（%s）\n", src, how)
+	// ★ 沙箱读数警告（缺口 `GAP-20260927-70` · 与门⑱ `check-trustroot-witness:1724` 同形）：单的来源
+	//   落到**状态目录默认落点**、且该目录是环境变量 `ZERG_STATE_DIR` 静默给的（没显式 `--plan` /
+	//   `ZERG_R28_PLAN`）⇒ 本读数是**沙箱**读数，不是真状态目录 `~/.zerg/state`。
+	if !explicit && os.Getenv("ZERG_STATE_DIR") != "" {
+		fmt.Fprintf(stdout, "★★ 状态目录是**环境变量 `ZERG_STATE_DIR` 给的**（%s）⇒ 本读数是**沙箱**读数，"+
+			"**不是**真状态目录 `~/.zerg/state`（闸里不设这个变量；要读真源请显式 `--plan`）\n",
+			os.Getenv("ZERG_STATE_DIR"))
+	}
 	var text string
 	if src == "-" {
 		b, _ := io.ReadAll(os.Stdin)

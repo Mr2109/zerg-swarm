@@ -79,6 +79,10 @@ type subproc struct {
 	// ⇒ /eggs 缺 unit/gtt_gb，且 external_occupancy[] 把**本端自己孵的卵**误列为「外部占用者」。
 	// 裸 exec 路径恒 0（那时用 sp.proc.Process.Pid）。
 	enginePID int
+	// engineArgv 本卵**实际执行**的引擎命令行（可执行 + 参数，逐字来自 buildEngineArgv）。
+	// 缺口 GAP-20260926-01：真 argv 原先只进 stderr.log 的 spawn 行 ⇒ 命令面机读不到。
+	// 两条起法都在 spawn 前赋值（裸 exec / 孵化各一处）；未起成 / 未赋值 ⇒ 空 = 如实缺席（不编）。
+	engineArgv []string
 	// inflight 在飞引用计数（P2，设计 §7.7 修补 3）——「在飞」的唯一真源：
 	// 请求进入生成中 +1（acquireInflight）、完成/失败 −1（releaseInflight）。
 	// 卸载/切换判据一律取它；引擎 /slots 只作交叉校验，不作为条件。
@@ -127,6 +131,10 @@ type Manager struct {
 	// 唯一写入点是 eggProfileFreshLocked（**现读盘上**后才回写）；整体刷新走 RefreshEggProfiles
 	// （/infer/reload 调它）。孵化判据一律现读，**不许**拿这份缓存当放行依据。
 	profileCache map[string]eggProfileCacheEntry
+	// eggMaxOverride 单卵时限的**逐枚覆盖**（GAP-20260926-201 全通路）：model → 该卵的墙钟上界。
+	// 来源 = `/load` 体里的 `egg_max_s`（`SetEggMaxOverride`），读点 = `InferForward` 每次调用
+	// （⇒ 逐请求生效）；缺省空 ⇒ 回落 env `ZERG_EGG_MAX_S` ⇒ 再回落 0。在 m.mu 下读写。
+	eggMaxOverride map[string]time.Duration
 }
 
 // defaultReapInterval 是后台 TTL 回收循环的扫描间隔（只决定"多久查一次"，不是 TTL 本身）。
@@ -136,12 +144,13 @@ const defaultReapInterval = 30 * time.Second
 // 空闲 TTL 取自 ZERG_MODEL_TTL_S（缺省 300 秒，见 DefaultIdleTTL；设 0 关闭）。TTL 启用时同时启动后台回收循环。
 func NewManager(reg *registry.Registry, machine string) *Manager {
 	m := &Manager{
-		procs:       make(map[string]*subproc),
-		loading:     make(map[string]*loadWaiter),
-		registry:    reg,
-		machine:     machine,
-		maxResident: resolveMaxResident(),
-		idleTTL:     resolveIdleTTL(),
+		procs:          make(map[string]*subproc),
+		loading:        make(map[string]*loadWaiter),
+		registry:       reg,
+		machine:        machine,
+		maxResident:    resolveMaxResident(),
+		idleTTL:        resolveIdleTTL(),
+		eggMaxOverride: make(map[string]time.Duration),
 	}
 	// TTL 未启用（idleTTL<=0，例如显式设成 0）→ StartIdleReaper 直接返回，不产生后台 goroutine。
 	m.StartIdleReaper(defaultReapInterval)
@@ -150,6 +159,29 @@ func NewManager(reg *registry.Registry, machine string) *Manager {
 	// 只在孵化开关开时执行（见 egg_gc.go 的两条口径：范围铁律 / 清不掉必须留痕）。
 	gcLeftoverEggsAtStartup()
 	return m
+}
+
+// SetEggMaxOverride 记下「这一枚卵」的单卵时限（来自 `/load` 的 `egg_max_s` · GAP-20260926-201）。
+//
+// d <= 0 ⇒ **清除覆盖**（回落 env 兜底）—— 与「没给」同义。逐 `InferForward` 读一次 ⇒ 逐请求生效。
+func (m *Manager) SetEggMaxOverride(model string, d time.Duration) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.eggMaxOverride == nil {
+		m.eggMaxOverride = make(map[string]time.Duration)
+	}
+	if d <= 0 {
+		delete(m.eggMaxOverride, model)
+		return
+	}
+	m.eggMaxOverride[model] = d
+}
+
+// eggMaxOverrideFor 读该模型的单卵时限覆盖（无 ⇒ 0）。只在 m.mu 下读；nil map 读安全。
+func (m *Manager) eggMaxOverrideFor(model string) time.Duration {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.eggMaxOverride[model]
 }
 
 // Start 启动/复用模型对应的后端进程（多模型驻留）。
@@ -454,6 +486,8 @@ func (m *Manager) doStart(modelName string, entry *registry.ModelEntry) (map[str
 	//  批 1：构造整段抽成 buildEngineArgv —— 孵化路径（hatch_spec.go）要用**同一份**参数，
 	//  两处各写一遍必然漂移；此处逐字保持原逻辑，行为不变。）
 	cmdPath, execArgs := buildEngineArgv(modelName, entry, port)
+	// GAP-20260926-01：把这一份真 argv 记到卵上 ⇒ 观测面 /eggs 的 argv 由此机读（不再靠扒 stderr.log）。
+	sp.engineArgv = engineArgvOf(cmdPath, execArgs)
 
 	cmd := exec.Command(cmdPath, execArgs...)
 	sp.proc = cmd
@@ -728,6 +762,9 @@ func (m *Manager) InferForward(ctx context.Context, model string, path string, b
 	// 活性看门狗（批 B 接线）：开着时**不设固定首字节超时**，由证据判活
 	// （长 prefill / 非流式长文不再被误杀）；关闭或降级时按旧口径兜底。
 	wdCfg := watchdogConfigFromEnv(watchdogEnv)
+	// 单卵时限全通路（GAP-20260926-201）：CLI `--timeout` ⇒ /load 体 `egg_max_s` ⇒ 主控透传
+	// ⇒ 本处**逐请求**覆盖 env 兜底。优先级：逐枚覆盖 > env `ZERG_EGG_MAX_S` > 现默认 0。
+	wdCfg = resolveEggMax(wdCfg, m.eggMaxOverrideFor(model))
 	headerTO := firstByteTO
 	if wdCfg.Enabled {
 		headerTO = 0

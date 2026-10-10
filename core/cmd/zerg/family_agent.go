@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -182,44 +183,49 @@ func cmdAgentModels(inv *invocation, stdout, stderr io.Writer) int {
 	return listCmd(inv, stdout, stderr, []string{"id", "host", "backend", "modality", "mem_gb", "declared", "subend"}, rows)
 }
 
-// cmdAgentLogs —— `zerg agent logs <机>`：**端点缺 ⇒ 不给结论**（不许拿别的东西当日志流）。
+// cmdAgentLogs —— `zerg agent logs <机>`：该机的日志（走**主控查询面** `/api/fleet/logs/query?machine=`）。
 //
-// 口径（同 T-17 的 `watch`）：主控面今天**没有**日志端点（`/api/logs/*` 不在路由表里）⇒
-// 本命令**声明面 + `kind=blocked` + 退码 8**；**不**去读 `/tmp` 下的文件、**不**偷偷直连子端
-// （§九 M20 `O2`「不偷偷换源」）。日志端点落地后本命令即通（`retryable=true`）。
+// 口径（缺口 `GAP-20260927-202` ① · 段2）：日志查询面 = 主控 `GET /api/fleet/logs/query`（参数逐字照
+// `gateway/protocol.md:74-78`）；子端按段2 的批量上报把本机日志喂进它 ⇒ 本命令**只打主控**、
+// 字段名逐字取自回据（§4.3 `U2`）。✗ 不读 `/tmp` 文件当结果、✗ 不偷偷直连子端（§九 M20 `O2`）。
+// 发现面取**①**：照 `/api/logs/*` 那类**主控内部读面**先例（`core/internal/api/routes.go:32` 边界 ——
+// 内部面不入能力表），直接读该已知面，✗ 不登进 `capabilities`。
+//
+// 未知 machine ⇒ 查询面按 machine 过滤后回**空数组** ⇒ **空结论**退 0（不是错、不崩）。
 func cmdAgentLogs(inv *invocation, stdout, stderr io.Writer) int {
 	if len(inv.args) == 0 {
 		fmt.Fprintf(stderr, "%s: `agent logs` 要一台机器名（`zerg agent ls` 看名册）\n", progName)
 		inv.setErr("usage", "missing_target", "缺机器名")
 		return exitUsage
 	}
-	machine := inv.args[0]
+	if len(inv.args) > 1 {
+		inv.setErr("usage", "too_many_targets", "多余位置参数（本档只吃一台机）")
+		fmt.Fprintf(stderr, "%s: `agent logs` 只吃**一台**机（多给的是 %q）\n", progName, inv.args[1])
+		return exitUsage
+	}
+	machine := strings.TrimSpace(inv.args[0])
 	c := newClient()
-	var caps jsonObj
-	haveLogs := false
-	if err := c.getJSON("/api/capabilities", &caps); err == nil {
-		for _, it := range asList(caps["capabilities"]) {
-			o := asObj(it)
-			if o == nil {
-				continue
-			}
-			if strings.Contains(cell(o["endpoint"]), "/api/logs") {
-				haveLogs = true
-			}
-		}
+	var payload []jsonObj
+	if rc := fetchInv(inv, c, "/api/fleet/logs/query?machine="+url.QueryEscape(machine), &payload, stderr); rc != exitOK {
+		return rc
 	}
-	if haveLogs {
-		// 端点有了 ⇒ 本版仍不猜它的载荷形状（形状未定案 ⇒ 不给结论，不许自己编字段）
-		inv.setErr("blocked", "endpoint_shape_undecided", "日志端点已在能力面，但载荷形状未定案")
-		fmt.Fprintf(stderr, "%s: 主控能力面出现了 `/api/logs` 类端点，但**载荷形状未定案** ⇒ 不给结论（退码 8）\n", progName)
-		return exitBlocked
+	rows := make([]map[string]string, 0, len(payload))
+	for _, o := range payload {
+		rows = append(rows, project(o, agentLogsFields))
 	}
-	inv.setErr("blocked", "logs_endpoint_absent", "主控面今天没有日志端点（/api/logs/*）")
-	fmt.Fprintf(stderr, "%s: 主控面**没有**日志端点 ⇒ 拿不到 %q 的日志，**不给结论**（退码 8）\n", progName, machine)
-	fmt.Fprintf(stderr, "error.kind=blocked · retryable=true · remedy=fix_precondition（端点落地后本命令即通）\n")
-	fmt.Fprintf(stderr, "不做的：不读 /tmp 的日志文件当结果、不偷偷直连子端（§九 M20 O2）\n")
-	return exitBlocked
+	if len(rows) == 0 {
+		fmt.Fprintf(stderr, "%s: 主控日志面里 %q **没有**符合条件的日志 —— 这是**空结论**（退码 0），不是取不到\n", progName, machine)
+	} else {
+		fmt.Fprintf(stderr, "%s: agent logs %s · 主控查询面 /api/fleet/logs/query 命中 %d 条\n", progName, machine, len(rows))
+	}
+	return listCmd(inv, stdout, stderr, agentLogsDisplay, rows)
 }
+
+// agentLogsFields —— `agent logs` 的字段闭集：逐字取自查询面回据（`protocol.md:82` 的列）。
+var agentLogsFields = []string{"ts", "machine", "level", "component", "model", "request_id", "message"}
+
+// agentLogsDisplay —— 人面列（机器面用 agentLogsFields 全集）。
+var agentLogsDisplay = []string{"ts", "level", "machine", "component", "model", "request_id", "message"}
 
 // cmdAgentProbe —— `zerg agent probe <机>`：探活诊断（§十五.4 `F-2` 例外的**显式**形态）。
 //
@@ -264,9 +270,37 @@ func cmdAgentProbe(inv *invocation, stdout, stderr io.Writer) int {
 // ★ 已跑时长（`uptime`）：子端 `/eggs` 今天**不跟踪**引擎启动时刻 ⇒ 本格如实**缺席**（空串），
 //
 //	**不**拿别的时间戳凑一个假值；要填满它需子端端点补 `started_at`（归 `GAP-20260927-202` 端点面）。
-var agentEnginesFields = []string{"machine", "model", "state", "unit_state", "pid", "port", "uptime", "managed", "via"}
+var agentEnginesFields = []string{"machine", "model", "state", "unit_state", "pid", "port", "uptime", "managed", "via", "argv"}
 
-var agentEnginesDisplay = []string{"machine", "model", "state", "pid", "port", "uptime", "managed"}
+var agentEnginesDisplay = []string{"machine", "model", "state", "pid", "port", "uptime", "managed", "argv"}
+
+// agentEngineFieldInflight / agentEngineFieldWatchdogVerdict / agentEngineFieldLastOutputAgoS ——
+// 「引擎实时态」三格的**字段名**（`--json` 面用 · 缺口 `GAP-20260925-45`）。
+//
+// ★ 子端 `/eggs` **已经透出**这三样读数（`inflight` 在飞计数 + `watchdog` 子对象 =
+// `backend.WatchdogObservation`：`last_output_ago_s` / `verdict`；见
+// `agent/internal/server/eggs_endpoint.go`），而机面此前**把它们丢掉**（只解析
+// `model/state/port/pid/managed/argv`）⇒ 「这台机的引擎此刻在不在算、多久没出声、看门狗怎么判的」
+// 在机面上**看不见**（区分不了「挂住」与「只是慢」）。
+//
+// ★ 两格字段名与卵面（`egg ls` 的 `GAP-20260925-15`）**逐字同源**（`last_output_ago_s` /
+// `watchdog_verdict`），`inflight` 逐字取自 `/eggs` 的键 —— ✗ 不另造词汇。
+const (
+	agentEngineFieldInflight        = "inflight"
+	agentEngineFieldWatchdogVerdict = "watchdog_verdict"
+	agentEngineFieldLastOutputAgoS  = "last_output_ago_s"
+)
+
+// agentEnginesOptionalFields —— `agent engines --json` 的**可选字段层**（`optFields`）：登在出口
+// 白名单里、点得出来，但**不进** `agentEnginesFields` 那一份**冻结**的帮助 / 文档导出面字段表 ——
+// 与 `eggOptionalFields` / `code find` 的 `count` 同一体例（冻结表不动、可选只增）。
+var agentEnginesOptionalFields = []string{
+	agentEngineFieldInflight, agentEngineFieldWatchdogVerdict, agentEngineFieldLastOutputAgoS,
+}
+
+// agentEnginesJSONFields —— `--json` 的**合法字段全集** = 冻结 `agentEnginesFields` ∪ 可选
+// `agentEnginesOptionalFields`（本命令的前置闭集校验用；`emitSelected` 的出口白名单同样取这两份之并）。
+var agentEnginesJSONFields = append(append([]string{}, agentEnginesFields...), agentEnginesOptionalFields...)
 
 // agentEngineFact 子端 `/eggs` 回据里的一枚**在跑**引擎（只读投影，不做判定）。
 type agentEngineFact struct {
@@ -278,6 +312,54 @@ type agentEngineFact struct {
 	Uptime    string // 子端未跟踪启动时刻 ⇒ 恒空（缺席不编）
 	Managed   bool
 	Via       string
+	// Argv 引擎真命令行（可执行 + 参数 · GAP-20260926-01）。nil = 子端回据里没有这一格 ⇒ 如实缺席，
+	// 由渲染层**点名**（不静默当空、不编一个空数组）。
+	Argv []string
+	// ── 引擎实时态（GAP-20260925-45）：区分「挂住」与「只是慢」的只读读数 ──
+	// Inflight 子端 `/eggs` 的 `inflight` 在飞引用计数（>0 = 此刻在算）；nil = 回据没这一格
+	//   （`/status` 兜底路径没有它）⇒ 如实缺席，✗ 不编一个 0（0 与「没读法」不是一回事）。
+	Inflight *int
+	// Watchdog 子端 `/eggs` 的 `watchdog` 子对象（看门狗判词 + 距最近输出秒数）；nil = 没这一格。
+	Watchdog *agentEngineWatchdog
+}
+
+// agentEngineWatchdog —— 子端 `/eggs` 逐枚引擎的看门狗读数（**逐字**取自 `watchdog` 子对象 · GAP-20260925-45）。
+//
+// ★ 两格字段名与卵面（`egg ls` 的 `GAP-20260925-15`）**逐字同源**（`last_output_ago_s` / `verdict`）
+// —— 同一格不许两套词。★ 诚实边界（照卵面）：`watchdog` 是**上一次请求的快照** ⇒ 看门狗没跑时子端报
+// `verdict=ok` / `last_output_ago_s=0`；本面**逐字照报**（不加工成「实时静默 N 秒」、不把 `0` 说成「未卡」）。
+// 缺席（nil）= 回据里没有这一格 ⇒ 两格留空（绝不编 `ok`/`0`）。
+type agentEngineWatchdog struct {
+	LastOutputAgoS string // 距最近一次输出的秒数（数值文本，逐字；`0` 也是真读数）
+	Verdict        string // 判词：ok / extended / stuck_cpu_stalled / stuck_no_progress / degraded / dead_unit
+}
+
+// agentEngineRow 把一枚**在跑**引擎的只读事实折成一行（含「引擎实时态」三格 · GAP-20260925-45）：
+//
+//	inflight          在飞引用计数（>0 = 此刻在算 · 判「在不在算」）
+//	last_output_ago_s 距最近一次输出的秒数（判「还有没有在出」—— 区分「挂住」与「只是慢」）
+//	watchdog_verdict  看门狗判词（ok/extended/stuck_*/degraded/dead_unit · 判「卡没卡」）
+//
+// 缺席（回据没那一格）⇒ 对应键**不出现**（`--json` 面整键略去、人面留空），✗ 绝不编 `0`/`ok`。
+func agentEngineRow(machine string, f agentEngineFact) map[string]string {
+	model := f.Model
+	if model == "" {
+		model = "<子端未自报模型名>"
+	}
+	row := map[string]string{
+		"machine": machine, "model": model, "state": f.State, "unit_state": f.UnitState,
+		"pid": strconv.Itoa(f.PID), "port": strconv.Itoa(f.Port), "uptime": f.Uptime,
+		"managed": strconv.FormatBool(f.Managed), "via": f.Via,
+		"argv": agentRenderArgv(f.Argv),
+	}
+	if f.Inflight != nil {
+		row[agentEngineFieldInflight] = strconv.Itoa(*f.Inflight)
+	}
+	if f.Watchdog != nil {
+		row[agentEngineFieldWatchdogVerdict] = f.Watchdog.Verdict
+		row[agentEngineFieldLastOutputAgoS] = f.Watchdog.LastOutputAgoS
+	}
+	return agentFillRow(row, agentEnginesFields)
 }
 
 func cmdAgentEngines(inv *invocation, stdout, stderr io.Writer) int {
@@ -285,7 +367,7 @@ func cmdAgentEngines(inv *invocation, stdout, stderr io.Writer) int {
 		if rc := requireFields(inv, stderr); rc != exitOK {
 			return rc
 		}
-		if rc := agentCheckFields(inv, stderr, agentEnginesFields); rc != exitOK {
+		if rc := agentCheckFields(inv, stderr, agentEnginesJSONFields); rc != exitOK {
 			return rc
 		}
 	}
@@ -310,15 +392,7 @@ func cmdAgentEngines(inv *invocation, stdout, stderr io.Writer) int {
 	}
 	rows := make([]map[string]string, 0, len(facts))
 	for _, f := range facts {
-		model := f.Model
-		if model == "" {
-			model = "<子端未自报模型名>"
-		}
-		rows = append(rows, agentFillRow(map[string]string{
-			"machine": machine, "model": model, "state": f.State, "unit_state": f.UnitState,
-			"pid": strconv.Itoa(f.PID), "port": strconv.Itoa(f.Port), "uptime": f.Uptime,
-			"managed": strconv.FormatBool(f.Managed), "via": f.Via,
-		}, agentEnginesFields))
+		rows = append(rows, agentEngineRow(machine, f))
 	}
 	if len(rows) == 0 {
 		fmt.Fprintf(stderr, "%s: 子端 %s 报**没有在跑的引擎**（`/eggs` 里 `port>0` 的条目 0 条、`/status.port=0`）—— 这是**空结论**（退码 0），不是取不到\n",
@@ -369,10 +443,25 @@ func agentEngineFacts(inv *invocation, a agentAddr, stderr io.Writer) ([]agentEn
 			}
 			managed := o["managed"] == nil || cell(o["managed"]) == "true"
 			pid, _ := strconv.Atoi(cell(o["pid"]))
-			facts = append(facts, agentEngineFact{
+			f := agentEngineFact{
 				Model: cell(o["model"]), State: cell(o["state"]), UnitState: cell(o["unit_state"]),
 				Port: port, PID: pid, Managed: managed, Via: "/eggs",
-			})
+				Argv: agentParseArgv(o["argv"]),
+			}
+			// 引擎实时态（GAP-20260925-45）：`inflight` 与 `watchdog` 子对象逐字留下。
+			// 缺 `inflight`（`/status` 兜底路径）⇒ Inflight 保持 nil（缺席，不编 0）；缺 `watchdog` ⇒ nil。
+			if v, ok := o["inflight"]; ok && v != nil {
+				if n, perr := strconv.Atoi(cell(v)); perr == nil {
+					f.Inflight = &n
+				}
+			}
+			if w := asObj(o["watchdog"]); w != nil {
+				f.Watchdog = &agentEngineWatchdog{
+					LastOutputAgoS: cell(w["last_output_ago_s"]),
+					Verdict:        cell(w["verdict"]),
+				}
+			}
+			facts = append(facts, f)
 		}
 	}
 	if len(facts) > 0 {
@@ -411,6 +500,43 @@ func agentEngineFacts(inv *invocation, a agentAddr, stderr io.Writer) ([]agentEn
 		}}, exitOK
 	}
 	return facts, exitOK // 两处一致：没有在跑的引擎
+}
+
+// agentArgvAbsent 渲染层对「子端回据里没有 argv 这一格」的**点名**（GAP-20260926-01 负控：
+// 取不到 ⇒ 不给结论、✗ 不静默当空）。人面与机器面用同一句，免得两处口径分家。
+const agentArgvAbsent = "<子端未提供 argv>"
+
+// agentParseArgv 从 /eggs 条目里解析 argv（JSON 字符串数组）。非数组 / 有非字符串元素 / 空数组
+// ⇒ 一律当**缺席**返回 nil：「形状认不出」与「没有这一格」同呈现（空数组 ≠ 有、是空的）。
+func agentParseArgv(v any) []string {
+	items, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(items))
+	for _, it := range items {
+		s, ok := it.(string)
+		if !ok {
+			return nil
+		}
+		out = append(out, s)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// agentRenderArgv 把 argv 渲染成机读串（JSON 数组、逐字保序）；缺席 ⇒ **点名**占位（不静默当空）。
+func agentRenderArgv(argv []string) string {
+	if len(argv) == 0 {
+		return agentArgvAbsent
+	}
+	b, err := json.Marshal(argv)
+	if err != nil {
+		return agentArgvAbsent
+	}
+	return string(b)
 }
 
 // ---- ⑦ `zerg agent slots <机>`（缺口 `GAP-20260927-202` ② · F 族 · 只读）----

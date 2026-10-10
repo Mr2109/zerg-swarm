@@ -18,8 +18,11 @@
 //	              （路径越出 `scripts/` 前缀 / 判据名 ≠ 去扩展名 / 表内路径与盘上不符 /
 //	              sha256 缓存键过期）＋ **第三方向 甲⇄乙**（人签半 `scripts/gates/judge-adoption.json` ·
 //	              schema `judge-adoption/1`：三类决定 `adopt`/`exempt`/`declare` · `declare` 四字段闭集 ·
-//	              `enforce` 迁移期与 `enforce_sig` 上牙机检 · 未决定脚注）⇒ 空 = 绿。
-//	`--self-test` —— 成对负控：合成夹具上正控绿 ＋ 拆两半成对负控（格A–格M）＋ 五条甲半负控各自必红。
+//	              `enforce` 迁移期与 `enforce_sig` 上牙机检 · 未决定脚注）＋ **第四腿「判据覆盖面」**
+//	              （人签半 `covered_by` 声明 ⇄ 盘面 / 步骤表面 **双向对拍**：`file:` 盘上件 / `step:` 步名
+//	              逐项正向解析 ＋ 反查同一对象不得被多判据同时认领）⇒ 空 = 绿。
+//	`--self-test` —— 成对负控：合成夹具上正控绿 ＋ 拆两半成对负控（格A–格M）＋ 覆盖面成对负控（格N/格N2）
+//	              ＋ 六条甲半负控各自必红。
 //
 // 遍历序（★ 本件逐处现读的结论）：py 用 `os.walk` 且**显式** `dns[:]=sorted(...)` / `sorted(fns)`
 // ⇒ 遍历本身已排序；且 `scan_roster` 的产物**全部**再走 `sorted()`（`build_registry` 按 name 排序、
@@ -103,6 +106,7 @@ var jrInterp = map[string]string{".py": "python3", ".sh": "bash"}
 //	jrDeclareBoolFields = DECLARE_BOOL_FIELDS（布尔两值的那两个）
 //	jrHazardValues      = HAZARD_VALUES（借 v1.2 P9 危险档闭集）
 //	jrDryRunValues      = DRY_RUN_VALUES
+//	jrCoverFaces        = COVER_FACES（「判据覆盖面」`covered_by` 覆盖对象引用**形态闭集**）
 var (
 	jrDecisionValues    = []string{"adopt", "exempt", "declare"}
 	jrAdoptionValues    = []string{"adopt", "exempt"}
@@ -110,6 +114,9 @@ var (
 	jrDeclareBoolFields = []string{"needs_env", "serial"}
 	jrHazardValues      = []string{"none", "swap", "replace", "publish", "kill"}
 	jrDryRunValues      = []string{"none", "argv", "noop"}
+	// jrCoverFaces —— `covered_by` 覆盖对象引用的「面」闭集：`file:<仓内相对路径>` ⇒ 盘上普通件；
+	// `step:<步名>` ⇒ 门禁脚本自己的 `add_step` 步骤表里的步名。
+	jrCoverFaces = []string{"file", "step"}
 )
 
 var jrBashVerCache *string
@@ -395,6 +402,30 @@ func jrInList(s string, xs []string) bool {
 		}
 	}
 	return false
+}
+
+// jrSplitCoverRef 切覆盖对象引用 `"<面>:<对象>"`（首个 `:` 为界；无 `:` ⇒ 面 = 整串、对象 = ""）。
+// 供闭集机检（面 ∉ 闭集 或 对象为空 ⇒ 调用方报红）。
+func jrSplitCoverRef(s string) (string, string) {
+	if i := strings.Index(s, ":"); i >= 0 {
+		return s[:i], s[i+1:]
+	}
+	return s, ""
+}
+
+// jrStepNames 现读步骤表（真源 = 门禁脚本自己的 `add_step` 声明 · 与 `gate` 族同一处解析
+// `parseAddStepsStrict`）⇒ 步名集合；表读不到 ⇒ 空集（调用方据「是否声明了 `step:` 引用」决定要不要报错）。
+func jrStepNames(root string) map[string]bool {
+	out := map[string]bool{}
+	b, err := os.ReadFile(pyJoin(root, gateScriptRel))
+	if err != nil {
+		return out
+	}
+	decls, _ := parseAddStepsStrict(string(b))
+	for _, d := range decls {
+		out[d.Name] = true
+	}
+	return out
 }
 
 // ── 现读读数 ──
@@ -934,6 +965,79 @@ func jrProblemList(root string, reg *jv, decisions *jv) ([]string, bool) {
 				}
 			}
 		}
+
+		// ── 第四腿：「判据覆盖面」`covered_by` 双向对拍（人签半声明 ⇄ 盘面 / 步骤表面）──────────────
+		// 正向（声明 ⇒ 面）：每个覆盖对象须在指名那一面解析得到 —— `file:<仓内相对路径>` ⇒ 盘上普通件；
+		//   `step:<步名>` ⇒ 步骤表（门禁脚本自己的 `add_step`）里的步名。解析不到 ⇒ 红（该面点名）。
+		// 反向（面 ⇒ 声明 · 反查）：同一解析目标不得被两个判据同时认领（对象 ⇒ 认领判据 反查索引去重）。
+		// ★ `covered_by` 属**人签半**声明：✗ 不进派生半（`--emit` 产物与人签半字段逐字分离 · 见格A）。
+		var coverSteps map[string]bool // 步名集合（懒读一次 · 局部量 ⇒ 无跨调用残留）
+		coverIndex := map[string][]string{}
+		for _, d := range jrDecisionsArr(decisions) {
+			if d == nil || d.kind != 'o' || !jpresent(d, "id") {
+				continue // 缺 `id` 已在上文报过
+			}
+			cv := jget(d, "covered_by")
+			if cv == nil {
+				continue // 未声明覆盖面 —— 合法（迁移期无声明）
+			}
+			did := jrPyStr(jget(d, "id"))
+			if cv.kind != 'a' {
+				problems = append(problems, fmt.Sprintf("人签半 `covered_by` 非数组（须覆盖对象引用表 · 现读 %s）：%s", jrPyRepr(cv), did))
+				continue
+			}
+			for _, ref := range cv.arr {
+				if ref == nil || ref.kind != 's' {
+					problems = append(problems, fmt.Sprintf("覆盖对象引用非字符串（现读 %s）：%s", jrPyRepr(ref), did))
+					continue
+				}
+				face, tail := jrSplitCoverRef(ref.s)
+				if !jrInList(face, jrCoverFaces) || tail == "" {
+					problems = append(problems, fmt.Sprintf("覆盖对象引用形态越出闭集 %s（须 `<面>:<对象>`）：%s（现读 %s）", jrPyList(jrCoverFaces), did, jrPyRepr(ref)))
+					continue
+				}
+				resolved := false
+				switch face {
+				case "file":
+					if st, err := os.Stat(pyJoin(root, tail)); err == nil && st.Mode().IsRegular() {
+						resolved = true
+					} else {
+						problems = append(problems, fmt.Sprintf("覆盖对象（`file:%s`）在盘上解析不到（须仓内普通件）：%s", tail, did))
+					}
+				case "step":
+					if coverSteps == nil {
+						coverSteps = jrStepNames(root)
+					}
+					if coverSteps[tail] {
+						resolved = true
+					} else {
+						problems = append(problems, fmt.Sprintf("覆盖对象（`step:%s`）在步骤表里解析不到（须 `%s` 里 `add_step` 的步名）：%s", tail, gateScriptRel, did))
+					}
+				}
+				if resolved {
+					coverIndex[ref.s] = append(coverIndex[ref.s], did)
+				}
+			}
+		}
+		coverKeys := make([]string, 0, len(coverIndex))
+		for k := range coverIndex {
+			coverKeys = append(coverKeys, k)
+		}
+		sort.Strings(coverKeys)
+		for _, k := range coverKeys {
+			uniq := map[string]bool{}
+			for _, id := range coverIndex[k] {
+				uniq[id] = true
+			}
+			if len(uniq) > 1 {
+				ids := make([]string, 0, len(uniq))
+				for id := range uniq {
+					ids = append(ids, id)
+				}
+				sort.Strings(ids)
+				problems = append(problems, fmt.Sprintf("覆盖对象**反查冲突**（同一对象被多判据同时认领）：%s（%s）", k, strings.Join(ids, " · ")))
+			}
+		}
 	}
 	return problems, true
 }
@@ -1078,6 +1182,7 @@ func jrCmdSelfTest(stdout io.Writer) int {
 	_ = jrWriteFile(root, "scripts/b.sh", "#!/usr/bin/env bash\necho b\n")
 	_ = jrWriteFile(root, "scripts/sub/c.py", "#!/usr/bin/env python3\nprint('c')\n")
 	_ = jrWriteFile(root, "scripts/gates/__pycache__/ignored.py", "# 缓存件，不进名录\n")
+	_ = jrWriteFile(root, "scripts/gates/precommit-gates.sh", "#!/usr/bin/env bash\nadd_step gates \"门X 覆盖测试步\" tri \".\" \"zerg gate check check-judge-registry --check\"\n")
 
 	reg := jrBuildRegistry(root)
 	regJV := jrJVOf(reg)
@@ -1098,7 +1203,7 @@ func jrCmdSelfTest(stdout io.Writer) int {
 	emitText := jrMarshalRegistry(reg)
 	badEmit := []string{}
 	for _, k := range []string{"\"decision\"", "\"adopt\"", "\"exempt\"", "\"declare\"", "\"sig\"",
-		"\"adopted\"", "\"needs_env\"", "\"serial\"", "\"hazard\"", "\"dry_run\""} {
+		"\"adopted\"", "\"needs_env\"", "\"serial\"", "\"hazard\"", "\"dry_run\"", "\"covered_by\""} {
 		if strings.Contains(emitText, k) {
 			badEmit = append(badEmit, k)
 		}
@@ -1340,6 +1445,34 @@ func jrCmdSelfTest(stdout io.Writer) int {
 	} else {
 		fmt.Fprintln(stdout, "✓ 格M（enforce 非布尔）：现红（并落回迁移期读）")
 	}
+	// ── 判据覆盖面 `covered_by`（人签半声明 ⇄ 盘面 / 步骤表面 双向对拍 · 成对）──────────────────
+	// 格N：合法覆盖声明（`file:` 盘上件 ＋ `step:` 步骤表步名）⇒ 不判红 · 声明可机读
+	dCov := jrClone(dec)
+	jrForEachDecision(dCov, func(d *jv) {
+		if jrPyStr(jget(d, "id")) == "a" {
+			jrSet(d, "covered_by", jrNewArr(jrNewStr("file:scripts/a.py"), jrNewStr("step:门X 覆盖测试步")))
+		}
+	})
+	if p, _ := jrProblemList(root, regJV, dCov); len(p) > 0 {
+		fmt.Fprintf(stdout, "✗ 格N（覆盖声明合法）：该绿没绿 ⇒ %s\n", jrPyList(p))
+		ok = false
+	} else {
+		fmt.Fprintln(stdout, "✓ 格N（覆盖声明合法 · file:＋step:）：判绿（声明可机读）")
+	}
+
+	// 格N2：反查 —— 同一覆盖对象被两判据同时认领 ⇒ 红
+	dCov2 := jrClone(dec)
+	jrForEachDecision(dCov2, func(d *jv) {
+		if id := jrPyStr(jget(d, "id")); id == "a" || id == "b" {
+			jrSet(d, "covered_by", jrNewArr(jrNewStr("file:scripts/a.py")))
+		}
+	})
+	if p, _ := jrProblemList(root, regJV, dCov2); !jrAnyContains(p, "反查冲突") {
+		fmt.Fprintf(stdout, "✗ 格N2（反查冲突）：该红没红 ⇒ %s\n", jrPyList(p))
+		ok = false
+	} else {
+		fmt.Fprintln(stdout, "✓ 格N2（反查冲突）：现红（同一对象被多判据认领）")
+	}
 
 	// ── 甲半负控（承前 · 顺序不变）────────────────────────────────────────────────
 	// 负控①：盘上新增件、表里没有 ⇒ 红
@@ -1402,6 +1535,20 @@ func jrCmdSelfTest(stdout io.Writer) int {
 		ok = false
 	} else {
 		fmt.Fprintln(stdout, "✓ 负控⑤（越出前缀）：现红")
+	}
+
+	// 负控⑥：覆盖对象（`covered_by`）声明一个盘上不存在的件 ⇒ 红（覆盖面双向对拍的第一腿）
+	covGhost := jrClone(dec)
+	jrForEachDecision(covGhost, func(d *jv) {
+		if jrPyStr(jget(d, "id")) == "a" {
+			jrSet(d, "covered_by", jrNewArr(jrNewStr("file:scripts/ghost-covered.py")))
+		}
+	})
+	if p, _ := jrProblemList(root, regJV, covGhost); !jrAnyContains(p, "覆盖对象") {
+		fmt.Fprintf(stdout, "✗ 负控⑥（覆盖对象不存在）：该红没红 ⇒ %s\n", jrPyList(p))
+		ok = false
+	} else {
+		fmt.Fprintln(stdout, "✓ 负控⑥（覆盖对象不存在）：现红")
 	}
 
 	if ok {

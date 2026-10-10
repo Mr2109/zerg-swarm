@@ -266,12 +266,12 @@ func TestImpactContract_CompatLevelReportOnlyPaired(t *testing.T) {
 	}
 	会红 := ""
 	for _, ln := range strings.Split(out.String(), "\n") {
-		if strings.HasPrefix(ln, "会红：") {
+		if strings.HasPrefix(ln, "预测会红：") {
 			会红 = ln
 		}
 	}
 	if 会红 == "" {
-		t.Fatalf("人面没有「会红：」那一行：\n%s", out.String())
+		t.Fatalf("人面没有「预测会红：」那一行：\n%s", out.String())
 	}
 	if strings.Contains(会红, "兼容级别") {
 		t.Errorf("判据②（**不许据此红绿**）：兼容级别**不许**出现在「会红」那一行里：%s", 会红)

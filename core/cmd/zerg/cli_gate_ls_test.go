@@ -118,3 +118,65 @@ func TestGateLsJSON_BareIsFullFace(t *testing.T) {
 		t.Errorf("裸面 total=%d steps=%d（要 2/2）· %q", doc.Total, len(doc.Steps), bare)
 	}
 }
+
+// ④ 正控（缺口 `GAP-20260927-226` want①）：`name` 走**可选字段层**（`optFields`）⇒ `--json name` 收下、逐行出步名的第二个键 `name`，值与既有冻结键 `--json step` **同值**（同一步名两种拼法）。
+func TestGateLsJSON_NameOptionalFieldProjects(t *testing.T) {
+	root := lsRepo(t)
+	rc, out, errb := runZergRepo(t, root, "gate", "ls", "--json", "name")
+	if rc != 0 {
+		t.Fatalf("`gate ls --json name` ⇒ 退 0（可选字段层收下），得到 %d · stderr=%s", rc, errb)
+	}
+	var doc struct {
+		Steps []map[string]string `json:"steps"`
+	}
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("解不动：%v · %q", err, out)
+	}
+	if len(doc.Steps) != 2 {
+		t.Fatalf("steps 行数 = %d（要 2）· %q", len(doc.Steps), out)
+	}
+	want := []string{"gofmt -l core", "合成步"}
+	for i, r := range doc.Steps {
+		if len(r) != 1 {
+			t.Errorf("第 %d 行 = %+v（只许 name 一键）", i, r)
+		}
+		if r["name"] != want[i] {
+			t.Errorf("第 %d 行 name = %q（要 %q）", i, r["name"], want[i])
+		}
+	}
+}
+
+// ⑤ 负控甲：`name` 只是**可选层**，不进冻结字段表 —— 闭集外字段的报话仍是既有的 `合法字段: total,scope,mode,step`，且那行里**不出现** `name`（与 `code find` 的 `count` 同规）。
+func TestGateLsJSON_NameNotInFrozenFieldList(t *testing.T) {
+	root := lsRepo(t)
+	rc, _, errb := runZergRepo(t, root, "gate", "ls", "--json", "totally-bogus")
+	if rc != 2 {
+		t.Fatalf("`--json <闭集外>` ⇒ 退 2，得到 %d · stderr=%s", rc, errb)
+	}
+	if !strings.Contains(errb, "合法字段: total,scope,mode,step") {
+		t.Errorf("冻结字段表须逐字不变：%q", errb)
+	}
+	if strings.Contains(errb, "name") {
+		t.Errorf("`合法字段:` 那行不许出现 name（可选层不进冻结表）：%q", errb)
+	}
+}
+
+// ⑥ 负控乙：裸 `--json`（不给字段）＝冻结全量 `{steps,total}` —— 逐行**不许**长出 `name` 键（默认面一字不改；want 形状的 `name` 只在显式点名时落）。
+func TestGateLsJSON_BareHasNoNameKey(t *testing.T) {
+	root := lsRepo(t)
+	rc, bare, errb := runZergRepo(t, root, "gate", "ls", "--json")
+	if rc != 0 {
+		t.Fatalf("裸 `--json` ⇒ 退 0，得到 %d · stderr=%s", rc, errb)
+	}
+	var doc struct {
+		Steps []map[string]interface{} `json:"steps"`
+	}
+	if err := json.Unmarshal([]byte(bare), &doc); err != nil {
+		t.Fatalf("解不动：%v · %q", err, bare)
+	}
+	for i, r := range doc.Steps {
+		if _, ok := r["name"]; ok {
+			t.Errorf("第 %d 行不该有 name 键（裸面＝冻结全量）：%+v", i, r)
+		}
+	}
+}

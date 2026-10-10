@@ -399,12 +399,17 @@ func removeMaterialized(dir string) {
 //	门82 hooksPath）就取到**非暂存面**（更糟：那段临时索引还会被本趟 `go test` 的夹具改写）⇒ 假红。
 //	⇒ 闸子进程一律**剥掉** `GIT_INDEX_FILE` / `GIT_DIR` / `GIT_WORK_TREE`（只留本仓默认索引面）。
 //	★ 与 `.githooks/pre-commit` 的同一处剥离**同规同批**（两条出口同规）。
+//
+// ★ 2026-10-10（缺口 `GAP-20260927-70`）：再**钉**门的状态目录（见 `pinGateStateDir`）—— 外部继承的
+//
+//	`ZERG_STATE_DIR` 不再被采信（指沙箱 ⇒ 状态目录门 rc=2 假红）。与 `scripts/gates/precommit-gates.sh`
+//	的封口（`gate_seal_env`）**同规同批**。
 func gateEnv(matRoot string) []string {
 	env := os.Environ()
 	if matRoot != "" {
 		env = append(env, "ZERG_GATE_REPO_ROOT="+matRoot)
 	}
-	return stripGitIndexFace(env)
+	return pinGateStateDir(stripGitIndexFace(env))
 }
 
 // stripGitIndexFace —— 从环境里逐条剔掉泄漏的 git 索引面三键（`GIT_INDEX_FILE` / `GIT_DIR` /
@@ -421,6 +426,39 @@ func stripGitIndexFace(env []string) []string {
 			continue
 		}
 		out = append(out, kv)
+	}
+	return out
+}
+
+// ── 门的状态目录口径（缺口 `GAP-20260927-70` · 2026-10-10）────────────────────────────────────
+//
+// 病灶：门**盲信外部继承的** `ZERG_STATE_DIR` —— 指沙箱/不存在目录时，读它的子门把「取不到数」记成
+// rc=2 假红（头号假红源）。修法：门内一律以门专用旋钮 `ZERG_GATE_STATE_DIR`（缺省 `~/.zerg/state`）
+// 为准（照同族 `ZERG_GATE_REPO_ROOT` 的「本件专用旋钮」体例）—— 外部继承值一律不再采信。
+const gateStateDirKnob = "ZERG_GATE_STATE_DIR"
+
+// gateStateDirKnobValue —— 门专用旋钮的现读值（**空串 = 没给**，与「给了空串」同档）。
+func gateStateDirKnobValue() string { return strings.TrimSpace(os.Getenv(gateStateDirKnob)) }
+
+// pinGateStateDir —— 把 env 里的 `ZERG_STATE_DIR` 按门内口径**重定**（缺口 `GAP-20260927-70`）：
+//
+//	· 显式给了门旋钮 `ZERG_GATE_STATE_DIR` ⇒ 把 `ZERG_STATE_DIR` **钉**成它（合法隔离跑法）；
+//	· 没给 ⇒ 逐条**剔掉**继承来的 `ZERG_STATE_DIR`（✗ 不再采信外部继承值 —— 子门落自己的缺省
+//	  `~/.zerg/state`）。
+//
+// 照 `stripGitIndexFace` 同规：名字一律**全等**匹配（✗ 不做前缀/模糊），只动这一枚、其余一字不改。
+// 「没给就剔」而不是「没给就钉成缺省值」：后者会让子门恒看到该变量非空 ⇒ 门⑰/门㉜/门⑱ 的「沙箱
+// 读数」警告在正常跑里误报（而值恰恰就是真缺省）⇒ 取「剔」这一档，正常跑与改前逐字同。
+func pinGateStateDir(env []string) []string {
+	out := make([]string, 0, len(env)+1)
+	for _, kv := range env {
+		if kv == "ZERG_STATE_DIR" || strings.HasPrefix(kv, "ZERG_STATE_DIR=") {
+			continue
+		}
+		out = append(out, kv)
+	}
+	if knob := gateStateDirKnobValue(); knob != "" {
+		out = append(out, "ZERG_STATE_DIR="+knob)
 	}
 	return out
 }

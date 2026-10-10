@@ -82,7 +82,7 @@ type errStr string
 
 func (e errStr) Error() string { return string(e) }
 
-// judgeImpactHuman —— 判据③的判定口：人面**恒三行**、字头与顺序固定（`会牵动：` / `会红：` / `建议：`）。
+// judgeImpactHuman —— 判据③的判定口：人面**恒三行**、字头与顺序固定（`会牵动：` / `预测会红：` / `建议：`）。
 func judgeImpactHuman(stdout string, heads [3]string) error {
 	lines := []string{}
 	for _, ln := range strings.Split(strings.TrimRight(stdout, "\n"), "\n") {
@@ -102,7 +102,7 @@ func judgeImpactHuman(stdout string, heads [3]string) error {
 }
 
 // impactHeads —— 判据③ 的字头（与实现同一份取值；测试**不另造**第二套字头）。
-var impactHeads = [3]string{"会牵动：", "会红：", "建议："}
+var impactHeads = [3]string{"会牵动：", "预测会红：", "建议："}
 
 // TestImpact_MachineFaceSixKeysAndEmptyItems —— 判据① + 判据②（正控）：
 // `A2` 取数接上之后，**零命中**要挑一件三层都空的件（① 反向包 0 · ③ 契约 0 · ④ 词法/形近 0）——

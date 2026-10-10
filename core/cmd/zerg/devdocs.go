@@ -27,6 +27,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Mr2109/zerg-swarm/core/internal/chat"
 	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 	"github.com/Mr2109/zerg-swarm/core/internal/version"
 )
@@ -68,4 +69,42 @@ func devDocsCurrentVersionDir(pinVersion string) (dir, why string) {
 		return "", fmt.Sprintf("版本目录不在盘上（版本真源 v%s）：%s", pinned, p)
 	}
 	return p, ""
+}
+
+// devDocsHasReleaseArtifact —— 钉版目录里有没有「发布件」（使用指南）？
+// 判据 glob 复用 chat 的**唯一真源**常量 `chat.ReleaseArtifactGlob`（✗ 不在本包另写字面量；与
+// `zerg_overview` / `doc_search` / 判据 `check-doc-consumers` 同一口径）。
+func devDocsHasReleaseArtifact(dir string) bool {
+	if dir == "" {
+		return false
+	}
+	m, _ := filepath.Glob(filepath.Join(dir, chat.ReleaseArtifactGlob))
+	return len(m) > 0
+}
+
+// devDocsConsumable —— 消费者「可消费」判定（缺口 `GAP-20260927-121`）：钉版目录 **在盘 ∧ 含发布件** 才给结论。
+//
+//	existWhy != ""    ⇒ 目录本身判不了（不在盘等）⇒ **原样透传**那条原因（不覆盖既有档位理由）；
+//	目录在盘但无发布件 ⇒ **不给结论** + 逐字明报「当前版目录 <d> 无发布件，故本消费者取不到」。
+//
+// 档位由**调用方按自己同族既有档位**给（本函数只决定「给不给结论 + 文案」，✗ 不新造档位）。
+//
+// ★ 为什么不并进 devDocsCurrentVersionDir：那条函数的契约被**已签判据** `devdocs_test.go` 逐字钉住
+//
+//	（合成夹具的当前版目录只有 2 篇 md、**无发布件**，仍须返回 `(dir, "")`）—— 故在此另立一格，不动那条。
+func devDocsConsumable(dir, existWhy string) (string, string) {
+	if existWhy != "" {
+		return "", existWhy
+	}
+	if !devDocsHasReleaseArtifact(dir) {
+		return "", fmt.Sprintf("当前版目录 %s 无发布件，故本消费者取不到（缺发布件 %s）", dir, chat.ReleaseArtifactGlob)
+	}
+	return dir, ""
+}
+
+// devDocsConsumablePinnedDir —— `devDocsCurrentVersionDir` 的**消费者版**：钉版后再过一遍可消费判定。
+// `help export` 与 `doc meta fill` 两处取源都改调本函数（钉版语义一字不改，只多「无发布件 ⇒ 不给结论」这一格）。
+func devDocsConsumablePinnedDir(pinVersion string) (dir, why string) {
+	d, w := devDocsCurrentVersionDir(pinVersion)
+	return devDocsConsumable(d, w)
 }

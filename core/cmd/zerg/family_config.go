@@ -102,6 +102,8 @@ type modelAddSpec struct {
 	SizeBytes                                      int64
 	HasCtx, HasMem, HasVerified, HasSize           bool
 	Verified                                       bool
+	Cmd                                            []string
+	HasCmd                                         bool
 }
 
 // modelAddLine 出一行 flow-style 名册条（与现册同形：`    - { host: …, backend: …, file: … }`）。
@@ -132,6 +134,13 @@ func modelAddLine(indent int, s modelAddSpec) string {
 	}
 	if s.Desc != "" {
 		parts = append(parts, "description: "+yamlStr(s.Desc))
+	}
+	if s.HasCmd {
+		elems := make([]string, 0, len(s.Cmd))
+		for _, e := range s.Cmd {
+			elems = append(elems, yamlStr(e))
+		}
+		parts = append(parts, "cmd: ["+strings.Join(elems, ", ")+"]")
 	}
 	return strings.Repeat(" ", indent) + "- { " + strings.Join(parts, ", ") + " }"
 }
@@ -329,7 +338,7 @@ func cmdModelAdd(inv *invocation, stdout, stderr io.Writer) int {
 	bad := func(detail, msg string) int {
 		inv.setErr("usage", detail, msg)
 		fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
-		fmt.Fprintf(stderr, "  用法：zerg model add --model <模型名> --host <主机> --file <GGUF 路径> --confirm <模型名> [--backend …] [--mem-gb …] [--size-bytes …] [--ctx …] [--arch …] [--desc …] [--mmproj …] [--added 日期] [--verified] [--dry-run | --yes]\n")
+		fmt.Fprintf(stderr, "  用法：zerg model add --model <模型名> --host <主机> --file <GGUF 路径> --confirm <模型名> [--backend …] [--mem-gb …] [--size-bytes …] [--ctx …] [--arch …] [--desc …] [--mmproj …] [--added 日期] [--verified] [--cmd <JSON 数组>] [--dry-run | --yes]\n")
 		fmt.Fprintf(stderr, "        （`--model` = `models:` 段的**键/块名** ⇒ 按它定位或新建那一块；`--host` = 该条 `host:` 的**字段值**＝这台模型跑在哪台机器）\n")
 		return exitUsage
 	}
@@ -372,6 +381,25 @@ func cmdModelAdd(inv *invocation, stdout, stderr io.Writer) int {
 			return bad("bad_value", fmt.Sprintf("`--size-bytes` 要正整数（给的是 %q）", sb))
 		}
 		s.SizeBytes, s.HasSize = n, true
+	}
+	// `--cmd <JSON 数组>`（缺口 GAP-20260925-26）：子端自定义启动命令（专用 fork 二进制 + 包装脚本）。
+	// 值是**一个 JSON 字符串数组**（如 `["/path/run.sh","-m","{file}"]`）—— 非数组 / 元素非串 / 空数组 ⇒ 退 2 点名。
+	if cmdRaw := strings.TrimSpace(inv.flagVal("--cmd")); cmdRaw != "" {
+		var arr []string
+		if jerr := json.Unmarshal([]byte(cmdRaw), &arr); jerr != nil {
+			return bad("bad_value", fmt.Sprintf("`--cmd` 要一个 JSON 字符串数组（如 `[\"/path/run.sh\",\"-m\",\"{file}\"]`）—— 解析不过：%v", jerr))
+		}
+		if len(arr) == 0 {
+			return bad("bad_value", "`--cmd` 给的是空数组 —— 要么给一条真命令、要么整枚别给（✗ 不许静默当空）")
+		}
+		s.Cmd, s.HasCmd = arr, true
+	}
+	// ── V016 前置（缺口 GAP-20260925-26）：需要非主线引擎实现的卵**缺 cmd:** ⇒ 写入前就拒 ──
+	// 口径同 config/validator.go 的 V016（`NeedsEngineImpl` ⇒ `len(Cmd)==0` 即 Fatal 拒孵）——
+	// 把它从「孵卵时」前移到「写名册前」，免得写进一条 V016 必拒的条（会静默退回主线 llama-server）。
+	if config.NeedsEngineImpl(config.ModelCandidate{Backend: s.Backend, Architecture: s.Arch}) && !s.HasCmd {
+		return bad("engine_impl_required_missing_cmd",
+			fmt.Sprintf("`--arch %s` 主线引擎不支持 ⇒ 必须同时给 `--cmd '<JSON 数组>'`（专用 fork 二进制 + 包装脚本）—— ✗ 不许静默退回主线 llama-server（V016）", s.Arch))
 	}
 	// `name`（`--model`）从本笔起是**块名**：`models:` 段的键就是要写/新建的那一块（见 `modelAddLocate`）。
 	// 它照旧不进条目的字段面（无 `name:` 键 —— 现册条靠 `host` + `file` 认），但**决定块定位与新增**。

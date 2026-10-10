@@ -343,3 +343,79 @@ func TestGapStateConcurrentWritesNoLostUpdate(t *testing.T) {
 		t.Errorf("N 路**不同 id** 应全落（修后口径）：rc=0 只 %d / %d（rc 表=%v）", rc0, n, rcs)
 	}
 }
+
+// TestGapSolvedKindPartialRemainder —— 缺口 `GAP-20260927-244`（方案乙：「有残面的已解条」留位）的成对机检。
+//
+// 钉住的格（逐格缺一即失败）：
+//
+//	① 正控：`--state 已解 --solved-kind 部分 --remainder <残面>` ⇒ rc=0 且账行 `solved_kind=部分` +
+//	   `remainder` 落位，而 `state` **仍是** `已解`（部分档不动 state 那一维）
+//	② 筛出口：`gap ls --state 已解 --solved-kind 部分` 列出该条 · `--json id,remainder` 取到残面文字
+//	③ 计数件随动：`gap ls --state 已解` 人面的「已解分栏」含「部分 1」
+//	④ 负控甲：闭集外 kind（`--solved-kind 乱`）⇒ 2（新档**不放宽**闭集）
+//	⑤ 负控乙：`--remainder` 只对 `已解`（`--state 仍缺 --remainder` ⇒ 2）
+//	⑥ 负控丙（★ 残面条**不**被算进「未闭」）：未闭四态筛零命中（rc=1）—— 部分档只进「已解」面
+func TestGapSolvedKindPartialRemainder(t *testing.T) {
+	_, ledger, _ := gapEnv(t)
+	rc, out, errb := gapRun(t, append(gapAddArgv("手搓：部分完成的条没有落脚处", "残面另记靶子"), "--yes")...)
+	if rc != 0 {
+		t.Fatalf("造靶子失败：rc=%d stderr=%q", rc, errb)
+	}
+	id := gapIDOf(t, out)
+
+	brA := "cmd=zerg gap ls --state 仍缺 · rc=1 · reading=改前列于仍缺"
+	brB := "cmd=zerg gap ls --state 已解 · rc=0 · reading=改后列于已解"
+
+	// ④ 负控甲：闭集外 kind ⇒ 2（新档不放宽闭集）
+	if rc, _, e := gapRun(t, "gap", "set-state", id, "--state", "已解", "--evidence", "e",
+		"--solved-kind", "乱", "--before-read", brA, "--after-read", brB, "--yes"); rc != 2 {
+		t.Errorf("④ `--solved-kind 乱` 要 2，得到 %d · %s", rc, e)
+	}
+	// ⑤ 负控乙：`--remainder` 只对 `已解` ⇒ 2
+	if rc, _, _ := gapRun(t, "gap", "set-state", id, "--state", "仍缺", "--evidence", "e",
+		"--remainder", "残面", "--yes"); rc != 2 {
+		t.Errorf("⑤ `--state 仍缺 --remainder` 要 2，得到 %d", rc)
+	}
+
+	// ① 正控：部分 + 残面（新账销案 ⇒ 必须带两态对拍，与既有闸一致）
+	if rc, _, e := gapRun(t, "gap", "set-state", id, "--state", "已解", "--evidence", "已治面已销",
+		"--solved-kind", "部分", "--remainder", "残面：want#2 未做",
+		"--before-read", brA, "--after-read", brB, "--yes"); rc != 0 {
+		t.Fatalf("① 部分真跑要 0，得到 %d · %s", rc, e)
+	}
+	r := gapRecOf(t, ledger, id)
+	if r["solved_kind"] != "部分" {
+		t.Errorf("① solved_kind 要 部分，得到 %v", r["solved_kind"])
+	}
+	if r["remainder"] != "残面：want#2 未做" {
+		t.Errorf("① remainder 未落位，得到 %v", r["remainder"])
+	}
+	if r["state"] != "已解" {
+		t.Errorf("① 部分档不许动 state（要仍是 已解），得到 %v", r["state"])
+	}
+
+	// ② 筛出口（人面 + 机器面）
+	rc, out, errb = gapRun(t, "gap", "ls", "--state", "已解", "--solved-kind", "部分")
+	if rc != 0 || !strings.Contains(out, id) {
+		t.Errorf("② 筛出口没列出该条：rc=%d out=%q err=%q", rc, out, errb)
+	}
+	rc, out, _ = gapRun(t, "gap", "ls", "--state", "已解", "--solved-kind", "部分", "--json", "id,remainder")
+	if rc != 0 || !strings.Contains(out, id) || !strings.Contains(out, "残面：want#2 未做") {
+		t.Errorf("② 筛出口 --json 取不到残面：rc=%d out=%q", rc, out)
+	}
+	// ③ 计数件随动：已解分栏含「部分 1」
+	rc, out, _ = gapRun(t, "gap", "ls", "--state", "已解")
+	if rc != 0 || !strings.Contains(out, "部分 1") {
+		t.Errorf("③ 已解分栏没含「部分 1」：rc=%d out=%q", rc, out)
+	}
+
+	// ⑥ 负控丙：部分档**不是**未闭 —— 四未闭态筛零命中（rc=1）且不列该条
+	rc, out, errb = gapRun(t, "gap", "ls",
+		"--state", "仍缺", "--state", "已派", "--state", "已立项", "--state", "回归")
+	if rc != 1 {
+		t.Errorf("⑥ 未闭四态筛应零命中 rc=1（残面条不许被算进未闭），得到 %d · out=%q err=%q", rc, out, errb)
+	}
+	if strings.Contains(out, id) {
+		t.Errorf("⑥ 残面条被算进未闭面：out=%q", out)
+	}
+}

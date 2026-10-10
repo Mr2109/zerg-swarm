@@ -225,6 +225,8 @@ func (m *Manager) hatchStartLocked(modelName string, entry *registry.ModelEntry,
 		delete(m.procs, modelName)
 		return errResponse(502, "hatch spec rejected", err.Error()), nil
 	}
+	// GAP-20260926-01：孵化路径的真 argv（空间内引擎可执行 + 参数）也记到卵上，供 /eggs 机读。
+	sp.engineArgv = engineArgvOf(spec.EnginePathInSpace, spec.EngineArgs)
 
 	h := m.hatcherImpl()
 	unit, err := h.Hatch(context.Background(), spec)

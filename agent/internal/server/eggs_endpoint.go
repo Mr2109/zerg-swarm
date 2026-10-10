@@ -68,6 +68,9 @@ type servicesEgg struct {
 	//
 	// nil = 本端从未声称过隔离（裸 exec 路径，孵化开关关）—— 与「声称了但读不到」不是一回事。
 	Enclosure *enclosure.Verdict `json:"enclosure,omitempty"`
+	// Argv 引擎实际命令行（可执行 + 参数 · GAP-20260926-01）：机读真 argv 的真源。
+	// 缺席（omitempty）= 本端从未为此卵记下 argv（如实缺席，不编空数组）。
+	Argv []string `json:"argv,omitempty"`
 }
 
 // externalOccupant external_occupancy[] 条目：非引擎 GPU 使用者（§8.7 收窄口径）。
@@ -103,6 +106,7 @@ func eggEntries(obs []backend.EggObservation, attrib map[int]monitor.ProcAttrib,
 			EnclosureVerified: o.EnclosureVerified,
 			EnclosureNote:     o.EnclosureNote,
 			Enclosure:         o.Enclosure,
+			Argv:              o.Argv,
 		}
 		if a, ok := attrib[o.PID]; ok {
 			e.GttGb = round1f(a.GttGb)

@@ -36,7 +36,7 @@ func cmdHelpExport(inv *invocation, stdout, stderr io.Writer) int {
 	if v, ok := flagValue(inv.orig, "--out"); ok {
 		outDir = v
 	} else {
-		d, why := devDocsCurrentVersionDir(strings.TrimSpace(inv.flagVal("--docs-ver")))
+		d, why := devDocsConsumablePinnedDir(strings.TrimSpace(inv.flagVal("--docs-ver")))
 		if why != "" {
 			fmt.Fprintf(stderr, "%s: 解析不到落点 —— %s\n", progName, why)
 			fmt.Fprintf(stderr, "（给 `--out <目录>` 或 `--docs-ver <X.Y.Z>` 钉一版；两种都不给时按版本真源 `version.Version` 钉到 `v<当前发布版>`）\n")

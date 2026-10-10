@@ -749,6 +749,34 @@ func impactLayerContract(root string, tgt *impactTarget) impactLayer {
 
 // -------- ④ 词法 + 形近层（文件级 + 名字级）-------------------------------------------------
 
+// impactFaceParityReading —— ④a 的「两面」判定口（缺口 `GAP-20260927-55` 的第二半 · 2026-10-10）。
+//
+// 同仓两把「词在哪儿」的正门读的是**两个面**：`zerg impact` 的 ④a 走**索引面**（`git grep` ·
+// `codeFaceIndex` = 只搜 tracked 件的工作树内容），`zerg code find` 走**工作树面**
+// （`codeWorktreeFaceHits` · `codeFaceWorktree` = tracked + 未跟踪）。同一个词，两面可给出不同答案。
+//
+// 契约（fail-loud）：任一面**取不到**（`ok=false`）⇒ 返回 (`不给结论` 串, false) —— 调用方必须写
+// 「读不到」并**不给结论**，✗ 绝不许拿另一面的数当答案（禁静默取其一）。两面都取到 ⇒ 恒返回一段把
+// **两面面名 + 读数**都写出的显式读数串；不一致时**追加** `codeFaceMismatchNote` 的点名（一致 ⇒ 不追加）。
+func impactFaceParityReading(word string, idxHits int, idxOK bool, wtHits int, wtOK bool) (string, bool) {
+	if !idxOK || !wtOK {
+		miss := []string{}
+		if !idxOK {
+			miss = append(miss, "索引面「"+codeFaceIndex+"」")
+		}
+		if !wtOK {
+			miss = append(miss, "工作树面「"+codeFaceWorktree+"」")
+		}
+		return fmt.Sprintf("⚠ 两面读数**不齐**：取不到 %s ⇒ **不给结论**（读数不许静默取其一 · 缺口 GAP-20260927-55）",
+			strings.Join(miss, " 与 ")), false
+	}
+	r := fmt.Sprintf("两面读数：索引面「%s」%d 条 · 工作树面「%s」%d 条", codeFaceIndex, idxHits, codeFaceWorktree, wtHits)
+	if n := codeFaceMismatchNote(word, wtHits, idxHits); n != "" {
+		r += " · " + n
+	}
+	return r, true
+}
+
 func impactLayerLexical(root string, tgt *impactTarget) impactLayer {
 	lay := impactLayer{
 		Seq: "④", Name: "词法 + 形近层", Grane: "文件级 + 名字级",
@@ -786,6 +814,16 @@ func impactLayerLexical(root string, tgt *impactTarget) impactLayer {
 	}
 	hits := add(w1, "词法", "词边界命中（`git grep -w`）", impactRowPage)
 	hitsR := add(w2, "词法", "正则面命中（`git grep -E`）", impactRowPage)
+	// ④a-3 两面显式读数 + 不一致点名（缺口 `GAP-20260927-55` · 2026-10-10）：上面这两跑 `git grep`
+	// 是**索引面**（只搜 tracked）；下面这一枚 `codeWorktreeFaceHits` 是**工作树面**，与 `zerg code find`
+	// 同源、共用同一枚排除表。同一词两面可不同 ⇒ 任一面取不到就**不给结论**（禁静默取其一）。
+	wtHits, wtErr := codeWorktreeFaceHits(root, word)
+	faceReading, faceOK := impactFaceParityReading(word, hits, true, wtHits, wtErr == nil)
+	if !faceOK {
+		lay.Status = "读不到"
+		lay.Detail = faceReading
+		return lay
+	}
 	// ④a 面标记（GAP-20260927-55 · 「面」作显式读数而非散文）：④a 走 `git grep` ⇒ **索引面(tracked 件的工作树内容)**，
 	// 未跟踪件不在面内 ⇒ 与 `zerg code find` 的**工作树面**不同源。零命中 ≠ 「没有」。
 	// ★ 2026-09-29 订正（GAP-20260927-55 落点修正）：这一句是**面读数、不是命中条目** —— 不许进 `lay.Rows`
@@ -855,8 +893,8 @@ func impactLayerLexical(root string, tgt *impactTarget) impactLayer {
 	}
 	lay.Rows = rows
 	lay.Status = "取值"
-	lay.Detail = fmt.Sprintf("④a 词边界 `git grep -w` %d 条 · 正则面 `git grep -E` %d 条（**两个数不同源**，别混用）· %s · 条数上限 %d/档（`truncated` 那一格今天在 `emitEnvelopeWith` 里是死的 ⇒ 上限走这里明说）· 面：%s",
-		hits, hitsR, sgNote, len(rows), faceMark)
+	lay.Detail = fmt.Sprintf("④a 词边界 `git grep -w` %d 条 · 正则面 `git grep -E` %d 条（**两个数不同源**，别混用）· %s · 条数上限 %d/档（`truncated` 那一格今天在 `emitEnvelopeWith` 里是死的 ⇒ 上限走这里明说）· 面：%s · %s",
+		hits, hitsR, sgNote, len(rows), faceMark, faceReading)
 	return lay
 }
 

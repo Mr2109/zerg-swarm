@@ -347,7 +347,7 @@ func TestImpactBudget_DegradeUnderPressedCap(t *testing.T) {
 		return ls
 	}
 	for i, ln := range head(outA) {
-		want := []string{"会牵动：", "会红：", "建议："}[i]
+		want := []string{"会牵动：", "预测会红：", "建议："}[i]
 		if !strings.HasPrefix(ln, want) {
 			t.Errorf("人面第 %d 行不是 %q：%s", i+1, want, ln)
 		}
@@ -746,7 +746,7 @@ func TestImpactBudget_LayerRowsKeepShape(t *testing.T) {
 	if rc != 0 {
 		t.Fatalf("真仓默认档该 rc=0，实得 %d · %s", rc, tail(errOut, 300))
 	}
-	for _, key := range []string{"会牵动：", "会红：", "建议："} {
+	for _, key := range []string{"会牵动：", "预测会红：", "建议："} {
 		if !strings.Contains(out, key) {
 			t.Errorf("人面骨架字头 %q 丢了（降级前后都必须恒三行）", key)
 		}

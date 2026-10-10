@@ -17,7 +17,7 @@
 // 闸的形状（**不按实现现算就不许叫「已开放」**，反过来也不许漏标）：
 //
 //	① 凡 `danger != nil && !opened` 的条目 ⇒ 它挂的 runner **必须在「真跑自拒」闭集里**
-//	   （`refusingRunners`：通用守门 `cmdGuarded` + 三枚族内自带自拒的 runner）。
+//	   （`refusingRunners`：通用守门 `cmdGuarded` + 四枚族内自带自拒的 runner）。
 //	   落到闭集外 ⇒ 表说「本版未开放」，而实现挂着一枚**没登记会拒执**的函数 ⇒ 当场红、点名到条目。
 //	   这就是 `gap export` 修前要红的那一格（它的 runner 是 `cmdGapExport`，不在闭集里）。
 //	② 反向防呆：凡挂 `cmdGuarded` 的**危险档**条目 ⇒ 必须 `!opened`
@@ -50,6 +50,8 @@ import (
 //   - `cmdAgentReap`  —— `agent reap`：默认干跑；真回收本版未开放（入库件永不进候选 = 红线）；
 //   - `cmdDevBuild`   —— `dev build`：候选区构建，**判据先于自动化**（找不到验收证据单 ⇒ 2）；
 //   - `cmdDevTest`    —— `dev test`：同上，真跑本版未开放。
+//   - `cmdAgentBootstrap` —— `agent bootstrap`：真跑分支转 `cmdGuarded`（family_agent_bootstrap.go）；
+//     ★ 与真源 `check_danger_guard_parity.go` 的 `dangerGuardParityGuardedRunners` **同一集合**（GAP-20260925-22 那路只登了真源、漏了本处 ⇒ 两支用例与实现脱钩 · 2026-10-10 收口窗补齐）。
 //
 // ★ 它**只收「确知会自拒」的那几枚**：新写一枚写面实现却忘标 `opened: true`、或反过来把已开放的 runner
 // 登记成未开放 —— 两种都落在闭集外 / 撞 ② ⇒ 本件当场红并点名到条目。这就是「`opened` 不再能静默脱钩」。
@@ -58,6 +60,7 @@ var refusingRunners = []func(*invocation, io.Writer, io.Writer) int{
 	cmdAgentReap,
 	cmdDevBuild,
 	cmdDevTest,
+	cmdAgentBootstrap,
 }
 
 // runnerName —— 函数值 ⇒ 可读名（`main.cmdGuarded`）。判红时**点名到条目**用。

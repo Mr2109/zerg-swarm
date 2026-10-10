@@ -47,7 +47,7 @@
    "command": "version",
    "id": "version#--json 不给字段",
    "want_rc": 2,
-   "want_stdout_bytes": 287,
+   "want_stdout_bytes": 329,
    "why": "给了 `--json` 不给字段 ⇒ **用法错 2**（`Q-146` 归位：退码表 `core/cmd/zerg/exitcodes.go:33` = `usage` 2 · `errors.go` 的 `kind=usage` = 2；改前退 1 与自家退码表不同向）+ **错误面包封走 stdout**（本批起 `inv.err != nil` 也发射 ⇒ **非危险档命令同样有机器面**：`items` 空 + `error.kind=usage`；★ 本 why **不记绝对字节数** —— 逐字形态见 `want_stdout_bytes` 那一格，手写的时点读数会烂）（字段清单走 stderr · §4.1 K2 的提示面不变）"
   },
   {
@@ -93,7 +93,7 @@
    "command": "help",
    "id": "help#说明面不认 --json",
    "want_rc": 2,
-   "want_stdout_bytes": 289,
+   "want_stdout_bytes": 331,
    "why": "**有**字段表的说明面 ⇒ 2（`help` 自 GAP-20260927-290/-403 起有字段表 `family`/`actions` ⇒ `--json name` 是未知字段，经 reportBadField 逐格点名合法字段；stdout = error.kind=usage 包封 289 字节（含末尾换行）· 现跑派生 · ★ 2026-10-04 重冻 0 → 289：原判词「没有字段表」在字段表落地后已成除旧读数）"
   },
   {
@@ -127,7 +127,7 @@
    "command": "doctor",
    "id": "doctor#--json 不给字段",
    "want_rc": 2,
-   "want_stdout_bytes": 291,
+   "want_stdout_bytes": 333,
    "why": "给了 --json 不给字段 ⇒ 2 + **错误面包封走 stdout**（本批起 `inv.err != nil` 也发射 ⇒ **非危险档命令同样有机器面**：`items` 空 + `error.kind=usage`；★ 本 why **不记绝对字节数** —— 逐字形态见 `want_stdout_bytes` 那一格，手写的时点读数会烂）（§4.1 K2 甲档 · `K2` 归一后码**取自退码表** `usage` = 2；改前退 1）"
   },
   {
@@ -164,7 +164,7 @@
    "command": "context ls",
    "id": "context/ls#--json 不给字段",
    "want_rc": 2,
-   "want_stdout_bytes": 287,
+   "want_stdout_bytes": 329,
    "why": "给了 --json 不给字段 ⇒ 2 + **错误面包封走 stdout**（本批起 `inv.err != nil` 也发射 ⇒ **非危险档命令同样有机器面**：`items` 空 + `error.kind=usage`；★ 本 why **不记绝对字节数** —— 逐字形态见 `want_stdout_bytes` 那一格，手写的时点读数会烂）（§4.1 K2 甲档 · `K2` 归一后码**取自退码表** `usage` = 2；改前退 1）"
   },
   {
@@ -390,7 +390,7 @@
    "command": "gate run",
    "id": "gate/run#--json 不给字段（K2）",
    "want_rc": 2,
-   "want_stdout_bytes": 287,
+   "want_stdout_bytes": 329,
    "why": "给了 `--json` 不给字段 ⇒ 2 + **错误面包封走 stdout**（本批起 `inv.err != nil` 也发射 ⇒ **非危险档命令同样有机器面**：`items` 空 + `error.kind=usage`；★ 本 why **不记绝对字节数** —— 逐字形态见 `want_stdout_bytes` 那一格，手写的时点读数会烂）（§4.1 K2 甲档 · `K2` 归一后码**取自退码表** `usage` = 2；改前退 1）· 执行前判；单步档的机器面越不过这一格 ★ **两档订正（删）**（`K2` 甲档归一 · 2026-09-24 同批）：本格原带两个公开面覆盖列（旧值 本机 `1/0` · 公开面 `2/0` —— 靠「本机退 1」与「公开面先撞硬错 2」**值不同**而分档）。归一后本机也是 `2/0` ⇒ 两档值**完全相同**，按本件两档负控「同值就不该分档（分档只给缺件面用）」**删去 `want_rc_public` / `want_stdout_bytes_public` / `why_public` 三列**（两档格 8 → 7 条）。公开面那一趟的机理照留在此、不丢：公开树缺 `scripts/gates/precommit-gates.sh` ⇒ `gate run` 先撞「门禁最小入口不在」**硬错 2**，走不到本机「`--json` 不给字段 ⇒ 2」这一格 —— 「缺件优先于参数校验」的同一面（同 `gate/run` 另两格）。"
   },
   {
@@ -403,7 +403,7 @@
    "command": "gate run",
    "id": "gate/run#--json 不在单步档",
    "want_rc": 2,
-   "want_stdout_bytes": 298,
+   "want_stdout_bytes": 355,
    "want_stdout_bytes_public": 281,
    "why": "`--json` 的包封面只挂在**单步档**（`--step <步名>`）上 —— 缺 `--step` ⇒ 用法错 2 + 错误包封（items 空）；**不许**拿全档报告冒充机器面",
    "why_public": "退码同为 2，但**包封字节数不同**：公开面先撞「门禁最小入口不在」，错误包封里少了本机那份用法错面的字（298 → 281）。281 字节的包封是**不含路径**的通用错误包封（逐字现读：{\"schema\":\"zerg/v1\",\"kind\":\"GateRun\",\"items\":[]…\"error\"…}）⇒ 与具体那棵树的位置无关，公开树 clone 到哪都一样"
@@ -420,7 +420,7 @@
    "command": "gate run",
    "id": "gate/run#--step 未知名（执行前判 · 一步都不跑）",
    "want_rc": 2,
-   "want_stdout_bytes": 274,
+   "want_stdout_bytes": 331,
    "want_stdout_bytes_public": 281,
    "why": "单步档：步名**逐字**不命中 ⇒ 退 2（执行前判 —— 被包的脚本一次都没起）+ 「最像的合法输入」（K14 第三件 · 与 `agent` 族同一方言）",
    "why_public": "同上一格的机理：公开面缺 `scripts/gates/precommit-gates.sh` ⇒ 先撞「门禁最小入口不在」，连「逐字找步名 + 最像的合法输入」都走不到 ⇒ 包封 281 字节（与本机 274 不同）。三格 `gate/run` 是**同一个缺件**的三个面向"
@@ -476,7 +476,7 @@
    "command": "gate show",
    "id": "gate/show#--json 缺步名",
    "want_rc": 2,
-   "want_stdout_bytes": 275,
+   "want_stdout_bytes": 327,
    "why": "`--json` 面也要步名（四格是「某一步」的四格 · 缺口 `Q-061`）· 执行前判 · **错误面包封走 stdout**（本批起 `inv.err != nil` 也发射 ⇒ **非危险档命令同样有机器面**：`items` 空 + `error.kind=usage`；★ 本 why **不记绝对字节数** —— 逐字形态见 `want_stdout_bytes` 那一格，手写的时点读数会烂）"
   },
   {
@@ -489,7 +489,7 @@
    "command": "gate show",
    "id": "gate/show#--json 未知名（精确匹配 · 不许静默放过）",
    "want_rc": 2,
-   "want_stdout_bytes": 275,
+   "want_stdout_bytes": 328,
    "why": "步名**逐字**不命中 ⇒ 2 + stderr 报「最像的合法输入」（不许静默放过、不许子串匹配给一坨）—— `Q-061` 可核条件 ③ 的负控"
   },
   {
@@ -930,6 +930,41 @@
   },
   {
    "argv": [
+    "model",
+    "verify"
+   ],
+   "command": "model verify",
+   "id": "model/verify#缺对象",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "缺位置对象（模型@机）⇒ 用法错 2 · 执行前判，stdout 0 字节"
+  },
+  {
+   "argv": [
+    "model",
+    "verify",
+    "foo"
+   ],
+   "command": "model verify",
+   "id": "model/verify#对象无 @",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "对象非 模型@机 形态（无 @）⇒ 用法错 2 · 执行前判，stdout 0 字节"
+  },
+  {
+   "argv": [
+    "model",
+    "verify",
+    "nope@Mr2109"
+   ],
+   "command": "model verify",
+   "id": "model/verify#点名不在册",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "模型不在册（点名不在册）⇒ 用法错 2 · 执行前判，stdout 0 字节"
+  },
+  {
+   "argv": [
     "core",
     "status",
     "--nosuchflag-zz"
@@ -1012,7 +1047,7 @@
    "command": "core daemon",
    "id": "core/daemon#--json 不给字段",
    "want_rc": 2,
-   "want_stdout_bytes": 290,
+   "want_stdout_bytes": 332,
    "why": "给了 --json 不给字段 ⇒ 2 + **错误面包封走 stdout**（本批起 `inv.err != nil` 也发射 ⇒ **非危险档命令同样有机器面**：`items` 空 + `error.kind=usage`；★ 本 why **不记绝对字节数** —— 逐字形态见 `want_stdout_bytes` 那一格，手写的时点读数会烂）（§4.1 K2 甲档 · `K2` 归一后码**取自退码表** `usage` = 2；改前退 1）"
   },
   {
@@ -1226,7 +1261,7 @@
    "command": "script ls",
    "id": "script/ls#--json 不给字段",
    "want_rc": 2,
-   "want_stdout_bytes": 286,
+   "want_stdout_bytes": 328,
    "why": "给了 --json 不给字段 ⇒ 2 + **错误面包封走 stdout**（本批起 `inv.err != nil` 也发射 ⇒ **非危险档命令同样有机器面**：`items` 空 + `error.kind=usage`；★ 本 why **不记绝对字节数** —— 逐字形态见 `want_stdout_bytes` 那一格，手写的时点读数会烂）（§4.1 K2 甲档 · `K2` 归一后码**取自退码表** `usage` = 2；改前退 1）"
   },
   {
@@ -1267,7 +1302,7 @@
    "command": "script inventory sync",
    "id": "script/inventory/sync#--json 不给字段",
    "want_rc": 2,
-   "want_stdout_bytes": 299,
+   "want_stdout_bytes": 341,
    "why": "给了 --json 不给字段 ⇒ **2**（§4.1 K2 甲档 · `K2` 归一后码**取自退码表** `usage` = 2；改前退 1）。★ 这一格的 stdout **不是** 0 字节：本命令是**危险档**（D2 写面）⇒ 框架把错误面打成机器可读包封走 stdout（同 `repo commit` 那条先例）· 逐字形态现读见 `want_stdout_bytes` 那一格（★ 本 why **不记绝对字节数**：手写的时点读数会烂 —— 2026-09-27 补 `detail` 后包封就变长过一轮）"
   },
   {
@@ -1361,7 +1396,7 @@
    "command": "resource pin",
    "id": "resource/pin#说明面不认 --json",
    "want_rc": 2,
-   "want_stdout_bytes": 293,
+   "want_stdout_bytes": 338,
    "why": "没有字段表的说明面 ⇒ 2（与 K2 甲档归一后的 2 **同码、错因不同**：这里根本没有字段表）"
   },
   {
@@ -1399,7 +1434,7 @@
    "command": "resource unpin",
    "id": "resource/unpin#说明面不认 --json",
    "want_rc": 2,
-   "want_stdout_bytes": 295,
+   "want_stdout_bytes": 340,
    "why": "没有字段表的说明面 ⇒ 2（与 K2 甲档归一后的 2 **同码、错因不同**：这里根本没有字段表）"
   },
   {
@@ -1437,7 +1472,7 @@
    "command": "gateway breakers",
    "id": "gateway/breakers#说明面不认 --json",
    "want_rc": 2,
-   "want_stdout_bytes": 297,
+   "want_stdout_bytes": 342,
    "why": "没有字段表的说明面 ⇒ 2（与 K2 甲档归一后的 2 **同码、错因不同**：这里根本没有字段表）"
   },
   {
@@ -1588,7 +1623,7 @@
    "command": "egg run",
    "id": "egg/run#说明面不认 --json",
    "want_rc": 2,
-   "want_stdout_bytes": 354,
+   "want_stdout_bytes": 411,
    "why": "`egg run` 的 `--json` 字段面：闭集外的字段名 ⇒ 退 2 + stderr 列字段表；stdout 是 `error.kind=usage` 那一份包封（354 字节（含末尾换行） · 现跑派生；GAP-20260928-16：reportBadField 前补同口径 inv.setErr ⇒ 包封 error.detail 点名那个未知字段）"
   },
   {
@@ -1714,6 +1749,33 @@
    ],
    "command": "itask interval set",
    "id": "itask/interval/set#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "argv": [
+    "itask",
+    "mode",
+    "set",
+    "--nosuchflag-zz"
+   ],
+   "command": "itask mode set",
+   "id": "itask/mode/set#未知旗标",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "argv": [
+    "itask",
+    "mode",
+    "set",
+    "--schema",
+    "zerg/v9"
+   ],
+   "command": "itask mode set",
+   "id": "itask/mode/set#不认的契约主号",
    "want_rc": 2,
    "want_stdout_bytes": 0,
    "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
@@ -1864,7 +1926,7 @@
    "id": "build/ls#--json 不给字段",
    "want_rc": 2,
    "want_rc_public": 8,
-   "want_stdout_bytes": 293,
+   "want_stdout_bytes": 335,
    "why": "给了 --json 不给字段 ⇒ 2 + **错误面包封走 stdout**（本批起 `inv.err != nil` 也发射 ⇒ **非危险档命令同样有机器面**：`items` 空 + `error.kind=usage`；★ 本 why **不记绝对字节数** —— 逐字形态见 `want_stdout_bytes` 那一格，手写的时点读数会烂）（§4.1 K2 甲档 · `K2` 归一后码**取自退码表** `usage` = 2；改前退 1）",
    "why_public": "公开面白名单（publish/whitelist.txt）**不含 `bin/`**（逐字现读：白名单 15 项里没有它）⇒ `build ls` 先撞缺件退 **8**，走不到「--json 不给字段 ⇒ 1」那一格。**不许**为了一道门禁往公开面塞空 `bin/`（『缺件 ⇒ 8』语义保：宁可拒绝，不可猜）"
   },
@@ -1903,7 +1965,7 @@
    "command": "build all",
    "id": "build/all#说明面不认 --json",
    "want_rc": 2,
-   "want_stdout_bytes": 281,
+   "want_stdout_bytes": 306,
    "why": "没有字段表的说明面 ⇒ 2（与 K2 甲档归一后的 2 **同码、错因不同**：这里根本没有字段表）"
   },
   {
@@ -1941,7 +2003,7 @@
    "command": "build release",
    "id": "build/release#说明面不认 --json",
    "want_rc": 2,
-   "want_stdout_bytes": 285,
+   "want_stdout_bytes": 310,
    "why": "没有字段表的说明面 ⇒ 2（与 K2 甲档归一后的 2 **同码、错因不同**：这里根本没有字段表）"
   },
   {
@@ -2832,7 +2894,7 @@
    "command": "dev proposal",
    "id": "dev/proposal#说明面不认 --json",
    "want_rc": 2,
-   "want_stdout_bytes": 272,
+   "want_stdout_bytes": 319,
    "why": "**有**字段表的说明面 ⇒ 2（与 K2 甲档归一后的 2 同码、错因不同：未知字段经 reportBadField 逐格点名合法字段）"
   },
   {
@@ -3030,7 +3092,7 @@
    "command": "plugin ls",
    "id": "plugin/ls#--json 不给字段",
    "want_rc": 2,
-   "want_stdout_bytes": 286,
+   "want_stdout_bytes": 328,
    "why": "给了 --json 却没给字段表（§九 M6 K2：--json 必须给字段 ⇒ 退码**取自退码表** `usage` = 2 + **错误面包封走 stdout**（本批起 `inv.err != nil` 也发射 ⇒ **非危险档命令同样有机器面**：`items` 空 + `error.kind=usage`；★ 本 why **不记绝对字节数** —— 逐字形态见 `want_stdout_bytes` 那一格，手写的时点读数会烂）（`K2` 归一后与「字段不给」同码，靠错因/文案分开））"
   },
   {
@@ -3143,7 +3205,7 @@
    "command": "plan",
    "id": "plan#--json 不给字段",
    "want_rc": 2,
-   "want_stdout_bytes": 309,
+   "want_stdout_bytes": 351,
    "why": "给了 --json 不给字段 ⇒ 2 + **错误面包封走 stdout**（本批起 `inv.err != nil` 也发射 ⇒ **非危险档命令同样有机器面**：`items` 空 + `error.kind=usage`；★ 本 why **不记绝对字节数** —— 逐字形态见 `want_stdout_bytes` 那一格，手写的时点读数会烂）（§4.1 K2 甲档 · `K2` 归一后码**取自退码表** `usage` = 2；改前退 1；落点显式给 /tmp，不写状态目录）"
   },
   {
@@ -3290,7 +3352,7 @@
    "command": "code find",
    "id": "code/find#--json 不给字段",
    "want_rc": 2,
-   "want_stdout_bytes": 288,
+   "want_stdout_bytes": 330,
    "why": "给了 --json 不给字段 ⇒ 2 + **错误面包封走 stdout**（本批起 `inv.err != nil` 也发射 ⇒ **非危险档命令同样有机器面**：`items` 空 + `error.kind=usage`；★ 本 why **不记绝对字节数** —— 逐字形态见 `want_stdout_bytes` 那一格，手写的时点读数会烂）（§4.1 K2 甲档 · `K2` 归一后码**取自退码表** `usage` = 2；改前退 1）；本命令**先判位置参数**（缺正则 ⇒ 2）再判字段，故这一格必须带正则才判得到"
   },
   {
@@ -3327,7 +3389,7 @@
    "command": "repo status",
    "id": "repo/status#--json 不给字段",
    "want_rc": 2,
-   "want_stdout_bytes": 290,
+   "want_stdout_bytes": 332,
    "why": "给了 --json 不给字段 ⇒ 2 + **错误面包封走 stdout**（本批起 `inv.err != nil` 也发射 ⇒ **非危险档命令同样有机器面**：`items` 空 + `error.kind=usage`；★ 本 why **不记绝对字节数** —— 逐字形态见 `want_stdout_bytes` 那一格，手写的时点读数会烂）（§4.1 K2 甲档 · `K2` 归一后码**取自退码表** `usage` = 2；改前退 1）"
   },
   {
@@ -3364,7 +3426,7 @@
    "command": "port ls",
    "id": "port/ls#--json 不给字段",
    "want_rc": 2,
-   "want_stdout_bytes": 286,
+   "want_stdout_bytes": 328,
    "why": "给了 --json 不给字段 ⇒ 2 + **错误面包封走 stdout**（本批起 `inv.err != nil` 也发射 ⇒ **非危险档命令同样有机器面**：`items` 空 + `error.kind=usage`；★ 本 why **不记绝对字节数** —— 逐字形态见 `want_stdout_bytes` 那一格，手写的时点读数会烂）（§4.1 K2 甲档 · `K2` 归一后码**取自退码表** `usage` = 2；改前退 1）"
   },
   {
@@ -3426,7 +3488,7 @@
    "command": "gate matrix",
    "id": "gate/matrix#--json 不给字段",
    "want_rc": 2,
-   "want_stdout_bytes": 290,
+   "want_stdout_bytes": 332,
    "why": "给了 --json 不给字段 ⇒ 2 + **错误面包封走 stdout**（**不是空** —— 本格 stdout 是错误面，字节数见 `want_stdout_bytes` 那一格 · §4.1 K2 甲档 · `K2` 归一后码**取自退码表** `usage` = 2；改前退 1）"
   },
   {
@@ -3478,7 +3540,7 @@
    "command": "gate bench",
    "id": "gate/bench#--json 不给字段",
    "want_rc": 2,
-   "want_stdout_bytes": 289,
+   "want_stdout_bytes": 331,
    "why": "给了 --json 不给字段 ⇒ 2 + **错误面包封走 stdout**（本批起 `inv.err != nil` 也发射 ⇒ **非危险档命令同样有机器面**：`items` 空 + `error.kind=usage`；★ 本 why **不记绝对字节数** —— 逐字形态见 `want_stdout_bytes` 那一格，手写的时点读数会烂）（§4.1 K2 甲档 · `K2` 归一后码**取自退码表** `usage` = 2；改前退 1）"
   },
   {
@@ -3574,7 +3636,7 @@
    "id": "gate/results#--json 字段表外",
    "want_rc": 2,
    "want_rc_public": 2,
-   "want_stdout_bytes": 316,
+   "want_stdout_bytes": 372,
    "want_stdout_bytes_public": 285,
    "why": "字段面**执行前判**（先于点名目录的读）⇒ 2 + stderr 列字段表；stdout 是 `error.kind=usage` 那一份包封（316 字节（含末尾换行） · 现跑派生；GAP-20260928-16：reportBadField 前补同口径 inv.setErr(`usage`,`json_field_unknown:`+字段,…) ⇒ 包封 error.detail 点名那个未知字段）",
    "why_public": "同上一格的机理：公开面先撞「门禁最小入口不在」⇒ 退码同为 2，但**包封字节数不同**（本机 301 → 公开 285）。285 字节是**不含路径**的通用错误包封（逐字现读：{\"schema\":\"zerg/v1\",\"kind\":\"GateResults\",\"items\":[]…\"error\"…}）⇒ 与那棵树 clone 到哪无关；与本机那份的差 = 少了字段表那几行字（`GateResults` 比 `GateRun` 长 4 字节，同族 281 字节那格 +4 = 285 ✓ 现读核对）"
@@ -4188,7 +4250,7 @@
    "command": "approve ls",
    "id": "approve/ls#说明面不认 --json",
    "want_rc": 2,
-   "want_stdout_bytes": 293,
+   "want_stdout_bytes": 344,
    "why": "**有**字段表的说明面 ⇒ 2（与 K2 甲档归一后的 2 同码、错因不同：未知字段经 reportBadField 逐格点名合法字段）· ★ 2026-09-24 重冻 282 → 281（缺口 `Q-155`：失败面包封的兜底 kind 由**真退码**派生 ⇒ 包封里 `\"kind\":\"failed\"` → `\"kind\":\"usage\"`，逐字节少 1 · ★ 2026-09-28 重冻 281 → 293（缺口 GAP-20260928-16：reportBadField 前补同口径 inv.setErr(`usage`,`json_field_unknown:`+bad,…) ⇒ 包封 error.detail 点名那个未知字段）；`want_rc` 不动 · 格数/命令数/空白/豁免四个计数一字未动）"
   },
   {
@@ -4226,7 +4288,7 @@
    "command": "approve show",
    "id": "approve/show#说明面不认 --json",
    "want_rc": 2,
-   "want_stdout_bytes": 279,
+   "want_stdout_bytes": 330,
    "why": "**有**字段表的说明面 ⇒ 2（与 K2 甲档归一后的 2 同码、错因不同：未知字段经 reportBadField 逐格点名合法字段）"
   },
   {
@@ -4333,7 +4395,7 @@
    "command": "approve keygen",
    "id": "approve/keygen#说明面不认 --json",
    "want_rc": 2,
-   "want_stdout_bytes": 273,
+   "want_stdout_bytes": 324,
    "why": "没有字段表的说明面 ⇒ 2（与 K2 甲档归一后的 2 **同码、错因不同**：这里根本没有字段表）"
   },
   {
@@ -4518,7 +4580,7 @@
    "command": "calib ls",
    "id": "calib/ls#--json 不给字段（K2）",
    "want_rc": 2,
-   "want_stdout_bytes": 285,
+   "want_stdout_bytes": 327,
    "why": "给了 `--json` 不给字段 ⇒ 2 + **错误面包封走 stdout**（本批起 `inv.err != nil` 也发射 ⇒ **非危险档命令同样有机器面**：`items` 空 + `error.kind=usage`；★ 本 why **不记绝对字节数** —— 逐字形态见 `want_stdout_bytes` 那一格，手写的时点读数会烂）（§4.1 K2 甲档 · `K2` 归一后码**取自退码表** `usage` = 2；改前退 1）· 执行前判"
   },
   {
@@ -4579,7 +4641,7 @@
    "command": "calib show",
    "id": "calib/show#--json 不给字段（K2）",
    "want_rc": 2,
-   "want_stdout_bytes": 285,
+   "want_stdout_bytes": 327,
    "why": "给了 `--json` 不给字段 ⇒ 2 + **错误面包封走 stdout**（本批起 `inv.err != nil` 也发射 ⇒ **非危险档命令同样有机器面**：`items` 空 + `error.kind=usage`；★ 本 why **不记绝对字节数** —— 逐字形态见 `want_stdout_bytes` 那一格，手写的时点读数会烂）（§4.1 K2 甲档 · `K2` 归一后码**取自退码表** `usage` = 2；改前退 1）· 执行前判"
   },
   {
@@ -4678,7 +4740,7 @@
    "command": "eval ls",
    "id": "eval/ls#--json 不给字段（K2）",
    "want_rc": 2,
-   "want_stdout_bytes": 284,
+   "want_stdout_bytes": 326,
    "why": "给了 `--json` 不给字段 ⇒ 2 + **错误面包封走 stdout**（本批起 `inv.err != nil` 也发射 ⇒ **非危险档命令同样有机器面**：`items` 空 + `error.kind=usage`；★ 本 why **不记绝对字节数** —— 逐字形态见 `want_stdout_bytes` 那一格，手写的时点读数会烂）（§4.1 K2 甲档 · `K2` 归一后码**取自退码表** `usage` = 2；改前退 1）· 执行前判"
   },
   {
@@ -4728,7 +4790,7 @@
    "command": "eval show",
    "id": "eval/show#--json 不给字段（K2）",
    "want_rc": 2,
-   "want_stdout_bytes": 284,
+   "want_stdout_bytes": 326,
    "why": "给了 `--json` 不给字段 ⇒ 2 + **错误面包封走 stdout**（本批起 `inv.err != nil` 也发射 ⇒ **非危险档命令同样有机器面**：`items` 空 + `error.kind=usage`；★ 本 why **不记绝对字节数** —— 逐字形态见 `want_stdout_bytes` 那一格，手写的时点读数会烂）（§4.1 K2 甲档 · `K2` 归一后码**取自退码表** `usage` = 2；改前退 1）· 执行前判"
   },
   {
@@ -4893,7 +4955,7 @@
    "command": "impact",
    "id": "impact#--json 不给字段",
    "want_rc": 2,
-   "want_stdout_bytes": 286,
+   "want_stdout_bytes": 328,
    "why": "给了 --json 不给字段 ⇒ 2 + **错误面包封走 stdout**（本批起 `inv.err != nil` 也发射 ⇒ **非危险档命令同样有机器面**：`items` 空 + `error.kind=usage`；★ 本 why **不记绝对字节数** —— 逐字形态见 `want_stdout_bytes` 那一格，手写的时点读数会烂）（§4.1 K2 甲档 · `K2` 归一后码**取自退码表** `usage` = 2；改前退 1；与各命令同一条纪律）"
   },
   {
@@ -4906,7 +4968,7 @@
    "command": "impact",
    "id": "impact#字段面·未知字段",
    "want_rc": 2,
-   "want_stdout_bytes": 289,
+   "want_stdout_bytes": 339,
    "why": "`--json` 点名字段面：未知字段 ⇒ 退 2 + 列合法字段（§九 M6 I5）· 且**判在取数之前**（A2 六层现跑读秒级，不为一条打错的字段白跑）。★ 这一格的前身是 `impact#件目标·零命中（人面三行）`（419 字节 froze 的正面人面）：A2 把六层接上后，**零命中件没法冻进矩阵** —— 矩阵是 tracked 件，口令里逐字写出件名 ⇒ 那一件自己命中 ④ 词法面（`git grep -w <件名>`）⇒ 那一格必然红。故「零命中 ⇒ 退 1 + 人面恒三行」的棘轮移到 `go test ./cmd/zerg/ -run TestImpact`（两件测试件真跑；件名在测试件里也是拼出来的，同一原因）· ★ 2026-09-24 重冻 280 → 279（缺口 `Q-155` 同上：失败面包封的兜底 kind 由**真退码**派生 ⇒ 包封里 `\"kind\":\"failed\"` → `\"kind\":\"usage\"`，逐字节少 1；`want_rc` 与四个计数一字未动） · ★ 2026-09-28 重冻 279 → 289（缺口 GAP-20260928-16：reportBadField 前补同口径 inv.setErr(`usage`,`json_field_unknown:`+字段,…) ⇒ 包封 error.detail 点名那个未知字段；want_rc 不动）"
   },
   {
@@ -4963,7 +5025,7 @@
    "command": "impact",
    "id": "impact#两档面·--for-human 与 --json 叠加（K2）",
    "want_rc": 2,
-   "want_stdout_bytes": 286,
+   "want_stdout_bytes": 328,
    "why": "`A3` 两档（§4.1）与 `--json` **不是同一条**（`R38` 拍定：两档只决定**内容与裁剪**、`--json` 只做**字段投影**，两者**可叠加**）⇒ 叠加时 `--json` 不给字段仍是 K2：退 2 + **错误面包封走 stdout**（本批起 `inv.err != nil` 也发射 ⇒ **非危险档命令同样有机器面**：`items` 空 + `error.kind=usage`；★ 本 why **不记绝对字节数** —— 逐字形态见 `want_stdout_bytes` 那一格，手写的时点读数会烂）（`K2` 归一后码取自退码表 `usage`）。★ 本格带**成对负控**（现跑逐字）：**老制品**（换件前的回滚件）跑同一口令退 **2**「未知旗标 \"--for-human\"」⇒ 这一格真能分辨「新旗标在不在」，不是一条恒返回的格"
   },
   {
@@ -4976,7 +5038,7 @@
    "command": "impact",
    "id": "impact#两档面·--for-model 与 --json 叠加（K2）",
    "want_rc": 2,
-   "want_stdout_bytes": 286,
+   "want_stdout_bytes": 328,
    "why": "`--for-model` 与 `--for-human` 是**同一族的两档**（§4.1：模型档 ≤ 1.2k token / 条目 ≤ 12；人档全文不限长），两档与 `--json` 都可叠加、都不改六键包封（`R38`）⇒ 叠加时 `--json` 不给字段仍退 2 + **错误面包封走 stdout**（本批起 `inv.err != nil` 也发射 ⇒ **非危险档命令同样有机器面**：`items` 空 + `error.kind=usage`；★ 本 why **不记绝对字节数** —— 逐字形态见 `want_stdout_bytes` 那一格，手写的时点读数会烂）。★ 成对负控（现跑逐字）：**老制品**跑同一口令退 **2**「未知旗标 \"--for-model\"」—— 两格合起来把「两档旗标真进了命令树」钉住"
   },
   {
@@ -5152,7 +5214,7 @@
    "command": "archive hash",
    "id": "archive/hash#--json 不给字段",
    "want_rc": 2,
-   "want_stdout_bytes": 291,
+   "want_stdout_bytes": 333,
    "why": "给了 --json 不给字段 ⇒ 2 + **错误面包封走 stdout**（本批起 `inv.err != nil` 也发射 ⇒ **非危险档命令同样有机器面**：`items` 空 + `error.kind=usage`；★ 本 why **不记绝对字节数** —— 逐字形态见 `want_stdout_bytes` 那一格，手写的时点读数会烂）（§4.1 K2 甲档 · `K2` 归一后码**取自退码表** `usage` = 2；改前退 1）"
   },
   {
@@ -5189,7 +5251,7 @@
    "command": "archive manifest",
    "id": "archive/manifest#--json 不给字段",
    "want_rc": 2,
-   "want_stdout_bytes": 295,
+   "want_stdout_bytes": 337,
    "why": "给了 --json 不给字段 ⇒ 2 + **错误面包封**（不空）（§4.1 K2 甲档 · `K2` 归一后码**取自退码表** `usage` = 2；改前退 1）。★ 本命令是**危险档**（D2 写面）⇒ 走 `main.go:182-183` 那条有意设计：**危险动作没有结果面，但错误面必须机器可读**（§九 M7：AI 自愈靠 kind）⇒ 收 `--json` 只当错误面用 —— 所以这里该是**包封字节数**，不是 0（★ 本 why 不记绝对数：手写时点读数会烂）"
   },
   {
@@ -5226,7 +5288,7 @@
    "command": "archive verify",
    "id": "archive/verify#--json 不给字段",
    "want_rc": 2,
-   "want_stdout_bytes": 293,
+   "want_stdout_bytes": 335,
    "why": "给了 --json 不给字段 ⇒ 2 + **错误面包封走 stdout**（本批起 `inv.err != nil` 也发射 ⇒ **非危险档命令同样有机器面**：`items` 空 + `error.kind=usage`；★ 本 why **不记绝对字节数** —— 逐字形态见 `want_stdout_bytes` 那一格，手写的时点读数会烂）（§4.1 K2 甲档 · `K2` 归一后码**取自退码表** `usage` = 2；改前退 1）"
   },
   {
@@ -5263,7 +5325,7 @@
    "command": "model add",
    "id": "model/add#--json 不给字段",
    "want_rc": 2,
-   "want_stdout_bytes": 288,
+   "want_stdout_bytes": 330,
    "why": "给了 --json 不给字段 ⇒ 2 + **错误面包封**（不空）（§4.1 K2 甲档 · `K2` 归一后码**取自退码表** `usage` = 2；改前退 1）。★ 2026-09-27 补 danger 后本命令走 `main.go:182-183` 那条有意设计：**危险动作没有结果面，但错误面必须机器可读**（§九 M7：AI 自愈靠 kind）⇒ 收 `--json` 只当错误面用 —— 所以这里该是**包封字节数**，不是 0"
   },
   {
@@ -5354,7 +5416,7 @@
    "command": "core ps",
    "id": "core/ps#--json 不给字段",
    "want_rc": 2,
-   "want_stdout_bytes": 286,
+   "want_stdout_bytes": 328,
    "why": "给了 --json 不给字段 ⇒ 2 + **错误面包封走 stdout**（本批起 `inv.err != nil` 也发射 ⇒ **非危险档命令同样有机器面**：`items` 空 + `error.kind=usage`；★ 本 why **不记绝对字节数** —— 逐字形态见 `want_stdout_bytes` 那一格，手写的时点读数会烂）（§4.1 K2 甲档 · `K2` 归一后码**取自退码表** `usage` = 2；改前退 1）"
   },
   {
@@ -5600,7 +5662,7 @@
    "command": "metrics",
    "id": "metrics#说明面不认 --json",
    "want_rc": 2,
-   "want_stdout_bytes": 291,
+   "want_stdout_bytes": 342,
    "why": "**有**字段表的说明面 ⇒ 2（与 K2 甲档归一后的 2 同码、错因不同：未知字段经 reportBadField 逐格点名合法字段）"
   },
   {
@@ -5638,7 +5700,7 @@
    "command": "code show",
    "id": "code/show#--json 不给字段",
    "want_rc": 2,
-   "want_stdout_bytes": 288,
+   "want_stdout_bytes": 330,
    "why": "给了 --json 不给字段 ⇒ 2 + **错误面包封走 stdout**（本批起 `inv.err != nil` 也发射 ⇒ **非危险档命令同样有机器面**：`items` 空 + `error.kind=usage`；★ 本 why **不记绝对字节数** —— 逐字形态见 `want_stdout_bytes` 那一格，手写的时点读数会烂）（§4.1 K2 甲档 · 码**取自退码表** `usage`）"
   },
   {
@@ -5699,7 +5761,7 @@
    "command": "net probe",
    "id": "net/probe#--json 不给字段",
    "want_rc": 2,
-   "want_stdout_bytes": 288,
+   "want_stdout_bytes": 330,
    "why": "给了 --json 不给字段 ⇒ 2 + **错误面包封走 stdout**（本批起 `inv.err != nil` 也发射 ⇒ **非危险档命令同样有机器面**：`items` 空 + `error.kind=usage`；★ 本 why **不记绝对字节数** —— 逐字形态见 `want_stdout_bytes` 那一格，手写的时点读数会烂）（§4.1 K2 甲档 · 码**取自退码表** `usage`）"
   },
   {
@@ -5739,7 +5801,7 @@
    "command": "publish tree has",
    "id": "publish/tree/has#--json 不给字段",
    "want_rc": 2,
-   "want_stdout_bytes": 294,
+   "want_stdout_bytes": 336,
    "why": "给了 --json 不给字段 ⇒ 2 + **错误面包封走 stdout**（本批起 `inv.err != nil` 也发射 ⇒ **非危险档命令同样有机器面**：`items` 空 + `error.kind=usage`；★ 本 why **不记绝对字节数** —— 逐字形态见 `want_stdout_bytes` 那一格，手写的时点读数会烂）（§4.1 K2 甲档 · 码**取自退码表** `usage`）"
   },
   {
@@ -5776,7 +5838,7 @@
    "command": "ci green",
    "id": "ci/green#--json 不给字段",
    "want_rc": 2,
-   "want_stdout_bytes": 287,
+   "want_stdout_bytes": 329,
    "why": "给了 --json 不给字段 ⇒ 2 + **错误面包封走 stdout**（本批起 `inv.err != nil` 也发射 ⇒ **非危险档命令同样有机器面**：`items` 空 + `error.kind=usage`；★ 本 why **不记绝对字节数** —— 逐字形态见 `want_stdout_bytes` 那一格，手写的时点读数会烂）（§4.1 K2 甲档 · 码**取自退码表** `usage`）"
   },
   {
@@ -5850,7 +5912,7 @@
    "command": "route ls",
    "id": "route/ls#--json 不给字段",
    "want_rc": 2,
-   "want_stdout_bytes": 287,
+   "want_stdout_bytes": 329,
    "why": "给了 --json 不给字段 ⇒ 2 + **错误面包封走 stdout**（本批起 `inv.err != nil` 也发射 ⇒ **非危险档命令同样有机器面**：`items` 空 + `error.kind=usage`；★ 本 why **不记绝对字节数** —— 逐字形态见 `want_stdout_bytes` 那一格，手写的时点读数会烂）（§4.1 K2 甲档 · 码**取自退码表** `usage`）"
   },
   {
@@ -6112,7 +6174,7 @@
    "command": "gap export",
    "id": "gap/export#说明面不认 --json",
    "want_rc": 2,
-   "want_stdout_bytes": 294,
+   "want_stdout_bytes": 336,
    "why": "**有**字段表的说明面 ⇒ 2（与 K2 甲档归一后的 2 同码、错因不同：未知字段经 reportBadField 逐格点名合法字段）· ★ 2026-09-28 重冻 282 → 294（`GAP-20260928-16` 那批刷新的**漏格**：同族 `approve/ls` 同批 281 → 293，本格承同两次刷新 —— 先承 `Q-155`：失败面包封的兜底 kind 由**真退码**派生 ⇒ 包封里 `\"kind\":\"failed\"` → `\"kind\":\"usage\"`；再承 `GAP-20260928-16`：`reportBadField` 前补同口径 `inv.setErr(`usage`,`json_field_unknown:`+bad,…)` ⇒ 包封 `error.detail` 点名那个未知字段。取法（现跑两遍逐字同值）：`env -u ZERG_STATE_DIR -u ZERG_REPO ./bin/zerg gap export --json name` ⇒ rc=2 · stdout 294 字节（含末尾换行）· `error.detail=json_field_unknown:name` · stderr 逐字「未知字段 \"name\"」+「合法字段: id,prio,impact,state,want,summary,fp,verify_cmd,found_at」；同源核对：`GapExport` 比同族 `Approval` 长 1 ⇒ 293 + 1 = 294 ✓）；`want_rc` 不动 · 格数/命令数/空白/豁免四个计数一字未动"
   },
   {
@@ -6150,7 +6212,7 @@
    "command": "gate find",
    "id": "gate/find#说明面不认 --json",
    "want_rc": 2,
-   "want_stdout_bytes": 314,
+   "want_stdout_bytes": 366,
    "why": "**有**字段表的说明面 ⇒ 2（与 K2 甲档归一后的 2 同码、错因不同：未知字段经 reportBadField 逐格点名合法字段）"
   },
   {
@@ -6259,7 +6321,7 @@
    "command": "find",
    "id": "find#--json 不给字段",
    "want_rc": 2,
-   "want_stdout_bytes": 275,
+   "want_stdout_bytes": 322,
    "why": "给了 --json 不给字段 ⇒ 2 + **错误面包封走 stdout**（本批起 `inv.err != nil` 也发射 ⇒ **非危险档命令同样有机器面**：`items` 空 + `error.kind=usage`；★ 本 why **不记绝对字节数** —— 逐字形态见 `want_stdout_bytes` 那一格，手写的时点读数会烂）（§4.1 K2 甲档 · 码**取自退码表** `usage`）"
   },
   {
@@ -6296,7 +6358,7 @@
    "command": "ui i18n",
    "id": "ui/i18n#--json 不给字段",
    "want_rc": 2,
-   "want_stdout_bytes": 284,
+   "want_stdout_bytes": 326,
    "why": "给了 --json 不给字段 ⇒ 2 + **错误面包封走 stdout**（本批起 `inv.err != nil` 也发射 ⇒ **非危险档命令同样有机器面**：`items` 空 + `error.kind=usage`；★ 本 why **不记绝对字节数** —— 逐字形态见 `want_stdout_bytes` 那一格，手写的时点读数会烂）（§4.1 K2 甲档 · 码**取自退码表** `usage`）"
   },
   {
@@ -7075,7 +7137,7 @@
    "command": "route ls",
    "id": "route/ls#字段面·未知字段",
    "want_rc": 2,
-   "want_stdout_bytes": 302,
+   "want_stdout_bytes": 350,
    "why": "`route ls` 的 `--json` 字段面：闭集外的字段名（`__zzbad__`）⇒ 退 2 + stderr 列字段表；stdout 是 `error.kind=usage` 那一份包封（302 字节（含末尾换行） · 现跑派生，两遍逐字同值；GAP-20260928-22：`reportBadField` 前补同口径 `inv.setErr` ⇒ 包封 `error.detail` 点名那个未知字段 = `json_field_unknown:__zzbad__`）"
   },
   {
@@ -7089,7 +7151,7 @@
    "command": "agent reload",
    "id": "agent/reload#字段面·未知字段",
    "want_rc": 2,
-   "want_stdout_bytes": 415,
+   "want_stdout_bytes": 468,
    "why": "`agent reload` 的 `--json` 字段面：闭集外的字段名（`__zzbad__`）⇒ 退 2 + stderr 列字段表；stdout 是 `error.kind=usage` 那一份包封（415 字节（含末尾换行） · 现跑派生，两遍逐字同值；字段面判在**子端 HTTP 面之前** ⇒ 本格不碰任何真机器（`zz-nosuch` 是不存在的机器名，只凑位置）；GAP-20260928-22：`reportBadField` 前补同口径 `inv.setErr` ⇒ `error.detail` 点名那个未知字段 = `json_field_unknown:__zzbad__`）"
   },
   {
@@ -7228,7 +7290,7 @@
    "command": "gap status",
    "id": "gap/status#说明面不认 --json",
    "want_rc": 2,
-   "want_stdout_bytes": 294,
+   "want_stdout_bytes": 336,
    "why": "**有**字段表的说明面 ⇒ 2（与 K2 甲档归一后的 2 同码、错因不同：未知字段经 reportBadField 逐格点名合法字段）"
   },
   {
@@ -7542,7 +7604,7 @@
    "command": "gap plan",
    "id": "gap/plan#说明面不认 --json",
    "want_rc": 2,
-   "want_stdout_bytes": 276,
+   "want_stdout_bytes": 324,
    "why": "**有**字段表的说明面 ⇒ 2（与 K2 甲档归一后的 2 同码、错因不同：未知字段经 reportBadField 逐格点名合法字段）"
   },
   {
@@ -7583,8 +7645,53 @@
    "command": "gap receipt check",
    "id": "gap/receipt/check#说明面不认 --json",
    "want_rc": 2,
-   "want_stdout_bytes": 304,
+   "want_stdout_bytes": 352,
    "why": "**有**字段表的说明面 ⇒ 2（与 K2 甲档归一后的 2 同码、错因不同：未知字段经 reportBadField 逐格点名合法字段）"
+  },
+  {
+   "argv": [
+    "gap",
+    "receipt",
+    "new",
+    "--nosuchflag-zz"
+   ],
+   "command": "gap receipt new",
+   "id": "gap/receipt/new#未知旗标",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "argv": [
+    "gap",
+    "receipt",
+    "new",
+    "--schema",
+    "zerg/v9"
+   ],
+   "command": "gap receipt new",
+   "id": "gap/receipt/new#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "argv": [
+    "gap",
+    "receipt",
+    "new",
+    "--egg",
+    "EGG-A",
+    "--reading",
+    "GAP-x=ok",
+    "--conclusion",
+    "c"
+   ],
+   "command": "gap receipt new",
+   "id": "gap/receipt/new#缺 --yes（D2）",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "`gap receipt new` 真写回执件（状态目录 `receipts/GR-<卵号>-<时刻>.json` · `GAP-20260928-184` 第三面）⇒ 缺 `--yes` **fail-closed 退 2 · 零写**；四栏齐（缺必需旗标那一格不在本格，另有 `go test` 覆盖）"
   },
   {
    "argv": [
@@ -7738,7 +7845,7 @@
    "command": "gap regress",
    "id": "gap/regress#说明面不认 --json",
    "want_rc": 2,
-   "want_stdout_bytes": 272,
+   "want_stdout_bytes": 320,
    "why": "**有**字段表的说明面 ⇒ 2（与 K2 甲档归一后的 2 同码、错因不同：未知字段经 reportBadField 逐格点名合法字段）"
   },
   {
@@ -8022,7 +8129,7 @@
    "command": "gap export",
    "id": "gap/export#--out 与 --json 同给",
    "want_rc": 2,
-   "want_stdout_bytes": 296,
+   "want_stdout_bytes": 350,
    "why": "`--out`（拆件落盘）与 `--json`（机读投影）**不许同给** ⇒ 用法错 2（判在任何 stdout 写入之前 · `family_gap_export.go:136-141`）· 给了 `--json` ⇒ 错误面包封走 stdout（本批起发射闸）：`error.kind=usage` · `error.detail=out_json_conflict`。★ 本 why 不记绝对字节数（逐字形态见 `want_stdout_bytes` 那一格 · 缺口 GAP-20260927-332）"
   },
   {
@@ -8084,7 +8191,7 @@
    "command": "model rm",
    "id": "model/rm#--json 不给字段",
    "want_rc": 2,
-   "want_stdout_bytes": 287,
+   "want_stdout_bytes": 329,
    "why": "给了 --json 不给字段 ⇒ 2 + **错误面包封**（不空）；D2 写面走「没有结果面、但错误面必须机器可读」那条（§九 M7）⇒ 287 字节是现跑包封字节数（本制品现跑两遍一致）。"
   },
   {
@@ -8121,7 +8228,7 @@
    "command": "model set",
    "id": "model/set#--json 不给字段",
    "want_rc": 2,
-   "want_stdout_bytes": 288,
+   "want_stdout_bytes": 330,
    "why": "给了 --json 不给字段 ⇒ 2 + **错误面包封**（不空）；D2 写面走「没有结果面、但错误面必须机器可读」那条（§九 M7）⇒ 288 字节是现跑包封字节数（本制品现跑两遍一致）。"
   },
   {
@@ -8158,7 +8265,7 @@
    "command": "context set-port",
    "id": "context/set-port#--json 不给字段",
    "want_rc": 2,
-   "want_stdout_bytes": 287,
+   "want_stdout_bytes": 312,
    "why": "给了 --json 不给字段 ⇒ 2 + **错误面包封**（不空）；D2 写面走「没有结果面、但错误面必须机器可读」那条（§九 M7）⇒ 287 字节是现跑包封字节数（本制品现跑两遍一致）。"
   },
   {
@@ -8446,7 +8553,7 @@
    "command": "dev check",
    "id": "dev/check#说明面不认 --json",
    "want_rc": 2,
-   "want_stdout_bytes": 280,
+   "want_stdout_bytes": 332,
    "why": "没有字段表的说明面 ⇒ 2（与 K2 甲档归一后的 2 同码、**错因不同**：这里根本没有字段表）"
   },
   {
@@ -8484,7 +8591,7 @@
     "name"
    ],
    "want_rc": 2,
-   "want_stdout_bytes": 274,
+   "want_stdout_bytes": 328,
    "why": "没有字段表的说明面 ⇒ 2（与 K2 甲档归一后的 2 同码、**错因不同**：这里根本没有字段表）"
   },
   {
@@ -9449,7 +9556,7 @@
    "command": "script inventory verify",
    "id": "script/inventory/verify#--json 不给字段",
    "want_rc": 2,
-   "want_stdout_bytes": 301,
+   "want_stdout_bytes": 343,
    "why": "给了 `--json` 不给字段 ⇒ 用法错（§4.1 K2 甲档 · 码取自退码表 `usage`）· 错误包封走 stdout · 301 字节。"
   },
   {
@@ -9489,6 +9596,79 @@
    "want_rc": 2,
    "want_stdout_bytes": 0,
    "why": "执行前判：不认的契约主号 ⇒ 退 2 · stdout 0 字节（读数由 2026-10-09 仓外新制品 `go build -overlay` 现跑两遍派生 · 本单禁碰 bin/）。"
+  },
+  {
+   "argv": [
+    "gate",
+    "self-test-summary",
+    "--nosuchflag-zz"
+   ],
+   "command": "gate self-test-summary",
+   "id": "gate/self-test-summary#未知旗标",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "执行前判：未知旗标 ⇒ 退 2 · stdout 0 字节（2026-10-10 现跑派生 · 收口窗 FAIL#3b 补格）"
+  },
+  {
+   "argv": [
+    "gate",
+    "self-test-summary",
+    "--schema",
+    "zerg/v9"
+   ],
+   "command": "gate self-test-summary",
+   "id": "gate/self-test-summary#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "执行前判：不认的契约主号 ⇒ 退 2 · stdout 0 字节（2026-10-10 现跑派生 · 收口窗 FAIL#3b 补格）"
+  },
+  {
+   "argv": [
+    "model",
+    "put",
+    "--nosuchflag-zz"
+   ],
+   "command": "model put",
+   "id": "model/put#未知旗标",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "执行前判：未知旗标 ⇒ 退 2 · stdout 0 字节（2026-10-10 现跑派生 · 收口窗 FAIL#3b 补格）"
+  },
+  {
+   "argv": [
+    "model",
+    "put",
+    "--schema",
+    "zerg/v9"
+   ],
+   "command": "model put",
+   "id": "model/put#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "执行前判：不认的契约主号 ⇒ 退 2 · stdout 0 字节（2026-10-10 现跑派生 · 收口窗 FAIL#3b 补格）"
+  },
+  {
+   "argv": [
+    "root",
+    "--nosuchflag-zz"
+   ],
+   "command": "root",
+   "id": "root#未知旗标",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "执行前判：未知旗标 ⇒ 退 2 · stdout 0 字节（2026-10-10 现跑派生 · 收口窗 FAIL#3b 补格）"
+  },
+  {
+   "argv": [
+    "root",
+    "--schema",
+    "zerg/v9"
+   ],
+   "command": "root",
+   "id": "root#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "执行前判：不认的契约主号 ⇒ 退 2 · stdout 0 字节（2026-10-10 现跑派生 · 收口窗 FAIL#3b 补格）"
   }
  ],
  "tiers": {

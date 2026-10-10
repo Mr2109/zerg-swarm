@@ -218,6 +218,22 @@ func dcSelfTest(stdout io.Writer) int {
 		dcChkBool("分叉判定：同目录 ⇒ 不分叉", divB, false),
 	)
 
+	// ★ GAP-20260927-121：消费者「钉版目录无发布件 ⇒ fail-closed 明报」—— 正控 + 成对负控
+	//   （同一判定函数 devDocsConsumable：export / doc meta fill 两处消费者取源都走它；两态只差「目录里有没有发布件」）。
+	okDir, okWhy := devDocsConsumable(dirOK, "")
+	checks = append(checks,
+		dcChkBool("正控·钉版目录含发布件 ⇒ 给结论（dir 原样 · why 空）", okDir == dirOK && okWhy == "", true),
+	)
+	_, noArtWhy := devDocsConsumable(dirNoArt, "")
+	checks = append(checks,
+		dcChkBool("负控·钉版目录无发布件 ⇒ 不给结论（why 非空）", noArtWhy != "", true),
+		dcChkBool("负控·钉版目录无发布件 ⇒ 逐字明报「无发布件，故本消费者取不到」", strings.Contains(noArtWhy, "无发布件，故本消费者取不到"), true),
+	)
+	_, passWhy := devDocsConsumable(dirOK, "目录本身判不了（不在盘）")
+	checks = append(checks,
+		dcChkBool("判不了 ⇒ 原样透传既有 why（不覆盖）", passWhy == "目录本身判不了（不在盘）", true),
+	)
+
 	// 成对负控：抽掉 v2.5.10 的发布件 ⇒ 该格由「符」翻「不符」（同一判定函数 · 只差那一件）。
 	before := dcConforms(dcJudgeOne("zerg_overview", dirOK, ""))
 	_ = os.Remove(art)

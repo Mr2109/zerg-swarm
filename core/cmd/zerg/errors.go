@@ -16,6 +16,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"runtime"
 	"sort"
 	"strings"
 )
@@ -132,13 +133,50 @@ type cliError struct {
 	Where   string // local / core / agent / node:<名>
 	Extra   map[string]string
 	Meta    map[string]string // 包封 `meta` 的按需子键（键名逐字取既有词表；空 ⇒ 不加）
+	// VerdictAt —— `error.verdict_at`：**哪一枚判定退出**的机器可检格（缺口 `GAP-20260927-385`）。
+	// 取 `setErr` 调用点的 `<仓内相对路径>:<行号>`（见 `verdictCaller`）；取不到 ⇒ 空 ⇒ 渲染成
+	// `verdictAtUnknown`（「判不了」· ✗ 不填伪位置）。它与 `detail` 分工：`detail` 是**哪一类因**，
+	// `VerdictAt` 是**判定位置** —— 「判到还是被早退拦」要的是后者（位置是否前置可机检）。
+	VerdictAt string
 }
 
 // setErr 记下本次调用的错（谁先报谁为准 —— 与「不打第二枪」同一条纪律）。
 func (inv *invocation) setErr(kind, detail, msg string) {
 	if inv.err == nil {
-		inv.err = &cliError{Kind: kind, Detail: detail, Message: msg, Where: "local"}
+		inv.err = &cliError{Kind: kind, Detail: detail, Message: msg, Where: "local", VerdictAt: verdictCaller()}
 	}
+}
+
+// verdictAtUnknown —— 「判不了」档的**唯一字面**（缺口 `GAP-20260927-385`）：判定位置取不到时
+// 明报这一枚，✗ 不许填一个看起来像位置的空值（空串 / 假路径 —— 本仓三值纪律）。
+const verdictAtUnknown = "判不了"
+
+// verdictCaller —— 取「哪一枚判定退出」的**位置**：调用栈里**调用 `setErr` 的那一点**的
+// `<仓内相对路径>:<行号>`（0=verdictCaller · 1=setErr · 2=调用 setErr 的判定点）。
+// 取不到（`runtime.Caller` 失败 / 行号非正）⇒ 空串 ⇒ 渲染端换 `verdictAtUnknown`（✗ 不伪造）。
+//
+// 归一：正式制品用 `-trimpath` 构建 ⇒ `runtime.Caller` 给模块相对路径；开发/测试构建给绝对
+// 路径 ⇒ 一律截到 `core/cmd/zerg/` 起，两态同形（在盘可对账 —— 未归一时绝对路径会随跑测机漂）。
+func verdictCaller() string {
+	_, file, line, ok := runtime.Caller(2)
+	if !ok || file == "" || line <= 0 {
+		return ""
+	}
+	if i := strings.LastIndex(file, "core/cmd/zerg/"); i >= 0 {
+		file = file[i:]
+	}
+	if file == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s:%d", file, line)
+}
+
+// orVerdictAt —— `verdict_at` 的三值渲染：有真位置 ⇒ 逐字给；取不到 ⇒ `verdictAtUnknown`（明报判不了）。
+func orVerdictAt(s string) string {
+	if strings.TrimSpace(s) == "" {
+		return verdictAtUnknown
+	}
+	return s
 }
 
 // errJSON 渲染 `error` 块（§九 M7：kind / detail / retryable / remedy / message / where）。
@@ -156,6 +194,7 @@ func (e *cliError) errJSON() string {
 	b.WriteString(",\"exit_code\":" + fmt.Sprintf("%d", codeOfKind(e.Kind)))
 	b.WriteString(",\"message\":" + jstr(e.Message))
 	b.WriteString(",\"where\":" + jstr(orLocal(e.Where)))
+	b.WriteString(",\"verdict_at\":" + jstr(orVerdictAt(e.VerdictAt)))
 	if len(e.Extra) > 0 {
 		keys := make([]string, 0, len(e.Extra))
 		for k := range e.Extra {
@@ -206,7 +245,11 @@ func helpErrors() string {
 	b.WriteString("机器面形状（`--json` 失败时 `error` 块与包封同出）：\n")
 	b.WriteString("  {\"schema\":\"zerg/v1\",\"kind\":\"…\",\"items\":[],\"meta\":{…},\"warnings\":[],\"truncated\":false,\n")
 	b.WriteString("   \"error\":{\"kind\":\"conflict\",\"detail\":\"…\",\"retryable\":false,\"remedy\":\"wait_or_reload\",\n")
-	b.WriteString("            \"exit_code\":14,\"message\":\"…\",\"where\":\"local\"}}\n\n")
+	b.WriteString("            \"exit_code\":14,\"message\":\"…\",\"where\":\"local\",\n")
+	b.WriteString("            \"verdict_at\":\"core/cmd/zerg/<件>.go:<行号>\"}}\n\n")
+	b.WriteString("`verdict_at`（缺口 `GAP-20260927-385`）：**哪一枚判定退出** —— `setErr` 调用点的\n")
+	b.WriteString("`<仓内相对路径>:<行号>`（判到还是被早退拦 ⇒ 位置是否前置可机检）；取不到判定位置 ⇒ 明报\n")
+	b.WriteString("**`判不了`**（✗ 不填伪位置）。它与 `error.detail` 分工：`detail` 是**哪一类因**、本格是**判定位置**。\n\n")
 	b.WriteString("口径（防误读）：`error.retryable` 与 `error.exit_code` 都由 kind 派生 ⇒ 两者**不独立**；\n")
 	b.WriteString("调用方判「要不要重试」只读 `kind` / `retryable`，**不许**拿退出码反推。\n")
 	return b.String()

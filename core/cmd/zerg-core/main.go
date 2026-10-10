@@ -179,8 +179,15 @@ func main() {
 	// GET /api/fleet/tasks - 任务列表（初始为空）
 	r.Get("/api/fleet/tasks", handlers.TasksHandler)
 
-	// POST /api/fleet/logs - 子端日志上报（v1 agent 兼容；v2 agent 可后续扩展）
+	// POST /api/fleet/logs - 子端日志上报（v1 agent 兼容 / v2 批量；落 SQLite）
 	r.Post("/api/fleet/logs", handlers.LogsHandler)
+
+	// GET /api/fleet/logs/{query,trace,errors,stats} —— 机群日志查询面
+	// （GAP-20260927-202 ① · 段1；参数逐字照 gateway/protocol.md:74-78）
+	r.Get("/api/fleet/logs/query", handlers.FleetLogsQueryHandler)
+	r.Get("/api/fleet/logs/trace", handlers.FleetLogsTraceHandler)
+	r.Get("/api/fleet/logs/errors", handlers.FleetLogsErrorsHandler)
+	r.Get("/api/fleet/logs/stats", handlers.FleetLogsStatsHandler)
 
 	// POST /api/config/reload - 热加载配置（B11：加模型不用重启）
 	r.Post("/api/config/reload", handlers.ReloadConfigHandler)

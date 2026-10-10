@@ -33,8 +33,27 @@ import (
 // 默认档名（`~/.zerg/contexts/<档>.yaml`）；`--context` 可覆盖。
 const defaultContextName = "default"
 
-// machineTargets —— `dangerSpec.Target` 里表示「对象是某台机」的那几种写法（X 轴口径 §7.1）。
-var machineTargets = map[string]bool{"机器名": true, "主机名": true, "网关主机名": true}
+// 机器目标名（machine target name）—— 「对象是某台机」的**机读闭集**（缺口 GAP-20260927-424）：
+// `command.machine` 取这些值之一 ⇒ 本命令的对象是某台机。
+//
+// ★ 与 `dangerSpec.Target`（人面**显示串**）**分字段**：显示串可自由措辞（含「本机名」
+// 「（落点目录）」一类显示修饰），机器判定**只读 `command.machine`** —— 此前二者同源
+// （`machineTargets[cmd.danger.Target]`）⇒ 改显示串会连带翻转 `needsMachine`
+// （`dev edit` 被迫用第三值「本机名」绕开的根因）。
+const (
+	machineNodeName    = "机器名"   // 对象是名册里的**机器名**（子端/节点机）
+	machineHostName    = "主机名"   // 对象是**主机名**（跑主控/构建/发布的那台）
+	machineGatewayHost = "网关主机名" // 对象是**网关主机**（闭集保留 · 本版未用）
+)
+
+// machineTargets —— 机器目标名**闭集**（成员判定 · fail-closed：`machine` 写错值不当作机器对象）。
+var machineTargets = map[string]bool{machineNodeName: true, machineHostName: true, machineGatewayHost: true}
+
+// isMachineObject —— 本命令的对象是不是**某台机**：只读 `command.machine`（机器目标名），
+// ✗ 不再读 `dangerSpec.Target`（显示串）—— 二者从此分字段（缺口 GAP-20260927-424）。
+func isMachineObject(cmd *command) bool {
+	return cmd != nil && machineTargets[cmd.machine]
+}
 
 // roster —— 名册（`Z2` 的真源读法：只读 `nodes:` 的键 + `default_node`）。
 type roster struct {
@@ -162,7 +181,7 @@ func enforceNodeRules(inv *invocation, cmd *command, stderr io.Writer) (int, boo
 	// 位置参数机器名 × `--node` 的撞车（`P-067`）
 	machineArg := ""
 	if len(inv.args) > 0 {
-		if contains(r.Nodes, inv.args[0]) || (cmd.danger != nil && machineTargets[cmd.danger.Target]) {
+		if contains(r.Nodes, inv.args[0]) || isMachineObject(cmd) {
 			machineArg = inv.args[0]
 		}
 	}
@@ -182,7 +201,7 @@ func enforceNodeRules(inv *invocation, cmd *command, stderr io.Writer) (int, boo
 	}
 
 	// 默认作用域（`P-066`）：群级只读 = 名册全集；**其余不许无目标**
-	needsMachine := cmd.danger != nil && machineTargets[cmd.danger.Target]
+	needsMachine := isMachineObject(cmd)
 	if needsMachine && len(nodes) == 0 && len(inv.args) == 0 && !inv.dryRun {
 		fmt.Fprintf(stderr, "%s: `%s %s` 的对象是某台**机**，本轮**没有目标**（位置参数与 `--node` 都没给）\n",
 			progName, progName, strings.Join(cmd.path, " "))

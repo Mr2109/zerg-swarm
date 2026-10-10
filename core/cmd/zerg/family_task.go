@@ -253,6 +253,15 @@ func taskSubmitBody(inv *invocation) (string, error) {
 	if inv.acceptanceDeclared {
 		body["acceptance"] = inv.acceptance // 显式空数组也发（与「没写」是两件事）
 	}
+	// 单卵时限（GAP-20260926-201 全通路）：`--timeout` ⇒ 体字段 `egg_max_s`（**秒**）。
+	// 不给 ⇒ **不下发**该键（子端回落 env）；给了但读不出 ⇒ 报错退 2（✗ 不静默回落默认）。
+	if tv := strings.TrimSpace(inv.flagVal(wallclockFlag)); tv != "" {
+		d, derr := parseWallclock(tv)
+		if derr != nil {
+			return "", derr
+		}
+		body["egg_max_s"] = strconv.FormatFloat(d.Seconds(), 'f', -1, 64)
+	}
 	b, err := json.Marshal(body)
 	if err != nil {
 		return "", err

@@ -252,3 +252,47 @@ func cgcFirstN(s string, n int) string {
 	}
 	return string(r)
 }
+
+// ★ `_scan_note` ↔ scan 实测 双向对拍（`GAP-20260927-05`）：
+//
+//	正控一致 ⇒ rc=0；负控分家 ⇒ rc=1 且**点名两侧读数**；负控取不到侧 ⇒ rc=2（不静默取其一）。
+func TestCheckGateCoverageScanNoteParityGreen(t *testing.T) {
+	cfg := `{"schema":"gate-coverage/1","baseline":0,"whitelist":{"build_dirs":[],"scripts":[]},"_scan_note":"本笔只加这段字 · 未动 script_globs；现读 2 条 glob 中 1 条实测 0 件。"}`
+	root := cgcTFixture(t, "sn-ok", [][2]string{{"core", "go build ./..."}, {"", "python3 scripts/ok.py"}},
+		[]string{"core/go.mod"}, []string{"scripts/ok.py"}, 0, cfg)
+	rc, so, se := cgcTRun(t, "--no-self-test", "--root", root)
+	if rc != 0 {
+		t.Fatalf("rc=%d want 0（现值句与实测一致）\nstdout=%s\nstderr=%s", rc, so, se)
+	}
+	if !strings.Contains(so, "note 现值句与实测一致") {
+		t.Fatalf("want 「note 现值句与实测一致」, got:\n%s", so)
+	}
+}
+
+// ★ 负控：造一处分家（note 说 8 · 实测 1）⇒ rc=1 且逐字点名两侧读数。
+func TestCheckGateCoverageScanNoteMismatchIsRed(t *testing.T) {
+	cfg := `{"schema":"gate-coverage/1","baseline":0,"whitelist":{"build_dirs":[],"scripts":[]},"_scan_note":"本笔只加这段字 · 未动 script_globs；现读 2 条 glob 中 8 条实测 0 件。"}`
+	root := cgcTFixture(t, "sn-bad", [][2]string{{"core", "go build ./..."}, {"", "python3 scripts/ok.py"}},
+		[]string{"core/go.mod"}, []string{"scripts/ok.py"}, 0, cfg)
+	rc, so, se := cgcTRun(t, "--no-self-test", "--root", root)
+	if rc != 1 {
+		t.Fatalf("rc=%d want 1（note 说 8 · 实测 1 ⇒ 分家必红）\nstdout=%s\nstderr=%s", rc, so, se)
+	}
+	if !strings.Contains(so, "note 说 8") || !strings.Contains(so, "机侧实测 1") {
+		t.Fatalf("must name both readings (note 说 8 / 机侧实测 1), got:\n%s", so)
+	}
+}
+
+// ★ 负控：取不到任一侧 ⇒ rc=2（不许静默取其一）。
+func TestCheckGateCoverageScanNoteUnreadableSideBlocks(t *testing.T) {
+	cfg := `{"schema":"gate-coverage/1","baseline":0,"whitelist":{"build_dirs":[],"scripts":[]},"_scan_note":"只有散文、无现值句。"}`
+	root := cgcTFixture(t, "sn-noside", [][2]string{{"core", "go build ./..."}, {"", "python3 scripts/ok.py"}},
+		[]string{"core/go.mod"}, []string{"scripts/ok.py"}, 0, cfg)
+	rc, so, se := cgcTRun(t, "--no-self-test", "--root", root)
+	if rc != 2 {
+		t.Fatalf("rc=%d want 2（取不到 note 侧 ⇒ 不给结论）\nstdout=%s\nstderr=%s", rc, so, se)
+	}
+	if !strings.Contains(so+se, "取不到") {
+		t.Fatalf("want 「取不到」 in output, got:\n%s", so+se)
+	}
+}

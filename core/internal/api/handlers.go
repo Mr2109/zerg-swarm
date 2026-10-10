@@ -11,7 +11,6 @@ import (
 	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 	"github.com/Mr2109/zerg-swarm/core/internal/store"
 	"github.com/Mr2109/zerg-swarm/core/internal/subtask"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -38,6 +37,13 @@ type Handlers struct {
 	// 模型目录根覆盖（GET /api/models/registry 用）。空 = 标准解析
 	// （ZERG_MODELS_DIR 优先，缺省 ~/.zerg/models）——测试注入 t.TempDir() 用。
 	ModelsDir string
+
+	// ── 机群日志面（GAP-20260927-202 ① · 段1 主控侧）───────────────────────
+	// FleetLogs = 机群日志落盘库实例（测试/主控可注入）；nil ⇒ 首次用时经 fleetLogsLazy
+	// 惰性打开默认库（statepath）；打开失败 ⇒ fail-closed 退 503。
+	FleetLogs *FleetLogStore
+	// fleetLogsLazy — 每实例惰性打开器（并发安全）。
+	fleetLogsLazy fleetLogsLazy
 
 	// ── 资源管理器观测面（《设计-资源管理器》批 4）──────────────────────────
 	// ResourcePins 是 pin/unpin 的动作侧（转发到子端）。nil = 未接线（接口如实返回 503）。
@@ -111,6 +117,9 @@ func (h *Handlers) SubmitTaskHandler(w http.ResponseWriter, r *http.Request) {
 		// v2.5.7 对话→任务集成: 来源对话/消息（UI"派任务"带——任务详情可回溯来源）
 		ParentSessionID string `json:"parent_session_id"`
 		ParentMessageID string `json:"parent_message_id"`
+		// 单卵时限（GAP-20260926-201 全通路）：CLI `--timeout` ⇒ 本字段 ⇒ 落进任务（下方透传）。
+		// 单位 = **秒**（与子端 env `ZERG_EGG_MAX_S` 同口径）。
+		EggMaxS string `json:"egg_max_s"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErrorCode(w, http.StatusBadRequest, "INVALID_BODY", "请求体解析失败: "+err.Error())
@@ -159,6 +168,7 @@ func (h *Handlers) SubmitTaskHandler(w http.ResponseWriter, r *http.Request) {
 		Flow:            req.Flow, // v2.5.6: "zerg"=程序定量驱动新流程
 		ParentSessionID: req.ParentSessionID,
 		ParentMessageID: req.ParentMessageID,
+		EggMaxS:         req.EggMaxS, // GAP-20260926-201：透传（✗ 不丢）
 		CreatedAt:       time.Now(),
 	}
 	// B 项③ 片（单子）: 片字段落进任务（未声明片字段 ⇒ 全是零值，等价于没这一行）
@@ -1540,27 +1550,10 @@ func (h *Handlers) UpdateAdapterOptionsHandler(w http.ResponseWriter, r *http.Re
 	})
 }
 
-// LogsHandler 处理 POST /api/fleet/logs——接收子端日志上报（v1 agent 兼容）。
+// LogsHandler 处理 POST /api/fleet/logs —— 接收子端日志上报并**落 SQLite**
+// （GAP-20260927-202 ① · 段1 主控侧；实现见 fleet_logs_http.go 的 fleetLogsReceive）。
 func (h *Handlers) LogsHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeErrorCode(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "仅支持 POST 方法")
-		return
-	}
-	body, _ := io.ReadAll(r.Body)
-	defer r.Body.Close()
-	// v1 agent 上报格式: {machine, level, component, message, timestamp, request_id}
-	var logEntry map[string]interface{}
-	if err := json.Unmarshal(body, &logEntry); err != nil {
-		// 非 JSON 也接收（简单日志行）
-		logEntry = map[string]interface{}{"raw": string(body)}
-	}
-	// 打印到主控日志（聚合展示可后续扩展存储）
-	machine, _ := logEntry["machine"].(string)
-	level, _ := logEntry["level"].(string)
-	msg, _ := logEntry["message"].(string)
-	println("子端日志: machine=", machine, " level=", level, " msg=", msg)
-
-	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
+	h.fleetLogsReceive(w, r)
 }
 
 // TasksHandler 处理 GET /api/fleet/tasks —— 返回任务列表（初始为空）。

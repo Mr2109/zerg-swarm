@@ -50,7 +50,7 @@ const (
 	chsecProg     = "check-history-secrets.py"
 	chsecIsoPrefx = "!夹具"
 	chsecMaxBlob  = 2 * 1024 * 1024
-	chsecWantCase = 19 // 自证用例条数（写死：少跑一格即断言失败；⑮⑯⑰⑱⑲ = 等价形态 · 缺口 GAP-20260925-38）
+	chsecWantCase = 22 // 自证用例条数（写死：少跑一格即断言失败；⑮⑯⑰⑱⑲ = 等价形态 · 缺口 GAP-20260925-38；⑳㉑㉒ = 夹具登记真源 · 缺口 GAP-20260926-225 甲案 A）
 )
 
 type chsecPatSpec struct{ pat, why string }
@@ -324,6 +324,42 @@ func chsecExcludesPath(root string) string {
 func chsecWhitelistPath(root string) string {
 	return chsecPyJoin(root, "publish", "whitelist.txt")
 }
+
+// chsecAllowPath：夹具登记**唯一真源**（`publish/mirror-allow.txt` · 件＋理由＋日期 三要素 · 只增不删）。
+// 本门只读它、✗ 不新建表、✗ 不填 `!夹具`、✗ 不内联复制一份。
+func chsecAllowPath(root string) string {
+	return chsecPyJoin(root, "publish", "mirror-allow.txt")
+}
+
+// chsecLoadAllow：读夹具登记表（口径同 `publish/mirror-public-lib.py` 的 `--allow` 解析：
+// `镜像路径<TAB>理由` · 空行与 `#` 注释跳过 · 无 TAB 或理由空 ⇒ 记为「（未写理由）」）。
+// ★ fail-closed：缺件 / 读不到 ⇒ ok=false（调用方 rc=2 不给结论 · ✗ 不当「无登记」把命中全当真 ·
+// 也 ✗ 不当「全免」）。
+func chsecLoadAllow(path string) (map[string]string, bool) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, false
+	}
+	m := map[string]string{}
+	for _, ln := range strings.Split(string(b), "\n") {
+		if chsecPyStrip(ln) == "" || strings.HasPrefix(strings.TrimLeftFunc(ln, unicode.IsSpace), "#") {
+			continue
+		}
+		p, why := ln, ""
+		if i := strings.Index(ln, "\t"); i >= 0 {
+			p, why = ln[:i], ln[i+1:]
+		}
+		p, why = chsecPyStrip(p), chsecPyStrip(why)
+		if why == "" {
+			why = "（未写理由）"
+		}
+		m[p] = why
+	}
+	return m, true
+}
+
+// chsecLoadAllowFn：夹具登记真源的**可替换句柄**（自检 / 负控档要换的真源）。
+var chsecLoadAllowFn = chsecLoadAllow
 
 // ── 子进程（git 面）──────────────────────────────────────────────────────────────────────
 
@@ -605,6 +641,16 @@ type chsecHit struct {
 	Match  string `json:"match"`
 }
 
+// chsecAllowHit：**已登记夹具**命中（登记真源 `publish/mirror-allow.txt`）—— 与阻断命中分开记，
+// 逐条打印但**不计判红**（`Allow` 携登记理由）。
+type chsecAllowHit struct {
+	Commit string `json:"commit"`
+	Path   string `json:"path"`
+	Why    string `json:"why"`
+	Match  string `json:"match"`
+	Allow  string `json:"allow"`
+}
+
 type chsecInfoHit struct {
 	Commit string `json:"commit"`
 	Path   string `json:"path"`
@@ -666,10 +712,11 @@ func chsecCountedBytes(counted map[string]chsecCount) int {
 
 // chsecScanCommits：按 revs 顺序扫描一段提交（**串行档与并行片共用同一份判据**）。
 func chsecScanCommits(revs []string, repo string, lits []chsecLit, regexes []chsecRx, isolated []string,
-	entries, exList []string, blk, inf []chsecCompiled, baseIdx int, emitProgress bool,
-	cache map[string]chsecVerdict, counted map[string]chsecCount, stdout io.Writer) ([]chsecHit, []chsecInfoHit, map[string]chsecCount) {
+	entries, exList []string, allow map[string]string, blk, inf []chsecCompiled, baseIdx int, emitProgress bool,
+	cache map[string]chsecVerdict, counted map[string]chsecCount, stdout io.Writer) ([]chsecHit, []chsecAllowHit, []chsecInfoHit, map[string]chsecCount) {
 
 	hits := []chsecHit{}
+	allowHits := []chsecAllowHit{}
 	infoHits := []chsecInfoHit{}
 	if cache == nil {
 		cache = map[string]chsecVerdict{}
@@ -742,7 +789,13 @@ func chsecScanCommits(revs []string, repo string, lits []chsecLit, regexes []chs
 				cache[key] = verdict
 			}
 			if verdict.kind == "block" {
-				hits = append(hits, chsecHit{chsecSHA10(sha), rel, verdict.why, verdict.sample})
+				// 夹具登记真源（`publish/mirror-allow.txt` · GAP-20260926-225 甲案 A）：已登记 ⇒ 分类
+				// 「已登记夹具」逐条打印、不计判红；未登记 ⇒ 仍按原档 fail-loud（rc=1）。两侧都留痕、✗ 不静默吞。
+				if whyAllow, ok2 := allow[rel]; ok2 {
+					allowHits = append(allowHits, chsecAllowHit{chsecSHA10(sha), rel, verdict.why, verdict.sample, whyAllow})
+				} else {
+					hits = append(hits, chsecHit{chsecSHA10(sha), rel, verdict.why, verdict.sample})
+				}
 			} else if verdict.kind == "info" {
 				infoHits = append(infoHits, chsecInfoHit{chsecSHA10(sha), rel, verdict.why})
 			}
@@ -752,7 +805,7 @@ func chsecScanCommits(revs []string, repo string, lits []chsecLit, regexes []chs
 				idx, total, len(counted), float64(chsecCountedBytes(counted))/1048576)
 		}
 	}
-	return hits, infoHits, counted
+	return hits, allowHits, infoHits, counted
 }
 
 // ── 并行档：提交区间分片（同进程 goroutine · stdout 与串行逐字一致）────────────────────────────
@@ -812,7 +865,7 @@ func chsecCumulativeAt(merged map[string]chsecCount, idx int) (int, int) {
 
 // chsecRunParallel：按提交区间并发跑分片、按最小序号归并 ⇒ (hits, info, merged, n, ok)。
 func chsecRunParallel(revs []string, repo string, jobs int, lits []chsecLit, regexes []chsecRx, isolated []string,
-	entries, exList []string, blk, inf []chsecCompiled, stderr io.Writer) ([]chsecHit, []chsecInfoHit, map[string]chsecCount, int, bool) {
+	entries, exList []string, allow map[string]string, blk, inf []chsecCompiled, stderr io.Writer) ([]chsecHit, []chsecAllowHit, []chsecInfoHit, map[string]chsecCount, int, bool) {
 
 	n := jobs
 	if len(revs) < n {
@@ -822,11 +875,12 @@ func chsecRunParallel(revs []string, repo string, jobs int, lits []chsecLit, reg
 	for i, b := range bounds {
 		if b[1] <= b[0] {
 			fmt.Fprintf(stderr, "✗ 分片 %d 为空片 ⇒ 判不了(2)（不许静默少审）\n", i)
-			return nil, nil, nil, 0, false
+			return nil, nil, nil, nil, 0, false
 		}
 	}
 	type shardOut struct {
 		hits   []chsecHit
+		allow  []chsecAllowHit
 		info   []chsecInfoHit
 		counts map[string]chsecCount
 	}
@@ -834,9 +888,9 @@ func chsecRunParallel(revs []string, repo string, jobs int, lits []chsecLit, reg
 	done := make(chan int, n)
 	for i, b := range bounds {
 		go func(i, a, e int) {
-			h, ih, c := chsecScanCommits(revs[a:e], repo, lits, regexes, isolated, entries, exList, blk, inf,
+			h, ah, ih, c := chsecScanCommits(revs[a:e], repo, lits, regexes, isolated, entries, exList, allow, blk, inf,
 				a, false, map[string]chsecVerdict{}, map[string]chsecCount{}, io.Discard)
-			outs[i] = shardOut{h, ih, c}
+			outs[i] = shardOut{h, ah, ih, c}
 			done <- i
 		}(i, b[0], b[1])
 	}
@@ -845,10 +899,12 @@ func chsecRunParallel(revs []string, repo string, jobs int, lits []chsecLit, reg
 	}
 	fmt.Fprintf(stderr, "并行档：%d 片（提交区间连续切分 · 结果面按片序拼接 + 首见序号归并 ⇒ 与串行逐字一致）\n", n)
 	hits := []chsecHit{}
+	allowHits := []chsecAllowHit{}
 	info := []chsecInfoHit{}
 	merged := map[string]chsecCount{}
 	for _, o := range outs {
 		hits = append(hits, o.hits...)
+		allowHits = append(allowHits, o.allow...)
 		info = append(info, o.info...)
 		for key, v := range o.counts {
 			cur, ok := merged[key]
@@ -857,7 +913,7 @@ func chsecRunParallel(revs []string, repo string, jobs int, lits []chsecLit, reg
 			}
 		}
 	}
-	return hits, info, merged, n, true
+	return hits, allowHits, info, merged, n, true
 }
 
 // ── 参数解析（argparse 面复刻）────────────────────────────────────────────────────────────
@@ -1113,13 +1169,14 @@ func checkHistorySecretsGateMain(stdout, stderr io.Writer, argv []string) (rc in
 
 	lits, regexes, isolated := chsecLoadRulesFn(chsecRulesPath(root))
 	exList := chsecLoadExcludes(chsecExcludesPath(root))
+	allowMap, allowOK := chsecLoadAllowFn(chsecAllowPath(root))
+	if !allowOK {
+		fmt.Fprintf(stderr, "✗ 夹具登记表读不到：%s ⇒ 判不了(2)（✗ 不许当「无登记」把命中全当真，也 ✗ 不许当「全免」）\n", chsecAllowPath(root))
+		return 2
+	}
 	fmt.Fprintf(stdout, "排除项: %d 条（从 publish/excludes.txt 行式真源解析）+ 噪声后缀 %s\n", len(exList), strings.Join(chsecNoiseSuffix, "/"))
 	fmt.Fprintf(stdout, "替换规则: %d 条字面 + %d 条正则（扫描前先套用——审计的是『真会公开的形状』）\n", len(lits), len(regexes))
-	isoSuffix := ""
-	if len(isolated) > 0 {
-		isoSuffix = "：" + strings.Join(isolated, " · ")
-	}
-	fmt.Fprintf(stdout, "夹具隔离: %d 条 glob（命中件整段跳过替换 · §五 第三批）%s\n", len(isolated), isoSuffix)
+	fmt.Fprintf(stdout, "夹具隔离: %d 条登记件（唯一真源 publish/mirror-allow.txt · 已登记命中 ⇒ 分类打印但不计判红）\n", len(allowMap))
 
 	wl := chsecWhitelistPath(repo)
 	if !chsecIsFile(wl) {
@@ -1143,15 +1200,16 @@ func checkHistorySecretsGateMain(stdout, stderr io.Writer, argv []string) (rc in
 	inf := chsecCompileSpecs(chsecInfoSpecs)
 
 	var hits []chsecHit
+	var allowHits []chsecAllowHit
 	var infoHits []chsecInfoHit
 	var scannedFiles, scannedBytes int
 
 	if jobs > 1 && len(revs) > 1 {
-		h, ih, merged, _, ok2 := chsecRunParallel(revs, repo, jobs, lits, regexes, isolated, entries, exList, blk, inf, stderr)
+		h, ah, ih, merged, _, ok2 := chsecRunParallel(revs, repo, jobs, lits, regexes, isolated, entries, exList, allowMap, blk, inf, stderr)
 		if !ok2 {
 			return 2
 		}
-		hits, infoHits = h, ih
+		hits, allowHits, infoHits = h, ah, ih
 		for idx := 200; idx <= len(revs); idx += 200 {
 			f, b := chsecCumulativeAt(merged, idx)
 			fmt.Fprintf(stdout, "  …已审 %d/%d 笔提交（文件 %d，%.1f MB）\n", idx, len(revs), f, float64(b)/1048576)
@@ -1161,7 +1219,7 @@ func checkHistorySecretsGateMain(stdout, stderr io.Writer, argv []string) (rc in
 	} else {
 		blobCache := map[string]chsecVerdict{}
 		counted := map[string]chsecCount{}
-		hits, infoHits, counted = chsecScanCommits(revs, repo, lits, regexes, isolated, entries, exList, blk, inf,
+		hits, allowHits, infoHits, counted = chsecScanCommits(revs, repo, lits, regexes, isolated, entries, exList, allowMap, blk, inf,
 			0, true, blobCache, counted, stdout)
 		scannedFiles = len(counted)
 		scannedBytes = chsecCountedBytes(counted)
@@ -1176,6 +1234,51 @@ func checkHistorySecretsGateMain(stdout, stderr io.Writer, argv []string) (rc in
 				break
 			}
 			fmt.Fprintf(stdout, "    %s  %-52s %s\n", h.Commit, chsecTruncRunes(h.Path, 52), h.Why)
+		}
+	}
+	if len(allowHits) > 0 {
+		type kp struct{ path, why string }
+		order := []kp{}
+		idx := map[kp]int{}
+		counts := []int{}
+		firsts := []string{}
+		samples := []string{}
+		reasons := []string{}
+		for _, h := range allowHits {
+			k := kp{h.Path, h.Why}
+			if j, ok3 := idx[k]; ok3 {
+				counts[j]++
+			} else {
+				idx[k] = len(order)
+				order = append(order, k)
+				counts = append(counts, 1)
+				firsts = append(firsts, h.Commit)
+				samples = append(samples, h.Match)
+				reasons = append(reasons, h.Allow)
+			}
+		}
+		perm := make([]int, len(order))
+		for i := range perm {
+			perm[i] = i
+		}
+		sort.SliceStable(perm, func(a, b int) bool { return counts[perm[a]] > counts[perm[b]] })
+		fmt.Fprintf(stdout, "\n· 已登记夹具命中 %d 处，涉及 %d 个文件（真源 publish/mirror-allow.txt · 逐条打印 · 不计判红 · ✗ 不静默）:\n", len(allowHits), len(order))
+		for n, j := range perm {
+			if n >= 30 {
+				break
+			}
+			fmt.Fprintf(stdout, "    %-56s %-20s ×%-4d 首见 %s  %s  ← %s\n",
+				chsecTruncRunes(order[j].path, 56), order[j].why, counts[j], firsts[j], samples[j], reasons[j])
+		}
+		fmt.Fprintf(stdout, "  逐条明细（前 %d）:\n", chsecMin(a.maxHits, len(allowHits)))
+		for i, h := range allowHits {
+			if i >= a.maxHits {
+				break
+			}
+			fmt.Fprintf(stdout, "    %s  %-52s %-22s %s  ← %s\n", h.Commit, chsecTruncRunes(h.Path, 52), h.Why, h.Match, h.Allow)
+		}
+		if len(allowHits) > a.maxHits {
+			fmt.Fprintf(stdout, "    …（其余 %d 处省略）\n", len(allowHits)-a.maxHits)
 		}
 	}
 	if len(hits) > 0 {
@@ -1228,17 +1331,21 @@ func checkHistorySecretsGateMain(stdout, stderr io.Writer, argv []string) (rc in
 		if hits == nil {
 			hits = []chsecHit{}
 		}
+		if allowHits == nil {
+			allowHits = []chsecAllowHit{}
+		}
 		if infoHits == nil {
 			infoHits = []chsecInfoHit{}
 		}
 		report := struct {
-			Scope     string         `json:"scope"`
-			Commits   int            `json:"commits"`
-			Files     int            `json:"files"`
-			Bytes     int            `json:"bytes"`
-			BlockHits []chsecHit     `json:"block_hits"`
-			InfoHits  []chsecInfoHit `json:"info_hits"`
-		}{scope, len(revs), scannedFiles, scannedBytes, hits, infoHits}
+			Scope       string          `json:"scope"`
+			Commits     int             `json:"commits"`
+			Files       int             `json:"files"`
+			Bytes       int             `json:"bytes"`
+			BlockHits   []chsecHit      `json:"block_hits"`
+			AllowedHits []chsecAllowHit `json:"allowed_hits"`
+			InfoHits    []chsecInfoHit  `json:"info_hits"`
+		}{scope, len(revs), scannedFiles, scannedBytes, hits, allowHits, infoHits}
 		fh, err := os.Create(a.jsonOut)
 		if err != nil {
 			fmt.Fprintf(stderr, "✗ 写 JSON 失败：%v ⇒ 判不了(2)\n", err)
@@ -1294,6 +1401,11 @@ func chsecShardWorker(a *chsecArgs, stdout, stderr io.Writer) int {
 	}
 	lits, regexes, isolated := chsecLoadRulesFn(chsecRulesPath(root))
 	exList := chsecLoadExcludes(chsecExcludesPath(root))
+	allowShard, allowShardOK := chsecLoadAllowFn(chsecAllowPath(root))
+	if !allowShardOK {
+		fmt.Fprintf(stderr, "✗ 夹具登记表读不到：%s ⇒ 判不了(2)\n", chsecAllowPath(root))
+		return 2
+	}
 	wl := chsecWhitelistPath(repo)
 	if !chsecIsFile(wl) {
 		wl = chsecWhitelistPath(root)
@@ -1321,17 +1433,18 @@ func chsecShardWorker(a *chsecArgs, stdout, stderr io.Writer) int {
 	}
 	blk := chsecCompileSpecs(chsecBlockSpecs)
 	inf := chsecCompileSpecs(chsecInfoSpecs)
-	hits, infoHits, counted := chsecScanCommits(revs[lo:hi], repo, lits, regexes, isolated, entries, exList, blk, inf,
+	hits, allowHits, infoHits, counted := chsecScanCommits(revs[lo:hi], repo, lits, regexes, isolated, entries, exList, allowShard, blk, inf,
 		lo, false, map[string]chsecVerdict{}, map[string]chsecCount{}, io.Discard)
 	cj := map[string][]int{}
 	for key, v := range counted {
 		cj[key] = []int{v.idx, v.bytes}
 	}
 	payload := struct {
-		Hits     []chsecHit       `json:"hits"`
-		InfoHits []chsecInfoHit   `json:"info_hits"`
-		Counted  map[string][]int `json:"counted"`
-	}{hits, infoHits, cj}
+		Hits        []chsecHit       `json:"hits"`
+		AllowedHits []chsecAllowHit  `json:"allowed_hits"`
+		InfoHits    []chsecInfoHit   `json:"info_hits"`
+		Counted     map[string][]int `json:"counted"`
+	}{hits, allowHits, infoHits, cj}
 	_ = stdout
 	if a.shardOut != "" {
 		fh, err := os.Create(a.shardOut)
@@ -1608,6 +1721,41 @@ func chsecSelfTest(stdout, stderr io.Writer) int {
 		rcMuteB64 == 0, fmt.Sprintf("rc=%d（期望 0）", rcMuteB64))
 
 	fmt.Fprint(stdout, "[真目标] 现读真仓**结构**（**不跑全历史** —— 实测 3m55s，见文件头）⇒ 结构断言 ＋ 计数照实报\n")
+	fmt.Fprint(stdout, "[正控] 夹具登记真源（publish/mirror-allow.txt）：白名单内两件被登记 ⇒ 分类「已登记夹具」逐条打印、不计判红（rc=0）\n")
+	savedAllow := chsecLoadAllowFn
+	rcAllow, textAllow := func() (int, string) {
+		chsecLoadAllowFn = func(string) (map[string]string, bool) {
+			return map[string]string{"src/app.py": "自检夹具：登记理由（合成）", "src/priv.py": "自检夹具：登记理由（合成）"}, true
+		}
+		defer func() { chsecLoadAllowFn = savedAllow }()
+		return chsecRunCLI(dirty)
+	}()
+	caseFn("⑳登记件", "已登记件命中 ⇒ rc=0 且打印「已登记夹具」并逐条点名（✗ 静默吞）",
+		rcAllow == 0 && strings.Contains(textAllow, "已登记夹具") && strings.Contains(textAllow, "src/app.py") && strings.Contains(textAllow, "src/priv.py"),
+		fmt.Sprintf("rc=%d（期望 0）· 分类行 %s · 点名 src/app.py %s / src/priv.py %s", rcAllow,
+			chsecHasNo(strings.Contains(textAllow, "已登记夹具")),
+			chsecHasNo(strings.Contains(textAllow, "src/app.py")), chsecHasNo(strings.Contains(textAllow, "src/priv.py"))))
+
+	fmt.Fprint(stdout, "[负控] 未登记件命中 ⇒ 仍按原档 fail-loud（rc=1 且打印「阻断级命中」）—— 与上一格**同一棵树**、只改登记表\n")
+	rcUnreg, textUnreg := func() (int, string) {
+		chsecLoadAllowFn = func(string) (map[string]string, bool) { return map[string]string{}, true }
+		defer func() { chsecLoadAllowFn = savedAllow }()
+		return chsecRunCLI(dirty)
+	}()
+	caseFn("㉑未登记", "登记表不含该件 ⇒ rc=1 且打印「阻断级命中」",
+		rcUnreg == 1 && strings.Contains(textUnreg, "阻断级命中"),
+		fmt.Sprintf("rc=%d（期望 1）· 阻断行 %s", rcUnreg, chsecHasNo(strings.Contains(textUnreg, "阻断级命中"))))
+
+	fmt.Fprint(stdout, "[退码钳] 夹具登记表取不到 ⇒ rc=2 不给结论（✗ 不许当「无登记」全真、也 ✗ 不许当「全免」）\n")
+	rcMissing, textMissing := func() (int, string) {
+		chsecLoadAllowFn = func(string) (map[string]string, bool) { return nil, false }
+		defer func() { chsecLoadAllowFn = savedAllow }()
+		return chsecRunCLI(dirty)
+	}()
+	caseFn("㉒取不到", "登记表读不到 ⇒ rc=2 且打印「判不了」",
+		rcMissing == 2 && strings.Contains(textMissing, "判不了"),
+		fmt.Sprintf("rc=%d（期望 2）", rcMissing))
+
 	root := chsecRepoRoot()
 	revsN := len(chsecFields(chsecShText([]string{"git", "rev-list", "--all"}, root)))
 	ents := len(chsecLoadWhitelist(chsecWhitelistPath(root)))

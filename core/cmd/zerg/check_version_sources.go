@@ -1107,10 +1107,7 @@ type vsDDEnt struct{ file, role, state, got, want, note, reviewDate string }
 var vsReReviewDate = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 var vsDerivedDefaultSites = []vsSiteEnt{
 	{"scripts/gates/check-doc-freshness.py", `os\.path\.join\(sibling, "项目文档", "(v[0-9.]+)"\)`, "pinned", "v2.5.10", "乙·沿革/引证：v2.5.10 是文档面上一次定稿版（改真源 2.5.13 破 devdocs:meta/freshness D1 两阻断步）· Mr2109 2026-10-08 拍·GAP-20260927-89", "2026-10-08"},
-	{"core/cmd/zerg/check_doc_freshness.go", `cdfSlugVersionDir = "(v[0-9.]+)"`, "pinned", "v2.5.10", "乙·沿革同上（Go 半 · 缺口 GAP-20260926-174）", "2026-10-08"},
-	{"core/cmd/zerg/check_doc_meta.go", `cdmPyJoin\(sibling, "项目文档", "(v[0-9.]+)"\)`, "pinned", "v2.5.10", "乙·沿革同上（devdocs 默认根）", "2026-10-08"},
 	{"core/cmd/zerg/check_doc_meta.go", `\{"docs/项目文档/(v[0-9.]+)/"`, "pinned", "v2.5.10", "FORMAL_PREFIX 首棵（面登记 · 沿革同上）", "2026-10-08"},
-	{"core/cmd/zerg/check_glossary.go", `chglJoin\(sibling, "项目文档", "(v[0-9.]+)"\)`, "pinned", "v2.5.10", "乙·沿革同上（devdocs 默认根）", "2026-10-08"},
 	{"core/cmd/zerg/check_approve_ci.go", `caciDevdocsTail = caciPyJoin\("项目文档", "(v[0-9.]+)"\)`, "pinned", "v2.5.11", "乙·引证：口径-CI永不人签-20260923.md 实际只在 v2.5.11（他版 0 份）", "2026-10-08"},
 	{"core/cmd/zerg/check_approve_closedset.go", `cacsDevdocsTail = caciPyJoin\("项目文档", "(v[0-9.]+)"\)`, "pinned", "v2.5.11", "乙·引证：S2 单向铁律台账实际只在 v2.5.11", "2026-10-08"},
 	{"core/cmd/zerg/check_approve_freeze.go", `cafrDocsVer\s+= "(v[0-9.]+)"`, "pinned", "v2.5.11", "乙·引证：缺口-命令面-20260922.md 顶账 16 条实际只在 v2.5.11", "2026-10-08"},

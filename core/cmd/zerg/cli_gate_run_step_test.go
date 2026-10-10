@@ -294,11 +294,16 @@ func TestGateRunStep_LogBodyIsStepLogVerbatim(t *testing.T) {
 	if row["log"] == "" || strings.HasPrefix(row["log"], "（读不到") {
 		t.Fatalf("结果表第 5 列的日志件路径要先读回来：%+v", row)
 	}
-	// ★ 判据**不取包封里的字面量**，而是自己去读那一件，再与 `log_body` 对拍
-	//   —— 这样验的才是「命令面原样读回」，而不是「印了两份一样的东西」。
-	want, err := os.ReadFile(row["log"])
+	// ★ 判据**不取包封里的字面量**（缺口 `GAP-20260927-430` 起 `log` 的**目录段已掩码**成 `<TMP>/…`），
+	//   而是照夹具**自己知道的**真路径去读那一件，再与 `log_body` 对拍 —— 这样验的才是
+	//   「命令面原样读回」，而不是「印了两份一样的东西」；同时钉住包封至少**保留件名**。
+	if !strings.HasSuffix(row["log"], "00-合成步.log") {
+		t.Fatalf("包封的 log 要保留件名（掩码只抹目录段）：%q", row["log"])
+	}
+	realLog := filepath.Join(od, "00-合成步.log")
+	want, err := os.ReadFile(realLog)
 	if err != nil {
-		t.Fatalf("夹具的日志件应当存在（%s）：%v", row["log"], err)
+		t.Fatalf("夹具的日志件应当存在（%s）：%v", realLog, err)
 	}
 	if len(want) == 0 {
 		t.Fatalf("夹具日志件是空的 ⇒ 本格验不出东西：%s", row["log"])
@@ -310,7 +315,7 @@ func TestGateRunStep_LogBodyIsStepLogVerbatim(t *testing.T) {
 	if row["log_body"] == "" {
 		t.Errorf("log_body 不许为空（读得到就要给正文）：%+v", row)
 	}
-	// 不截断：末行哨兵仍在。只钉「在不在」，**不钉字节数**（输出里印了 outdir，字节随目录变）。
+	// 不截断：末行哨兵仍在。只钉「在不在」。（缺口 `GAP-20260927-430` 起目录段已掩码，字节也可钉了。）
 	if !strings.Contains(row["log_body"], "末行哨兵-ZB9") {
 		t.Errorf("log_body 被截断了（末行哨兵不在）：%q", row["log_body"])
 	}
@@ -333,10 +338,12 @@ func TestGateRunStep_LogBodyMissingLogIsNamedNotFaked(t *testing.T) {
 		t.Fatalf("要一行判决的包封：%v · %q", err, out)
 	}
 	row := env.Items[0]
-	missing := row["log"]
-	if missing == "" || strings.HasPrefix(missing, "（读不到") {
-		t.Fatalf("结果表第 5 列的路径要先读回来（本档的前提）：%+v", row)
+	// ★ 缺口 `GAP-20260927-430`：包封的 `log` 目录段已掩码 ⇒ 点名那件的**真路径**照夹具自算
+	//   （`--outdir od` ＋ 合成脚本写死的件名 `00-日志缺失.log`）；顺带钉住包封**保留件名**。
+	if !strings.HasSuffix(row["log"], "00-日志缺失.log") {
+		t.Fatalf("包封的 log 要保留件名（掩码只抹目录段）：%+v", row)
 	}
+	missing := filepath.Join(od, "00-日志缺失.log")
 	if _, err := os.Stat(missing); err == nil {
 		t.Fatalf("夹具前提破了：%s 不该存在（本档要的就是「点名了一件读不到的」）", missing)
 	}
@@ -493,6 +500,75 @@ func TestGateRunStep_NoOutdirWithoutResultsTableReadsBackNothing(t *testing.T) {
 	}
 	if row["log_body"] != "（读不到：脚本没落结果表）" {
 		t.Errorf("本轮没落表 ⇒ log_body 走初值那一枚字面量：%+v", row)
+	}
+}
+
+// ── ⑨ 缺口 `GAP-20260927-430`：机器面**不印可变路径** ⇒ stdout 对同参稳定 ──
+//
+// 病：`gate run --step <步名> --json <字段>` 的包封把日志目录（**调用方给的** `--outdir` 或命令面
+// **自建**的临时目录）印进 `outdir`/`log` ⇒ 同一 argv 换个目录名 / 换个 TMPDIR 形态就换一串字节
+// （血证：同参 3517 B vs 3516 B，差 1 = 目录名 hold vs hb3 差 1）⇒ 矩阵格/字节型判据钉不住它。
+// 修法：把日志目录抹成稳定占位符 `<TMP>`。本组：
+//
+//	① 正控：同一 argv（`--outdir <本机 TMPDIR 下的同一处>`）两次跑 ⇒ stdout **逐字节相同**，
+//	   且真目录**不再**出现在 stdout 可比面上（抹成 `<TMP>`）；
+//	③ 正控：**换个目录名**（hold vs hb3）掩码生效时结果**仍逐字节相同**（名字长短不漏字节）；
+//	④ 正控：**不给 `--outdir`**（命令面自建那一档）⇒ 本机 TMPDIR 段也抹成 `<TMP>/`；
+//	② 负控·哑化（「可变路径仍在可比面」⇒ 须真红）：`ZERG_GATE_STEP_NOMASK` 关掉掩码 ⇒ 真目录**必出现**、
+//	   **换个目录名必不同** ⇒ 证明 ①/③ 的断言能判红（负控有牙）。
+//
+// ★ 本组走**从源码现编**（`zergBinaryFromSource`）：行为面改了，而 `bin/zerg` 本批**禁重编**
+// ⇒ 走旧制品会把「本面未落制品」误读成「本面不存在」（同 ⑧ 口径）。
+func TestGateRunStep_MachineFaceHidesVarDir(t *testing.T) {
+	bin := zergBinaryFromSource(t)
+	root := stepRepo(t, stepGateScript)
+	tmp := t.TempDir()
+	odA := filepath.Join(tmp, "hold") // 名字长短就是要抹掉的可变量（血证：hold vs hb3）
+	odB := filepath.Join(tmp, "hb3")
+	argv := func(od string) []string {
+		return []string{"gate", "run", "--step", "合成步", "--outdir", od,
+			"--json", "step,verdict,rc,log,outdir"}
+	}
+
+	// ① 正控：同一 argv 两次跑 ⇒ 逐字节相同；真目录不在可比面。
+	_, a1, _ := execCase(t, bin, root, argv(odA)...)
+	_, a2, _ := execCase(t, bin, root, argv(odA)...)
+	if a1 != a2 {
+		t.Errorf("缺口 `GAP-20260927-430`：同参两次跑 stdout 必须逐字节相同：\n  ① %q\n  ② %q", a1, a2)
+	}
+	if strings.Contains(a1, odA) {
+		t.Errorf("可变路径（--outdir=%s）仍印在 stdout 可比面上：%q", odA, a1)
+	}
+	// ★ `<TMP>` 在 JSON 里被 HTML-转义成 `\u003cTMP\u003e` ⇒ 断言看**解包后的解码值**。
+	if got := gateRunStepOutdir(t, "改后-hold", a1); got != "<TMP>" {
+		t.Errorf("outdir 应抹成稳定占位符 `<TMP>`（解码值），得 %q", got)
+	}
+
+	// ③ 正控：换目录名（hold vs hb3）⇒ 掩码生效时结果仍逐字节相同。
+	_, b1, _ := execCase(t, bin, root, argv(odB)...)
+	if a1 != b1 {
+		t.Errorf("换个目录名（%s vs %s）stdout 仍须逐字节相同（掩码吃掉目录段）：\n  hold %q\n  hb3  %q",
+			odA, odB, a1, b1)
+	}
+
+	// ④ 正控：不给 `--outdir`（命令面自建那一档）⇒ 本机 TMPDIR 段抹成 `<TMP>/`（运行期唯一后缀保留）。
+	_, c1, _ := execCase(t, bin, root, "gate", "run", "--step", "合成步", "--json", "log,outdir")
+	if td := os.TempDir(); td != "" && strings.Contains(c1, td) {
+		t.Errorf("自建目录的本机 TMPDIR 段仍印在可比面上（%s）：%q", td, c1)
+	}
+	if got := gateRunStepOutdir(t, "改后-自建", c1); !strings.HasPrefix(got, "<TMP>/zerg-gate-step-") {
+		t.Errorf("自建目录的 outdir 应抹成 `<TMP>/zerg-gate-step-…`（解码值），得 %q", got)
+	}
+
+	// ② 负控·哑化：关掉掩码 ⇒ 真目录必出现、换个目录名必不同（证明上面几条断言能判红）。
+	t.Setenv("ZERG_GATE_STEP_NOMASK", "1")
+	_, m1, _ := execCase(t, bin, root, argv(odA)...)
+	_, m2, _ := execCase(t, bin, root, argv(odB)...)
+	if !strings.Contains(m1, odA) {
+		t.Errorf("哑化后真目录应当漏回可比面（否则「不出现」那条断言判不了红）：%q", m1)
+	}
+	if m1 == m2 {
+		t.Errorf("哑化后换个目录名结果却相同 ⇒ 掩码测试无区分度（负控没牙）：%q", m1)
 	}
 }
 

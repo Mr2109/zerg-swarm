@@ -809,6 +809,16 @@ func buildEngineArgv(modelName string, entry *registry.ModelEntry, port int) (st
 	return cmdPath, applyIdleSelfSleep(execArgs, entry.Backend)
 }
 
+// engineArgvOf 拼出「可执行 + 参数」的完整 argv（观测面 /eggs 的 argv 真源 · GAP-20260926-01）。
+// 逐字保留 buildEngineArgv 的产出：可执行在前、参数在后，一项不改（机读要与真命令行逐字相符）。
+func engineArgvOf(cmdPath string, execArgs []string) []string {
+	out := make([]string, 0, len(execArgs)+1)
+	if cmdPath != "" {
+		out = append(out, cmdPath)
+	}
+	return append(out, execArgs...)
+}
+
 // replaceArgvPlaceholders 就地替换参数里的 {file}/{port} 占位符（适配器与卵清单**两侧同一口径**）。
 func replaceArgvPlaceholders(args []string, file string, port int) {
 	for i, arg := range args {

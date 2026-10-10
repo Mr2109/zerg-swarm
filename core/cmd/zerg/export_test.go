@@ -119,6 +119,13 @@ func EnvelopeMetaReservedForTest() []string {
 	return append([]string{}, envMetaReserved...)
 }
 
+// CliErrJSONForTest `error` 块的**直接**渲染口（喂合成 `cliError` ⇒ 判 `verdict_at` 三值：
+// 有位置 ⇒ 逐字给 / 取不到 ⇒ 「判不了」）。缺口 `GAP-20260927-385`：负控②要走**取不到位置**那一路
+// （合成 ⇒ 不碰真目标），正控走真跑（一处真判定退出）。
+func CliErrJSONForTest(kind, detail, msg, verdictAt string) string {
+	return (&cliError{Kind: kind, Detail: detail, Message: msg, VerdictAt: verdictAt}).errJSON()
+}
+
 // TruncatedDetailJudgeForTest `meta.truncated_detail` 的**唯一判定口**（喂合成包封 ⇒ 只给布尔必红）。
 func TruncatedDetailJudgeForTest(envJSON string) error { return truncatedDetailJudge(envJSON) }
 
@@ -1741,6 +1748,20 @@ func SetEggBackendProbeForTest(byHost map[string]EggBackendFactForTest) func() {
 			run[k] = v
 		}
 		return eggBackendFact{Reachable: f.Reachable, Running: run, Why: "合成子端"}
+	}
+	return func() { eggBackendProbe = prev }
+}
+
+// SetEggBackendProbeLiveForTest 把探测口接回**真**实现（`eggBackendProbeLive`）—— 但把所有机器名
+// 都解析到给定的 host:port（`agentAddr`）⇒ 判据件可用一个**本进程内的 `httptest` 合成子端**喂 `/eggs`
+// 的**原始载荷**，走的是真解析路径（`GAP-20260925-15` 的 `watchdog` 子对象解析正需要它）。返回还原函数。
+//
+// 与 `SetEggBackendProbeForTest`（合成**结构体**回据）分工：那一座测「投影 / 对账」，这一座测
+// 「载荷解析」—— 两处都是真身的一层，缺一测不到。地址与口令都不真（`httptest` 本机临时端口）。
+func SetEggBackendProbeLiveForTest(host string, port int) func() {
+	prev := eggBackendProbe
+	eggBackendProbe = func(machine string, a agentAddr) eggBackendFact {
+		return eggBackendProbeLive(machine, agentAddr{Host: host, Port: port})
 	}
 	return func() { eggBackendProbe = prev }
 }

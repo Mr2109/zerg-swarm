@@ -822,10 +822,28 @@ func chglRepoRoot() string {
 	return chglNormpath(cwd)
 }
 
-// chglDevdocsRoot —— 开发文档面根（与 py devdocs_root 同名同序逐字）。
-func chglDevdocsRoot(repoRoot string) string {
+// chglCurrentVersion —— 当前发布版（带 `v` 前缀，如 `v2.5.14`）—— 读**唯一真源**
+// `core/internal/version/version.go` 的 `const Version = "X.Y.Z"`（与门① `cdnCurrentVersion` 同读法）。
+// 读不到真源 ⇒ ok=false（调用方退 rc=2 fail-closed，✗ 不静默回落旧版号/空）。
+func chglCurrentVersion(repoRoot string) (string, bool) {
+	p := chglJoin(repoRoot, "core", "internal", "version", "version.go")
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return "", false
+	}
+	re := regexp.MustCompile(`const\s+Version\s*=\s*"([^"]+)"`)
+	m := re.FindStringSubmatch(string(b))
+	if m == nil {
+		return "", false
+	}
+	return "v" + m[1], true
+}
+
+// chglDevdocsRoot —— 开发文档面根（与 py devdocs_root 同名同序逐字）。版本目录**现读唯一真源**
+// （GAP-20260927-47：曾钉死 `v2.5.10` ⇒ 换版静默过期）；读不到真源 ⇒ ok=false（调用方退 rc=2 不给结论）。
+func chglDevdocsRoot(repoRoot string) (string, bool) {
 	if v := os.Getenv("ZERG_DEVDOCS_ROOT"); v != "" {
-		return chglAbs(v)
+		return chglAbs(v), true
 	}
 	sibling := os.Getenv("ZERG_DOCS_ALT")
 	if sibling == "" {
@@ -834,7 +852,11 @@ func chglDevdocsRoot(repoRoot string) string {
 	if sibling == "" {
 		sibling = chglJoin(chglDir(chglAbs(repoRoot)), "Zerg-内部文档")
 	}
-	return chglAbs(chglJoin(sibling, "项目文档", "v2.5.10"))
+	ver, ok := chglCurrentVersion(repoRoot)
+	if !ok {
+		return "", false
+	}
+	return chglAbs(chglJoin(sibling, "项目文档", ver)), true
 }
 
 func chglPyBool(b bool) string {
@@ -919,7 +941,12 @@ func chglRun(stdout, stderr io.Writer, argv []string) int {
 		i++
 	}
 	if scope == "devdocs" && !chglHas(argv, "--root") {
-		root = chglDevdocsRoot(chglRepoRoot())
+		r, ok := chglDevdocsRoot(chglRepoRoot())
+		if !ok {
+			fmt.Fprint(stderr, "✗ 版本真源读不到（core/internal/version/version.go 里没有 `const Version = \"…\"`）⇒ 现算不出开发文档面默认根 ⇒ 不给结论（rc=2 · 换根请设 ZERG_DEVDOCS_ROOT）\n")
+			return chglRCBlocked
+		}
+		root = r
 		if !chglIsDir(root) {
 			fmt.Fprintf(stderr, "✗ 开发文档面根不在（%s）⇒ 不给结论（rc=2 · 仓外不可达不许静默当绿）\n", root)
 			return chglRCBlocked

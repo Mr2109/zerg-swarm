@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/Mr2109/zerg-swarm/agent/internal/backend"
+	"github.com/Mr2109/zerg-swarm/agent/internal/fleetlogs"
 	"github.com/Mr2109/zerg-swarm/agent/internal/heartbeat"
 	"github.com/Mr2109/zerg-swarm/agent/internal/logx"
 	"github.com/Mr2109/zerg-swarm/agent/internal/monitor"
@@ -130,6 +131,13 @@ func main() {
 	hr.Start()
 	startup.Mark("心跳上报已启动")
 
+	// 机群日志批量上报（缺口 `GAP-20260927-202` ① · 段2）：读本机日志文件（logx 的 `--log-file` 源）、
+	// 每 5s 一批增量 POST 主控 `/api/fleet/logs`（照 `gateway/protocol.md:62-65`）；上报失败 ⇒ 出声 + 计数
+	// （**不静默吞**）、游标不推进（下轮重试、条目不丢）。✗ 不动心跳/看门狗语义。
+	fr := fleetlogs.NewReporter(*controller, token, m, *logFile)
+	fr.Start()
+	startup.Mark("机群日志上报已启动")
+
 	// 创建 HTTP 服务器
 	srv := server.NewServer(agent)
 	// srv.Start 是**阻塞**的（2026-09-16 实测：写在它后面的两行永远执行不到 ⇒ /ready 恒 503）
@@ -160,6 +168,9 @@ func main() {
 
 	// 停止心跳
 	hr.Stop()
+
+	// 停止机群日志上报
+	fr.Stop()
 
 	// 停止后端
 	backendMgr.Stop()
