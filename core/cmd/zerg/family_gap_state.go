@@ -75,14 +75,28 @@ import (
 // ⇒ 2026-09-27 起收进闭集（原注「`不做` 另有其面」已不成立，逐字改掉）。
 var gapStateSettable = []string{gapStOpen, gapStSolved, gapStWontDo}
 
-// gapSolvedKindClosed —— `已解` 的**分栏闭集**（缺口账 `GAP-20260927-249` · 「销案 ≠ 修」的机制化）：
+// gapSolvedKindClosed —— `已解` 的**分栏闭集**（缺口账 `GAP-20260927-249` · 「销案 ≠ 修」的机制化；
+// 2026-10-10 · 缺口 `GAP-20260927-244` 方案乙加第四值 `部分`）：
 // 「**实现完成**」与「**销案**（存量 / 账滞后 / 前提不成立）」此前压进同一个 `state=已解` ⇒ 已解计数
-// **看不出哪些是真修的**。本闭集给 `--solved-kind` 三值：`实现` / `销案` / `前提不成立`。
-var gapSolvedKindClosed = []string{"实现", "销案", "前提不成立"}
+// **看不出哪些是真修的**。本闭集给 `--solved-kind` 四值：`实现` / `销案` / `前提不成立` / `部分`。
+// ★ `部分`（方案乙）：**本条的已治面已销、残面另记** —— 它**仍是** `state=已解`：读者面的未闭/已闭
+// 分档（`gapOpenStates` / `glvOpenStates` / `gsaOpenStates` · 门75 分子分母 · 门101）**一字不动**；
+// 未治的残面一句话走 `set-state --remainder` 另落一格（`gapRecord.Remainder`）。
+var gapSolvedKindClosed = []string{"实现", "销案", "前提不成立", gapSolvedKindPartial}
+
+// gapSolvedKindPartial —— 「**有残面的已解条**」那一档（缺口 `GAP-20260927-244` 方案乙）：本条的已治面
+// 已销、残面另记（残面文字走 `set-state --remainder`）。★ 它与 `实现`/`销案`/`前提不成立` 平级在
+// `gapSolvedKindClosed` 里 —— `state` 仍是 `已解`，读者面（未闭/已闭分档）一处分支都不动。
+const gapSolvedKindPartial = "部分"
 
 // gapSolvedKindUnclassified —— 老账（本格之前写的行）的**缺省读法**。★ **禁改存量行** —— 存量行没有
 // `solved_kind` 格时，读面一律作 `未分类`（不写盘）。它与「真的一格都没有」同义。
 const gapSolvedKindUnclassified = "未分类"
+
+// gapSolvedKindFilterClosed —— `gap ls --solved-kind` 的**筛值闭集** = 分栏闭集 + `未分类`（老账缺省）。
+// 只做**读数侧收窄**（「筛出口」：哪一批 `已解` 要列出来 ⇒ 能单列「有残面的已解条」）；★ 它**不进**
+// 任何「未闭/已闭」判据（那是 `state` 那一维 —— 本值集只收窄打印面，不动任何分档）。
+var gapSolvedKindFilterClosed = []string{"实现", "销案", "前提不成立", gapSolvedKindPartial, gapSolvedKindUnclassified}
 
 // gapSolvedKindOf —— 账行的 `solved_kind`（空串 ⇒ `未分类`）。`gap ls` / `gap show` / `set-state`
 // 三处**同一取值口**（不自创第二套）。
@@ -102,7 +116,7 @@ func gapSolvedKindOf(r gapRecord) string {
 }
 
 // gapSolvedKindSplitLine —— `gap ls` 人面的**报数分栏**（缺口账 `GAP-20260927-249`）：把筛后那一批里
-// `state=已解` 的行按 `solved_kind` 数成「实现 N · 销案 N · 前提不成立 N · 未分类 N」。
+// `state=已解` 的行按 `solved_kind` 数成「实现 N · 销案 N · 前提不成立 N · 部分 N · 未分类 N」。
 // 返回 `(行, true)`；**筛后一条 `已解` 都没有 ⇒ `("", false)`**（老查询输出逐字节不变）。
 // 只印**非零**栏（零栏不占位）：栏序固定照 `gapSolvedKindClosed`，`未分类` 收尾。
 func gapSolvedKindSplitLine(out []gapRecord) (string, bool) {
@@ -131,7 +145,7 @@ func gapSolvedKindSplitLine(out []gapRecord) (string, bool) {
 }
 
 // gapSolvedKindCountsText —— `recs` 里 `state=已解` 的行按 `solved_kind` 的计数文本
-// （`实现 N · 销案 N · 前提不成立 N · 未分类 N` · 只印非零栏）。`gap export` 件头用（缺口账
+// （`实现 N · 销案 N · 前提不成立 N · 部分 N · 未分类 N` · 只印非零栏）。`gap export` 件头用（缺口账
 // `GAP-20260927-249`）。一条已解都没有 ⇒ `（无已解）`。
 func gapSolvedKindCountsText(recs []gapRecord) string {
 	n := map[string]int{}
@@ -161,9 +175,16 @@ func gapSolvedKindCountsText(recs []gapRecord) string {
 // gapNoteSep —— 一条注的形态：`<时刻> · <谁>：<文本>`（时刻那一格**不参与幂等比对**）。
 const gapNoteSep = "："
 
+// gapNoteLine —— 一条注的**成文**：`<时刻> · <谁>：<文本>`。落注面的**唯一真源** ——
+// `gap note <id> --text` 与 `gap add` / `gap idea promote` **建条顺带落注**（缺口 `GAP-20260927-259`）
+// 都读它 ⇒ 形态不分家（✗ 不造第二套）。
+func gapNoteLine(by, text string) string {
+	return fmt.Sprintf("%s · %s%s%s", gapNow(), by, gapNoteSep, text)
+}
+
 // gapSetStateFields / gapNoteFields —— `--json` 可取字段（与命令树里的 `fields` 同一份口径）。
 // ★ 批4 第四片（2026-09-28）：销案两态对拍 ⇒ `--json` 多两格（`two_state` 齐/缺/不适用 · `exempt` 豁免与否）。
-var gapSetStateFields = []string{"id", "fp", "state", "solved_kind", "changed", "two_state", "exempt"}
+var gapSetStateFields = []string{"id", "fp", "state", "solved_kind", "remainder", "changed", "two_state", "exempt"}
 var gapNoteFields = []string{"id", "fp", "notes", "changed"}
 
 // gapFrontJSONFields —— `--json <字段>` 的**字段面前置判定**（缺口账 `GAP-20261005-26` · 本枚）。
@@ -231,7 +252,7 @@ func gapRewriteOne(inv *invocation, led gapLedger, idx int, rec gapRecord, cmdNa
 	//
 	//   治：锁一取到就**现读**盘上真源为新基线（「读」被包进锁），本发的整条记录按 **id 重放**到
 	//   新基线上（未动的行逐字节取新基线原文）—— ✗ 不是拿旧基线整件覆盖 ⇒ 别的写者已落的更新
-	//   不被覆盖（零丢更新）；同一 id 在两次读之间被别人改过 ⇒ 仍按**原口径拒写**（退 2）。
+	//   不被覆盖（零丢更新）；同一 id 在两次读之间被别人改过 ⇒ 仍按**原口径拒写**（退 14 · 并发冲突）。
 	//   ★ 取不到锁 / 现读不出 ⇒ 按原口径退 2 / 8 且**不给结论**（✗ 不静默继续）。
 	lk, lerr := gapLedgerLock(led.Path)
 	if lerr != nil {
@@ -249,11 +270,11 @@ func gapRewriteOne(inv *invocation, led gapLedger, idx int, rec gapRecord, cmdNa
 	//    之间再无别人可插）+ 按 id **重放**本发到新基线上。
 	tidx := gapFindIdx(fresh, rec.ID)
 	if tidx < 0 {
-		return "concurrent_write", exitUsage,
+		return "concurrent_write", exitConflict,
 			fmt.Sprintf("锁内现读：目标 id %s 不在账内（`%s`） ⇒ 本次拒写", rec.ID, cmdName)
 	}
 	if idx >= 0 && idx < len(led.Recs) && !gapRecJSONEqual(led.Recs[idx], fresh.Recs[tidx]) {
-		return "concurrent_write", exitUsage,
+		return "concurrent_write", exitConflict,
 			fmt.Sprintf("同一 id %s 在「本进程读入」与「锁内现读」之间被别人改过 ⇒ 本次拒写（重跑一次即好）", rec.ID)
 	}
 	enc, err := json.Marshal(rec)
@@ -386,11 +407,11 @@ func gapReceiptPrint(w io.Writer, receipt string) {
 //
 //	· 基线 = 本进程**读入那一刻**的整件字节（`led.Raw`）的 `sha256`；
 //	· 写前**现读**盘上那一件，现算 `sha256`；
-//	· 两者不符 ⇒ 退 `concurrent_write`（调用方 `gapWriteFail` 译成**退码 2** · 逐字点名两个 `sha16`）；
+//	· 两者不符 ⇒ 退 `concurrent_write`（调用方 `gapWriteFail` 译成**退码 14**（`kind=conflict`） · 逐字点名两个 `sha16`）；
 //	· 写前**现读不到** ⇒ 分两档（甲案 · 2026-10-03 拍定 · 缺口 `GAP-20260927-191` 修）：
 //	  **「件不在」**（`os.IsNotExist`）⇒ 视为**空账**：空账本来就该能写第一条（首次 `add` / 首次改态）
 //	  ⇒ **放行**；**「件在、但读不出来」**（损坏 / 无权限 · 非 `IsNotExist`）⇒ 拿不到「现在」这一格
-//	  ⇒ **拒写**（退 `concurrent_write` · 退码 2）。★ 这道闸的本意只是「**别覆盖别人的写**」——
+//	  ⇒ **拒写**（退 `concurrent_write` · 退码 14）。★ 这道闸的本意只是「**别覆盖别人的写**」——
 //	  盘上没有件，就没有可覆盖的对象；原先「读不到一律拒写」把**空账首写**误伤了。
 //	· 相符 ⇒ 放行，此后仍是原路（审计先落盘 → 整件重写 → 读回对拍）。
 //
@@ -398,9 +419,10 @@ func gapReceiptPrint(w io.Writer, receipt string) {
 // `bulk set-state` / `verify-one` / `receipt apply`）都只走唯一收口 `gapRewriteOne` ⇒ 闸加在收口上，
 // 这些面**自动**被护住（不另开写路 · 也不是每个命令里各写一遍）。
 //
-// ★ 退码取 2（本片取定 · 回执如实点名）：语义是「**这发不算数**、重跑一次即好」—— 不是真源坏（8）、
-// 不是审计坏（8）。仓内另有专号 `exitConflict = 14`（`kind=conflict` · `remedy=wait_or_reload`），
-// 本片**未取**它（本面要的是「谁改谁重跑」，不是「等一会儿再来」）；是否改取 14 留待定夺。
+// ★ 退码取 14（**2026-10-10 改定 · 缺口 `GAP-20260928-192`**）：语义是「**并发冲突**」—— 本族口径
+// 「并发拒写 ⇒ 退 14」（`exitConflict` · `kind=conflict`），与同族 `repo commit` 的 `repo_busy` /
+// `guard` 的 `rebuild_blocked` 同码。★ 改前取 2（用法错）⇒ 机器消费方把「并发冲突（**可重试**）」
+// 误当「用法错（**不可重试**）」；本次改取 14（改动只收敛「并发拒写」这一路，用法错照旧退 2）。
 func gapConcurGate(led gapLedger, cmdName string) (string, int, string) {
 	base := sha256Of(led.Raw)
 	now, err := os.ReadFile(led.Path)
@@ -412,14 +434,14 @@ func gapConcurGate(led gapLedger, cmdName string) (string, int, string) {
 		if os.IsNotExist(err) {
 			return "", exitOK, ""
 		}
-		return "concurrent_write", exitUsage,
+		return "concurrent_write", exitConflict,
 			fmt.Sprintf("写前**现读**不到账件（%v） ⇒ 拿不到「现在」这一格，拒写", err)
 	}
 	cur := sha256Of(now)
 	if cur == base {
 		return "", exitOK, ""
 	}
-	return "concurrent_write", exitUsage,
+	return "concurrent_write", exitConflict,
 		fmt.Sprintf("基线 sha16=%s（`%s` 读入那一刻） · 现状 sha16=%s（写前现读）", base[:16], cmdName, cur[:16])
 }
 
@@ -698,6 +720,101 @@ func gapTwoStateDecimal(v string) bool {
 	return true
 }
 
+// gapTwoStateAutoReading —— 一条「自动跑」命令串 ⇒ 三格读数串
+// （`cmd=<原样命令串> · rc=<真退码> · reading=<stdout 首行或摘要>`）。
+//
+// 形态**照拄** `gateFourStatesRun`（切词 · 无 shell 展开 · 60s 上限 · 收 stdout+stderr）
+// —— ✗ 不另造 runner：跑不起来（命令不存在 / 不可执行 ⇒ `Empty`）或 `rc∈{126,127}`
+// ⇒ `ok=false`，调用方按本族既有档**判不了**（✗ 不许当 0 用）。
+//
+// `reading` 取 stdout **首个非空行**（无输出 ⇒ 摘要 `(无 stdout 输出 · rc=N)`）；行内若含分段符
+// ` · ` ⇒ 换成 ` / `（该符与三格分隔同形，留着会被唯一判处读成「多了一格」）。
+func gapTwoStateAutoReading(cmdStr string) (string, bool) {
+	cell := gateFourStatesRun(cmdStr, nil)
+	if cell.Empty || cell.RC == 126 || cell.RC == 127 {
+		return "", false
+	}
+	reading := gapTwoStateFirstLine(string(cell.Out))
+	if reading == "" {
+		reading = fmt.Sprintf("(无 stdout 输出 · rc=%d)", cell.RC)
+	}
+	reading = strings.ReplaceAll(reading, gapTwoStateSep, " / ")
+	return "cmd=" + cmdStr + gapTwoStateSep + "rc=" + strconv.Itoa(cell.RC) + gapTwoStateSep + "reading=" + reading, true
+}
+
+// gapTwoStateFirstLine —— 一段输出的**首个非空行**（去首尾空白 · 去行尾 `\r`）。
+func gapTwoStateFirstLine(s string) string {
+	for _, ln := range strings.Split(s, "\n") {
+		if t := strings.TrimSpace(strings.TrimSuffix(ln, "\r")); t != "" {
+			return t
+		}
+	}
+	return ""
+}
+
+// gapTwoStateResolution —— 两态读数 resolver 的一次判决（**判与落同源**的唯一取值面）：
+//
+//	Before / After = 两侧的**最终**三格读数串（自动跑出的 · 或手传的）；
+//	Note           = 「同给 cmd 与 read」那一档的**明报**（空 ⇒ 无）；
+//	RC             = `exitOK`；或**判不了**要退的码（跑不起来 ⇒ `exitBlocked`=8）。
+type gapTwoStateResolution struct {
+	Before, After string
+	Note          string
+	RC            int
+}
+
+// gapTwoStateResolve —— 两态读数的**唯一 resolver**：裁决（`gapTwoStateJudge`）与落账
+// （`gapTwoStateLanded`）都只认它拼出的三格（✗ 不许两处各拼一套 · 缺口 `GAP-20260928-196` 甲）。
+//
+// 每侧取值优先级（取定 · **明报**）：给了 `--<侧>-cmd` ⇒ **现读语义优先** —— CLI 自己跑那一条命令、
+// 把 `cmd=/rc=/reading=` 三格按**真退码**填死（✗ 不伪造 rc）；同给 `--<侧>-read` ⇒ 手传那一枚
+// **不取**、并把「现读优先」写进 `Note`（✗ 不静默取一）。两侧都没给 cmd ⇒ 照旧用手传 read（口径不动）。
+// 任一侧**跑不起来** ⇒ `RC=exitBlocked`（判不了 · 该族既有档）。
+//
+// 结果**缓存**在 `inv.twoStateCache` 上：同一发里裁决与落账（被调多次）**只跑一趟**、且逐字同源。
+func gapTwoStateResolve(inv *invocation) *gapTwoStateResolution {
+	if inv == nil {
+		return &gapTwoStateResolution{RC: exitOK}
+	}
+	if inv.twoStateCache != nil {
+		return inv.twoStateCache
+	}
+	res := &gapTwoStateResolution{RC: exitOK}
+	sides := []struct {
+		label string
+		cmd   string
+		read  string
+		dst   *string
+	}{
+		{"改前", "--before-cmd", "--before-read", &res.Before},
+		{"改后", "--after-cmd", "--after-read", &res.After},
+	}
+	for _, s := range sides {
+		cmdStr := strings.TrimSpace(inv.flagVal(s.cmd))
+		readStr := strings.TrimSpace(inv.flagVal(s.read))
+		if cmdStr == "" {
+			*s.dst = readStr
+			continue
+		}
+		got, ok := gapTwoStateAutoReading(cmdStr)
+		if !ok {
+			res.RC = exitBlocked
+			res.Note = fmt.Sprintf("%s：`%s` 的命令**跑不起来**（命令不存在 / 不可执行 · rc=126/127）⇒ %s 现读拿不到三格 ⇒ 按本族既有档**判不了**（退码 %d · ✗ 不当 0 用）", s.label, s.cmd, s.label, exitBlocked)
+			inv.twoStateCache = res
+			return res
+		}
+		if readStr != "" {
+			if res.Note != "" {
+				res.Note += "\n"
+			}
+			res.Note += fmt.Sprintf("%s：`%s`（手传读数）与 `%s`（现读）**同给** ⇒ 按**现读语义优先**取 `%s` 跑出的三格；手传那一枚**不取**（明报 · ✗ 不静默取一）", s.label, s.read, s.cmd, s.cmd)
+		}
+		*s.dst = got
+	}
+	inv.twoStateCache = res
+	return res
+}
+
 // gapTwoStateMissing —— 两态读数**逐段真判**（批4 第五片：不只查空串 ⇒ 逐格点出**哪一格 · 怎么不对**）。
 func gapTwoStateMissing(beforeRaw, afterRaw string) []string {
 	miss := []string{}
@@ -733,8 +850,14 @@ func gapTwoStateJudge(inv *invocation, id, stateWant string) (pair string, exemp
 	if stateWant != gapStSolved {
 		return "不适用", false, nil
 	}
-	beforeRaw := strings.TrimSpace(inv.flagVal("--before-read"))
-	afterRaw := strings.TrimSpace(inv.flagVal("--after-read"))
+	// ★ GAP-20260928-196（甲）：取值走**唯一 resolver**（`--before-cmd`/`--after-cmd` 自动跑 ⇒ 三格
+	//   现读填死；手传 `--before-read`/`--after-read` 照旧）—— 与落账同源（✗ 不各拼一套）。
+	res := gapTwoStateResolve(inv)
+	if res.RC != exitOK {
+		// 自动跑那两条**跑不起来** ⇒ **判不了**（退码 8 · 该族既有档）—— 调用方翻成退码，✗ 不当 0 用。
+		return "判不了", false, []string{res.Note}
+	}
+	beforeRaw, afterRaw := res.Before, res.After
 	miss = gapTwoStateMissing(beforeRaw, afterRaw)
 	if len(miss) == 0 {
 		return "齐", false, nil
@@ -744,6 +867,53 @@ func gapTwoStateJudge(inv *invocation, id, stateWant string) (pair string, exemp
 	// 只有两段都空（= 真没给）时，存量账才走豁免分支。
 	malformed := beforeRaw != "" || afterRaw != ""
 	return "缺", !malformed && !gapTwoStateNewLedger(id), miss
+}
+
+// gapTwoStateGate —— 「新账销案必须带两态读数」的**共用闸**（缺口 `GAP-20260928-195`）。
+//
+// 病（该缺口逐字）：闸此前**只内联**在单条 `set-state` 一处 ⇒ `gap bulk set-state`（批量改态）与
+// 判据批量面 `gap verify`（跑判据改态）同样能把号改到 `已解`，却**绕道**不受闸约束 ⇒ 「无两态读数
+// 直接销案」依然可行，闸形同虚设。回执 `receipt apply`（`已派` → `已解`）同理是把号改到 `已解` 的第四条面。
+//
+// 治：把判决抽到**这一处共用函数** —— 所有能把号改到 `已解` 的写面在**真写之前**一律调它。判决本身
+// **不另造口径**：仍走本片唯一判处 `gapTwoStateJudge`（形 `齐`/`缺`/`不适用` · 存量豁免 · 逐段缺名）。
+// 放行（非 `已解` 面 / 存量豁免 / 两态齐）⇒ rc=`exitOK`（一个字不打）；拒收 ⇒ rc=`exitUsage`
+// （逐段缺名 + 形态说明 + 生效面打到 stderr · `--json` 信封面落 `two_state=缺`）。
+// **读面动作**：本函数一个字都不写（拒收时真源一个字节未改、审计一行未落 —— 闸在任何「审计先落盘」之前）。
+func gapTwoStateGate(inv *invocation, id, stateWant, cmdLabel, ledgerPath string, ledgerLines int, stderr io.Writer) int {
+	pair, exempt, miss := gapTwoStateJudge(inv, id, stateWant)
+	// ★ GAP-20260928-196（甲）：自动跑那两条（`--before-cmd`/`--after-cmd`）**跑不起来** ⇒ **判不了**
+	//   （退码 8 · 该族既有档）—— 真源一个字节未改、审计一行未落；✗ 绝不当 0 用。
+	if pair == "判不了" {
+		inv.setErr("blocked", "two_state_unrunnable", "两态读数现读跑不起来（判不了）")
+		for _, m := range miss {
+			fmt.Fprintf(stderr, "%s: `gap %s` **判不了**（退码 %d）—— %s\n", progName, cmdLabel, exitBlocked, m)
+		}
+		fmt.Fprintf(stderr, "  真源         : %s（%d 行 · **本发一个字节未改**、审计一行未落 —— 闸在「审计先落盘」之前）\n", orDash(ledgerPath), ledgerLines)
+		gapTwoStateMeta(inv, "判不了", false)
+		return exitBlocked
+	}
+	if stateWant != gapStSolved || exempt || len(miss) == 0 {
+		return exitOK
+	}
+	inv.setErr("usage", "two_state_missing", "销案缺两态读数（缺 "+strconv.Itoa(len(miss))+" 段）")
+	if gapTwoStateNewLedger(id) {
+		fmt.Fprintf(stderr, "%s: `gap %s` **销案拒收** —— %s（号内日期 %s ≥ %s ⇒ **新账**：拿不出两态读数就不给销）\n",
+			progName, cmdLabel, id, orDash(gapIDDate(id)), gapTwoStateDateMin)
+	} else {
+		// GAP-20260929-17：存量账但**给了值却形态不符** ⇒ 同样拒收（不许静默降级成存量豁免）。
+		fmt.Fprintf(stderr, "%s: `gap %s` **销案拒收** —— %s（存量账：`--before-read`/`--after-read` **给了值但形态不符** ⇒ 按 GAP-20260929-17 不降级成存量豁免）\n",
+			progName, cmdLabel, id)
+	}
+	for _, m := range miss {
+		fmt.Fprintf(stderr, "    ✗ %s\n", m)
+	}
+	fmt.Fprintf(stderr, "  两态读数形态 : --before-read \"cmd=<命令> · rc=<真退码> · reading=<关键读数一行>\" · --after-read 同形（改前/改后**成对**）\n")
+	fmt.Fprintf(stderr, "  生效面       : 新账（号内日期 ≥ %s）强制 · 存量账豁免**仅当两段真没给**（给了值却形态不符 ⇒ 拒收 · GAP-20260929-17）（设计稿 §11.5 两态对拍 · 共用闸取自缺口 `GAP-20260928-195`）\n", gapTwoStateDateMin)
+	fmt.Fprintf(stderr, "  真源         : %s（%d 行 · **本发一个字节未改**、审计一行未落 —— 闸在「审计先落盘」之前）\n",
+		orDash(ledgerPath), ledgerLines)
+	gapTwoStateMeta(inv, "缺", false)
+	return exitUsage
 }
 
 // gapTwoStateMeta —— `--json` 同族信封面上的两格（本片新增：回显**两态是否齐**、**豁免与否**）。
@@ -767,6 +937,9 @@ func cmdGapSetState(inv *invocation, stdout, stderr io.Writer) int {
 	evidence := strings.TrimSpace(inv.flagVal("--evidence"))
 	// ★ 本枚（缺口账 `GAP-20260927-249`）：「销案 ≠ 修」的**分栏** —— `--state 已解` 时给这一类。
 	solvedKind := strings.TrimSpace(inv.flagVal("--solved-kind"))
+	// ★ 缺口 `GAP-20260927-244` 方案乙：`--remainder <残面描述>` —— `部分` 档的**残面另记**
+	//   （本条 `state=已解` 且 `solved_kind=部分` 时，把**未治的残面**一句话落 `gapRecord.Remainder`）。
+	remainder := strings.TrimSpace(inv.flagVal("--remainder"))
 
 	// ① 用法面（在任何盘面动作之前 —— 与 `add` / `verify` 同一条位置）
 	if inv.jsonGiven && len(inv.fields) == 0 {
@@ -785,7 +958,7 @@ func cmdGapSetState(inv *invocation, stdout, stderr io.Writer) int {
 	if stateWant == "" {
 		inv.setErr("usage", "missing_required", "缺 --state")
 		fmt.Fprintf(stderr, "%s: `gap set-state` 缺必填旗标：--state\n", progName)
-		fmt.Fprintf(stderr, "用法：zerg gap set-state <GAP id> --state <%s> --evidence <一句话> [--solved-kind <实现|销案|前提不成立>] [--before-read <cmd=… · rc=… · reading=…>] [--after-read <cmd=… · rc=… · reading=…>] [--by <谁>] [--dry-run | --yes]\n",
+		fmt.Fprintf(stderr, "用法：zerg gap set-state <GAP id> --state <%s> --evidence <一句话> [--solved-kind <实现|销案|前提不成立|部分>] [--remainder <残面描述>] [--before-cmd <命令串>] [--after-cmd <命令串>] [--before-read <cmd=… · rc=… · reading=…>] [--after-read <cmd=… · rc=… · reading=…>] [--by <谁>] [--dry-run | --yes]\n",
 			strings.Join(gapStateSettable, "|"))
 		return exitUsage
 	}
@@ -817,6 +990,18 @@ func cmdGapSetState(inv *invocation, stdout, stderr io.Writer) int {
 	if solvedKind != "" && stateWant != gapStSolved {
 		inv.setErr("usage", "solved_kind_only_for_solved", "--solved-kind 只对 --state 已解 有效")
 		fmt.Fprintf(stderr, "%s: `--solved-kind` 只对 `--state %s` 有效（本发 --state %s）—— 改别的态不带它\n",
+			progName, gapStSolved, stateWant)
+		return exitUsage
+	}
+	// ★ 缺口 `GAP-20260927-244`：`--remainder` 两道用法闸（裸给 / 只对已解）—— 与 `--solved-kind` 同款。
+	if inv.hasFlag("--remainder") && remainder == "" {
+		inv.setErr("usage", "remainder_missing_value", "--remainder 没给值")
+		fmt.Fprintf(stderr, "%s: `--remainder` 要给一段**残面描述**（裸给不降级 —— 用法错 2）\n", progName)
+		return exitUsage
+	}
+	if remainder != "" && stateWant != gapStSolved {
+		inv.setErr("usage", "remainder_only_for_solved", "--remainder 只对 --state 已解 有效")
+		fmt.Fprintf(stderr, "%s: `--remainder` 只对 `--state %s` 有效（本发 --state %s）—— 改别的态不带它\n",
 			progName, gapStSolved, stateWant)
 		return exitUsage
 	}
@@ -867,9 +1052,33 @@ func cmdGapSetState(inv *invocation, stdout, stderr io.Writer) int {
 			kindWant = gapSolvedKindUnclassified
 		}
 	}
+	// ★ 缺口 `GAP-20260927-244`：**残面文字**取值 —— 给了就写；没给 ⇒ 保留旧值（幂等向）。
+	//   ★ 改到**非** `已解` 的态 ⇒ 本格**一个字节不动**（`r.Remainder` 原样带回，与 `solved_kind` 同处置）。
+	remainderWant := r.Remainder
+	if stateWant == gapStSolved && inv.hasFlag("--remainder") {
+		remainderWant = remainder
+	}
 
 	// ④★ 批4 第四片：两态读数**取值**（只在改到 `已解` 时有语义；其余状态 ⇒ 「不适用」· 一个字都不多打）。
 	twoStatePair, twoStateExempt, twoStateMiss := gapTwoStateJudge(inv, r.ID, stateWant)
+	// ★ GAP-20260928-196（甲）：自动跑那两条（`--before-cmd`/`--after-cmd`）的取值走**唯一 resolver**
+	//   （与裁决同源）：跑不起来 ⇒ **判不了**（退码 8 · 该族既有档）—— 真源一个字节未改、审计一行未落；
+	//   同给 cmd 与 read ⇒ **明报**「现读优先」（✗ 不静默取一）。非销案态 ⇒ 不碰 resolver（不跑命令）。
+	var twoStateRes *gapTwoStateResolution
+	if stateWant == gapStSolved {
+		twoStateRes = gapTwoStateResolve(inv)
+		if twoStateRes.Note != "" {
+			fmt.Fprintf(stderr, "%s: %s\n", progName, twoStateRes.Note)
+		}
+		if twoStatePair == "判不了" {
+			inv.setErr("blocked", "two_state_unrunnable", "两态读数现读跑不起来（判不了）")
+			for _, m := range twoStateMiss {
+				fmt.Fprintf(stderr, "    ✗ %s\n", m)
+			}
+			fmt.Fprintf(stderr, "  真源         : %s（%d 行 · **本发一个字节未改**、审计一行未落）\n", orDash(led.Path), len(led.Lines))
+			return exitBlocked
+		}
+	}
 
 	// ④★★ 批4 第五片：**销案落账** —— 两态**齐** ⇒ 把两态读数按写死的字段名落进该条账行的
 	// `solved_evidence`（设计稿 §11.5 逐字「自动写进 solved_evidence」· `O-13`「钉成可解析形态」）。
@@ -877,16 +1086,17 @@ func cmdGapSetState(inv *invocation, stdout, stderr io.Writer) int {
 	// （即：现有一切调用路径的行为逐字不变）。`landed` 同时是**幂等比对**与**真写**共用的那一格取值。
 	landed := evidence
 	if twoStatePair == "齐" {
-		landed = gapTwoStateLanded(evidence, inv.flagVal("--before-read"), inv.flagVal("--after-read"))
+		landed = gapTwoStateLanded(evidence, twoStateRes.Before, twoStateRes.After)
 	}
 
-	// ⑤ 幂等：状态**与**证据（改到 `已解` 时另加 `solved_kind`）都逐字已在位 ⇒ 「无变化」（0）。
-	if r.State == stateWant && r.Evidence == landed && (stateWant != gapStSolved || gapSolvedKindOf(r) == kindWant) {
+	// ⑤ 幂等：状态**与**证据（改到 `已解` 时另加 `solved_kind` / `remainder`）都逐字已在位 ⇒ 「无变化」（0）。
+	if r.State == stateWant && r.Evidence == landed &&
+		(stateWant != gapStSolved || (gapSolvedKindOf(r) == kindWant && r.Remainder == remainderWant)) {
 		inv.changed = boolPtr(false)
 		if inv.jsonGiven {
 			gapTwoStateMeta(inv, twoStatePair, twoStateExempt)
 			return selectJSON(stdout, stderr, inv, inv.path, inv.fields,
-				map[string]string{"id": r.ID, "fp": r.FP, "state": r.State, "solved_kind": gapSolvedKindOf(r), "changed": "false",
+				map[string]string{"id": r.ID, "fp": r.FP, "state": r.State, "solved_kind": gapSolvedKindOf(r), "remainder": r.Remainder, "changed": "false",
 					"two_state": twoStatePair, "exempt": boolWord(twoStateExempt)})
 		}
 		fmt.Fprintf(stdout, "无变化 %s · state=%s（同 id 同态同证据 ⇒ 幂等命中：不写真源、不写审计）\n", r.ID, r.State)
@@ -899,12 +1109,13 @@ func cmdGapSetState(inv *invocation, stdout, stderr io.Writer) int {
 			inv.changed = boolPtr(false)
 			gapTwoStateMeta(inv, twoStatePair, twoStateExempt)
 			return selectJSON(stdout, stderr, inv, inv.path, inv.fields,
-				map[string]string{"id": r.ID, "fp": r.FP, "state": stateWant, "solved_kind": kindWant, "changed": "false",
+				map[string]string{"id": r.ID, "fp": r.FP, "state": stateWant, "solved_kind": kindWant, "remainder": remainderWant, "changed": "false",
 					"two_state": twoStatePair, "exempt": boolWord(twoStateExempt)})
 		}
 		plan2 := "evidence     : " + evidence
 		if stateWant == gapStSolved {
 			plan2 += fmt.Sprintf("\n    solved_kind  : %s → %s", gapSolvedKindOf(r), kindWant)
+			plan2 += fmt.Sprintf("\n    remainder    : %s → %s", gapShowText(r.Remainder), gapShowText(remainderWant))
 		}
 		gapStatePlanBlock(stdout, "--dry-run", "set-state", led.Path, len(led.Lines),
 			r.ID, r.FP, r.State, stateWant,
@@ -922,28 +1133,13 @@ func cmdGapSetState(inv *invocation, stdout, stderr io.Writer) int {
 
 	// ⑤★ 批4 第四片：**销案两态对拍闸**（设计稿 §11.5：「新账强制 · 存量豁免」）—— 只挡真写这一态（`--dry-run` 恒 0）。
 	//    新账（号内日期 ≥ `2026-09-28`）+ 改到 `已解` + 两态读数不齐 ⇒ **拒收**（退 2 · 逐段点名）。
+	//    ★ 缺口 `GAP-20260928-195`（本枚）：判决已**抽成共用闸** `gapTwoStateGate` —— 与批量
+	//      `bulk set-state`、判据批量面 `verify`、回执面 `receipt apply` **同一道判**（✗ 不再只内联在本一处）。
 	//    ⚠ 排在这一处：幂等「无变化」与 `--dry-run` 都在上面先行返回（预演不该被拦）；
 	//    闸只挡真写；预演由上面的提示行先告知会被拒。
 	//    真源在这之前只被读过 —— 拒收时**一个字节未改、审计一行未落**。
-	if stateWant == gapStSolved && !twoStateExempt && len(twoStateMiss) > 0 {
-		inv.setErr("usage", "two_state_missing", "销案缺两态读数（缺 "+strconv.Itoa(len(twoStateMiss))+" 段）")
-		if gapTwoStateNewLedger(r.ID) {
-			fmt.Fprintf(stderr, "%s: `gap set-state` **销案拒收** —— %s（号内日期 %s ≥ %s ⇒ **新账**：拿不出两态读数就不给销）\n",
-				progName, r.ID, orDash(gapIDDate(r.ID)), gapTwoStateDateMin)
-		} else {
-			// GAP-20260929-17：存量账但**给了值却形态不符** ⇒ 同样拒收（不许静默降级成存量豁免）。
-			fmt.Fprintf(stderr, "%s: `gap set-state` **销案拒收** —— %s（存量账：`--before-read`/`--after-read` **给了值但形态不符** ⇒ 按 GAP-20260929-17 不降级成存量豁免）\n",
-				progName, r.ID)
-		}
-		for _, m := range twoStateMiss {
-			fmt.Fprintf(stderr, "    ✗ %s\n", m)
-		}
-		fmt.Fprintf(stderr, "  两态读数形态 : --before-read \"cmd=<命令> · rc=<真退码> · reading=<关键读数一行>\" · --after-read 同形（改前/改后**成对**）\n")
-		fmt.Fprintf(stderr, "  生效面       : 新账（号内日期 ≥ %s）强制 · 存量账豁免**仅当两段真没给**（给了值却形态不符 ⇒ 拒收 · GAP-20260929-17）（设计稿 §11.5 两态对拍 · 表 `D6` · `M-33`）\n", gapTwoStateDateMin)
-		fmt.Fprintf(stderr, "  真源         : %s（%d 行 · **本发一个字节未改**、审计一行未落 —— 闸在「审计先落盘」之前）\n",
-			led.Path, len(led.Lines))
-		gapTwoStateMeta(inv, "缺", false)
-		return exitUsage
+	if rc := gapTwoStateGate(inv, r.ID, stateWant, "set-state", led.Path, len(led.Lines), stderr); rc != exitOK {
+		return rc
 	}
 
 	// ★ 本枚（缺口账 `GAP-20261005-26`）：**字段面前置判定** —— 把 `--json` 字段名校验从出口
@@ -965,6 +1161,7 @@ func cmdGapSetState(inv *invocation, stdout, stderr io.Writer) int {
 	r.Evidence = landed
 	if stateWant == gapStSolved {
 		r.SolvedKind = kindWant
+		r.Remainder = remainderWant
 	}
 	if (stateWant == gapStSolved || stateWant == gapStWontDo) && before != stateWant {
 		r.SolvedAt = gapNow()
@@ -978,7 +1175,7 @@ func cmdGapSetState(inv *invocation, stdout, stderr io.Writer) int {
 	if inv.jsonGiven {
 		gapTwoStateMeta(inv, twoStatePair, twoStateExempt)
 		return selectJSON(stdout, stderr, inv, inv.path, inv.fields,
-			map[string]string{"id": r.ID, "fp": r.FP, "state": r.State, "solved_kind": gapSolvedKindOf(r), "changed": boolWord(before != stateWant || led.Recs[idx].Evidence != landed),
+			map[string]string{"id": r.ID, "fp": r.FP, "state": r.State, "solved_kind": gapSolvedKindOf(r), "remainder": r.Remainder, "changed": boolWord(before != stateWant || led.Recs[idx].Evidence != landed),
 				"two_state": twoStatePair, "exempt": boolWord(twoStateExempt)})
 	}
 	fmt.Fprintf(stdout, "已改态 %s · state %s → %s（真源 %d 行不变 · 只重写目标那一行 · 审计已落 1 行）\n",
@@ -986,10 +1183,13 @@ func cmdGapSetState(inv *invocation, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "  solved_evidence : %s\n", r.Evidence)
 	if stateWant == gapStSolved {
 		fmt.Fprintf(stdout, "  solved_kind     : %s（销案分栏 · 缺口账 `GAP-20260927-249`）\n", gapSolvedKindOf(r))
+		if r.Remainder != "" {
+			fmt.Fprintf(stdout, "  remainder       : %s（残面另记 · 缺口账 `GAP-20260927-244`）\n", r.Remainder)
+		}
 	}
 	if twoStatePair == "齐" {
-		fmt.Fprintf(stdout, "  两态·改前    : %s\n", strings.TrimSpace(inv.flagVal("--before-read")))
-		fmt.Fprintf(stdout, "  两态·改后    : %s\n", strings.TrimSpace(inv.flagVal("--after-read")))
+		fmt.Fprintf(stdout, "  两态·改前    : %s\n", strings.TrimSpace(twoStateRes.Before))
+		fmt.Fprintf(stdout, "  两态·改后    : %s\n", strings.TrimSpace(twoStateRes.After))
 	}
 	if stateWant == gapStSolved {
 		fmt.Fprintf(stdout, "  solved_at       : %s\n", r.SolvedAt)
@@ -1178,7 +1378,7 @@ func cmdGapNote(inv *invocation, stdout, stderr io.Writer) int {
 
 	// ⑦ 真写：**只**追加 `notes` 一条；`state` 逐字不动（改前改后现算对拍，破 ⇒ 不给结论）。
 	before := r.State
-	r.Notes = append(append([]string{}, r.Notes...), fmt.Sprintf("%s · %s%s%s", gapNow(), by, gapNoteSep, text))
+	r.Notes = append(append([]string{}, r.Notes...), gapNoteLine(by, text))
 	if r.State != before {
 		inv.setErr("failed", "state_mutated", "注这一路改了 state")
 		fmt.Fprintf(stderr, "%s: 内部对拍破了：注这一路改了 `state`（%s → %s）⇒ 不给结论（退码 1）\n", progName, before, r.State)
@@ -1407,8 +1607,8 @@ func gapNoteSupersede(inv *invocation, stdout, stderr io.Writer, led gapLedger, 
 func gapWriteFail(inv *invocation, stderr io.Writer, detail, msg, cmdName string) {
 	switch detail {
 	case "concurrent_write":
-		inv.setErr("usage", detail, msg)
-		fmt.Fprintf(stderr, "%s: **并发冲突** —— 账件在本进程读入之后被别人改过 ⇒ 本次**拒写**（退码 2）\n", progName)
+		inv.setErr("conflict", detail, msg)
+		fmt.Fprintf(stderr, "%s: **并发冲突** —— 账件在本进程读入之后被别人改过 ⇒ 本次**拒写**（退码 14 · kind=conflict）\n", progName)
 		fmt.Fprintf(stderr, "  %s\n", msg)
 		fmt.Fprintf(stderr, "  真源     : %s（一个字节未动 · 审计一行未落 —— 闸在「审计先落盘」**之前**）\n", gapLedgerPath())
 		fmt.Fprintf(stderr, "  下一步   : **重跑一次即可**（重跑以盘上现状为新基线）—— **不要手改账件**（手改正是这条闸要挡的形态）\n")
@@ -2306,6 +2506,22 @@ func cmdGapBulkSetState(inv *invocation, stdout, stderr io.Writer) int {
 		gapBulkTable(stdout, rows, stateWant, 0, len(rows), 0, true)
 		fmt.Fprintf(stderr, "（--dry-run：只出计划件 · 零副作用 —— 未改真源、未写审计）\n")
 		return exitOK
+	}
+
+	// ★ 缺口 `GAP-20260928-195`（本枚）：**批量销案同走共用两态闸** —— `--state 已解` 时逐条判
+	//    （判决与单条面同一处 `gapTwoStateGate`，✗ 不另造口径）；任一条缺读数（新账且未带两态）
+	//    ⇒ **整批拒**（退 2 · 一字不写：真源一个字节未改、审计一行未落）。`--state 仍缺` / `不做`
+	//    与非销案面 ⇒ 闸判「不适用」，行为一字不动。
+	if stateWant == gapStSolved {
+		for i := range rows {
+			if rows[i].Fail != "" {
+				continue
+			}
+			if rc := gapTwoStateGate(inv, rows[i].ID, stateWant, "bulk set-state", led.Path, len(led.Lines), stderr); rc != exitOK {
+				fmt.Fprintf(stderr, "  批量面   : 任一条销案缺两态读数 ⇒ **整批拒**（退码 2 · **一字不写**：真源一个字节未改、审计一行未落）\n")
+				return rc
+			}
+		}
 	}
 
 	// ★ 本枚（缺口账 `GAP-20261005-26`）：**字段面前置判定** —— 把 `--json` 字段名校验从出口

@@ -1297,5 +1297,12 @@ func checkApproveBackfillGateMain(stdout, stderr io.Writer, argv []string) int {
 		return 0
 	}
 	fmt.Fprintf(stdout, "── 真目标：%s（状态目录 %s）\n", repo, state)
+	// ★ 沙箱读数警告（缺口 `GAP-20260927-70` · 与门⑱ `check-trustroot-witness:1724` 同形）：状态目录
+	//   是环境变量 `ZERG_STATE_DIR` 静默给的（没显式 `--state`）⇒ 本读数是**沙箱**读数，不是真状态目录。
+	if stateFlag == "" && os.Getenv("ZERG_STATE_DIR") != "" {
+		fmt.Fprintf(stdout, "★★ 状态目录是**环境变量 `ZERG_STATE_DIR` 给的**（%s）⇒ 本读数是**沙箱**读数，"+
+			"**不是**真状态目录 `~/.zerg/state`（闸里不设这个变量；要读真源请显式 `--state`）\n",
+			os.Getenv("ZERG_STATE_DIR"))
+	}
 	return cafbScan(stdout, repo, state, gatePath)
 }

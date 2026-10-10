@@ -14,7 +14,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -455,6 +460,14 @@ func agentActGuarded(inv *invocation, stdout, stderr io.Writer, action string) i
 	}
 	machine, model := strings.TrimSpace(inv.args[0]), strings.TrimSpace(inv.args[1])
 	endpoint := eggActEndpoint(action)
+	// ⓪ GAP-20260925-28 · 端口冲突预检（只读）：起引擎（`agent load`）前先核该子端口有没有被
+	//    **非本族**进程占住（同端口跨协议族抢占 = 探活假阳性的根因）。占用 ⇒ 退 14 点名端口与占用者；
+	//    读不到 ⇒ 退 8（不给结论，✗ 不许当空闲）。只对**本机侧**目标判定（远端档另开）。
+	if action == eggActLoad {
+		if rc := agentLoadPortPrecheck(inv, machine, stderr); rc != exitOK {
+			return rc
+		}
+	}
 	// ① 状态面先判（幂等 · 与未开放档同一条只读探测）：`agent load` 已在该机装载态 ⇒ 按「已在该状态」报。
 	if rc, done := probeStateConflict(inv, cmd, stdout, stderr); done {
 		return rc
@@ -979,4 +992,161 @@ func cmdTaskResumeGuarded(inv *invocation, stdout, stderr io.Writer) int {
 // 主控 `POST /api/tasks/{id}/retry`）。
 func cmdTaskRetryGuarded(inv *invocation, stdout, stderr io.Writer) int {
 	return taskQueueActGuarded(inv, stdout, stderr, taskActRetry)
+}
+
+// ── GAP-20260925-28（命令面 · agent 族）· `agent load` 的端口冲突预检 ──────────────────────────
+//
+// 症状（缺口正文）：子端在某机绑 8100，若该机已有**别的**服务也占 8100（各占一个协议族 IPv4/IPv6），
+// 两边互不知情 ⇒ `zerg agent ping --direct` 会打到「别人」并报 reachable=true（假阳性）。
+// 子端侧已在 `agent/internal/server/server.go` 的 `Start()` 里加了跨协议族检测（响亮拒启）；
+// **命令面**这一侧仍缺 —— 起引擎（`agent load`）前没有任何一条命令先查「该口被谁占着」。
+//
+// 本预检（**只读** · 不起任何服务 · 只读一次 lsof）：
+//   · 端口无属主（口空）                    ⇒ 放行（退码 0）
+//   · 属主全是本族子端（前缀 `zerg-agent`）  ⇒ 放行（该口就是子端自己在听）
+//   · 有**非本族**属主                       ⇒ **冲突**（退码 14 = conflict），逐条点名端口 + 占用者（pid/进程）
+//   · lsof 不在 / 读不到                     ⇒ **不给结论**（退码 8 = blocked），✗ 不许当空闲
+//
+// 作用域（本版如实登记）：本预检是**本机侧**探测 —— 目标机不是本机（远端）时，本机读不到那台机的
+// 监听面（ssh 属 §十五.4 例外清单，本版不给结论）⇒ 本档对远端机**不判定、不阻断**（既有控制面通路
+// 照走 · 远端档另开）。这不是「当空闲」：本档根本没参与远端判定 —— 与「探不了 ⇒ blocked」的边界
+// 写在注释里，✗ 不含糊。
+
+const portPrecheckZergProcPrefix = "zerg-agent"
+
+// portOwner —— 一个 LISTEN 属主（pid + 进程名，取自 lsof 的 COMMAND/PID 两列）。
+type portOwner struct{ PID, Process string }
+
+// fleetAddrForMachine —— **静默**读 `gateway/fleet.yaml` 的 `fleet:` 段取一台机的地址（无 stderr 副作用
+// —— 本预检不新加前置：读不到 ⇒ 交给调用方按「不适用」处理，✗ 不在这里报错污染既有通路）。
+func fleetAddrForMachine(machine string) (agentAddr, bool) {
+	root := repoRoot()
+	if root == "" {
+		return agentAddr{}, false
+	}
+	b, err := os.ReadFile(filepath.Join(root, agentFleetAddrFileRel))
+	if err != nil {
+		return agentAddr{}, false
+	}
+	inFleet := false
+	for _, line := range strings.Split(string(b), "\n") {
+		if line == "" {
+			continue
+		}
+		if !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") {
+			inFleet = strings.TrimSpace(line) == "fleet:"
+			continue
+		}
+		if !inFleet {
+			continue
+		}
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		name, rest, ok := strings.Cut(trimmed, ":")
+		if !ok || strings.TrimSpace(name) != machine {
+			continue
+		}
+		host := yamlInlineField(rest, "host")
+		port, _ := strconv.Atoi(yamlInlineField(rest, "port"))
+		if host == "" || port == 0 {
+			return agentAddr{}, false
+		}
+		return agentAddr{Host: host, Port: port}, true
+	}
+	return agentAddr{}, false
+}
+
+// hostIsLocal —— 该地址是不是**本机侧**（回环 / 未指定 / 本机某张网卡的地址）。
+func hostIsLocal(host string) bool {
+	h := strings.TrimSpace(strings.Trim(host, "[]"))
+	if h == "" || h == "localhost" {
+		return true
+	}
+	if ip := net.ParseIP(h); ip != nil && (ip.IsLoopback() || ip.IsUnspecified()) {
+		return true
+	}
+	ifas, err := net.InterfaceAddrs()
+	if err != nil {
+		return false
+	}
+	for _, ia := range ifas {
+		if ipn, ok := ia.(*net.IPNet); ok && ipn.IP.String() == h {
+			return true
+		}
+	}
+	return false
+}
+
+// lsofListenOwners —— 现读某端口 LISTEN 的属主（pid + 进程名 · 去重）。lsof 退 1 = **无匹配** = 口空
+// （正常答案，不是错）；别的错误 ⇒ 交给调用方按「读不到 ⇒ 不给结论」处理。
+func lsofListenOwners(lsof string, port int) ([]portOwner, error) {
+	out, err := exec.Command(lsof, "-nP", "-iTCP:"+strconv.Itoa(port), "-sTCP:LISTEN").Output()
+	if err != nil {
+		if ee, ok := err.(*exec.ExitError); ok && ee.ExitCode() == 1 {
+			return nil, nil
+		}
+		return nil, err
+	}
+	seen := map[string]bool{}
+	var res []portOwner
+	for i, ln := range strings.Split(string(out), "\n") {
+		if i == 0 || strings.TrimSpace(ln) == "" {
+			continue
+		}
+		f := strings.Fields(ln)
+		if len(f) < 2 {
+			continue
+		}
+		key := f[0] + "|" + f[1]
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		res = append(res, portOwner{PID: f[1], Process: f[0]})
+	}
+	return res, nil
+}
+
+// agentLoadPortPrecheck —— `agent load`（起引擎/装载）前的**端口冲突预检**（唯一执行门前调用）。
+// 见本段文件头注释的退码表与作用域口径。
+func agentLoadPortPrecheck(inv *invocation, machine string, stderr io.Writer) int {
+	a, ok := fleetAddrForMachine(machine)
+	if !ok || !hostIsLocal(a.Host) {
+		return exitOK // 不在名册 / 远端机 ⇒ 本档不适用（不判定、不阻断 —— 不是「当空闲」）
+	}
+	lsof, err := exec.LookPath("lsof")
+	if err != nil {
+		inv.setErr("blocked", "lsof_absent", "端口预检取不到属主（lsof 不在）")
+		fmt.Fprintf(stderr, "%s: 端口冲突预检：本机没有 `lsof` ⇒ 端口 %d 的属主读不到 ⇒ **不给结论**"+
+			"（退码 8 · ✗ 不许当空闲）\n", progName, a.Port)
+		fmt.Fprintf(stderr, "error.kind=blocked · detail=lsof_absent · retryable=true · remedy=fix_precondition\n")
+		return exitBlocked
+	}
+	owners, err := lsofListenOwners(lsof, a.Port)
+	if err != nil {
+		inv.setErr("blocked", "lsof_failed", "端口预检取不到属主")
+		fmt.Fprintf(stderr, "%s: 端口冲突预检：端口 %d 的属主读不到（%v）⇒ **不给结论**（退码 8 · ✗ 不许当空闲）\n",
+			progName, a.Port, err)
+		fmt.Fprintf(stderr, "error.kind=blocked · detail=lsof_failed · retryable=true · remedy=fix_precondition\n")
+		return exitBlocked
+	}
+	foreign := []string{}
+	for _, o := range owners {
+		if !strings.HasPrefix(o.Process, portPrecheckZergProcPrefix) {
+			foreign = append(foreign, o.PID+"("+o.Process+")")
+		}
+	}
+	if len(foreign) > 0 {
+		inv.setErr("conflict", "port_foreign_occupant", fmt.Sprintf("端口 %d 被非本族进程占住", a.Port))
+		fmt.Fprintf(stderr, "%s: 端口冲突预检 ⇒ **冲突**：端口 %d（机 %s · %s）被**非本族**监听者占住：%s\n",
+			progName, a.Port, machine, agentChildBase(a), strings.Join(foreign, " · "))
+		fmt.Fprintf(stderr, "  这正是 GAP-20260925-28 的假阳性根因（同端口跨协议族抢占 ⇒ 探活会连上「别人」）"+
+			"⇒ **拒执**。先处理占位进程，或 `%s port ls %d` 现读属主\n", progName, a.Port)
+		fmt.Fprintf(stderr, "error.kind=conflict · detail=port_foreign_occupant · retryable=false · remedy=wait_or_reload\n")
+		return exitConflict
+	}
+	fmt.Fprintf(stderr, "%s: 端口冲突预检：端口 %d（%s）无外人监听 ⇒ **放行**\n", progName, a.Port, agentChildBase(a))
+	return exitOK
 }

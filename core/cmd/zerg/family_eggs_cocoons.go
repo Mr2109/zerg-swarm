@@ -76,10 +76,16 @@ const (
 	eggStateIdle     = "未加载"
 	eggStateDeclared = "已声明但后端不在"
 	eggStateUnknown  = "取不到"
+	// ★ 缺口 `GAP-20260925-44`（命令面 · 异步查询）：**第五档**「装载中」—— 真后端还没起来、
+	// 但主控装载登记表里有一枚**在装**（`load_tasks` 的 `phase=accepted`）。它与「未加载」
+	// （没有在装的）与「已声明但后端不在」（声明了却装不起来）是**三个不同的结论** ——
+	// 本缺口要治的正是「还在冷装」与「起不来」分不开。词与主控 phase 闭集**不同源**（那是
+	// `accepted|ok|failed` 三态；本格是**卵面**给调用方的结论词），故不并进 phase。
+	eggStateLoading = "装载中"
 )
 
-// eggStateClosedSet —— 四词闭集（机检用一处取值 · 判词与测试都引它，不各抄一份）。
-var eggStateClosedSet = []string{eggStateLoaded, eggStateIdle, eggStateDeclared, eggStateUnknown}
+// eggStateClosedSet —— 五词闭集（机检用一处取值 · 判词与测试都引它，不各抄一份）。
+var eggStateClosedSet = []string{eggStateLoaded, eggStateIdle, eggStateDeclared, eggStateUnknown, eggStateLoading}
 
 // eggDisplay —— 人面 / 行式面的**三格**（判据①：每行三格齐；缺一格即红）。
 var eggDisplay = []string{"host", "model", "state"}
@@ -96,6 +102,28 @@ var eggDisplay = []string{"host", "model", "state"}
 //
 // 两格都是**纯追加**（旧字段一个没动、顺序没动）⇒ 闭集外沿只增不改。
 var eggFields = []string{"egg_id", "host", "model", "state", "declared", "backend_port", "backend", "mem_gb", eggFieldHasProfile}
+
+// eggFieldLastOutputAgoS / eggFieldWatchdogVerdict —— 看门狗读数两格的**字段名**（`--json` 面用）。
+//
+// ★ `GAP-20260925-15`（Face A · 字段面投影 · 2026-10-10）：子端 `/eggs` **已经透出**这两样读数
+// （`agent/internal/server/eggs_endpoint.go` 的 `watchdog` 子对象 = `backend.WatchdogObservation`：
+// `last_output_ago_s` + `verdict`；见 `agent/internal/backend/watchdog.go`），而命令面此前把它们
+// **丢掉**（只解析 `port/managed/state/model`）⇒ 本笔把它们投影到卵面字段。
+//
+// ★ 诚实边界（口径逐字）：`watchdog` 是**上一次请求的快照** ⇒ 看门狗没跑时子端报
+// `verdict=ok` / `last_output_ago_s=0`；本面**逐字照报**（值域照子端原样）——
+// ✗ 不把它加工成「实时静默 N 秒」、✗ 不把 `0` 说成「未卡」、✗ 读不到就留空（绝不编 `ok`/`0`）。
+const (
+	eggFieldLastOutputAgoS  = "last_output_ago_s"
+	eggFieldWatchdogVerdict = "watchdog_verdict"
+)
+
+// eggOptionalFields —— `--json` 的**可选字段层**（`optFields`）：登在出口白名单里、点得出来，但**不进**
+// `eggFields` 那一份**冻结**的帮助 / 文档导出面字段表 —— 与 `approveOptionalFields` 及 `code find` 的
+// `count` **同一体例**（冻结表不动、可选只增）⇒ 不造「表列着、面不产出」的反例，也无需重生成命令页。
+//
+// 两格**逐字照子端**（见上）——本面只投影、不解释。
+var eggOptionalFields = []string{eggFieldLastOutputAgoS, eggFieldWatchdogVerdict}
 
 // eggRequired —— 「三格齐」机检用的字段表（少一格 ⇒ 红）。
 var eggRequired = []string{"host", "model", "state"}
@@ -340,6 +368,11 @@ func projectEggs(c *client, inv *invocation, stderr io.Writer, only string) ([]m
 				// （`GAP-20260926-08`：不许把声明当真值）。
 				"declared":     state,
 				"backend_port": "",
+				// ★ `GAP-20260925-15`（Face A）：看门狗读数两格 —— 子端 `/eggs` 的 `watchdog` 子对象
+				// （逐字照报）。初值空串 = **没有读数**（子端答不动 / 没给这一枚）；真值由
+				// `eggReconcileBackends` 从同一份回据落定（✗ 绝不编 `ok`/`0`）。
+				eggFieldLastOutputAgoS:  "",
+				eggFieldWatchdogVerdict: "",
 				// ★ `GAP-20261005-06`：`has_profile` —— 本 CLI 读得到的档案目录里这枚卵有没有
 				// **可用**实测档案。`false` ⇒ 507 的第一个因（无实测档案）⇒ 名册声明了也**永不可孵**。
 				eggFieldHasProfile: strconv.FormatBool(hasProfile[id]),
@@ -412,6 +445,23 @@ type eggBackendFact struct {
 	Reachable bool
 	Running   map[string]int
 	Why       string
+	// Watchdog 模型 id ⇒ 子端 `/eggs` 的 `watchdog` 子对象（**逐字照报** · `GAP-20260925-15`）；
+	// 缺席 = 子端那份回据里没这一枚卵 / 没给 `watchdog` 子对象 ⇒ 两格留空（不编）。
+	Watchdog map[string]eggBackendWatchdog
+}
+
+// eggBackendWatchdog —— 子端 `/eggs` 逐卵的看门狗读数（**逐字**取自子端 `watchdog` 子对象）。
+//
+// ★ `GAP-20260925-15`（Face A）：这是**上一次请求**的活性快照 ——
+//
+//	LastOutputAgoS = 子端 `watchdog.last_output_ago_s`（数值文本，逐字；`0` 也是真读数）；
+//	Verdict        = 子端 `watchdog.verdict`（子端判词枚举：ok / extended / stuck_cpu_stalled /
+//	                 stuck_no_progress / degraded / dead_unit）。
+//
+// 本面**只投影、不解释**：缺席（子端那份回据里没有这一枚卵 / 没有 `watchdog` 子对象）⇒ 两格留空。
+type eggBackendWatchdog struct {
+	LastOutputAgoS string
+	Verdict        string
 }
 
 // eggBackendProbe —— 子端真后端探测的**唯一出口**（测试可换成合成子端 ⇒ 判据件不连真网）。
@@ -447,6 +497,7 @@ func eggBackendProbeLive(machine string, a agentAddr) eggBackendFact {
 		return eggBackendFact{Why: fmt.Sprintf("子端 %s/eggs 的响应不是合法 JSON（%v）", agentChildBase(a), err)}
 	}
 	running := map[string]int{}
+	watchdog := map[string]eggBackendWatchdog{}
 	for _, it := range asList(doc["eggs"]) {
 		o := asObj(it)
 		if o == nil {
@@ -468,9 +519,17 @@ func eggBackendProbeLive(machine string, a agentAddr) eggBackendFact {
 		}
 		if id != "" {
 			running[id] = port
+			// ★ `GAP-20260925-15`（Face A）：把子端 `/eggs` **已经透出**的 `watchdog` 子对象**逐字**
+			//   留下（值域照子端原样 —— 本面不加工）。缺 `watchdog` 子对象 ⇒ 这一枚不落读数（留空）。
+			if w := asObj(o["watchdog"]); w != nil {
+				watchdog[id] = eggBackendWatchdog{
+					LastOutputAgoS: cell(w["last_output_ago_s"]),
+					Verdict:        cell(w["verdict"]),
+				}
+			}
 		}
 	}
-	return eggBackendFact{Reachable: true, Running: running}
+	return eggBackendFact{Reachable: true, Running: running, Watchdog: watchdog}
 }
 
 // eggBackendTimeout 单机探测的超时（子端是**近端**服务；一条 `egg ls` 对每台机只问一次）。
@@ -519,6 +578,9 @@ func eggReconcileBackends(inv *invocation, rows []map[string]string, stderr io.W
 		hosts = append(hosts, r["host"])
 	}
 	facts := eggBackends(hosts)
+	// ★ 缺口 `GAP-20260925-44`（命令面 · 异步查询）：主控装载登记表里**在装**的卵（键 `机器\t模型`）。
+	//   只读面读不到 ⇒ `loadOK=false`（调用方不落 `装载中` —— 「取不到」不是「没有在装的」）。
+	pending, loadOK := eggPendingLoad(newClient(), stderr)
 	unreadable := map[string]bool{} // 读不到的机（去重 · 只在 stderr 说一次）
 	for _, r := range rows {
 		f := facts[r["host"]]
@@ -530,6 +592,13 @@ func eggReconcileBackends(inv *invocation, rows []map[string]string, stderr io.W
 			unreadable[r["host"]] = true
 			continue
 		}
+		// ★ `GAP-20260925-15`（Face A · 字段面投影）：把子端 `/eggs` **已经读到的**看门狗读数
+		//   **逐字**投影上来 —— 只在这一台答得动（`Reachable`）且它对这一枚报过 `watchdog` 子对象时
+		//   才落值；没有读数 ⇒ 两格留空（✗ 绝不编 `ok`/`0` —— 「读不到」不是「没卡」）。
+		if w, ok := f.Watchdog[r["model"]]; ok {
+			r[eggFieldLastOutputAgoS] = w.LastOutputAgoS
+			r[eggFieldWatchdogVerdict] = w.Verdict
+		}
 		// ② 真后端在跑（子端 `/eggs` 里 `port` > 0）⇒ `已加载` —— **回据说了算**，与声明无关。
 		//    为什么此时若声明说「未加载」也落 `已加载`：本格量的是**真后端在不在**（缺口原话
 		//    「不再拿声明当真值」）—— 声明那一格原样留在 `declared` 里，机器面自己看得见两者不一致。
@@ -538,9 +607,14 @@ func eggReconcileBackends(inv *invocation, rows []map[string]string, stderr io.W
 			r["backend_port"] = strconv.Itoa(port)
 			continue
 		}
-		// ③ 真后端不在：主控声「已加载」⇒ **已声明但后端不在**（本缺口的正题）；
-		//    主控也没声 ⇒ `未加载`（两处一致）。
+		// ③ 真后端不在：主控有一枚**在装** ⇒ `装载中`（缺口 `GAP-20260925-44` 的第五档 ——
+		//    「还在冷装」与「没在跑/装不起来」必须分得开）；主控声「已加载」⇒ **已声明但后端不在**
+		//    （本缺口的正题）；主控也没声 ⇒ `未加载`（两处一致）。
 		r["backend_port"] = ""
+		if loadOK && pending[r["host"]+"\t"+r["model"]] {
+			r["state"] = eggStateLoading
+			continue
+		}
 		if declared == eggStateLoaded {
 			r["state"] = eggStateDeclared
 			continue
@@ -774,9 +848,32 @@ func eggRosterOf(fleet jsonObj) (map[string][]eggCand, []string, []string) {
 	return byModel, models, hosts
 }
 
+// eggMaxSeconds —— 读全局旗标 `--timeout`（`wallclockFlag`）并转成**秒**字符串（下发体字段
+// `egg_max_s` 的单位；与子端 env `ZERG_EGG_MAX_S` **同一口径** —— 不另造第二套单位）。
+//
+// `GAP-20260926-201` 全通路：本值顺着 POST 体 ⇒ 主控透传 ⇒ 子端 watchdog 的「单卵时限」
+// （`agent/internal/backend/watchdog.go` 的 `EggMax`）逐请求生效。
+// 口径：不给 ⇒ 空串（**不下发**该键 ⇒ 子端回落 env 兜底）；给了但读不出 ⇒ 用法错退 2
+// （✗ **不静默回落**默认 —— 与 `--timeout` 的全局口径同一条）。
+func eggMaxSeconds(inv *invocation, stderr io.Writer) (string, int) {
+	raw := strings.TrimSpace(inv.flagVal(wallclockFlag))
+	if raw == "" {
+		return "", exitOK
+	}
+	d, err := parseWallclock(raw)
+	if err != nil {
+		inv.setErr("usage", "bad_egg_max", err.Error())
+		fmt.Fprintf(stderr, "%s: `%s` 的时长读不出来：%q（例 `30s` / `2m` / `90`；裸数字按**秒**读）\n",
+			progName, wallclockFlag, raw)
+		return "", exitUsage
+	}
+	return strconv.FormatFloat(d.Seconds(), 'f', -1, 64), exitOK
+}
+
 // eggPlanLines —— 计划件的**共用**几行（干跑与缺 `--yes` 两态印同一份 ⇒ 两档判据不许分叉）。
 // `cands` 为空时（授权闸在**读名册之前**判）只印得出目标两行 —— 照实少印，不编。
-func eggPlanLines(action, eggID, model, machine string, cands []eggCand) []string {
+// `eggMaxS` 非空时多印一行「单卵时限」并把 `egg_max_s` 带进请求体那一行（GAP-20260926-201）。
+func eggPlanLines(action, eggID, model, machine, eggMaxS string, cands []eggCand) []string {
 	verb := "装载"
 	if action == eggActUnload {
 		verb = "卸载"
@@ -796,8 +893,12 @@ func eggPlanLines(action, eggID, model, machine string, cands []eggCand) []strin
 		lines = append(lines,
 			fmt.Sprintf("请求体   : {\"machine\":%s}（控制面那条端点**只吃 machine** —— 逐字照它的体形状）", jstr(machine)))
 	} else {
-		lines = append(lines,
-			fmt.Sprintf("请求体   : {\"machine\":%s,\"model\":%s}", jstr(machine), jstr(model)))
+		reqBody := fmt.Sprintf("{\"machine\":%s,\"model\":%s}", jstr(machine), jstr(model))
+		if eggMaxS != "" {
+			reqBody = fmt.Sprintf("{\"machine\":%s,\"model\":%s,\"egg_max_s\":%s}", jstr(machine), jstr(model), jstr(eggMaxS))
+			lines = append(lines, fmt.Sprintf("单卵时限 : %s 秒（子端 watchdog 的 EggMax —— 到点判卡住；`%s` 那一枚旗标）", eggMaxS, wallclockFlag))
+		}
+		lines = append(lines, "请求体   : "+reqBody)
 	}
 	return lines
 }
@@ -841,8 +942,22 @@ func eggWriteGate(inv *invocation, stdout, stderr io.Writer, act, eggID, machine
 	return exitOK, true
 }
 
-// cmdEggRun —— `zerg egg run <卵 id> [--machine <机>] [--dry-run | --yes] [--json <字段>]`：
+// cmdEggRun —— `zerg egg run <卵 id> [--machine <机>] [--timeout <时长>] [--wait | --no-wait] [--dry-run | --yes] [--json <字段>]`：
 // 把该卵的模型**装到**那台机器上（内部 = 控制面 `POST /api/control/load`）。
+//
+// ★ 缺口 `GAP-20260925-44`（命令面 · 「就绪等待」那一段）：`POST /api/control/load` 是**异步受理**
+// （回 `accepted:true + task_id`，冷装在后台跑，实测 21GB/35B > 45s）⇒ 只读那枚 `ok:true`
+// **分不清**「引擎还在冷装」与「引擎起不来」。本档补的就是这一段：
+//
+//	--wait      拿受理体里的 `task_id` 轮询**只读面** `GET /api/core/status` 的 `load_tasks`，
+//	            直到 `phase` 离开 `accepted`：`ok` ⇒ 就绪（退 0）· `failed` ⇒ 装载失败（退 1）；
+//	            只读面读不到 / 任务号查不到 ⇒ **不给结论**（退 8，✗ 不当「装好了」）。
+//	            **必须**配 `--timeout <时长>`（就绪等待的墙钟上界 —— 到点由 `wallclockGuard` 退 11
+//	            「等不起」，与「装载失败」退 1 **异码**）；缺它 ⇒ **先于任何网络**退 2。
+//	--no-wait   拿句柄就走：照旧发完 POST 即回，受理体里的 `task_id`（句柄）打进 stderr。
+//	（不给 ⇒ 与 `--no-wait` 同 —— §九 M8 `P-020`：非 TTY 默认不阻塞；本档只做**显式** `--wait`。）
+//
+// ★ 复用既有下发通路（受理体的 `task_id` ＋ 主控既有只读面 `load_tasks`），✗ 不另造第二套。
 func cmdEggRun(inv *invocation, stdout, stderr io.Writer) int {
 	return eggAct(inv, stdout, stderr, eggActLoad)
 }
@@ -857,6 +972,23 @@ func cmdEggStop(inv *invocation, stdout, stderr io.Writer) int {
 func eggAct(inv *invocation, stdout, stderr io.Writer, action string) int {
 	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
 		return rc
+	}
+	// 单卵时限（GAP-20260926-201 全通路）：**先于任何网络/写入**读一次 `--timeout`
+	// （人给错了当场退 2，别等打完主控才发现）。
+	eggMaxS, rcT := eggMaxSeconds(inv, stderr)
+	if rcT != exitOK {
+		return rcT
+	}
+	// ★ 缺口 `GAP-20260925-44`（命令面 · 就绪等待）：`--wait` 要配 `--timeout <时长>` ——
+	// 就绪等待**必须有墙钟上界**（fail-closed：✗ 不许无限挂住）。缺它 ⇒ **先于任何网络**退 2。
+	// 到点由外层 `wallclockGuard`（`--timeout` ⇒ `main.go` 的 dispatch）打断 ⇒ 退 11（等不起），
+	// 与「装载失败」退 1 **异码**（§九 M8：「等不起」与「等到了坏结果」不许合成一件）。
+	if action == eggActLoad && eggLoadWaitExplicit(inv) && !inv.hasFlag(wallclockFlag) {
+		inv.setErr("usage", "wait_without_timeout", "`--wait` 要配 `"+wallclockFlag+" <时长>`：就绪等待的墙钟上界")
+		fmt.Fprintf(stderr, "%s: `%s egg run --wait` 缺 `%s <时长>` ⇒ 退码 2（**不许无限等** —— 给一个上界再等）\n",
+			progName, progName, wallclockFlag)
+		fmt.Fprintf(stderr, "  「就绪等待」到点退 11（**等不起**），与「装载失败」退 1 异码（§九 M8）\n")
+		return exitUsage
 	}
 	verb := eggActVerb(action)
 	act := "egg " + verb
@@ -917,7 +1049,7 @@ func eggAct(inv *invocation, stdout, stderr io.Writer, action string) int {
 	}
 	if !inv.dryRun {
 		if rc, goOn := eggWriteGate(inv, stdout, stderr, act, eggArg, machine, endpoint, effect,
-			eggPlanLines(action, eggArg, model, machine, nil)); !goOn {
+			eggPlanLines(action, eggArg, model, machine, eggMaxS, nil)); !goOn {
 			return rc
 		}
 	}
@@ -983,7 +1115,7 @@ func eggAct(inv *invocation, stdout, stderr io.Writer, action string) int {
 		return exitUsage
 	}
 	eggID := model + eggSep + machine
-	plan := eggPlanLines(action, eggID, model, machine, cands)
+	plan := eggPlanLines(action, eggID, model, machine, eggMaxS, cands)
 
 	// ⑤ 干跑：计划件已在校验之后 ⇒ 把**核对过的**目标与候选一并印出来（零请求）。
 	// `--json` 面：人读计划件走 stderr、机器面 stdout 只出包封（不混）。
@@ -1006,6 +1138,10 @@ func eggAct(inv *invocation, stdout, stderr io.Writer, action string) int {
 	body := fmt.Sprintf("{\"machine\":%s,\"model\":%s}", jstr(machine), jstr(model))
 	if action == eggActUnload {
 		body = fmt.Sprintf("{\"machine\":%s}", jstr(machine))
+	}
+	// 单卵时限（GAP-20260926-201 全通路）：`--timeout` ⇒ 体字段 `egg_max_s`（**秒**）。
+	if action == eggActLoad && eggMaxS != "" {
+		body = fmt.Sprintf("{\"machine\":%s,\"model\":%s,\"egg_max_s\":%s}", jstr(machine), jstr(model), jstr(eggMaxS))
 	}
 	status, respBody, err := postJSON(c, endpoint, body)
 	if err != nil {
@@ -1031,6 +1167,11 @@ func eggAct(inv *invocation, stdout, stderr io.Writer, action string) int {
 		fmt.Fprintf(stderr, "（码**逐字透传、命令面不翻译** —— 上面那串是主控自己的说法）\n")
 		return codeOfKind(kind)
 	}
+	// ★ 缺口 `GAP-20260925-44`（命令面 · 就绪等待）：装载档 `--wait` ⇒ 轮询只读面拿**结论**
+	//   （就绪 / 装载失败 / 取不到），✗ 不满足于「受理体回了 ok」（那正是本缺口的症状）。
+	if action == eggActLoad && eggLoadWaitExplicit(inv) {
+		return eggWaitLoadReady(inv, c, respBody, eggID, model, machine, stdout, stderr)
+	}
 	changed := true
 	inv.changed = &changed
 	// 后置读数：**只取主控自己的原话**，取不到就不给值（不编、也不装读到过）。
@@ -1038,6 +1179,14 @@ func eggAct(inv *invocation, stdout, stderr io.Writer, action string) int {
 	row := map[string]string{
 		"egg_id": eggID, "model": model, "machine": machine,
 		"action": action, "state": state, "result": strings.TrimSpace(respBody),
+	}
+	// ★ 缺口 `GAP-20260925-44`：异步受理体里的 `task_id` 是**句柄** —— 拿句柄就走（§九 M8
+	//   `--no-wait`／非 TTY 默认档）时把它打进 stderr 供复核（✗ 不塞进冻结的 `--json` 字段表）。
+	if action == eggActLoad {
+		if tid := jsonStrField(respBody, "task_id"); tid != "" {
+			fmt.Fprintf(stderr, "%s: 任务号 %s（异步受理 —— 复核 `%s egg ls`；装载进展在主控 `GET /api/core/status` 的 `load_tasks`）\n",
+				progName, tid, progName)
+		}
 	}
 	fmt.Fprintf(stderr, "%s: %s 已发（%s ⇒ %s · 机器 %s）—— 复核：`%s egg ls` 或 `%s agent show %s`\n",
 		progName, act, endpoint, orDash(state), machine, progName, progName, machine)
@@ -1065,6 +1214,145 @@ func eggStateAfter(inv *invocation, c *client, model, machine string, stderr io.
 		return ""
 	}
 	return cell(detail["status"])
+}
+
+// ---- 卵面：主控装载登记表（缺口 `GAP-20260925-44` 的「异步查询 / 就绪等待」两段落点）---------------
+
+// loadPhase* —— 装载任务 `phase` 三态（**逐字**取自主控 `core/internal/api/control.go` 的
+// `phaseAccepted`/`phaseOK`/`phaseFailed` —— 命令面只投影、✗ 不另造词 ⇒ 同一格不许两套词）。
+const (
+	loadPhaseAccepted = "accepted"
+	loadPhaseOK       = "ok"
+	loadPhaseFailed   = "failed"
+)
+
+// eggLoadWaitExplicit —— 装载档的**显式**等待档（缺口 `GAP-20260925-44`）：`--wait` 显式等就绪
+// （由下方 `eggWaitLoadReady` 轮询给结论）；`--no-wait` 显式「拿句柄就走」；两者**互斥**
+// （`main.go` 的 `boolCount` 判）。不给 ⇒ 与 `--no-wait` 同（§九 M8 `P-020`：非 TTY 默认不阻塞
+// —— 本档只做**显式** `--wait`）。★ 在这里**显式读两枚旗标**，✗ 不许当「没给、静默吞掉」。
+func eggLoadWaitExplicit(inv *invocation) bool {
+	return inv.wait && !inv.noWait
+}
+
+// eggWaitPollInterval —— 就绪等待两问之间的间隔（**实现细节**的时长，✗ 不进任何契约/帮助面 ——
+// §九 M8/M5 的「契约不写时长数值」那条只约束契约面）。
+const eggWaitPollInterval = 500 * time.Millisecond
+
+// jsonStrField —— 从一个响应体字节里抠一个字符串字段（抠不动 ⇒ 空串；✗ 不编）。
+func jsonStrField(body string, key string) string {
+	var m map[string]interface{}
+	if json.Unmarshal([]byte(body), &m) != nil {
+		return ""
+	}
+	if s, ok := m[key].(string); ok {
+		return s
+	}
+	return ""
+}
+
+// eggPendingLoad —— 主控装载登记表里**在装**（`phase=accepted`）的卵集合（键 `机器\t模型`）。
+//
+// ★ 缺口 `GAP-20260925-44`：这是「异步查询面」在 `egg ls` 上的落点 —— 一枚卵真后端还没起来、
+// 但主控有一枚在装的任务 ⇒ 那一格必须是 `装载中`（与「未加载」「已声明但后端不在」分开）。
+// 读不到（`GET /api/core/status` 挂）⇒ ok=false —— **不给结论**（调用方不落 `装载中`），
+// ✗ 不把它当「没有在装的」（那是编一个数 —— 「取不到」不是「没有」）。
+// ★ 例外：端点**不存在**（HTTP 404 —— 旧主控没有 `load_tasks` 这一维）⇒ 如实当「无此维度」，
+// 静默空集（不报错、也不落 `装载中`）—— 那不是「取不到」，是「本主控没有这一面」。
+func eggPendingLoad(c *client, stderr io.Writer) (map[string]bool, bool) {
+	var st jsonObj
+	if err := c.getJSON("/api/core/status", &st); err != nil {
+		var he *httpError
+		if errors.As(err, &he) && he.status == http.StatusNotFound {
+			return map[string]bool{}, true
+		}
+		fmt.Fprintf(stderr, "%s: 主控装载登记表 `GET /api/core/status` 读不到：%v ⇒ `%s` 这一档**不给结论**（不落它）\n",
+			progName, err, eggStateLoading)
+		return nil, false
+	}
+	out := map[string]bool{}
+	for _, it := range asList(st["load_tasks"]) {
+		o := asObj(it)
+		if o == nil || cell(o["phase"]) != loadPhaseAccepted {
+			continue
+		}
+		m, mo := cell(o["machine"]), cell(o["model"])
+		if m != "" && mo != "" {
+			out[m+"\t"+mo] = true
+		}
+	}
+	return out, true
+}
+
+// eggLoadTaskByID —— 只读面 `GET /api/core/status` 的 `load_tasks` 里按 `task_id` 查那一枚。
+// 找到 ⇒ found=true；表里没有 ⇒ found=false（**不给结论**）。读不到 / 体解不动 ⇒ err 非 nil
+// （**不给结论**，✗ 不当「还在装」静默空转）。
+func eggLoadTaskByID(c *client, taskID string) (phase, backend, port string, found bool, err error) {
+	var st jsonObj
+	if err := c.getJSON("/api/core/status", &st); err != nil {
+		return "", "", "", false, err
+	}
+	for _, it := range asList(st["load_tasks"]) {
+		o := asObj(it)
+		if o == nil || cell(o["task_id"]) != taskID {
+			continue
+		}
+		return cell(o["phase"]), cell(o["backend"]), cell(o["port"]), true, nil
+	}
+	return "", "", "", false, nil
+}
+
+// eggWaitLoadReady —— 就绪等待（`egg run --wait`）：轮询只读面，直到这枚任务离开 `accepted`。
+// 上界由**外层**墙钟闸给（`--wait` 强制配 `--timeout` ⇒ `wallclockGuard`）—— 到点本函数被打断。
+// 只读面读不到 / 任务号查不到 / 未知 phase ⇒ 一律**不给结论**（退 8）—— ✗ 绝不当作「还在装」
+// 静默空转、✗ 更不许当作「装好了」（「取不到」既不是「没在装」、也不是「装好了」）。
+func eggWaitLoadReady(inv *invocation, c *client, respBody string, eggID, model, machine string, stdout, stderr io.Writer) int {
+	taskID := jsonStrField(respBody, "task_id")
+	if taskID == "" {
+		inv.setErr("blocked", "load_task_id_absent", "异步受理体里没有 task_id ⇒ 就绪等待拿不到跟谁")
+		fmt.Fprintf(stderr, "%s: 受理体里没有 `task_id` ⇒ 就绪等待**拿不到跟谁** ⇒ 不给结论（退码 8，✗ 不当装好了）\n", progName)
+		fmt.Fprintf(stderr, "主控原样响应: %s\n", strings.TrimSpace(respBody))
+		return exitBlocked
+	}
+	fmt.Fprintf(stderr, "%s: 就绪等待（`--wait`）任务号 %s —— 轮询主控只读面 `GET /api/core/status` 的 `load_tasks`\n", progName, taskID)
+	for {
+		phase, backend, port, found, err := eggLoadTaskByID(c, taskID)
+		if err != nil {
+			inv.setErr("blocked", "load_query_unreadable", "就绪等待的只读面 `/api/core/status` 读不到")
+			fmt.Fprintf(stderr, "%s: 只读面 `GET /api/core/status` 读不到：%v\n", progName, err)
+			fmt.Fprintf(stderr, "  ⇒ **不给结论**（退码 8）—— ✗ 不当「还在装」、✗ 更不当「装好了」（「取不到」不是那两个）\n")
+			return exitBlocked
+		}
+		if !found {
+			inv.setErr("blocked", "load_task_absent", "任务号不在 load_tasks 里")
+			fmt.Fprintf(stderr, "%s: 任务号 %s 不在 `load_tasks` 里 ⇒ **不给结论**（退码 8，✗ 不当作装好了）\n", progName, taskID)
+			return exitBlocked
+		}
+		switch phase {
+		case loadPhaseOK:
+			changed := true
+			inv.changed = &changed
+			row := map[string]string{
+				"egg_id": eggID, "model": model, "machine": machine,
+				"action": eggActLoad, "state": eggStateLoaded, "result": strings.TrimSpace(respBody),
+			}
+			fmt.Fprintf(stderr, "%s: `egg run` **就绪**（phase=ok · backend %s · port %s · 任务号 %s）—— 机器 %s\n",
+				progName, orDash(backend), orDash(port), taskID, machine)
+			return listCmd(inv, stdout, stderr, eggActDisplay, []map[string]string{row})
+		case loadPhaseFailed:
+			inv.setErr("upstream_error", "load_failed", "后端装载失败（phase=failed）")
+			fmt.Fprintf(stderr, "%s: `egg run` 装载**失败**（phase=failed · 任务号 %s）⇒ 退码 1\n", progName, taskID)
+			fmt.Fprintf(stderr, "主控原样响应: %s\n", strings.TrimSpace(respBody))
+			return exitFail
+		case loadPhaseAccepted:
+			time.Sleep(eggWaitPollInterval)
+			continue
+		default:
+			inv.setErr("blocked", "load_phase_unknown", "load_tasks 里的 phase 不在闭集（accepted|ok|failed）")
+			fmt.Fprintf(stderr, "%s: 任务号 %s 的 `phase`=%q 不在闭集（accepted|ok|failed）⇒ **不给结论**（退码 8）\n",
+				progName, taskID, phase)
+			return exitBlocked
+		}
+	}
 }
 
 // cmdCocoonLs —— `zerg cocoon ls`：虫茧清单（**主控面仍没有茧投影端点 ⇒ 不给结论**）。

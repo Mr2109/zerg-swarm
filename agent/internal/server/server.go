@@ -714,6 +714,20 @@ func (s *Server) handleLoad(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 单卵时限（GAP-20260926-201 全通路）：CLI `--timeout` ⇒ /load 体 `egg_max_s` ⇒ 落成该模型
+	// 的逐枚覆盖，逐 `InferForward` 生效（优先级 本值 > env `ZERG_EGG_MAX_S` > 现默认 0）。
+	// 给了但读不出 ⇒ **明报拒收**（400 · ✗ 不静默回落默认）—— 与「没给」是两件事。
+	if raw, ok := reqMap["egg_max_s"]; ok {
+		var egs string
+		_ = json.Unmarshal(raw, &egs)
+		d, perr := backend.ParseEggMaxS(egs)
+		if perr != nil {
+			http.Error(w, `{"error":"bad egg_max_s: `+perr.Error()+`"}`, http.StatusBadRequest)
+			return
+		}
+		s.agent.backends.SetEggMaxOverride(model, d)
+	}
+
 	// 加载模型
 	result, loadErr := s.agent.backends.Start(model)
 	if loadErr != nil {

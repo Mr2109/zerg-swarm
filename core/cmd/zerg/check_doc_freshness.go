@@ -83,7 +83,9 @@ import (
 
 const cdfProg = "check-doc-freshness.py"
 const cdfVersion = "v1.0.0"
-const cdfSlugVersionDir = "v2.5.10"
+
+// cdfFixtureVerDir —— 自检夹具专用版目录名（**非真源**；真源见 cdfCurrentVersion，只用于自检合成树）。
+const cdfFixtureVerDir = "v9.9.9"
 const cdfConfigRel = "scripts/docs/doc-freshness.config.json"
 
 const cdfRCOK = 0
@@ -869,16 +871,45 @@ func cdfClassifyTarget(tgt string) (string, string, string) {
 
 // ── 仓外基准根 ──────────────────────────────────────────────────────────────
 
-func cdfDevdocsRoot(repoRoot string) string {
-	if env := os.Getenv("ZERG_DEVDOCS_ROOT"); env != "" {
-		return dcmdAbs(env)
+// cdfCurrentVersion —— 当前发布版（带 `v` 前缀，如 `v2.5.14`）—— 读**唯一真源**
+// `core/internal/version/version.go` 的 `const Version = "X.Y.Z"`（与门① `cdnCurrentVersion` /
+// 门⑫ `dcmdCurrentVersion` 同读法）。读不到真源 ⇒ ok=false（调用方退 rc=2 fail-closed，✗ 不静默回落旧版号/空）。
+func cdfCurrentVersion(repoRoot string) (string, bool) {
+	p := dcmdJoin(repoRoot, "core", "internal", "version", "version.go")
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return "", false
 	}
-	sibling := dcmdSiblingDocsBase(repoRoot)
-	return dcmdAbs(dcmdJoin(sibling, "项目文档", cdfSlugVersionDir))
+	re := regexp.MustCompile(`const\s+Version\s*=\s*"([^"]+)"`)
+	m := re.FindStringSubmatch(string(b))
+	if m == nil {
+		return "", false
+	}
+	return "v" + m[1], true
 }
 
+// cdfDevdocsRoot —— 开发文档面根（`<同级文档仓>/项目文档/<当前版>`）。版本目录**现读唯一真源**
+// （GAP-20260926-174 / GAP-20260927-47：曾钉死 `v2.5.10` ⇒ 换版静默过期）。`ZERG_DEVDOCS_ROOT`
+// 覆盖优先；读不到真源 ⇒ ok=false（调用方退 rc=2 不给结论，✗ 不静默回落旧版号/空）。
+func cdfDevdocsRoot(repoRoot string) (string, bool) {
+	if env := os.Getenv("ZERG_DEVDOCS_ROOT"); env != "" {
+		return dcmdAbs(env), true
+	}
+	sibling := dcmdSiblingDocsBase(repoRoot)
+	ver, ok := cdfCurrentVersion(repoRoot)
+	if !ok {
+		return "", false
+	}
+	return dcmdAbs(dcmdJoin(sibling, "项目文档", ver)), true
+}
+
+// cdfSiblingDocsRoot —— 同级文档仓根。与旧式 `dirname(dirname(devdocs_root()))` 逐字同值
+// （版本目录在两级 dirname 中相消）⇒ 扫描期取根不再受版号真源可读性牵连。
 func cdfSiblingDocsRoot(t *cdfTree) string {
-	return dcmdDir(dcmdDir(cdfDevdocsRoot(t.repo)))
+	if env := os.Getenv("ZERG_DEVDOCS_ROOT"); env != "" {
+		return dcmdDir(dcmdDir(dcmdAbs(env)))
+	}
+	return dcmdSiblingDocsBase(t.repo)
 }
 
 var cdfSiblingStripPrefixes = []string{"docs/"}
@@ -1004,6 +1035,72 @@ func cdfDirPosix(p string) string {
 		return ""
 	}
 	return p[:i]
+}
+
+// ── 跨版相对引用（`../vX.Y.Z/件.md`）真解析（devdocs 收口第 1 步）────────────────────
+//
+// 病：D1 的候选一律按**纯文本归约**（cdfNormJoin）生成，而它会把**越出本树根的 `..` 吃掉**
+// ⇒ `../v2.5.13/件.md`（源在版本根）被当成相对本版根的 `v2.5.13/件.md` ⇒ 恒判断链，
+// 而目标件其实在盘上（树内跨版引用是常态）。
+//
+// 治法（最小面）：只对**越出本树根**的相对目标补一条**真 stat** 的判 ——
+// 以「本树根的父目录」（devdocs ⇒ `项目文档/`）为解析基准，保留 `..` 交 OS 逐级解析。
+// 硬线：① 存在才算命中（✗ 不因「带 ../」就放行）；② 解析基准取不到 / 越出基准 / stat 出错
+//      ⇒ 判不了 ⇒ 不给结论（rc=2），**绝不静默当已解析**。
+
+// cdfRelKeepEscape —— 文本归约 (d, tgt) 但**保留会越出本树根的 `..`**（cdfNormJoin 会把它们吃掉）。
+func cdfRelKeepEscape(d, tgt string) string {
+	segs := []string{}
+	for _, part := range []string{d, tgt} {
+		for _, s := range strings.Split(strings.ReplaceAll(part, "\\", "/"), "/") {
+			if s == "" || s == "." {
+				continue
+			}
+			if s == ".." {
+				if len(segs) > 0 && segs[len(segs)-1] != ".." {
+					segs = segs[:len(segs)-1]
+				} else {
+					segs = append(segs, "..")
+				}
+				continue
+			}
+			segs = append(segs, s)
+		}
+	}
+	return strings.Join(segs, "/")
+}
+
+// cdfCrossRootResolve —— 跨版相对引用的真解析（**仅 devdocs 面**启用；其余 scope 交原逻辑）。
+// 返回 (状态, 绝对路径)：状态 ∈ {"na","exists","dir","miss","unresolvable"}。
+// "na" = 非跨版（目标越不出本树根 / 非 devdocs）⇒ 交原候选逻辑；
+// "miss" = 基准内确无此件（⇒ 断链）；"unresolvable" = 判不了（基准取不到 / 越出基准 / stat 出错）⇒ 不给结论。
+func cdfCrossRootResolve(t *cdfTree, srcRel, tgt string) (string, string) {
+	if t.scope != "devdocs" {
+		return "na", ""
+	}
+	rel := cdfRelKeepEscape(cdfDirPosix(srcRel), tgt)
+	if rel != ".." && !strings.HasPrefix(rel, "../") {
+		return "na", ""
+	}
+	base := dcmdDir(t.repo)
+	if fi, err := os.Stat(base); err != nil || !fi.IsDir() {
+		return "unresolvable", ""
+	}
+	abs := dcmdNormpath(dcmdJoin(t.repo, rel))
+	if !cdfIsUnder(abs, base) {
+		return "unresolvable", ""
+	}
+	st, err := os.Stat(abs)
+	if err == nil {
+		if st.IsDir() {
+			return "dir", abs
+		}
+		return "exists", abs
+	}
+	if os.IsNotExist(err) {
+		return "miss", abs
+	}
+	return "unresolvable", ""
 }
 
 // ─────────────────────────── slug ───────────────────────────
@@ -1292,6 +1389,21 @@ func cdfGateD1(t *cdfTree, args *cdfArgs) *cdfResult {
 				r.add(rel, lk.line, lk.tgt, "黄·大小写不符",
 					fmt.Sprintf("精确串没命中，命中=%s（APFS 判绿、Linux CI 判红）", hit), dom)
 				continue
+			}
+			// ★ 跨版相对引用（`../vX.Y.Z/件.md`）：原候选按纯文本归约生成、会吃掉越出本树根的 `..`
+			// ⇒ 补一条以本树根的父目录为基准的**真 stat** 判（devdocs 收口第 1 步）。
+			if xk, xabs := cdfCrossRootResolve(t, rel, f); xk != "na" {
+				switch xk {
+				case "exists", "dir":
+					r.counted("过", 1)
+					continue
+				case "unresolvable":
+					r.counted("跨版引用·判不了（不给结论）", 1)
+					r.errors = append(r.errors, fmt.Sprintf(
+						"跨版相对引用判不了（解析基准取不到/越界/stat 出错）⇒ 不给结论：%s:%d → %s", rel, lk.line, lk.tgt))
+					continue
+				}
+				cands = append(cands, xabs)
 			}
 			r.counted("断链", 1)
 			last := ""
@@ -2634,6 +2746,34 @@ func cdfCmdSelfTest(w io.Writer, args *cdfArgs) int {
 	}
 	check("缺件（语料根 docs/ 不存在 ⇒ 公开树侧）rc=2 且点名缺件路径", res.rc() == 2 && hasMissDocs, strings.Join(res.errors, " · "))
 
+	// ---------- D1 · 跨版相对引用（devdocs 收口第 1 步）----------
+	fmt.Fprintf(w, "[D1] 跨版相对引用（`../vX.Y.Z/件.md`）\n")
+	cv := filepath.Join(tmp, "crossver")
+	cdfMkroot(map[string]string{
+		"v2.5.14/事故.md": "见 [证](../v2.5.13/证.md)\n",
+		"v2.5.13/证.md":  "# 证\n",
+	}, cv)
+	cvroot := filepath.Join(cv, "v2.5.14")
+	dv := cdfGateD1(cdfNewTree(cvroot, cdfBaseCfg(cvroot), "devdocs", false, false, ""), args)
+	check("跨版相对引用·目标在盘 ⇒ 过（rc=0 · 0 红）", dv.rc() == 0 && len(dv.reds()) == 0,
+		fmt.Sprintf("(%d, %v, %v)", dv.rc(), dv.counts, cdfKinds(dv.reds())))
+	cb := filepath.Join(tmp, "crossver_bad")
+	cdfMkroot(map[string]string{
+		"v2.5.14/事故.md": "见 [证](../v2.5.13/缺件.md)\n",
+		"v2.5.13/证.md":  "# 证\n",
+	}, cb)
+	cbroot := filepath.Join(cb, "v2.5.14")
+	db := cdfGateD1(cdfNewTree(cbroot, cdfBaseCfg(cbroot), "devdocs", false, false, ""), args)
+	okBad := db.rc() == 1 && len(db.reds()) == 1 && db.reds()[0].file == "事故.md" &&
+		db.reds()[0].line == 1 && db.reds()[0].target == "../v2.5.13/缺件.md"
+	check("负控①·跨版链指向不存在件 ⇒ 真红 rc=1 且点名件:行与目标", okBad,
+		fmt.Sprintf("(%d, %v)", db.rc(), db.reds()))
+	func() {
+		tnx := &cdfTree{repo: filepath.Join(tmp, "nope_base", "v2.5.14"), scope: "devdocs"}
+		xk, _ := cdfCrossRootResolve(tnx, "a.md", "../v2.5.13/b.md")
+		check("负控②·解析基准取不到 ⇒ 判不了（unresolvable · ✗ 不当已解析）", xk == "unresolvable", xk)
+	}()
+
 	// ---------- D2 ----------
 	fmt.Fprintf(w, "[D2] 三格\n")
 	r1 = filepath.Join(tmp, "d2good")
@@ -2716,7 +2856,7 @@ func cdfCmdSelfTest(w io.Writer, args *cdfArgs) int {
 	tmp2, _ := os.MkdirTemp("", "docfresh-selftest-ext-")
 	defer os.RemoveAll(tmp2)
 	sx := filepath.Join(tmp2, "repo")
-	cdfMkroot(map[string]string{"docs/a.md": "见 `项目文档/" + cdfSlugVersionDir + "/x.md:3` 与 `Zerg-内部文档/项目文档/" + cdfSlugVersionDir + "/x.md:3`" +
+	cdfMkroot(map[string]string{"docs/a.md": "见 `项目文档/" + cdfFixtureVerDir + "/x.md:3` 与 `Zerg-内部文档/项目文档/" + cdfFixtureVerDir + "/x.md:3`" +
 		" 与 `core/nope.py:1`。\n"}, sx)
 	t = cdfNewTree(sx, cdfBaseCfg(sx), "main", false, false, "")
 	res = cdfGateD2(t, args)
@@ -2738,14 +2878,14 @@ func cdfCmdSelfTest(w io.Writer, args *cdfArgs) int {
 	}
 	check("缺语料·**仓内**引用不跟着进 BLOCKED（`core/nope.py:1` 仍判红·文件不存在）", innerOK,
 		fmt.Sprintf("%v", cdfKindTargets(rs)))
-	cdfMkroot(map[string]string{"项目文档/" + cdfSlugVersionDir + "/x.md": "l1\nl2\nl3\nl4\n"}, filepath.Join(tmp2, "Zerg-内部文档"))
+	cdfMkroot(map[string]string{"项目文档/" + cdfFixtureVerDir + "/x.md": "l1\nl2\nl3\nl4\n"}, filepath.Join(tmp2, "Zerg-内部文档"))
 	res2 := cdfGateD2(cdfNewTree(sx, cdfBaseCfg(sx), "main", false, false, ""), args)
 	rrs := res2.reds()
 	pairOK := res2.counts["不给结论·仓外根不在盘"] == 0 && len(rrs) == 1 && strings.HasPrefix(rrs[0].target, "core/nope.py")
 	check("成对负控·外根在盘 ⇒ 同一个件（①/② 形态）照旧判过（本档整体不生效）", pairOK,
 		fmt.Sprintf("(%d, %v, %v)", res2.rc(), res2.counts, cdfKindTargets(rrs)))
 	sx3 := filepath.Join(tmp2, "repo3")
-	cdfMkroot(map[string]string{"docs/a.md": "见 `项目文档/" + cdfSlugVersionDir + "/x.md:99` 与 `项目文档/" + cdfSlugVersionDir + "/真不存在-x.md:1`。\n"}, sx3)
+	cdfMkroot(map[string]string{"docs/a.md": "见 `项目文档/" + cdfFixtureVerDir + "/x.md:99` 与 `项目文档/" + cdfFixtureVerDir + "/真不存在-x.md:1`。\n"}, sx3)
 	res3 := cdfGateD2(cdfNewTree(sx3, cdfBaseCfg(sx3), "main", false, false, ""), args)
 	kinds3 := cdfKinds(res3.reds())
 	sort.Strings(kinds3)
@@ -3236,7 +3376,11 @@ func checkDocFreshnessGateMain(stdout, stderr io.Writer, argv []string) int {
 		return cdfCmdSelfTest(stdout, args)
 	}
 	if args.scope == "devdocs" {
-		d := cdfDevdocsRoot(dcmdDefaultRepo())
+		d, ok := cdfDevdocsRoot(dcmdDefaultRepo())
+		if !ok {
+			fmt.Fprint(stderr, "版本真源读不到（core/internal/version/version.go 里没有 `const Version = \"…\"`）⇒ 现算不出开发文档面默认根 ⇒ rc=2 不给结论（换根请设 ZERG_DEVDOCS_ROOT；口径见设计稿 §五）\n")
+			return cdfRCBlocked
+		}
 		if fi, err := os.Stat(d); err != nil || !fi.IsDir() {
 			fmt.Fprintf(stderr, "开发文档面根不在 ⇒ rc=2 不给结论：%s（换根请设 ZERG_DEVDOCS_ROOT；口径见设计稿 §五）\n", d)
 			return cdfRCBlocked

@@ -271,6 +271,9 @@ func (h *ControlHandlers) LoadHandler(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Machine string `json:"machine"`
 		Model   string `json:"model"`
+		// 单卵时限（GAP-20260926-201 全通路）：CLI `--timeout` ⇒ 本字段 ⇒ **透传**进子端
+		// /load 体（✗ 不许在下面重造体时丢掉）。单位 = **秒**（与子端 env `ZERG_EGG_MAX_S` 同口径）。
+		EggMaxS string `json:"egg_max_s"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErrorCode(w, http.StatusBadRequest, "INVALID_BODY", "请求体 JSON 解析失败: "+err.Error())
@@ -340,7 +343,12 @@ func (h *ControlHandlers) LoadHandler(w http.ResponseWriter, r *http.Request) {
 	// ★ 负控：**受理前**的前置拒执一字未动（未知模型 404 MODEL_NOT_FOUND · 未部署
 	//   MODEL_NOT_DEPLOYED · 机器不存在 MACHINE_NOT_FOUND · 本机已退役 410 · 体坏 400）⇒
 	//   这些路径**不**出 `accepted`（装载失败 = 未受理，不得回 accepted）。
-	body, _ := json.Marshal(map[string]string{"model": req.Model})
+	loadBody := map[string]string{"model": req.Model}
+	if req.EggMaxS != "" {
+		// 透传（GAP-20260926-201）：CLI 给的单卵时限**原样**带给子端 —— 重造体时不许丢。
+		loadBody["egg_max_s"] = req.EggMaxS
+	}
+	body, _ := json.Marshal(loadBody)
 	taskID := newLoadTaskID(req.Machine, req.Model)
 	started := time.Now()
 	h.addLoadTask(&loadTaskRec{

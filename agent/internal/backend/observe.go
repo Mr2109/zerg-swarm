@@ -130,6 +130,9 @@ type EggObservation struct {
 	//   - Enclosure 是同一个事实的完整形态（含 expected/observed/allowlist/checked_at）。
 	//   - Enclosure == nil ⇔ 本端从未声称过隔离（裸 exec 路径），此时旧两字段也恒为 false/空。
 	Enclosure *enclosure.Verdict
+	// Argv 本卵实际执行的引擎命令行（可执行 + 参数，逐字来自 buildEngineArgv · GAP-20260926-01）。
+	// 缺席（nil）＝ 本端从未为此卵记下 argv（未起成 / 未赋值）⇒ 如实缺席，**不编**一个空数组。
+	Argv []string
 }
 
 // enginePIDOf 取一枚托管卵的引擎进程 pid（只读）：
@@ -187,6 +190,7 @@ func (m *Manager) EggObservations() []EggObservation {
 			EnclosureVerified: sp.enclosureVerified,
 			EnclosureNote:     sp.enclosureNote,
 			Enclosure:         sp.enclosure,
+			Argv:              sp.engineArgv,
 		}
 		if sp.entry != nil {
 			o.SchemaVersion = sp.entry.SchemaVersion

@@ -343,3 +343,127 @@ func itaskIntervalReadBack(inv *invocation, stderr io.Writer) (map[string]string
 	}
 	return out, true
 }
+
+// ---- `itask mode set` 写面（D2 · 设内部任务的自动运行开关 · 缺口 GAP-20260927-205 · 2026-10-10）----
+//
+// 现读写路径（本票只开这一条）：`zerg itask mode set <任务 id> --on|--off`
+//   ⇒ POST `/api/internal-tasks/{id}/mode` `{"auto_run": true|false}`
+//   （主控侧路由已存在 · `core/cmd/zerg-core/main.go` → `api.InternalModeHandler`）
+//   ⇒ `SetInternalMode(id, auto)` ⇒ 持久化 `<任务目录根>/internal_modes.json`（重启恢复）。
+//   `--on`（auto_run=true · 自动运行）/`--off`（auto_run=false · 手动运行）**恰好给一枚**（同给/都不给 ⇒ 用法错 2）。
+//
+// 口径逐字照同族写面先例（`itask interval set`〔本件〕＋ `itask stop` · §九 M3 C1/C2/C4）：
+//   - D2 档（有影响但可逆：再设回原开关即回原态）；走自家确认档门 `cmdItaskModeSetGuarded`；
+//   - `--dry-run`：只出**计划件**、零副作用、退 0（档序：干跑先于确认档）；
+//   - `--confirm=<本机名>` + `--yes`：fail-closed（缺一即退 2，从不提问）；
+//   - `--dry-run` 与 `--yes` 同给 ⇒ `dryRunYesConflict` 判用法错 2。
+//   ★ 本票**不做删除面**（`itask rm` 另面待拍）—— 关比删安全（可回滚、不丢清单）。
+
+// cmdItaskModeSetGuarded —— `zerg itask mode set` 的唯一执行门（D2 · 确认档齐 ⇒ 转真写）。
+func cmdItaskModeSetGuarded(inv *invocation, stdout, stderr io.Writer) int {
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
+	if len(inv.args) == 0 || strings.TrimSpace(inv.args[0]) == "" {
+		inv.setErr("usage", "missing_target", "缺任务 id")
+		fmt.Fprintf(stderr, "%s: `itask mode set` 要一个任务 id（先 `%s itask ls`）⇒ 退码 2\n", progName, progName)
+		return exitUsage
+	}
+	target := strings.TrimSpace(inv.args[0])
+	// `--on` / `--off` 恰好给一枚（同给/都不给 ⇒ 用法错 2 · **零写** —— 判在干跑与写之前）。
+	on := inv.hasFlag("--on")
+	off := inv.hasFlag("--off")
+	if on == off {
+		inv.setErr("usage", "bad_flag_value", "`--on`/`--off` 要恰好给一枚")
+		fmt.Fprintf(stderr, "%s: `itask mode set` 要 `--on` 或 `--off` **恰好给一枚**（如 `%s itask mode set health-check --off`）\n", progName, progName)
+		return exitUsage
+	}
+	autoRun := on
+	if inv.dryRun {
+		emitItaskModeSetPlan(stdout, stderr, target, autoRun)
+		return exitOK
+	}
+	if rc := schedConfirmGate(inv, stderr, "itask mode set"); rc != exitOK {
+		return rc
+	}
+	return cmdItaskModeSetWrite(inv, stdout, stderr, target, autoRun)
+}
+
+// emitItaskModeSetPlan —— `itask mode set --dry-run` 的计划件（人面 · stderr 一行收口 · 零副作用）。
+func emitItaskModeSetPlan(stdout, stderr io.Writer, target string, autoRun bool) {
+	mode := "手动运行（off）"
+	if autoRun {
+		mode = "自动运行（on）"
+	}
+	fmt.Fprintln(stdout, schedPlanHeader)
+	fmt.Fprintf(stdout, "  动作     : %s itask mode set\n", progName)
+	fmt.Fprintf(stdout, "  危险档   : %s（有影响但可逆 —— 再设回原开关即回原态；要 --confirm=<本机名> 与 --yes）\n", dangerD2)
+	fmt.Fprintf(stdout, "  目标     : %s\n", target)
+	fmt.Fprintf(stdout, "  请求     : POST %s/api/internal-tasks/%s/mode {\"auto_run\": %t}\n", newClient().base, target, autoRun)
+	fmt.Fprintf(stdout, "  它会动   : 把该内部任务的自动运行开关设成 %s（**持久化**到 internal_modes.json —— 重启恢复）\n", mode)
+	fmt.Fprintf(stdout, "  留痕     : 一行一事件 · 追加只写 · **写失败即拒**（§九 M3 C5）\n")
+	fmt.Fprintf(stdout, "  来源     : §7.1 P8 · §5.1 POST /api/internal-tasks/{id}/mode · 缺口 GAP-20260927-205 · 同族写面先例 `itask interval set`（D2 + --confirm + --yes）\n")
+	fmt.Fprintln(stderr, "（--dry-run：只出计划件 · 零副作用 —— 未执行、未改任何状态）")
+}
+
+// cmdItaskModeSetWrite —— 真写（确认档齐后）：POST `/api/internal-tasks/{id}/mode`，
+// 再把落点值**回读**（`GET /api/internal-tasks/modes`）逐条核（落地值回读）。
+func cmdItaskModeSetWrite(inv *invocation, stdout, stderr io.Writer, target string, autoRun bool) int {
+	body := fmt.Sprintf("{\"auto_run\":%t}", autoRun)
+	status, respBody, err := postJSON(newClient(), "/api/internal-tasks/"+url.PathEscape(target)+"/mode", body)
+	var he *httpError
+	if err != nil && asHTTP(err, &he) {
+		status, respBody, err = he.status, he.body, nil
+	}
+	if err != nil {
+		inv.setErr("unreachable", "dial_failed", err.Error())
+		fmt.Fprintf(stderr, "%s: 打不到主控：%v\n", progName, err)
+		return exitUnreachable
+	}
+	if status == 401 || status == 403 {
+		inv.setErr("unauthenticated", fmt.Sprintf("http_%d", status), "未认证")
+		fmt.Fprintf(stderr, "%s: 主控拒了这次设模式（http_%d）—— 看 `zerg help credentials`\n", progName, status)
+		return exitAuth
+	}
+	if status >= 400 {
+		code := errorCodeOf(respBody)
+		inv.setErr("usage", code, "主控拒绝设模式")
+		fmt.Fprintf(stderr, "%s: 主控拒绝设模式（http_%d）· code=%s\n", progName, status, orDash(code))
+		fmt.Fprintf(stderr, "主控原样响应: %s\n", strings.TrimSpace(respBody))
+		if status == 404 {
+			fmt.Fprintf(stderr, "⇒ 主控**没有这条路由**（`POST /api/internal-tasks/{id}/mode` 未接）—— 需重编 + 重启主控后才有\n")
+		}
+		return exitUsage
+	}
+	var resp jsonObj
+	if err := json.Unmarshal([]byte(respBody), &resp); err != nil {
+		inv.setErr("upstream_error", "bad_itask_payload", err.Error())
+		fmt.Fprintf(stderr, "%s: 主控回了 2xx 但响应体不是对象 ⇒ 不给结论（退码 1）\n", progName)
+		return exitFail
+	}
+	row := map[string]string{"id": target, "auto_run": cell(resp["auto_run"]), "message": cell(resp["message"])}
+	// 落地值回读：把现读的 modes 核进结果面（`set` 报的 auto_run 与回读值同源对照）。
+	if landed, ok := itaskModeReadBack(inv, stderr); ok {
+		if v, hit := landed[target]; hit {
+			row["landed"] = v
+		} else {
+			row["landed"] = "（未列出 ⇒ 默认自动运行）"
+		}
+	}
+	return listCmd(inv, stdout, stderr, []string{"id", "auto_run", "landed", "message"}, []map[string]string{row})
+}
+
+// itaskModeReadBack —— 回读现读的模式表（`GET /api/internal-tasks/modes`）；取不到 ⇒ ok=false（不吞错）。
+func itaskModeReadBack(inv *invocation, stderr io.Writer) (map[string]string, bool) {
+	var resp jsonObj
+	if rc := fetchInv(inv, newClient(), "/api/internal-tasks/modes", &resp, stderr); rc != exitOK {
+		return nil, false
+	}
+	out := map[string]string{}
+	if m := asObj(resp["modes"]); m != nil {
+		for k, v := range m {
+			out[k] = cell(v)
+		}
+	}
+	return out, true
+}

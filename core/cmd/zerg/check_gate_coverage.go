@@ -138,6 +138,7 @@ type cgcConfig struct {
 	path              string
 	baseline          int
 	baselineNote      string
+	scanNote          string
 	buildManifests    []string
 	scriptGlobs       []string
 	nosuffixDir       string
@@ -195,8 +196,11 @@ type cgcReport struct {
 	nosuffix          []string
 	baseline          int
 	baselineNote      string
+	scanNote          string
 	noteDrift         bool
 	noteDriftDetail   string
+	scanNoteStatus    int
+	scanNoteDetail    string
 	stale             [][4]string
 	wlCounts          map[string]int
 	excludeComponents []string
@@ -681,6 +685,7 @@ func cgcLoadConfig(path string) (*cgcConfig, error) {
 		path:              path,
 		baseline:          bl,
 		baselineNote:      cgcStrOr(cfgMap["_baseline_note"], ""),
+		scanNote:          cgcStrOr(cfgMap["_scan_note"], ""),
 		buildManifests:    cgcStrSliceOr(scanMap["build_manifests"], cgcDefaultBuildManifests),
 		scriptGlobs:       cgcStrSliceOr(scanMap["script_globs"], cgcDefaultScriptGlobs),
 		nosuffixDir:       cgcStrOr(scanMap["nosuffix_dir"], cgcDefaultNosuffixDir),
@@ -1386,6 +1391,7 @@ func cgcAnalyse(root string, cfg *cgcConfig, steps []cgcStep, gatesText string, 
 		nosuffix:          nosuffix,
 		baseline:          cfg.baseline,
 		baselineNote:      cfg.baselineNote,
+		scanNote:          cfg.scanNote,
 		stale:             stale,
 		wlCounts:          map[string]int{"build_dirs": len(cfg.wlBuild), "scripts": len(cfg.wlScripts)},
 		excludeComponents: append([]string{}, cfg.excludeComponents...),
@@ -1806,6 +1812,8 @@ func (r *cgcReport) toJSONMap() map[string]any {
 			"git_tracked_known": r.gitTrackedKnown, "whitelisted": bWL, "glob_only": globOnly,
 			"nosuffix": nosuffix, "empty": r.bEmpty},
 		"baseline": r.baseline, "baseline_note": r.baselineNote,
+		"scan_note":       r.scanNote,
+		"scan_note_drift": map[string]any{"rc": r.scanNoteStatus, "detail": r.scanNoteDetail},
 		"note_drift":      map[string]any{"ok": r.noteDrift, "detail": r.noteDriftDetail},
 		"stale_whitelist": stale, "wl_counts": r.wlCounts,
 		"exclude_components": r.excludeComponents, "exclude_prefixes": r.excludePrefixes,
@@ -1870,6 +1878,66 @@ func cgcBaselineNoteDrift(baseline int, note string) (bool, string) {
 func cgcNoteDriftOK(baseline int, note string) bool {
 	ok, _ := cgcBaselineNoteDrift(baseline, note)
 	return ok
+}
+
+// ── `_scan_note` ↔ `scan.script_globs` 同源校验（`GAP-20260927-05`）─────────────────
+//
+// 病（缺口逐字）：门配置件的笔注 `_scan_note` 自述「本笔只加这段字 · 未动 script_globs」，
+// 同一笔却动了 `scan.script_globs` ⇒ note 与 diff 自相矛盾；且**无任何门**校验「笔注说的」
+// 与「机侧实测」是否一致。治法（同族先例 = 本门 ㉓ `_baseline_note`↔`baseline`）：把
+// `_scan_note` 的**现值句**与 `scan` 的**机侧实测读数**双向对拍 —— 一侧取不到 ⇒ rc=2
+// （不给结论），两侧对不上（任一方向）⇒ rc=1 且**逐字点名两侧读数**。
+//
+//	note 侧：句「现读 N 条 glob」= 声明 glob 总条数；句「M 条实测 0 件」= 声明空 glob 条数。
+//	机侧：len(script_globs) 与 逐条实测「匹配 0 个盘上件」的条数。
+var (
+	cgcScanNoteTotalRe = regexp.MustCompile(`现读\s*(\d+)\s*条\s*glob`)
+	cgcScanNoteEmptyRe = regexp.MustCompile(`(\d+)\s*条实测\s*0\s*件`)
+)
+
+// cgcScanNoteDrift：`_scan_note` 现值句 ↔ scan 实测 **两向对拍**。返回 (rc, detail)：
+//
+//	rc=0 一致 · rc=1 分家（点名两侧读数）· rc=2 取不到任一侧（不给结论）。
+//
+// ★ 只在 config **有** `_scan_note` 时被调用；无 note ⇒ 无声明可比 ⇒ 本面不适用（调用方跳过）。
+func cgcScanNoteDrift(root string, globs []string, note string) (int, string) {
+	tm := cgcScanNoteTotalRe.FindAllStringSubmatch(note, -1)
+	em := cgcScanNoteEmptyRe.FindAllStringSubmatch(note, -1)
+	if len(tm) == 0 {
+		return cgcRcBlocked, "note 侧取不到：`_scan_note` 里没有「现读 N 条 glob」现值句 ⇒ 不给结论"
+	}
+	if len(em) == 0 {
+		return cgcRcBlocked, "note 侧取不到：`_scan_note` 里没有「M 条实测 0 件」读数句 ⇒ 不给结论"
+	}
+	if len(globs) == 0 {
+		return cgcRcBlocked, "机侧取不到：scan.script_globs 为空 ⇒ 不给结论"
+	}
+	declTotal, _ := strconv.Atoi(tm[len(tm)-1][1])
+	declEmpty, _ := strconv.Atoi(em[len(em)-1][1])
+	actTotal := len(globs)
+	actEmpty := 0
+	for _, g := range globs {
+		n := 0
+		for _, q := range cgcGlob(root, g) {
+			if cgcIsFile(q) {
+				n++
+			}
+		}
+		if n == 0 {
+			actEmpty++
+		}
+	}
+	var probs []string
+	if declTotal != actTotal {
+		probs = append(probs, fmt.Sprintf("glob 总条数：note 说 %d · 机侧实测 %d（%+d）", declTotal, actTotal, actTotal-declTotal))
+	}
+	if declEmpty != actEmpty {
+		probs = append(probs, fmt.Sprintf("实测 0 件条数：note 说 %d · 机侧实测 %d（%+d）", declEmpty, actEmpty, actEmpty-declEmpty))
+	}
+	if len(probs) > 0 {
+		return cgcRcFail, "_scan_note 与实测分家：" + strings.Join(probs, "；")
+	}
+	return cgcRcOK, fmt.Sprintf("note 现值句与实测一致（glob %d 条 · 空 %d 条）", actTotal, actEmpty)
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -2349,6 +2417,35 @@ func cgcSelfTest(sink io.Writer, deep bool) bool {
 	check("㉓c note 无现值重述句 ⇒ 不误红（只认可机读「下调成 N」形态）",
 		cgcNoteDriftOK(55, "只有散文、无重述句"), "")
 
+	// ★ `_scan_note` ↔ 实测 双向对拍（`GAP-20260927-05`）：正控一致 / 负控分家 / 负控取不到侧。
+	{
+		root := cgcFixture(base, "scan-note-ok", cgcFixOpts{
+			steps:   [][2]string{{"core", "go build ./..."}, {"", "python3 scripts/ok.py"}},
+			scripts: []string{"scripts/ok.py"}})
+		cfgP := cgcPyJoin(root, "scripts", "gates", "gate-coverage.config.json")
+		mk := func(note string) string {
+			b, _ := json.Marshal(map[string]any{"schema": "gate-coverage/1", "baseline": 0,
+				"whitelist":  map[string]any{"build_dirs": []any{}, "scripts": []any{}},
+				"_scan_note": note})
+			cgcWriteFile(cfgP, string(b))
+			return string(b)
+		}
+		_ = mk("本笔只加这段字 · 未动 script_globs；现读 2 条 glob 中 1 条实测 0 件。")
+		rcN, outN := cgcRunCapture([]string{"--no-self-test", "--root", root})
+		check("㉔a _scan_note 现值句与实测一致 ⇒ rc=0（正控）", rcN == 0, fmt.Sprintf("rc=%d", rcN))
+
+		_ = mk("本笔只加这段字 · 未动 script_globs；现读 2 条 glob 中 8 条实测 0 件。")
+		rcN, outN = cgcRunCapture([]string{"--no-self-test", "--root", root})
+		check("㉔b 造一处分家（note 说 8 · 实测 1）⇒ rc=1（负控 · 与 ㉔a 成对）", rcN == 1, fmt.Sprintf("rc=%d", rcN))
+		check("㉔b 且**逐字点名两侧读数**（note 说 8 · 机侧实测 1）",
+			strings.Contains(outN, "实测 0 件条数：note 说 8") && strings.Contains(outN, "机侧实测 1"), "")
+
+		_ = mk("本笔只加一段散文、无任何现值句。")
+		rcN, outN = cgcRunCapture([]string{"--no-self-test", "--root", root})
+		check("㉔c 取不到 note 侧（无现值句）⇒ rc=2（不给结论 · ✗ 不静默取其一）", rcN == 2, fmt.Sprintf("rc=%d", rcN))
+		check("㉔c 且点名「取不到」", strings.Contains(outN, "取不到"), "")
+	}
+
 	fmt.Fprintln(sink, "── check-gate-coverage 自检（成对负控 · 真命令行 + 真退出码）──")
 	bad := 0
 	for _, c := range cases {
@@ -2585,6 +2682,13 @@ func cgcRunMain(stdout, stderr io.Writer, argv []string) int {
 	// ★ `_baseline_note` ↔ `baseline` 同源校验（`GAP-20260927-42` ①）：末次现值句必须 == baseline，
 	//   否则人读报告说一套、`baseline` 是另一套 ⇒ 读者按错数算余量。红档并入 rc=1（不是 rc=2）。
 	rep.noteDrift, rep.noteDriftDetail = cgcBaselineNoteDrift(rep.baseline, rep.baselineNote)
+	// ★ `_scan_note` ↔ `scan` 同源校验（`GAP-20260927-05`）：note 现值句与**机侧实测**双向对拍。
+	//   无 `_scan_note` ⇒ 无声明可比 ⇒ 本面不适用（rc 不受影响）。一侧取不到 ⇒ rc=2（不给结论）。
+	rep.scanNoteStatus = cgcRcOK
+	rep.scanNoteDetail = "config 无 `_scan_note`（无声明可比）⇒ 本面对拍不适用"
+	if rep.scanNote != "" {
+		rep.scanNoteStatus, rep.scanNoteDetail = cgcScanNoteDrift(root, cfg.scriptGlobs, rep.scanNote)
+	}
 
 	nRedA := len(rep.aRed)
 	nOverB := rep.bHit - rep.baseline
@@ -2610,7 +2714,11 @@ func cgcRunMain(stdout, stderr io.Writer, argv []string) int {
 		rep.verdictReason = fmt.Sprintf("判不了：仓根不是 git 仓 / git 不可用 ⇒ ③ 档 %d 条分不开"+
 			"「新件 / 存量债」⇒ 不给结论", len(rep.bHitItems))
 		rep.rc = cgcRcBlocked
-	case nRedA > 0 || nOverB > 0 || nNewB > 0 || !rep.noteDrift:
+	case rep.scanNoteStatus == cgcRcBlocked:
+		rep.verdictCode = "SCAN_NOTE_UNKNOWN"
+		rep.verdictReason = "_scan_note ↔ scan 对拍取不到一侧 ⇒ 不给结论：" + rep.scanNoteDetail
+		rep.rc = cgcRcBlocked
+	case nRedA > 0 || nOverB > 0 || nNewB > 0 || !rep.noteDrift || rep.scanNoteStatus == cgcRcFail:
 		over := nOverB
 		if over < 0 {
 			over = 0
@@ -2620,8 +2728,12 @@ func cgcRunMain(stdout, stderr io.Writer, argv []string) int {
 			drift = 1
 		}
 		rep.verdictCode = "RED"
+		sd := 0
+		if rep.scanNoteStatus == cgcRcFail {
+			sd = 1
+		}
 		rep.verdictReason = fmt.Sprintf("A 未收进 %d 条；B 棘轮命中 %d > 基线 %d（超 %d）；"+
-			"新件未挂门 %d 条；_baseline_note 漂移 %d 条", nRedA, rep.bHit, rep.baseline, over, nNewB, drift)
+			"新件未挂门 %d 条；_baseline_note 漂移 %d 条；_scan_note 漂移 %d 条", nRedA, rep.bHit, rep.baseline, over, nNewB, drift, sd)
 		rep.rc = cgcRcFail
 	default:
 		rep.verdictCode = "OK"
@@ -2650,6 +2762,16 @@ func cgcRunMain(stdout, stderr io.Writer, argv []string) int {
 			nd = "**漂移**（note 与 baseline 不同源）"
 		}
 		fmt.Fprintf(stdout, "   _baseline_note：%s（%s）\n", nd, rep.noteDriftDetail)
+		snd := "不适用"
+		if rep.scanNote != "" {
+			snd = "一致"
+			if rep.scanNoteStatus == cgcRcFail {
+				snd = "**分家**"
+			} else if rep.scanNoteStatus == cgcRcBlocked {
+				snd = "**取不到侧**"
+			}
+		}
+		fmt.Fprintf(stdout, "   _scan_note：%s（%s）\n", snd, rep.scanNoteDetail)
 		switch rep.rc {
 		case cgcRcBlocked:
 			fmt.Fprintf(stderr, "   ⇒ **不给结论（rc=2）**：%s\n", rep.verdictReason)

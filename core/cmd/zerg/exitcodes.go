@@ -98,6 +98,8 @@ func helpExitCodes() string {
 	out += "\n" + exitcodePolicy + "\n"
 	out += "\n" + exitcodeGatePass + "\n"
 	out += "  门禁直通档（不翻译）：" + gateExitLine + "\n"
+	out += "  门禁步骤四档（脚本内部 · 不进退出码）：PASS／FAIL（失败项）／BLOCKED（不给结论）／REPORT（只报告）\n"
+	out += "    档位映射：`tri` ⇒ 0=PASS · 1=FAIL · 2=BLOCKED · 其它码=FAIL；`tri-report` 与 `tri` **只差 rc=1 那一格**（rc=1 ⇒ REPORT：红只入清单、不计失败项、不计 BLOCKED、**不影响退出码**）；`rc`／`empty` 两模式语义不变。\n"
 	out += "\n一份口径（防误读）：**组件的自有码空间**（`zerg-compat` / `zerg-model` / `zerg-agent` 的进程内语义码）" +
 		"与命令面这张表**不是同一张表** —— 命令面只把它们**原样转出**；值面对齐要先给它们的自有语义重新取号，" +
 		"属 `P-013` 的拍板项（差集逐条登记在《开工记录-批A-20260920.md》T-04 节）。\n"

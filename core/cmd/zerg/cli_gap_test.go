@@ -184,8 +184,19 @@ func TestGapFamily_ThreeStates(t *testing.T) {
 	if rc, out, _ := gapRun(t, "gap", "verify", id); rc != 2 {
 		t.Errorf("verify 缺 --yes ⇒ 2，得到 %d · %q", rc, out)
 	}
-	if rc, out, errb := gapRun(t, "gap", "verify", id, "--yes"); rc != 0 {
-		t.Errorf("verify --yes ⇒ 0，得到 %d · %s%s", rc, out, errb)
+	// ★ 缺口 `GAP-20260928-195`（本枚）：判据批量面销案同走**共用两态闸** —— 新账未带两态读数
+	//   ⇒ **拒写**（退 2 · 一字不写）；带成对读数 ⇒ 放行（下面正控）。此前该面绕道无闸。
+	bsha := gapSHAOf(t, ledger)
+	if rc, _, errb := gapRun(t, "gap", "verify", id, "--yes"); rc != 2 {
+		t.Errorf("verify 销案缺两态读数 ⇒ 2（共用闸 · 负控要真红），得到 %d · %s", rc, errb)
+	}
+	if gapSHAOf(t, ledger) != bsha {
+		t.Errorf("verify 负控（缺读数拒写）动了真源")
+	}
+	if rc, out, errb := gapRun(t, "gap", "verify", id, "--yes",
+		"--before-read", "cmd=zerg gap ls --state 仍缺 · rc=1 · reading=改前该号列于仍缺",
+		"--after-read", "cmd=zerg gap ls --state 已解 · rc=0 · reading=改后该号列于已解"); rc != 0 {
+		t.Errorf("verify --yes（带两态）⇒ 0，得到 %d · %s%s", rc, out, errb)
 	}
 }
 
@@ -376,8 +387,11 @@ func TestGapFamily_VerifyJudgePairs(t *testing.T) {
 	}
 	id := gapFirstID(t)
 
-	if rc, out, errb := gapRun(t, "gap", "verify", id, "--yes"); rc != 0 {
-		t.Fatalf("判据过 ⇒ verify --yes 要 0，得到 %d · %s%s", rc, out, errb)
+	// ★ 缺口 `GAP-20260928-195`（本枚）：新账销案须带两态读数（共用闸）—— 带成对读数才放行。
+	if rc, out, errb := gapRun(t, "gap", "verify", id, "--yes",
+		"--before-read", "cmd=zerg gap ls --state 仍缺 · rc=1 · reading=改前该号列于仍缺",
+		"--after-read", "cmd=zerg gap ls --state 已解 · rc=0 · reading=改后该号列于已解"); rc != 0 {
+		t.Fatalf("判据过 ⇒ verify --yes（带两态）要 0，得到 %d · %s%s", rc, out, errb)
 	}
 	rec := gapRecordOf(t, ledger, id)
 	if rec["state"] != "已解" {
@@ -608,4 +622,183 @@ func gapFirstLine(s string) string {
 		return s[:i]
 	}
 	return s
+}
+
+// ── 卵闭案回执的**生产者** + 检查面**错族点名**（缺口账 `GAP-20260928-184` 第三面 · 2026-10-10）─────
+//
+// 三格（逐格对派单）：
+//
+//	正控 —— `zerg gap receipt new` 产出的件 ⇒ `zerg gap receipt check` rc=0（生产者↔检查面同一把尺）；
+//	负控① —— 真缺栏的本族件 ⇒ 检查面**仍须红**（判据侧硬必填不动）；
+//	负控② —— `dev receipt` 族件（签名键 `round_id`）⇒ 检查面**点名为错族**（「本面不适用」），**不许**报「缺 4 栏」。
+
+// gapReceiptEnv 合成 receipts 目录（`ZERG_RECEIPT_DIR`）+ 合成真源（`gapEnv`）。
+func gapReceiptEnv(t *testing.T) (receipts, ledger string) {
+	t.Helper()
+	receipts = t.TempDir()
+	t.Setenv("ZERG_RECEIPT_DIR", receipts)
+	_, ledger, _ = gapEnv(t)
+	return
+}
+
+// gapReceiptAssignedLine 一条 `state=已派` 的真源行（闭案对账要「号在账里且当前 state=已派」）。
+func gapReceiptAssignedLine(id string) string {
+	return `{"id":"` + id + `","fp":"x","symptom":"s","handmade":"h","impact":"命令面","prio":"P1",` +
+		`"state":"已派","want_family":"gap","want_action":"ls","repro_cmd":"x",` +
+		`"verify_cmd":"zerg version","found_at":"2026-10-10T00:00:00+08:00"}` + "\n"
+}
+
+func TestGapReceiptNewRoundTripThenCheckPasses(t *testing.T) {
+	_, ledger := gapReceiptEnv(t)
+	const id = "GAP-20261010-900"
+	if err := os.WriteFile(ledger, []byte(gapReceiptAssignedLine(id)), 0o644); err != nil {
+		t.Fatalf("夹具写真源失败：%v", err)
+	}
+	// 缺 `--yes` ⇒ fail-closed 2（零写 · 同族 `dev receipt new` 一条纪律）
+	if rc, out, _ := gapRun(t, "gap", "receipt", "new", "--egg", "EGG-A", "--reading", id+"=ok", "--conclusion", "收口"); rc != 2 || out != "" {
+		t.Fatalf("缺 --yes ⇒ 要 rc=2 + stdout 0 字节，实测 rc=%d out=%q", rc, out)
+	}
+	// 缺必需旗标 ⇒ 2 且点名
+	if rc, _, errb := gapRun(t, "gap", "receipt", "new", "--yes", "--egg", "EGG-A"); rc != 2 || !strings.Contains(errb, "--reading") {
+		t.Fatalf("缺 --reading/--conclusion ⇒ 要 rc=2 且点名，实测 rc=%d err=%q", rc, errb)
+	}
+	// `--reading` 形态不对 ⇒ 2
+	if rc, _, _ := gapRun(t, "gap", "receipt", "new", "--yes", "--egg", "E", "--reading", "没有等号", "--conclusion", "c"); rc != 2 {
+		t.Fatalf("`--reading` 无 `=` ⇒ 要 rc=2，实测 rc=%d", rc)
+	}
+	// 真写（`--yes`）
+	rc, out, errb := gapRun(t, "gap", "receipt", "new", "--yes",
+		"--egg", "EGG-A", "--reading", id+"=ok", "--conclusion", "收口")
+	if rc != 0 {
+		t.Fatalf("写回执 ⇒ rc=0，实测 rc=%d err=%s", rc, errb)
+	}
+	p := firstLine(out)
+	if !strings.HasPrefix(filepath.Base(p), "GR-") {
+		t.Fatalf("文件名前缀应为 `GR-`（与 `dev receipt` 的 `R-` 族区分），实测 %q", p)
+	}
+	if _, err := os.Stat(p); err != nil {
+		t.Fatalf("回执没落盘到 %s：%v", p, err)
+	}
+	// 正控：新生产者产物 ⇒ check rc=0
+	rc, out, errb = gapRun(t, "gap", "receipt", "check", p)
+	if rc != 0 {
+		t.Fatalf("check 新生产者产物 ⇒ rc=0，实测 rc=%d out=%q err=%q", rc, out, errb)
+	}
+	if !strings.Contains(out, "EGG-A") || !strings.Contains(out, "一一对应") {
+		t.Errorf("check 人面没读出卵号 / 对账：%q", out)
+	}
+	// 逆：`--reading` 空值那一半也不收（`=` 在尾 ⇒ 2）
+	if rc, _, _ := gapRun(t, "gap", "receipt", "new", "--yes", "--egg", "E", "--reading", id+"=", "--conclusion", "c"); rc != 2 {
+		t.Errorf("`--reading` 结果半为空 ⇒ 要 rc=2，实测 rc=%d", rc)
+	}
+}
+
+func TestGapReceiptCheckNegativeControls(t *testing.T) {
+	receipts, ledger := gapReceiptEnv(t)
+	const id = "GAP-20261010-901"
+	if err := os.WriteFile(ledger, []byte(gapReceiptAssignedLine(id)), 0o644); err != nil {
+		t.Fatalf("夹具写真源失败：%v", err)
+	}
+	// 负控① 真缺栏（缺 `conclusion` / `closed_ids`）⇒ 仍须红（判据侧硬必填不动）
+	missingPath := filepath.Join(receipts, "GR-bad.json")
+	if err := os.WriteFile(missingPath, []byte(`{"egg":"E","readings":[{"gap_id":"`+id+`","result":"ok"}]}`+"\n"), 0o644); err != nil {
+		t.Fatalf("夹具写缺栏件失败：%v", err)
+	}
+	rc, out, errb := gapRun(t, "gap", "receipt", "check", missingPath)
+	if rc != 2 || out != "" {
+		t.Fatalf("负控①：真缺栏 ⇒ 要 rc=2 + stdout 0 字节，实测 rc=%d out=%q", rc, out)
+	}
+	if !strings.Contains(errb, "缺栏拒收") {
+		t.Errorf("负控①：stderr 没报缺栏：%q", errb)
+	}
+	// 负控② 错族（`dev receipt` 族 · 签名键 `round_id`）⇒ **点名错族**，**不许**报缺栏
+	roundPath := filepath.Join(receipts, "R-20261010T000000.json")
+	if err := os.WriteFile(roundPath, []byte(`{"round_id":"R-20261010T000000","trace_id":"TR-000000000000","what":"w","next":"n"}`+"\n"), 0o644); err != nil {
+		t.Fatalf("夹具写错族件失败：%v", err)
+	}
+	rc, out, errb = gapRun(t, "gap", "receipt", "check", roundPath)
+	if rc != 2 || out != "" {
+		t.Fatalf("负控②：错族 ⇒ 要 rc=2 + stdout 0 字节，实测 rc=%d out=%q", rc, out)
+	}
+	if !strings.Contains(errb, "本面不适用") || !strings.Contains(errb, "轮级交接回执族") {
+		t.Errorf("负控②：错族未点名（要「本面不适用」+「轮级交接回执族」）：%q", errb)
+	}
+	if strings.Contains(errb, "缺栏拒收") || strings.Contains(errb, "缺 4 栏") {
+		t.Errorf("负控②：错族被误报成缺栏（本单第三面禁止）：%q", errb)
+	}
+}
+
+// ── 判据 〔本枚〕GAP-20260927-259：`gap add` 建条时顺带落注（`--note`/`--notes`/`--evidence` 同义）──
+//
+// 正控：给了旗标 ⇒ 注**逐字**落进真源那一行的 `notes`（机器面 `gap show --json notes` 读得到），
+// 且 `state` 一字不动（仍是 `仍缺`）。负控①：裸给（给了旗标没给值）⇒ rc=2 并点名那枚旗标。
+// 负控②：加了注旗标**也不放宽**七必填（缺必填仍按既有档拒）。
+func TestGapFamily_AddNoteFlags(t *testing.T) {
+	_, ledger, _ := gapEnv(t)
+
+	// 正控甲：`--note` ⇒ 一条注 · 逐字落 `notes` · 形态 `<时刻> · <谁>：<文本>`
+	rc, out, errb := gapRun(t, append(gapAddArgv("h-注甲", "注甲", "--note", "现读证据 探针读数 rc=0"), "--yes")...)
+	if rc != 0 {
+		t.Fatalf("`--note` 建条 ⇒ 0，得到 %d · %s%s", rc, out, errb)
+	}
+	idA := gapIDOf(t, out)
+	recA := gapRecordOf(t, ledger, idA)
+	nA := gapNotesOf(t, recA)
+	if len(nA) != 1 || !strings.Contains(nA[0], "现读证据 探针读数 rc=0") {
+		t.Errorf("`--note` 要逐字落进 `notes`，得到 %v", nA)
+	}
+	if len(nA) == 1 && !strings.Contains(nA[0], "合成夹具") {
+		t.Errorf("注形态要含 `<时刻> · <谁>：`（那一格 = ZERG_BY），得到 %q", nA[0])
+	}
+	if recA["state"] != "仍缺" {
+		t.Errorf("落注不改 state，得到 %v", recA["state"])
+	}
+
+	// 正控乙：`--notes` 与 `--evidence` 同义 —— 各落一条，机器面读得到
+	rc, out, errb = gapRun(t, append(gapAddArgv("h-注乙", "注乙", "--notes", "注二是也", "--evidence", "证据二是也"), "--yes")...)
+	if rc != 0 {
+		t.Fatalf("`--notes`+`--evidence` 建条 ⇒ 0，得到 %d · %s%s", rc, out, errb)
+	}
+	idB := gapIDOf(t, out)
+	nB := gapNotesOf(t, gapRecordOf(t, ledger, idB))
+	if len(nB) != 2 || !strings.Contains(nB[0], "注二是也") || !strings.Contains(nB[1], "证据二是也") {
+		t.Errorf("`--notes`/`--evidence` 要各落一条（按固定次序），得到 %v", nB)
+	}
+	if rc, out, _ := gapRun(t, "gap", "show", idB, "--json", "notes"); rc != 0 ||
+		!strings.Contains(out, "注二是也") || !strings.Contains(out, "证据二是也") {
+		t.Errorf("机器面 `gap show --json notes` 要读得到两条注，rc=%d out=%q", rc, out)
+	}
+
+	// 负控①：裸给 `--note`（给了旗标没给值）⇒ 2 并点名那枚旗标（不许静默降级）
+	before := len(gapReadLines(t, ledger))
+	if rc, _, errb := gapRun(t, append(gapAddArgv("h-裸给", "裸给", "--note"), "--yes")...); rc != 2 {
+		t.Errorf("裸给 `--note` ⇒ 2，得到 %d · %s", rc, errb)
+	} else if !strings.Contains(errb, "--note") {
+		t.Errorf("裸给要点名那枚旗标 `--note`，得到 %q", errb)
+	}
+	if n := len(gapReadLines(t, ledger)); n != before {
+		t.Errorf("裸给拒收不许动真源：%d → %d", before, n)
+	}
+
+	// 负控②：加了注旗标也不放宽七必填（缺 --verify-cmd）⇒ 仍按既有档拒 2
+	if rc, _, errb := gapRun(t, "gap", "add", "--symptom", "s", "--handmade", "h", "--impact", "命令面",
+		"--want-family", "gap", "--want-action", "ls", "--repro-cmd", "go test ./... -run X",
+		"--note", "加了注也不放宽", "--yes"); rc != 2 {
+		t.Errorf("缺 --verify-cmd（即使带 --note）⇒ 2（防呆⑤），得到 %d · %s", rc, errb)
+	}
+}
+
+// gapNotesOf 取真源那一行的 `notes` 数组（原始账行 ⇒ `notes` 是数组，不是渲染串）。
+func gapNotesOf(t *testing.T, rec map[string]any) []string {
+	t.Helper()
+	raw, ok := rec["notes"].([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(raw))
+	for _, v := range raw {
+		s, _ := v.(string)
+		out = append(out, s)
+	}
+	return out
 }

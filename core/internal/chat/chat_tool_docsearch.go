@@ -54,6 +54,16 @@ func docSearch(args map[string]any, workDir string) (string, error) {
 	//   编译期真源 —— ✗ 不取 latestVersionDir() 扫出的目录名（发布件多在旧版 ⇒ 会把上一版标成当前版）。
 	curBase := version.Tag // 当前版真源 = 编译期常量（形如 "v2.5.13"）——与 overview 一致
 
+	// ★ GAP-20260927-121（fail-closed 明报）：本消费者的「当前版目录」= `<取源根>/<curBase>`。
+	//   该目录**无发布件**（只在途设计稿 / 收版中间态）⇒ 本消费者取不到 —— **不给结论**（同族既有档位 =
+	//   返回错误）并**逐字明报**，✗ 不静默指到无发布件的目录（旧码照走全扫、把「★当前版」标注悄悄丢掉）。
+	if base := zergDocsBase(); base != "" {
+		curDir := filepath.Join(base, curBase)
+		if !hasReleaseArtifact(curDir) {
+			return "", fmt.Errorf("当前版目录 %s 无发布件，故本消费者取不到（缺发布件 %s）", curDir, releaseArtifactGlob)
+		}
+	}
+
 	type hit struct {
 		path   string // 相对 docs 根的展示路径（含版本）
 		verKey int    // 版本排序键（当前版 0——其他按字典）

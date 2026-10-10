@@ -71,7 +71,7 @@ func jrWriteDec(t *testing.T, root, body string) string {
 
 func TestCheckJudgeRegistrySelfTest(t *testing.T) {
 	rc, out, errb := jrRun(t, "--self-test")
-	want := "✓ 正控：干净夹具判绿（条目 3）\n" +
+	want := "✓ 正控：干净夹具判绿（条目 4）\n" +
 		"✓ 格A（甲/乙 分离）：`--emit` 产物无人签半字段（含四字段已搬走）\n" +
 		"✓ 格B（人签半未建）：乙半面不判红（迁移期只报告）\n" +
 		"✓ 格C（人签半全覆盖 adopt）：判绿\n" +
@@ -86,15 +86,18 @@ func TestCheckJudgeRegistrySelfTest(t *testing.T) {
 		"✓ 格J（declare 越界/缺键）：现红（非布尔 / 值越闭集 / 缺载荷 各自点名）\n" +
 		"✓ 格J2（declare 缺字段键）：现红（缺 `dry_run` 点名）\n" +
 		"✓ 格K1（enforce=false）：未决定不判红（迁移期只报告）\n" +
-		"✓ 格K2（enforce=true）：未决定判红（现 3 条）\n" +
-		"✓ 格K3（enforce=false 脚注）：脚注报「未决定 3 条」\n" +
+		"✓ 格K2（enforce=true）：未决定判红（现 4 条）\n" +
+		"✓ 格K3（enforce=false 脚注）：脚注报「未决定 4 条」\n" +
 		"✓ 格L（上牙未人签）：现红（enforce=true 缺 enforce_sig）\n" +
 		"✓ 格M（enforce 非布尔）：现红（并落回迁移期读）\n" +
+		"✓ 格N（覆盖声明合法 · file:＋step:）：判绿（声明可机读）\n" +
+		"✓ 格N2（反查冲突）：现红（同一对象被多判据认领）\n" +
 		"✓ 负控①（盘上有件表里无）：现红\n" +
 		"✓ 负控②（表里点名盘上无）：现红\n" +
 		"✓ 负控③（缓存键过期）：现红\n" +
 		"✓ 负控④（同名多件）：现红\n" +
-		"✓ 负控⑤（越出前缀）：现红\n"
+		"✓ 负控⑤（越出前缀）：现红\n" +
+		"✓ 负控⑥（覆盖对象不存在）：现红\n"
 	if rc != 0 {
 		t.Fatalf("--self-test rc=%d, want 0（stdout=%q stderr=%q）", rc, out, errb)
 	}
@@ -158,7 +161,7 @@ func TestCheckJudgeRegistryEmitOmitsPersonFields(t *testing.T) {
 	root := jrFix(t)
 	_, out, _ := jrRun(t, "--root", root, "--emit", "--out", "-")
 	for _, k := range []string{"needs_env", "serial", "hazard", "dry_run",
-		"\"decision\"", "\"adopt\"", "\"exempt\"", "\"declare\"", "\"sig\"", "\"adopted\""} {
+		"\"decision\"", "\"adopt\"", "\"exempt\"", "\"declare\"", "\"sig\"", "\"adopted\"", "\"covered_by\""} {
 		if strings.Contains(out, k) {
 			t.Errorf("派生半（--emit）不该含 %q：\n%s", k, out)
 		}

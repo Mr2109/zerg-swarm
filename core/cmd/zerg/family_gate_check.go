@@ -258,8 +258,17 @@ func gateCheckRunInproc(fn func(stdout, stderr io.Writer, argv []string) int, ro
 	}
 	oldRoot, hadRoot := os.LookupEnv("ZERG_REPO_ROOT")
 	oldRepo, hadRepo := os.LookupEnv("ZERG_REPO")
+	oldState, hadState := os.LookupEnv("ZERG_STATE_DIR")
 	_ = os.Setenv("ZERG_REPO_ROOT", root)
 	_ = os.Setenv("ZERG_REPO", root)
+	// ★ 门专用状态目录口径（缺口 `GAP-20260927-70`）：与 exec 档 / `precommit-gates.sh` 的封口
+	//   **同规同批** —— 显式给了门旋钮 `ZERG_GATE_STATE_DIR` ⇒ 钉成它；否则剔掉继承值（✗ 不再采信
+	//   外部继承的 `ZERG_STATE_DIR` ⇒ 判据体落自己的缺省 `~/.zerg/state`）。
+	if knob := gateStateDirKnobValue(); knob != "" {
+		_ = os.Setenv("ZERG_STATE_DIR", knob)
+	} else {
+		_ = os.Unsetenv("ZERG_STATE_DIR")
+	}
 	defer func() {
 		if hadRoot {
 			_ = os.Setenv("ZERG_REPO_ROOT", oldRoot)
@@ -270,6 +279,11 @@ func gateCheckRunInproc(fn func(stdout, stderr io.Writer, argv []string) int, ro
 			_ = os.Setenv("ZERG_REPO", oldRepo)
 		} else {
 			_ = os.Unsetenv("ZERG_REPO")
+		}
+		if hadState {
+			_ = os.Setenv("ZERG_STATE_DIR", oldState)
+		} else {
+			_ = os.Unsetenv("ZERG_STATE_DIR")
 		}
 	}()
 	return fn(stdout, stderr, argv)
@@ -1019,6 +1033,10 @@ func gateCheck(inv *invocation, stdout, stderr io.Writer, root string) int {
 	argv := append(append([]string{}, pre...), full)
 	argv = append(argv, rest...)
 	cmd := armChildGroup(exec.Command(interp, argv...))
+	// ★ 门专用状态目录口径（缺口 `GAP-20260927-70`）：外部继承的 `ZERG_STATE_DIR` 不再透传 —— 显式
+	//   给了门旋钮 ⇒ 钉成它；否则剔掉（子件落自己的缺省 `~/.zerg/state`）。与 `precommit-gates.sh` 的
+	//   封口 / `family_repo_commit.go` 的 gateEnv **同规同批**。
+	cmd.Env = pinGateStateDir(os.Environ())
 	// 与 `cmdGate` 的其余转发同规：登记在跑的这一步（人打断时 `--cancel-on-interrupt` 有东西可取消）。
 	runningChild = cmd
 	defer func() { runningChild = nil }()

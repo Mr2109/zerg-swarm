@@ -7,6 +7,7 @@ package chat
 
 import (
 	"fmt"
+	"github.com/Mr2109/zerg-swarm/core/internal/config"
 	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 	"github.com/Mr2109/zerg-swarm/core/internal/version"
 	"log"
@@ -27,6 +28,20 @@ import (
 func zergDocsBase() string { return statepath.DocsBase() }
 
 var ZergRepoRoot = statepath.WorkspaceRoot()
+
+// x3FleetAddrSnippet 返回架构一行的 edge-node 地址说明（fleet 调用 host:port ／ 部署 ssh 目标）——
+// 真源 = gateway/fleet.yaml 的 fleet 段（config.NodeAddr，与 gateway/agent 包同一读取口径）。
+// 真源不可得 ⇒ 出声并把不可得写进正文（✗ 不回落硬编码地址）。
+func x3FleetAddrSnippet() string {
+	fleetYAML := filepath.Join(statepath.WorkspaceRoot(), "gateway", "fleet.yaml")
+	cfg, err := config.LoadFleetConfig(fleetYAML)
+	if err != nil {
+		log.Printf("zerg_overview: 读 fleet.yaml 失败(%s)——edge-node 地址真源不可得: %v", fleetYAML, err)
+		return "地址真源不可得(fleet.yaml 未取到)"
+	}
+	host, port := config.NodeAddr(cfg.Fleet, "x"+"3")
+	return host + ":" + strconv.Itoa(port) + "／部署 ssh g01@" + host
+}
 
 // zergOverview — zerg_overview 执行器（全景 / section 下钻）
 func zergOverview(args map[string]any, workDir string) (string, error) {
@@ -168,7 +183,7 @@ func zergOverviewFull() (string, error) {
 	b.WriteString("\n## 架构\n")
 	// 2026-09-11 一致性审计：工具数原硬编码 "136 tools/"（每加工具必漂）→ 改为按注册表动态计算；
 	// 同时把 node-a 两个地址口径写清（fleet 调用 host 与部署 ssh 主机不是一回事）
-	b.WriteString(fmt.Sprintf("主控core(core/) 模型集群(X"+"3——fleet 调用 <worker-ip>:8100／部署 ssh g01@<worker-ip>（名册/fleet.yaml updates.nodes 真源）；local/mini) UI(ui/ egui) CA(任务执行) 工具库(%d 个注册——tool_search 查) 知识库(%s)\n", len(chatToolRegistry), KBPath))
+	b.WriteString(fmt.Sprintf("主控core(core/) 模型集群(X"+"3——fleet 调用 "+x3FleetAddrSnippet()+"（名册/fleet.yaml updates.nodes 真源）；local/mini) UI(ui/ egui) CA(任务执行) 工具库(%d 个注册——tool_search 查) 知识库(%s)\n", len(chatToolRegistry), KBPath))
 
 	// 使用精简（分流——完整见使用指南）
 	b.WriteString("\n## 怎么使用\n")

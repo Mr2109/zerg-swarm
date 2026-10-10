@@ -268,7 +268,7 @@ func docFillRoot(scope, pinVersion string) (root, why string, status docFillStat
 			}
 			return v, "", okStatus
 		}
-		dir, why := devDocsCurrentVersionDir(pinVersion)
+		dir, why := devDocsConsumablePinnedDir(pinVersion)
 		if why != "" {
 			return "", why, missingStatus
 		}

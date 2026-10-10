@@ -143,6 +143,8 @@ func cenkKnobTable() map[string]cenkKnob {
 			Poison: "弱化「同仓同刻只许一趟」的口径"},
 		"ZERG_STATE_DIR": {Readers: "precommit-gates.sh · judge-targets.sh", Swap: "状态目录（账/批准件/真源所在）",
 			Poison: "指沙箱 ⇒ 状态目录门「未取数 ⇒ rc=2」；CLI `gap ls` 也退 8"},
+		"ZERG_GATE_STATE_DIR": {Readers: "precommit-gates.sh", Swap: "门专用状态目录（缺省 ~/.zerg/state）",
+			Poison: "指到沙箱 ⇒ 门内状态目录换源（缺口 GAP-20260927-70；本件专用旋钮，照 ZERG_GATE_REPO_ROOT 体例）"},
 		"ZERG_DEVDOCS_ROOT": {Readers: "precommit-gates.sh（及其调的子门，多读点）", Swap: "文档仓面根",
 			Poison: "一变量两语义（仓根 vs 语料目录）⇒ 门扫错面 / 非 UTF-8 件把工具读崩、假红"},
 		"ZERG_DOCS_ROOT": {Readers: "precommit-gates.sh", Swap: "文档仓根 / 语料目录（语义二义）",

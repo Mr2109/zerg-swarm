@@ -384,10 +384,28 @@ func cdmDefaultRepo() string {
 	return cdmAbs(wd)
 }
 
-// cdmDevdocsRoot —— py `devdocs_root()` 的逐字同构（旋钮名同名同序）。
-func cdmDevdocsRoot(repoRoot string) string {
+// cdmCurrentVersion —— 当前发布版（带 `v` 前缀，如 `v2.5.14`）—— 读**唯一真源**
+// `core/internal/version/version.go` 的 `const Version = "X.Y.Z"`（与门① `cdnCurrentVersion` 同读法）。
+// 读不到真源 ⇒ ok=false（调用方退 rc=2 fail-closed，✗ 不静默回落旧版号/空）。
+func cdmCurrentVersion(repoRoot string) (string, bool) {
+	p := cdmPyJoin(repoRoot, "core", "internal", "version", "version.go")
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return "", false
+	}
+	re := regexp.MustCompile(`const\s+Version\s*=\s*"([^"]+)"`)
+	m := re.FindStringSubmatch(string(b))
+	if m == nil {
+		return "", false
+	}
+	return "v" + m[1], true
+}
+
+// cdmDevdocsRoot —— py `devdocs_root()` 的逐字同构（旋钮名同名同序）。版本目录**现读唯一真源**
+// （GAP-20260927-47：曾钉死 `v2.5.10` ⇒ 换版静默过期）；读不到真源 ⇒ ok=false（调用方退 rc=2 不给结论）。
+func cdmDevdocsRoot(repoRoot string) (string, bool) {
 	if env := os.Getenv("ZERG_DEVDOCS_ROOT"); env != "" {
-		return cdmAbs(env)
+		return cdmAbs(env), true
 	}
 	sibling := os.Getenv("ZERG_DOCS_ALT")
 	if sibling == "" {
@@ -396,7 +414,11 @@ func cdmDevdocsRoot(repoRoot string) string {
 	if sibling == "" {
 		sibling = cdmPyJoin(cdmPyDir(cdmAbs(repoRoot)), "Zerg-内部文档")
 	}
-	return cdmAbs(cdmPyJoin(sibling, "项目文档", "v2.5.10"))
+	ver, ok := cdmCurrentVersion(repoRoot)
+	if !ok {
+		return "", false
+	}
+	return cdmAbs(cdmPyJoin(sibling, "项目文档", ver)), true
 }
 
 // cdmEnvKnobs —— py `_env_knobs()`：关键取根旋钮的**实解析值**（未设 = ∅）。
@@ -2488,7 +2510,13 @@ func checkDocMetaGateMain(stdout, stderr io.Writer, argv []string) int {
 	var root string
 	var targets []string
 	if args.scope == "devdocs" && len(given) == 0 {
-		root = cdmDevdocsRoot(repo)
+		var verOK bool
+		root, verOK = cdmDevdocsRoot(repo)
+		if !verOK {
+			fmt.Fprint(stdout, "BLOCKED：版本真源读不到（core/internal/version/version.go 里没有 `const Version = \"…\"`）⇒ 现算不出开发文档面根 ⇒ 不给结论\n")
+			fmt.Fprint(stdout, "  口径：读不到真源不当绿（设计稿 §五）。换根请设 ZERG_DEVDOCS_ROOT。\n")
+			return 2
+		}
 		if !cdmIsDir(root) {
 			fmt.Fprintf(stdout, "BLOCKED：开发文档面根不在 ⇒ 不给结论：%s\n", root)
 			fmt.Fprint(stdout, "  口径：仓外根不可达（设计稿 §五：不许静默当绿 ✗）。换根请设 ZERG_DEVDOCS_ROOT。\n")

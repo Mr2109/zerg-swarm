@@ -363,19 +363,20 @@ func cmdCodeFind(inv *invocation, stdout, stderr io.Writer) int {
 	//   不给（`--json`）都**先扫完整棵树**才报用法错（stderr 先落「扫了 N 件」再落错误）✗。
 	//   口径（**只前移判定 · 合法形态一个字节不变**）：合法字段集按**本跑选中的那一档面**的真产出集
 	//   取 —— 默认面 `path/line/text` · `--count` 面 `path/count` · `--files-only` 面 `path`；三档都另加
-	//   跑级落键 `truncated`/`face`（见 `markCodeFindTruncated`/`markCodeFindFace`）。
+	//   跑级落键 `truncated`/`face`/`count`（见 `markCodeFindTruncated`/`markCodeFindFace`/`markCodeFindCount`
+	//   —— `count` 由缺口 `GAP-20260928-142` 加入：默认面 / `--files-only` 面 = 本跑命中条数，聚合面 = 按件命中数）。
 	//   命中非法 ⇒ 与 walk 之后那条**同 kind 同 detail 同退码**（`json_field_unknown` · `reportBadField`
 	//   逐字同文案）；一个字段都不给 ⇒ 走既有 `requireFields`（同 kind/detail）。合法形态 ⇒ 不进这一块。
 	if inv.jsonGiven {
 		if len(inv.fields) == 0 {
 			return requireFields(inv, stderr)
 		}
-		allowed := map[string]bool{"path": true, "line": true, "text": true, "kind": true, "match": true, "truncated": true, "face": true}
+		allowed := map[string]bool{"path": true, "line": true, "text": true, "kind": true, "match": true, "truncated": true, "face": true, "count": true}
 		switch {
 		case aggCount:
 			allowed = map[string]bool{"path": true, "count": true, "truncated": true, "face": true}
 		case aggFilesOnly:
-			allowed = map[string]bool{"path": true, "truncated": true, "face": true}
+			allowed = map[string]bool{"path": true, "count": true, "truncated": true, "face": true}
 		}
 		for _, f := range inv.fields {
 			if !allowed[f] {
@@ -576,6 +577,9 @@ func cmdCodeFind(inv *invocation, stdout, stderr io.Writer) int {
 		}
 		markCodeFindTruncated(inv, aggRows, cut)
 		markCodeFindFace(inv, aggRows)
+		if aggFilesOnly {
+			markCodeFindCount(inv, aggRows, hits)
+		}
 		rcAgg := listCmd(inv, stdout, stderr, aggFields, aggRows)
 		if cut {
 			fmt.Fprintf(stderr,
@@ -627,6 +631,7 @@ func cmdCodeFind(inv *invocation, stdout, stderr io.Writer) int {
 	}
 	markCodeFindTruncated(inv, rows, cut)
 	markCodeFindFace(inv, rows)
+	markCodeFindCount(inv, rows, hits)
 	rc := listCmd(inv, stdout, stderr, []string{"path", "line", "text"}, rows)
 	if cut {
 		// 人面末行：表格之后再钉一句 —— 「这一页不是全集」不许靠读者自己推。
@@ -675,6 +680,32 @@ func markCodeFindFace(inv *invocation, rows []map[string]string) {
 	}
 	for _, r := range rows {
 		r["face"] = codeFaceWorktree
+	}
+}
+
+// markCodeFindCount —— `--json` 那一态给每条目落一格 `count`（缺口 `GAP-20260928-142` · 本枚）。
+//
+// 与 `markCodeFindTruncated` / `markCodeFindFace` **同一形态**（逐行写 · 跑级真值 · 只在 `--json`
+// 落键 ⇒ 不给这一格时输出逐字节不变）：
+//
+//   - 值 = 本跑**命中条数**（`hits`，≠「一页列出的条数」—— 那一格是 `meta.count`）；默认面 /
+//     `--files-only` 面逐行同一值（这是**跑级真值**，不是条目自己的属性）；
+//   - `--count` 聚合面**不覆盖**：那一档 `count` 是**按件命中数**（既有语义 `{path,count}`）——
+//     故本函数只在行里**没有** `count` 键时才写（`continue` 保留既有格）。
+//
+// 为什么走这里（缺口本体）：`--json` 的**出口白名单**（`cmd.fields`）此前没登记 `count`
+// ⇒ 聚合面明明产出它，`emitSelected` 却在出口把它拒成 `未知字段`；把 `count` 登进**可选字段层**
+// （`optFields`，与 `approveOptionalFields` 同一体例）后，出口收下、本命令逐行产出 ⇒ 表与产出集同源。
+func markCodeFindCount(inv *invocation, rows []map[string]string, hits int) {
+	if inv == nil || !inv.jsonGiven {
+		return
+	}
+	v := strconv.Itoa(hits)
+	for _, r := range rows {
+		if _, ok := r["count"]; ok {
+			continue // `--count` 档的按件命中数：既有语义，不覆盖
+		}
+		r["count"] = v
 	}
 }
 

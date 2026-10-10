@@ -107,6 +107,41 @@ func watchdogConfigFromEnv(get func(string) string) WatchdogConfig {
 	return cfg
 }
 
+// ── 单卵时限全通路（GAP-20260926-201）：CLI 旗标 ⇒ 下发体 ⇒ 主控透传 ⇒ 子端逐请求 ──────
+
+// ParseEggMaxS 把请求体里的 `egg_max_s` 读成 time.Duration。
+//
+// 口径与 env `ZERG_EGG_MAX_S` 同形（**秒 · 可小数**）：空串 ⇒ (0, nil)「未设」（回落 env 兜底）；
+// 读不出 / ≤ 0 ⇒ **报错**（调用方据此**明报拒收**，✗ **不静默回落**默认 —— 与本文件 env 侧
+// 「非法值静默忽略」刻意不同：这里是**用户逐次显式给的**，静默回落等于骗人）。
+func ParseEggMaxS(s string) (time.Duration, error) {
+	t := strings.TrimSpace(s)
+	if t == "" {
+		return 0, nil
+	}
+	f, err := strconv.ParseFloat(t, 64)
+	if err != nil {
+		return 0, fmt.Errorf("egg_max_s 读不出来：%q", s)
+	}
+	if f <= 0 {
+		return 0, fmt.Errorf("egg_max_s 必须为正：%q", s)
+	}
+	return time.Duration(f * float64(time.Second)), nil
+}
+
+// resolveEggMax 求「这一枚卵」的有效单卵时限。
+//
+// 优先级（`GAP-20260926-201` 口径 · 逐字照账）：**逐枚覆盖（flag）> env `ZERG_EGG_MAX_S` > 现默认 0**。
+// `override > 0` 才算「给了」（与 env 同一形态）；给了就同时把看门狗打开 —— 否则
+// `EggMax` 在 `Enabled=false` 时根本无牙（`Wait` 走纯固定超时那条路），设了等于没设。
+func resolveEggMax(cfg WatchdogConfig, override time.Duration) WatchdogConfig {
+	if override > 0 {
+		cfg.EggMax = override
+		cfg.Enabled = true
+	}
+	return cfg
+}
+
 // WatchdogObservation 观测面（设计 §6；字段名逐字对应）。
 type WatchdogObservation struct {
 	WindowIdx      int             `json:"window_idx"`

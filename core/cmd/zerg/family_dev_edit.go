@@ -94,7 +94,7 @@ var devEditFieldsShared = []string{"proposal", "file", "mode", "result", "before
 
 // devEditDryRunOnlyFields —— 只由**干跑档**填的那几格（真写档产出不了 ⇒ 写前拒）。
 // ★ 2026-09-29（`GAP-20260927-261` · 本枚）：末两格 = **红契约机器面**。此前「会红」判决
-// **只有自然语言**（stderr 那一行「会红：契约 S-g（`change_class=B` …）」）⇒ 机读方切不出
+// **只有自然语言**（stderr 那一行「预测会红：契约 S-g（`change_class=B` …）」）⇒ 机读方切不出
 // 「红线是哪条契约」；`--json contract_hits` 当时直接判**未知字段**（退 2）。两格取值与
 // 人面那一行**同源**（同一趟 `Layers` · 同一个抽取函数 `impactRedContractIDs` —— 禁二次算 ✗）。
 var devEditDryRunOnlyFields = []string{"approver", "rollback_verdict", "rollback_tier",
@@ -232,6 +232,13 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 	//   （**单给任一档零行为改动**：`--dry-run` 独给仍退 0 · 确认档独给仍走下面原有的闸）。
 	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
 		return rc
+	}
+	// ★ 本单（Mr2109「甲案」仓内半 · 缺口 GAP-20260927-234「守卫 literal-text」）：`dev edit --literal-text` —— **声明口**的**可见回执**。
+	//   用了该旗标就在 stderr 出一行逐字回执（「已声明本次命令行含字面文本」）。★ 硬线（本单铁律①/②）：**只出声、✗ 不放宽任何闸 / 审批 / 判据**
+	//   —— 本块只印一行、不改任何变量 / 不改退码；下面所有判据（作用域 / 语法闸 / 批准件闸 / 钩子判决 / 审计）逐字不动
+	//   ⇒ 带与不带，闸与审批的判决**逐字相同**。
+	if inv.hasFlag("--literal-text") {
+		fmt.Fprintf(stderr, "%s: ★ 已声明（--literal-text）：本次命令行含**字面文本**（不是命令）—— 本旗标只作**声明**、**不放宽任何闸 / 审批 / 判据**；免检口 = 命令串里出现 `literal-text`（缺口 GAP-20260927-234）。\n", progName)
 	}
 	proposalID := strings.TrimSpace(inv.flagVal("--proposal"))
 	fileRel := strings.TrimSpace(inv.flagVal("--file"))

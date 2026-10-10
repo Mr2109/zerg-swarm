@@ -93,14 +93,17 @@ type Task struct {
 	ClosedNote   string     `json:"closed_note,omitempty"`   // 结案备注（自由文本——可空）
 	RefTaskID    string     `json:"ref_task_id,omitempty"`   // 关联任务（复查任务 → 执行任务）
 	// v2.5.7 对话→任务集成: 来源对话/消息关联（UI"派任务"——记录任务从哪个对话发起）
-	ParentSessionID   string    `json:"parent_session_id,omitempty"`
-	ParentMessageID   string    `json:"parent_message_id,omitempty"`
-	RefWorktree       string    `json:"ref_worktree,omitempty"` // 关联 worktree（复查用）
-	ReplanCount       int       `json:"replan_count,omitempty"` // 重做次数（阶段3 Replan 循环——上限 3）
-	ReviewCount       int       `json:"review_count,omitempty"` // 复查次数（阶段3——上限 5）
-	RetryCount        int       `json:"retry_count,omitempty"`  // 自动重跑次数（失败自动重跑——上限 3——Mr2109 2026-08-20）
-	Model             string    `json:"model"`                  // 派发用模型
-	Workdir           string    `json:"workdir"`                // 工作区
+	ParentSessionID string `json:"parent_session_id,omitempty"`
+	ParentMessageID string `json:"parent_message_id,omitempty"`
+	RefWorktree     string `json:"ref_worktree,omitempty"` // 关联 worktree（复查用）
+	ReplanCount     int    `json:"replan_count,omitempty"` // 重做次数（阶段3 Replan 循环——上限 3）
+	ReviewCount     int    `json:"review_count,omitempty"` // 复查次数（阶段3——上限 5）
+	RetryCount      int    `json:"retry_count,omitempty"`  // 自动重跑次数（失败自动重跑——上限 3——Mr2109 2026-08-20）
+	Model           string `json:"model"`                  // 派发用模型
+	Workdir         string `json:"workdir"`                // 工作区
+	// EggMaxS 单卵时限（秒 · GAP-20260926-201 全通路）：CLI `--timeout` ⇒ `/api/tasks` 体 ⇒
+	// 落进任务（主控**透传** · ✗ 不丢）。空 = 未设（回落子端 env `ZERG_EGG_MAX_S`）。
+	EggMaxS           string    `json:"egg_max_s,omitempty"`
 	CreatedAt         time.Time `json:"created_at"`
 	CompletedAt       time.Time `json:"completed_at"`                  // v2.5.5 虫族UI: 完成时间（耗时计算）
 	Checkpoint        string    `json:"checkpoint"`                    // 检查点（打断恢复用——.zerg/logs/<ID>/checkpoint.json）

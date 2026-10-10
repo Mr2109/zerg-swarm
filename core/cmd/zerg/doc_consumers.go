@@ -72,12 +72,13 @@ func dcResolve() (map[string][2]string, string) {
 	if base == "" {
 		return nil, statepath.DocsBaseMissingNote()
 	}
-	heDir, heWhy := devDocsCurrentVersionDir("")
+	heDir, heWhy := devDocsConsumablePinnedDir("")
+	dsDir, dsWhy := devDocsConsumable(filepath.Join(base, version.Tag), "")
 	return map[string][2]string{
 		"zerg_overview": {chat.OverviewCurrentVersionDir(), ""},
 		"help export":   {heDir, heWhy},
 		"doc meta fill": {heDir, heWhy},
-		"doc_search":    {filepath.Join(base, version.Tag), ""},
+		"doc_search":    {dsDir, dsWhy},
 	}, ""
 }
 

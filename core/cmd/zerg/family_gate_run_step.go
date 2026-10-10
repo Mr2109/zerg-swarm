@@ -165,6 +165,7 @@ func gateRunStepJSON(inv *invocation, stdout, stderr io.Writer, root, script str
 				progName, filepath.Join(os.TempDir(), prefix), mkErr)
 			return exitBlocked
 		}
+		defer os.RemoveAll(base) // ★ 自回收（缺口 `GAP-20261001-58`：本目录是命令面**自建**的临时日志目录、只用于本轮读回 results.tsv ⇒ 没用 `--outdir` 时函数返回即清；给了 `--outdir` 的调用方不受影响）
 		outdir = base
 		tail = append(tail, "--outdir", outdir)
 		scriptTail = append(scriptTail, "--outdir", outdir)
@@ -232,10 +233,60 @@ func gateRunStepJSON(inv *invocation, stdout, stderr io.Writer, root, script str
 				progName, lp, lerr)
 		}
 	}
+	// ★ 缺口 `GAP-20260927-430`（P1 · 命令面）：机器面**不印可变路径** —— `outdir`/`log` 两格印的是
+	//   日志目录（**调用方给的** `--outdir` 或命令面**自建**的临时目录）⇒ 目录名（含本机 TMPDIR 段 ·
+	//   名字长短）漏进 stdout，同一 argv 换个目录名 / 换个 TMPDIR 形态就换一串字节，矩阵格与字节型
+	//   判据钉不住它（血证：同参 3517 B vs 3516 B，差 1 = 目录名 hold vs hb3 差 1）。抹成稳定占位符。
+	maskGiven := ""
+	if hasOutdir {
+		maskGiven = outdir
+	}
+	row["outdir"] = gateRunStepMaskLogDir(row["outdir"], maskGiven)
+	row["log"] = gateRunStepMaskLogDir(row["log"], maskGiven)
 	if rc := listCmd(inv, stdout, stderr, gateRunStepFields, []map[string]string{row}); rc != exitOK {
 		return rc
 	}
 	return rc
+}
+
+// gateRunStepNoMaskEnv —— 关掉掩码的现成口子（非空即关；默认**开**）。探针/沙盒用，也是判据件的
+// **哑化负控**：关掉它 ⇒ 可变路径漏回 stdout 可比面 ⇒ 「同参 stdout 稳定」那条断言当真红。
+const gateRunStepNoMaskEnv = "ZERG_GATE_STEP_NOMASK"
+
+// gateRunStepMaskLogDir —— 缺口 `GAP-20260927-430`（P1 · 命令面）：机器面**不印可变路径**。
+//
+// 病（现读）：`zerg gate run --step <步名> --json <字段>` 的包封把日志目录印进 `outdir`/`log` 两格 ——
+// 那是**调用方给的** `--outdir`（目录名长短直接漏进 stdout 字节）或**命令面自建**的临时目录
+// （名字带纳秒时间戳 ＋ 随机后缀）⇒ 同一 argv 换个目录名 / 换个 TMPDIR 形态，stdout 字节就变 ⇒
+// 矩阵格与字节型判据钉不住它（血证：同参 3517 B vs 3516 B，差 1 = 目录名 hold vs hb3 差 1）。
+// 本函数把日志目录抹成稳定占位符 `<TMP>`，让该命令的 stdout 对同参稳定。
+//
+// 口径：
+//
+//	① 调用方**显式给了** `--outdir` ⇒ 整条目录换 `<TMP>`（名字长短 / 绝对路径段一概不漏）；
+//	② 其余（命令面自建）⇒ 把**本机 TMPDIR 前缀**换 `<TMP>/`（机器相关段不漏；运行期唯一后缀
+//	   **保留** —— 缺口 `GAP-20260927-432/433` 要看得到「两次运行各建一处」，见在册负控 ⑦①）；
+//	③ `log_body` **不抹**（那是那一步自己的逐字正文）。
+//
+// ★ 铁律：`os.TempDir()` / `$TMPDIR` 带不带上**尾斜杠**本身就是两态 ⇒ 匹配键先
+// `TrimRight(td, "/")` 再补回一个 `/`（只写 `ReplaceAll(s, td, …)` 会只在一态红）。
+func gateRunStepMaskLogDir(s, givenDir string) string {
+	if s == "" || strings.TrimSpace(os.Getenv(gateRunStepNoMaskEnv)) != "" {
+		return s // 现成口子：关掩码（哑化负控用）
+	}
+	if givenDir != "" {
+		s = strings.ReplaceAll(s, givenDir, "<TMP>")
+		if tr := strings.TrimRight(givenDir, "/"); tr != "" && tr != "/" {
+			s = strings.ReplaceAll(s, tr, "<TMP>")
+		}
+	}
+	if td := strings.TrimRight(os.TempDir(), "/"); td != "" {
+		s = strings.ReplaceAll(s, td+"/", "<TMP>/")
+		if s == td {
+			s = "<TMP>"
+		}
+	}
+	return s
 }
 
 // ── `zerg gate run --step <步名> --verify-live`：单步**只读复核**的可手敲正门 ──
@@ -726,6 +777,7 @@ func gateRunStepShowLog(inv *invocation, stdout, stderr io.Writer, root, script 
 				progName, filepath.Join(os.TempDir(), prefix), mkErr)
 			return exitBlocked
 		}
+		defer os.RemoveAll(base) // ★ 自回收（缺口 `GAP-20261001-58`：本目录是命令面**自建**的临时日志目录、只用于本轮读回 results.tsv ⇒ 没用 `--outdir` 时函数返回即清；给了 `--outdir` 的调用方不受影响）
 		outdir = base
 		scriptTail = append(scriptTail, "--outdir", outdir)
 	}

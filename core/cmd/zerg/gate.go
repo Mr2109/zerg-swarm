@@ -131,6 +131,14 @@ func cmdGate(inv *invocation, stdout, stderr io.Writer) int {
 		}
 		args = []string{"--list"}
 	case "run":
+		// ★ 缺口 `GAP-20260927-02`（P1 · 命令面）：门跑**干跑档** —— `--dry-run` ⇒ 只摆出
+		//   「本趟将跑 vs 被跳过」的步表（步名/档位/形态），**不起任何子进程、立即返回**
+		//   （真材在 `family_gate_run_dry.go`）。判在一切下游拦截之前：`--dry-run` 不在自举件的
+		//   旗标表里 ⇒ 不早判就会被下面的「旗标前移校验」当未知旗标拒（退 2）。
+		//   缺 `--dry-run` 时一个字节都不动（默认全量的既有形态逐字照旧）。
+		if inv.dryRun && gateRunWantsDryRun(tail) {
+			return gateRunDryRun(inv, stdout, stderr, root, script, tail)
+		}
 		// ★ 2026-10-04（T-PR-03·04 · 设计-门禁部分趟-v0.7 §三）：`--since [<全量趟目录>]` = **部分趟**的
 		//   唯一显式入口（`gate_run_partial.go`）。判在**一切下游拦截之前**（叠并拒绝的 rc=2 归它）。
 		//   handled=false ⇒「转全量」：去掉 `--since` 后按**原全量路径**继续（下面那些拦截与透传一字不改）；
@@ -343,9 +351,21 @@ func recordRunFreshness(root, outdirArg string, since time.Time, fp, head string
 // `total`/`scope`/`mode`/`step`）。未知字段 ⇒ 2 + stderr 列这四格（同族出口 `reportBadField`）。
 var gateLsFields = []string{"total", "scope", "mode", "step"}
 
+// gateLsOptFields —— `gate ls --json` 的**可选字段层**（缺口 `GAP-20260927-226` want①）：步名在
+// want 形状 `{steps:[{name,mode,scope}],total:N}` 里写作 `name`（与同族 `gate find`/`gate explain`
+// 的 `name` 逐字同名），而 `step` 是本命令既有的**冻结键**。可选字段**不进** `main.go` 登记 `fields:`
+// 那一份（= 帮助/导出面的冻结表）⇒ 帮助面与命令页一行不动，只多一个点得出来的键（与 `code find`
+// 的 `count` 同一体例）。`name` 与 `step` **同值**（都指同一步名）；裸 `--json` 一字不改。
+var gateLsOptFields = []string{"name"}
+
 // gateLsFieldLegal —— 字段是否在闭集四格内（与 `gateShowFieldLegal` 同形 · 不另写第二份口径）。
 func gateLsFieldLegal(f string) bool {
 	for _, ok := range gateLsFields {
+		if f == ok {
+			return true
+		}
+	}
+	for _, ok := range gateLsOptFields {
 		if f == ok {
 			return true
 		}
@@ -441,7 +461,7 @@ func gateLsJSON(inv *invocation, stdout, stderr io.Writer, root, script string) 
 		switch f {
 		case "total":
 			wantTotal = true
-		case "scope", "mode", "step":
+		case "scope", "mode", "step", "name":
 			rowKeys = append(rowKeys, f)
 		}
 	}
@@ -461,7 +481,7 @@ func gateLsJSON(inv *invocation, stdout, stderr io.Writer, root, script string) 
 			if i > 0 {
 				b.WriteString(",")
 			}
-			obj, _ := marshalObject(rowKeys, map[string]string{"scope": r.Scope, "mode": r.Mode, "step": r.Step})
+			obj, _ := marshalObject(rowKeys, map[string]string{"scope": r.Scope, "mode": r.Mode, "step": r.Step, "name": r.Step})
 			b.WriteString(obj)
 		}
 		b.WriteString("]")

@@ -50,6 +50,20 @@ func mustToken() string {
 	return t
 }
 
+// x3StatusExample 返回 -x3-status 帮助里的示例地址——真源 = gateway/fleet.yaml 的 fleet 段
+// （config.NodeAddr，与 gateway/agent 包同一读取口径）。真源不可得 ⇒ 出声并给占位
+// （✗ 不回落硬编码地址）。
+func x3StatusExample() string {
+	fleetYAML := filepath.Join(statepath.WorkspaceRoot(), "gateway", "fleet.yaml")
+	cfg, err := config.LoadFleetConfig(fleetYAML)
+	if err != nil {
+		log.Printf("zerg-agent: 读 fleet.yaml 失败(%s)——edge-node-status 示例真源不可得: %v", fleetYAML, err)
+		return "<edge-node-host>"
+	}
+	host, port := config.NodeAddr(cfg.Fleet, "x"+"3")
+	return fmt.Sprintf("http://%s:%d/status", host, port)
+}
+
 func main() {
 	startTime := time.Now() // 开始时间（JSON 信封 metrics——v2.5）
 
@@ -86,7 +100,7 @@ func main() {
 	flag.StringVar(&stateFile, "state", "", "状态文件路径（断连恢复用——存在则续跑）")
 	flag.StringVar(&issueFile, "issue", "", "接单模式：issue 文件路径（读问题单→查因→填修复结论→标记 resolved）")
 	flag.StringVar(&gateway, "gateway", statepath.GatewayBaseURL(), "网关地址（容器内用 host.docker.internal:8082——v2.5.3）")
-	flag.StringVar(&x3Status, "x"+"3-status", "", "X"+"3 agent 状态地址（机器级采样用——如 http://<worker-ip>:8100/status）")
+	flag.StringVar(&x3Status, "x"+"3-status", "", "X"+"3 agent 状态地址（机器级采样用——如 "+x3StatusExample()+"）")
 	flag.StringVar(&x3Token, "x"+"3-token", "", "X"+"3 认证 token（机器级采样用）")
 	flag.Parse()
 

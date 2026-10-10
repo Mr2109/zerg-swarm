@@ -210,7 +210,7 @@ func TestImpactSteps_LiveTruthSourceAndRedLine(t *testing.T) {
 	if rc != 0 {
 		t.Fatalf("`impact core/cmd/zerg/main.go`（默认档）该退 0，实得 %d · stderr=%s", rc, errb)
 	}
-	red := lineOf(out, "会红：")
+	red := lineOf(out, "预测会红：")
 	if !strings.Contains(red, "未机检") || !strings.Contains(red, "--all") {
 		t.Errorf("默认档遇上候选该写「未机检 + 按需档 --all」，实得 %q", red)
 	}
@@ -226,7 +226,7 @@ func TestImpactSteps_LiveTruthSourceAndRedLine(t *testing.T) {
 	if err := judgeImpactHuman(out, impactHeads); err != nil {
 		t.Errorf("人面仍须恒三行：%v · stdout=%q", err, out)
 	}
-	red = lineOf(out, "会红：")
+	red = lineOf(out, "预测会红：")
 	if !strings.Contains(red, fmt.Sprintf("本跑 %d 步", snap.Total)) {
 		t.Errorf("判据③：「会红」行该带**本跑 %d 步**（现跑 · 不许写常量），实得 %q", snap.Total, red)
 	}
@@ -248,7 +248,7 @@ func TestImpactSteps_LiveTruthSourceAndRedLine(t *testing.T) {
 	if rc != 0 {
 		t.Fatalf("`impact agent/internal/enclosure/contract.go` 该退 0，实得 %d · stderr=%s", rc, errb)
 	}
-	red = lineOf(out, "会红：")
+	red = lineOf(out, "预测会红：")
 	if !strings.Contains(red, "未接步") || !strings.Contains(red, "S-b") {
 		t.Errorf("粗步表述那一条该写「未接步 S-b」，实得 %q", red)
 	}
@@ -261,7 +261,7 @@ func TestImpactSteps_LiveTruthSourceAndRedLine(t *testing.T) {
 	if rc != 0 {
 		t.Fatalf("`impact scripts/gates/check-compat-manifest.py` 该退 0，实得 %d · stderr=%s", rc, errb)
 	}
-	red = lineOf(out, "会红：")
+	red = lineOf(out, "预测会红：")
 	if !strings.Contains(red, "未接步") || !strings.Contains(red, "S-a") {
 		t.Errorf("`S-a` 该写「未接步」，实得 %q", red)
 	}

@@ -522,3 +522,263 @@ func TestDevProposalEvidenceAcceptsDescriptiveText(t *testing.T) {
 		t.Errorf("stderr 要点名「查不到」：%q", errb3)
 	}
 }
+
+// ---- ★ GAP-20260928-161（方案甲）：前瞻判据档 `--criterion-new`（本版**还跑不动**的判据）----
+
+// TestDevProposalCriterionNewForwardSlot —— 前瞻判据档三格：
+//
+//	正控：前瞻判据（本版**跑不动**的命令形态）被收下，且**分栏落盘**（`criterion_new` + 它的态=前瞻）。
+//	负控①：强档 `--criterion` 收到**前瞻形态** ⇒ 拒（强档一字未动 · 两档不许互相冒充）。
+//	负控②：前瞻档 `--criterion-new` 收到**本版真能跑**的命令 ⇒ 拒（不许冒充前瞻）。
+func TestDevProposalCriterionNewForwardSlot(t *testing.T) {
+	proposalEvidenceDir(t)
+	ids, err := contract.DevTargets()
+	if err != nil || len(ids) == 0 {
+		t.Fatalf("回指清单读不出来：%v", err)
+	}
+	dir := t.TempDir()
+	t.Setenv("ZERG_PROPOSAL_DIR", dir)
+
+	// 前瞻形态 = 一条首词是 zerg、但**本版命令树里解析不到**的命令（将来才有的命令形态）。
+	const forward = "zerg gap backfill-future --dry-run"
+
+	// ---- 负控①：强档 `--criterion` 收前瞻形态 ⇒ 红（强档的判定口一字未动：解析不到 ⇒ 不收）----
+	rcS, outS, errS := runProposalNew(t, "--title", "强档收前瞻", "--target", "待办:"+ids[0], "--goal", "g",
+		"--evidence", "GAP-20260927-254", "--rollback", "r", "--criterion", forward)
+	if rcS != 2 || !strings.Contains(errS, "不在命令树里") {
+		t.Errorf("强档 `--criterion` 收前瞻形态 ⇒ rc=%d（要 2 · 点名「不在命令树里」）· stderr=%s", rcS, errS)
+	}
+	if outS != "" {
+		t.Errorf("拒收时 stdout 必须 0 字节，实测 %d 字节", len(outS))
+	}
+
+	// ---- 负控②：前瞻档 `--criterion-new` 收本版**真能跑**的命令 ⇒ 红（不许冒充前瞻）----
+	rcN, outN, errN := runProposalNew(t, "--title", "前瞻档收能真跑", "--target", "待办:"+ids[0], "--goal", "g",
+		"--evidence", "GAP-20260927-254", "--rollback", "r", "--criterion", testCriterion, "--criterion-new", testCriterion)
+	if rcN != 2 || !strings.Contains(errN, "能解析到") {
+		t.Errorf("前瞻档 `--criterion-new` 收本版真能跑的命令 ⇒ rc=%d（要 2 · 点名「能解析到」）· stderr=%s", rcN, errN)
+	}
+	if outN != "" {
+		t.Errorf("拒收时 stdout 必须 0 字节，实测 %d 字节", len(outN))
+	}
+
+	// ---- 正控：前瞻判据入档 ⇒ rc=0；落件**显式标前瞻**（分栏：criterion_new 值 + criterion_new_state=前瞻）----
+	rc, out, errb := runProposalNew(t, "--title", "前瞻档", "--target", "待办:"+ids[0], "--goal", "g",
+		"--evidence", "GAP-20260927-254", "--rollback", "r", "--criterion", testCriterion, "--criterion-new", forward)
+	if rc != 0 {
+		t.Fatalf("前瞻判据入档 ⇒ rc=%d（要 0）· stderr=%s", rc, errb)
+	}
+	id := strings.TrimSpace(out)
+	if id == "" {
+		t.Fatalf("成功时 stdout 要给提案 id")
+	}
+	b, err := os.ReadFile(filepath.Join(dir, id+".json"))
+	if err != nil {
+		t.Fatalf("读落件 %s 失败：%v", id, err)
+	}
+	var rec map[string]any
+	if err := json.Unmarshal(b, &rec); err != nil {
+		t.Fatalf("落件 JSON 解不开：%v", err)
+	}
+	if got, _ := rec["criterion_new"].(string); got != forward {
+		t.Errorf("落件 `criterion_new` = %q（要 %q）", got, forward)
+	}
+	if got, _ := rec["criterion"].(string); got != testCriterion {
+		t.Errorf("落件 `criterion`（强档）被动了 = %q（要 %q · 强档一字未动）", got, testCriterion)
+	}
+	// 机器面同一格：`criterion_new_state` 必须**显式标前瞻**（分栏落盘的「它的态」）。
+	var jout, jerr strings.Builder
+	if rc := zerg.RunForTest([]string{"dev", "proposal", "show", id, "--json", "criterion,criterion_state,criterion_new,criterion_new_state"}, &jout, &jerr); rc != 0 {
+		t.Fatalf("show --json 取分栏 ⇒ rc=%d · stderr=%s", rc, jerr.String())
+	}
+	if !strings.Contains(jout.String(), `"criterion_new_state":"前瞻"`) {
+		t.Errorf("机器面 `criterion_new_state` 要显式标「前瞻」：%s", jout.String())
+	}
+}
+
+// ---- ★ GAP-20260927-265：判据「现树校验面」的**出口提示**（本枚）----
+
+// TestDevProposalCriterionLiveTreeExitHint —— 强档 `--criterion` 的「现役命令树」校验面：
+//
+//	正控：合规判据（本版真跑得动）⇒ rc=0，且**逐字**落件（判据值不改写）。
+//	负控①：本版**跑不动**的判据（新命令形态）⇒ 按既有档拒（rc=2）· 点名命令 · **指向前瞻档 `--criterion-new`**。
+//	负控②：族级判据（`zerg dev` 是族名、不是可跑命令）⇒ 仍按既有档拒（rc=2）。
+//
+// 证明「拒执不再只点名、给出出口」这一格：负控① 的 stderr 必须含 `--criterion-new`。
+func TestDevProposalCriterionLiveTreeExitHint(t *testing.T) {
+	proposalEvidenceDir(t)
+	ids, err := contract.DevTargets()
+	if err != nil || len(ids) == 0 {
+		t.Fatalf("回指清单读不出来：%v", err)
+	}
+	dir := t.TempDir()
+	t.Setenv("ZERG_PROPOSAL_DIR", dir)
+
+	// ---- 正控：合规判据 ⇒ rc=0，且逐字落件 ----
+	rc, out, errb := runProposalNew(t, "--title", "现树校验正控", "--target", "待办:"+ids[0], "--goal", "g",
+		"--evidence", proposalEvidenceInLedger, "--rollback", "r", "--criterion", testCriterion)
+	if rc != 0 {
+		t.Fatalf("合规判据 ⇒ rc=%d（要 0）· stderr=%s", rc, errb)
+	}
+	id := strings.TrimSpace(out)
+	b, err := os.ReadFile(filepath.Join(dir, id+".json"))
+	if err != nil {
+		t.Fatalf("读落件 %s 失败：%v", id, err)
+	}
+	var rec map[string]any
+	if err := json.Unmarshal(b, &rec); err != nil {
+		t.Fatalf("落件 JSON 解不开：%v", err)
+	}
+	if got, _ := rec["criterion"].(string); got != testCriterion {
+		t.Errorf("落件 criterion = %q（要 %q · 逐字）", got, testCriterion)
+	}
+
+	// ---- 负控①：本版跑不动的判据 ⇒ 按既有档拒 · 点名 · 指向前瞻档 ----
+	const notInTree = "zerg gap backfill-future --dry-run"
+	rc1, out1, err1 := runProposalNew(t, "--title", "现树校验负控一", "--target", "待办:"+ids[0], "--goal", "g",
+		"--evidence", proposalEvidenceInLedger, "--rollback", "r", "--criterion", notInTree)
+	if rc1 != 2 {
+		t.Fatalf("不在命令树里的判据 ⇒ rc=%d（要 2 · 按既有档拒）· stderr=%s", rc1, err1)
+	}
+	if out1 != "" {
+		t.Errorf("拒收时 stdout 必须 0 字节，实测 %d 字节", len(out1))
+	}
+	if !strings.Contains(err1, "不在命令树里") || !strings.Contains(err1, "backfill-future") {
+		t.Errorf("负控① 要点名「不在命令树里」+ 逐字点名命令：%q", err1)
+	}
+	if !strings.Contains(err1, "--criterion-new") {
+		t.Errorf("负控① 要**指向前瞻档** `--criterion-new`（GAP-20260927-265 的出口）：%q", err1)
+	}
+
+	// ---- 负控②：族级判据（族名不是可跑命令）⇒ 仍按既有档拒 ----
+	rc2, out2, err2 := runProposalNew(t, "--title", "现树校验负控二", "--target", "待办:"+ids[0], "--goal", "g",
+		"--evidence", proposalEvidenceInLedger, "--rollback", "r", "--criterion", "zerg dev")
+	if rc2 != 2 {
+		t.Fatalf("族级判据 ⇒ rc=%d（要 2 · 族名跑不动）· stderr=%s", rc2, err2)
+	}
+	if out2 != "" {
+		t.Errorf("拒收时 stdout 必须 0 字节，实测 %d 字节", len(out2))
+	}
+	if !strings.Contains(err2, "不在命令树里") {
+		t.Errorf("负控② 要点名「不在命令树里」：%q", err2)
+	}
+}
+
+// ---- ★ GAP-20260927-267：`dev proposal revise <提案 id>` —— 提案的「改判据」动作（本枚）----
+
+// runProposalRevise 起一次 `dev proposal revise`（**只走进程内 run**）。
+func runProposalRevise(t *testing.T, argv ...string) (int, string, string) {
+	t.Helper()
+	var out, errb strings.Builder
+	rc := zerg.RunForTest(append([]string{"dev", "proposal", "revise"}, argv...), &out, &errb)
+	return rc, out.String(), errb.String()
+}
+
+// readProposalCriterion 读提案件里的 criterion（「拒执零写 / 逐字落件」的取值面）。
+func readProposalCriterion(t *testing.T, dir, id string) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(dir, id+".json"))
+	if err != nil {
+		t.Fatalf("读落件 %s 失败：%v", id, err)
+	}
+	var rec map[string]any
+	if err := json.Unmarshal(b, &rec); err != nil {
+		t.Fatalf("落件 JSON 解不开：%v", err)
+	}
+	s, _ := rec["criterion"].(string)
+	return s
+}
+
+// TestDevProposalReviseCriterion —— 改判据动作（GAP-20260927-267）：
+//
+//	正控：合规判据就地改 ⇒ rc=0，且**逐字落件**（其余字段一字不动）。
+//	负控①（非法/越界形态 ⇒ 按既有档拒并点名）：判据不在命令树 / 人话 / 一格都不给 / 提案不存在 —— 四条 rc=2，逐条点名。
+//	负控②（既有档行为逐字不变）：`new` 正控仍 rc=0 · `show` 仍只读并读到改后的判据 · `check` 判据可跑仍 rc=0。
+func TestDevProposalReviseCriterion(t *testing.T) {
+	proposalEvidenceDir(t)
+	ids, err := contract.DevTargets()
+	if err != nil || len(ids) == 0 {
+		t.Fatalf("回指清单读不出来：%v", err)
+	}
+	dir := t.TempDir()
+	t.Setenv("ZERG_PROPOSAL_DIR", dir)
+
+	// 先提一件（强档判据 = testCriterion），拿到 id。
+	rc, out, errb := runProposalNew(t, "--title", "改判据", "--target", "待办:"+ids[0], "--goal", "g",
+		"--evidence", proposalEvidenceInLedger, "--rollback", "r", "--criterion", testCriterion)
+	if rc != 0 {
+		t.Fatalf("正控件提不出来：rc=%d · stderr=%s", rc, errb)
+	}
+	id := strings.TrimSpace(out)
+	if id == "" {
+		t.Fatalf("成功时 stdout 要给提案 id")
+	}
+
+	// ---- 负控①a：非法形态（判据不在命令树）⇒ rc=2 · 按既有档拒 · 点名「不在命令树里」----
+	const notInTree = "zerg gap backfill-future --dry-run"
+	rc1, out1, err1 := runProposalRevise(t, id, "--criterion", notInTree, "--yes")
+	if rc1 != 2 {
+		t.Errorf("非法判据（不在命令树）⇒ rc=%d（要 2 · 按既有档拒）· stderr=%s", rc1, err1)
+	}
+	if out1 != "" {
+		t.Errorf("拒收时 stdout 必须 0 字节，实测 %d 字节", len(out1))
+	}
+	if !strings.Contains(err1, "不在命令树里") {
+		t.Errorf("负控①a 要点名「不在命令树里」：%q", err1)
+	}
+	if got := readProposalCriterion(t, dir, id); got != testCriterion {
+		t.Errorf("拒执后盘上判据被改了 = %q（要 %q · 拒执零写）", got, testCriterion)
+	}
+
+	// ---- 负控①b：人话判据（越界形态）⇒ rc=2 · 点名「首词」----
+	rc2, _, err2 := runProposalRevise(t, id, "--criterion", "看门禁全绿就行", "--yes")
+	if rc2 != 2 || !strings.Contains(err2, "首词") {
+		t.Errorf("人话判据 ⇒ rc=%d（要 2）、stderr 要点名首词：%q", rc2, err2)
+	}
+
+	// ---- 负控①c：一格都不给 ⇒ rc=2（没改任何东西）----
+	rc3, _, err3 := runProposalRevise(t, id, "--yes")
+	if rc3 != 2 || !strings.Contains(err3, "没给") {
+		t.Errorf("不给判据 ⇒ rc=%d（要 2）、stderr 要点名「没给」：%q", rc3, err3)
+	}
+
+	// ---- 负控①d：提案不存在 ⇒ rc=2（同族写面 `dev edit` 同口径）----
+	rc4, _, err4 := runProposalRevise(t, "DEV-9999-nope", "--criterion", testCriterion, "--yes")
+	if rc4 != 2 || !strings.Contains(err4, "没有") {
+		t.Errorf("提案不存在 ⇒ rc=%d（要 2）、stderr 要点名「没有」：%q", rc4, err4)
+	}
+
+	// ---- 正控：合规判据就地改 ⇒ rc=0，且逐字落件（其余字段一字不动）----
+	const newCrit = "zerg gate run --fast"
+	rc5, _, err5 := runProposalRevise(t, id, "--criterion", newCrit, "--yes")
+	if rc5 != 0 {
+		t.Fatalf("合规改判据 ⇒ rc=%d（要 0）· stderr=%s", rc5, err5)
+	}
+	if got := readProposalCriterion(t, dir, id); got != newCrit {
+		t.Errorf("改后盘上判据 = %q（要 %q · 逐字）", got, newCrit)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, id+".json"))
+	if err != nil {
+		t.Fatalf("读落件失败：%v", err)
+	}
+	var rec map[string]any
+	if err := json.Unmarshal(b, &rec); err != nil {
+		t.Fatalf("落件 JSON 解不开：%v", err)
+	}
+	if rec["id"] != id || rec["target"] != ids[0] || rec["goal"] != "g" || rec["rollback_ref"] != "r" {
+		t.Errorf("改判据动了别的字段：id=%v target=%v goal=%v rollback=%v", rec["id"], rec["target"], rec["goal"], rec["rollback_ref"])
+	}
+
+	// ---- 负控②：既有档行为逐字不变 ----
+	var so, se strings.Builder
+	if rc := zerg.RunForTest([]string{"dev", "proposal", "show", id, "--json", "criterion"}, &so, &se); rc != 0 {
+		t.Errorf("show 既有档 ⇒ rc=%d（要 0）· stderr=%s", rc, se.String())
+	}
+	if !strings.Contains(so.String(), newCrit) {
+		t.Errorf("show 应读到改后的判据 %q：%s", newCrit, so.String())
+	}
+	var co, ce strings.Builder
+	if rc := zerg.RunForTest([]string{"dev", "proposal", "check", id}, &co, &ce); rc != 0 {
+		t.Errorf("check（判据可跑）⇒ rc=%d（要 0）· stderr=%s", rc, ce.String())
+	}
+}
