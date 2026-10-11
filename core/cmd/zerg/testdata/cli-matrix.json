@@ -8084,6 +8084,30 @@
   {
    "argv": [
     "gate",
+    "ps",
+    "--nosuchflag-zz"
+   ],
+   "command": "gate ps",
+   "id": "gate/ps#未知旗标",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标（读数现跑派生：rc=2 · stdout 0 字节）"
+  },
+  {
+   "argv": [
+    "gate",
+    "ps",
+    "不认的契约主号"
+   ],
+   "command": "gate ps",
+   "id": "gate/ps#不收位置参数",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "本命令 arity=none ⇒ 不收位置参数（执行前判 · 读数现跑派生：rc=2 · stdout 0 字节）"
+  },
+  {
+   "argv": [
+    "gate",
     "check",
     "--schema",
     "zerg/v9"
