@@ -99,7 +99,7 @@ func TestCheckSymbolDeleteRippleGatePort(t *testing.T) {
 		t.Fatalf("--list-rules 失败：得 rc=%d out=%q", rcRules, outRules)
 	}
 
-	// ── --self-test 九格自身必须全过（防恒绿/恒红） ───────────────────────
+	// ── --self-test 十三格自身必须全过（防恒绿/恒红） ───────────────────────
 	rcST, outST, _ := sdrRun(t, "--self-test")
 	if rcST != 0 || !strings.Contains(outST, "自检结论: 全过") {
 		t.Fatalf("--self-test 失败：得 rc=%d out=%q", rcST, outST)

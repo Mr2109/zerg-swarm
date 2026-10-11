@@ -25,6 +25,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Mr2109/zerg-swarm/core/internal/gitpaths"
@@ -255,8 +256,9 @@ func cmdRepoCommit(inv *invocation, stdout, stderr io.Writer) int {
 		}
 		return exitBlocked
 	}
+	setActiveMatRoot(matRoot)
 	gtRC, err := runFastGate(root, matRoot, logDir, stderr)
-	removeMaterialized(matRoot)
+	defer removeActiveMaterialized()
 	if err != nil {
 		inv.setErr("failed", "gate_run_failed", err.Error())
 		fmt.Fprintf(stderr, "%s: 跑不动门禁脚本：%v\n", progName, err)
@@ -442,6 +444,30 @@ func removeMaterialized(dir string) {
 	_ = os.Remove(filepath.Join(dir, ".git"))
 	_ = os.Remove(filepath.Join(dir, "bin"))
 	_ = os.RemoveAll(dir)
+}
+
+// ── 物化树在飞登记（缺口 `GAP-20261012-07`）──────────────────────────
+// 信号打断走 `os.Exit`（**不跑 defer**）⇒ 物化树会漏；主 goroutine 与信号处理器 goroutine
+// 并发读写同一枚登记位 ⇒ 用互斥守住。正常收口与信号面两路共用 `removeActiveMaterialized`。
+var activeMatRootMu sync.Mutex
+
+// activeMatRoot —— 当前**在飞**的物化索引树（空串 = 无）。
+var activeMatRoot string
+
+// setActiveMatRoot —— 登记在飞的物化树（摘完由 `removeActiveMaterialized` 置空）。
+func setActiveMatRoot(dir string) {
+	activeMatRootMu.Lock()
+	activeMatRoot = dir
+	activeMatRootMu.Unlock()
+}
+
+// removeActiveMaterialized —— 回收当前在飞的物化树（正常收口与信号处理器两路共用 · 幂等）。
+func removeActiveMaterialized() {
+	activeMatRootMu.Lock()
+	dir := activeMatRoot
+	activeMatRoot = ""
+	activeMatRootMu.Unlock()
+	removeMaterialized(dir)
 }
 
 // gateEnv —— 在现环境上叠加 `ZERG_GATE_REPO_ROOT`（物化树）：闸脚本据此**自动改面**（REPO_ROOT）。
@@ -962,8 +988,9 @@ func repoCommitOnly(inv *invocation, stdout, stderr io.Writer, paths []string, m
 		}
 		return exitBlocked
 	}
+	setActiveMatRoot(matRoot)
 	gtRC, gtOut, err := runFastGateCapture(root, matRoot, logDir)
-	removeMaterialized(matRoot)
+	defer removeActiveMaterialized()
 	if err != nil {
 		inv.setErr("failed", "gate_run_failed", err.Error())
 		fmt.Fprintf(stderr, "%s: 跑不动门禁脚本：%v\n", progName, err)
@@ -1321,8 +1348,9 @@ func repoCommitRemoved(inv *invocation, stdout, stderr io.Writer, paths []string
 		fmt.Fprintf(stderr, "%s: **物化临时索引失败：%v ⇒ 不给结论（退码 8 · 绝不静默回落到工作树面）**\n", progName, mErr)
 		return exitBlocked
 	}
+	setActiveMatRoot(matRoot)
 	gtRC, err := runFastGate(root, matRoot, logDir, stderr)
-	removeMaterialized(matRoot)
+	defer removeActiveMaterialized()
 	if err != nil {
 		inv.setErr("failed", "gate_run_failed", err.Error())
 		fmt.Fprintf(stderr, "%s: 跑不动门禁脚本：%v\n", progName, err)

@@ -27,6 +27,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -37,6 +38,8 @@ import (
 const (
 	cwgGuardToken   = "atomic-write.sh"
 	cwgLedgerSchema = "gate-check-write-tools/1"
+	cwgLedgerRegex  = `^#\s*zerg-class:\s*(read|write)\s+(D0|D2|D3)\s*$`
+	cwgGeneratedBy  = "zerg gate check check-writer-guard --emit"
 )
 
 // cwgFields —— py `FIELDS`（`--json` 字段闭集 · 唯一真源）。
@@ -934,6 +937,7 @@ func cwgUsageText() string {
 	return "用法\n" +
 		"  python3 scripts/gates/check-writer-guard.py [--root <目录>] [--report-only]\n" +
 		"  python3 scripts/gates/check-writer-guard.py --json <字段,…>\n" +
+		"  --emit [--out <件>] [--dry-run]\n" +
 		"  python3 scripts/gates/check-writer-guard.py --self-test\n" +
 		"  python3 scripts/gates/check-writer-guard.py --help\n" +
 		"说明\n" +
@@ -942,8 +946,11 @@ func cwgUsageText() string {
 		"  --report-only 干跑档：命中只登记、退码恒 0\n" +
 		"  --json        人面 JSON（字段闭集：" + strings.Join(cwgFields, ",") + "）\n" +
 		"  --self-test   合成夹具：3 负控（必命中）+ 2 正控（不得命中）\n" +
+		"  --emit        现读生成写工具台账（只收 class==write）· `--out -` ⇒ stdout\n" +
+		"  --out         台账落点（缺省 = <根>/scripts/gates/gate-check-write-tools.json）\n" +
+		"  --dry-run     只与 --emit 同用：只印不写（计划件走 stdout · 零副作用）\n" +
 		"退码\n" +
-		"  0 全绿 / 干跑档 · 1 红（命中绕过）· 2 不给结论（用法错 / 未知旗标 / 根读不到 / 扫到 0 个脚本 / 自检不过）\n"
+		"  0 全绿 / 干跑档 · 1 红（命中绕过）· 2 不给结论（用法错 / 未知旗标 / 根读不到 / 扫到 0 个脚本 / 自检不过 / 台账写不出）\n"
 }
 
 func cwgWriteFile(path, content string) {
@@ -1155,10 +1162,101 @@ func cwgAncestorWithGates(start string) string {
 	return ""
 }
 
+const cwgLedgerKouJing = "名录收写工具 · 强制危险档的分类台账（派生真值表 · 供机检与人读）。" +
+	"真值来自每件自己头部的一行声明（#zerg-class: write D2|D3）—— 与 core/cmd/zerg/main.go 的 dangerSpec " +
+	"同形状（分类是条目自带的字段，不是外挂名单）。本件由 scripts/gates/check-writer-guard.py 的 G0/G1 双向差集机检；" +
+	".json 不进 gate check 名录（只收 .py/.sh）也不进脚本清单台账。head = 生成时刻 HEAD 短 sha（只作留痕，机检不比它）。"
+
+// cwgLedgerItem —— 台账一条（键序 file/class/level · 手写档同形）。
+type cwgLedgerItem struct {
+	File  string `json:"file"`
+	Class string `json:"class"`
+	Level string `json:"level"`
+}
+
+// cwgLedgerDoc —— 台账顶层（键序逐字对齐手写档 ＋ generated_by）。
+type cwgLedgerDoc struct {
+	Schema      string          `json:"schema"`
+	GeneratedBy string          `json:"generated_by"`
+	Head        string          `json:"head"`
+	Count       int             `json:"count"`
+	Regex       string          `json:"regex"`
+	KouJing     string          `json:"_口径"`
+	Items       []cwgLedgerItem `json:"items"`
+}
+
+// cwgHeadShort —— 台账 head（生成时刻 HEAD 短 sha · 8 位 · 只作留痕）。
+// 非 git 根 / 取不到 ⇒ ""（不猜；空 head 机检不比它）。
+func cwgHeadShort(root string) string {
+	out, err := exec.Command("git", "-C", root, "rev-parse", "--short=8", "HEAD").Output()
+	if err != nil {
+		return ""
+	}
+	return pyStrip(string(out))
+}
+
+// cwgEmit —— `--emit`：现读 ⇒ 生成写工具台账（唯一写面）。
+func cwgEmit(root, out string, dryRun bool, stdout, stderr io.Writer) int {
+	if st, err := os.Stat(root); err != nil || !st.IsDir() {
+		fmt.Fprintf(stderr, "⛔ 不给结论（退 2）：扫描根读不到（%s）—— 空转不当绿\n", root)
+		return 2
+	}
+	declared := cwgCollectDeclared(root)
+	files := make([]string, 0, len(declared))
+	for rel, cv := range declared {
+		if cv[0] == "write" {
+			files = append(files, rel)
+		}
+	}
+	sort.Strings(files)
+	items := make([]cwgLedgerItem, 0, len(files))
+	for _, rel := range files {
+		items = append(items, cwgLedgerItem{File: rel, Class: "write", Level: declared[rel][1]})
+	}
+	led := cwgLedgerDoc{
+		Schema:      cwgLedgerSchema,
+		GeneratedBy: cwgGeneratedBy,
+		Head:        cwgHeadShort(root),
+		Count:       len(items),
+		Regex:       cwgLedgerRegex,
+		KouJing:     cwgLedgerKouJing,
+		Items:       items,
+	}
+	b, err := json.MarshalIndent(led, "", "  ")
+	if err != nil {
+		fmt.Fprintf(stderr, "⛔ 台账序列化失败：%s ⇒ 不给结论（rc=2）\n", err)
+		return 2
+	}
+	b = append(b, '\n')
+	if dryRun {
+		fmt.Fprintf(stdout, "计划（--dry-run · 零副作用 · 未写任何文件）：将生成写工具台账 %s · items %d 条\n",
+			out, len(items))
+		_, _ = stdout.Write(b)
+		return 0
+	}
+	if out == "-" {
+		_, _ = stdout.Write(b)
+		return 0
+	}
+	if dd := filepath.Dir(out); dd != "" {
+		if merr := os.MkdirAll(dd, 0o755); merr != nil {
+			fmt.Fprintf(stderr, "⛔ 台账落点建不了（%s）：%v ⇒ 不给结论（rc=2）\n", dd, merr)
+			return 2
+		}
+	}
+	if werr := os.WriteFile(out, b, 0o644); werr != nil {
+		fmt.Fprintf(stderr, "⛔ 台账写不了（%s）：%v ⇒ 不给结论（rc=2）\n", out, werr)
+		return 2
+	}
+	fmt.Fprintf(stdout, "已生成写工具台账 %s · items %d 条 · schema %s\n", out, len(items), cwgLedgerSchema)
+	return 0
+}
+
 // checkWriterGuardGateMain —— 入口。
 func checkWriterGuardGateMain(stdout, stderr io.Writer, argv []string) int {
-	var rootArg, jsonArg *string
+	var rootArg, jsonArg, outArg *string
 	reportOnly, selfTest, help := false, false, false
+	emit, dryRun := false, false
 	var unknown []string
 	for i := 0; i < len(argv); i++ {
 		a := argv[i]
@@ -1169,6 +1267,21 @@ func checkWriterGuardGateMain(stdout, stderr io.Writer, argv []string) int {
 			reportOnly = true
 		case a == "--self-test":
 			selfTest = true
+		case a == "--emit":
+			emit = true
+		case a == "--dry-run":
+			dryRun = true
+		case a == "--out":
+			if i+1 < len(argv) {
+				v := argv[i+1]
+				outArg = &v
+				i++
+			} else {
+				unknown = append(unknown, a)
+			}
+		case strings.HasPrefix(a, "--out="):
+			v := a[len("--out="):]
+			outArg = &v
 		case a == "--root":
 			if i+1 < len(argv) {
 				v := argv[i+1]
@@ -1201,8 +1314,16 @@ func checkWriterGuardGateMain(stdout, stderr io.Writer, argv []string) int {
 	}
 	if len(unknown) > 0 {
 		fmt.Fprint(stderr, "⛔ 不给结论（退 2）：未知旗标 "+strings.Join(unknown, " ")+
-			" ⇒ 本件只认 --root / --json / --report-only / --self-test / --help\n")
+			" ⇒ 本件只认 --root / --json / --report-only / --self-test / --emit / --out / --dry-run / --help\n")
 		fmt.Fprint(stderr, cwgUsageText())
+		return 2
+	}
+	if dryRun && !emit {
+		fmt.Fprint(stderr, "⛔ 不给结论（退 2）：`--dry-run` 只与 `--emit` 同用\n")
+		return 2
+	}
+	if emit && (selfTest || jsonArg != nil || reportOnly) {
+		fmt.Fprint(stderr, "⛔ 不给结论（退 2）：`--emit` 与 `--json` / `--report-only` / `--self-test` 互斥\n")
 		return 2
 	}
 	var fields []string
@@ -1239,6 +1360,16 @@ func checkWriterGuardGateMain(stdout, stderr io.Writer, argv []string) int {
 	root := cwgDefaultRoot()
 	if rootArg != nil {
 		root = *rootArg
+	}
+	if emit {
+		out := filepath.Join(root, cwgLedgerRel)
+		if outArg != nil {
+			out = *outArg
+			if out != "-" && !filepath.IsAbs(out) {
+				out = filepath.Join(root, out)
+			}
+		}
+		return cwgEmit(root, out, dryRun, stdout, stderr)
 	}
 	rc, info, notes := cwgCheck(root, reportOnly)
 	lrc, linfo, lnotes := cwgCheckLedger(root)

@@ -358,3 +358,68 @@ func cctTempCount(t *testing.T) int {
 	}
 	return len(m)
 }
+
+// TestCliContractLiveVerifyUnpinned —— 缺口 `GAP-20261012-05` 的**成对正负控**：
+// R-6 逐格回放里「格标了 `stdout_bytes_unpinned:true`」= 只钉 rc、不钉 stdout 字节数。
+//
+//	UnpinnedSet_Rc0        · 该格标了旗标 ＋ 其 stdout 两遍字节数变 ⇒ rc=0（正控）
+//	UnpinnedAbsent_Rc1     · 同格拿掉旗标 ⇒ rc=1 且判词点名「两次现跑不等」（负控）
+//	UnpinnedButRcWrong_Rc1 · 标了旗标但 want_rc 错 ⇒ 仍 rc≠0 且报退码差（对照：防呆不许把 rc 也比没了）
+//
+// 成对断言：rc(UnpinnedSet) != rc(UnpinnedAbsent)。
+func TestCliContractLiveVerifyUnpinned(t *testing.T) {
+	// cctUnpinnedFixture 造一枚**只含一格**的自验仓：假 bin 每次现跑多打 1 字节
+	//（`bin/zerg` 用 `bin/.n` 计数并打 n 个 'x'）⇒ 同一格的 stdout 字节数两遍必变。
+	cctUnpinnedFixture := func(t *testing.T, unpinned bool, wantRc float64) string {
+		t.Helper()
+		root := t.TempDir()
+		c := map[string]any{"id": "version#两遍变", "command": "version",
+			"argv": []any{"version", "--ts"}, "want_rc": wantRc, "want_stdout_bytes": 1.0,
+			"why": "GAP-20261012-05：stdout 字节数两遍不定"}
+		if unpinned {
+			c["stdout_bytes_unpinned"] = true
+		}
+		m := clicGoodMatrix()
+		m["cases"] = []any{c}
+		clicFixture(root, clicGoodMain, clicGoodExitcodes, m, clicGoodBaseline(), clicGoodRegistry(), "")
+		_ = os.MkdirAll(filepath.Join(root, "bin"), 0o755)
+		_ = os.WriteFile(filepath.Join(root, "bin", "zerg"), []byte(cctChangingBin), 0o755)
+		return root
+	}
+
+	var rcPos, rcNeg int
+	t.Run("UnpinnedSet_Rc0", func(t *testing.T) {
+		rc, out, _ := cctRun(t, cctUnpinnedFixture(t, true, 0.0), "--verify-live")
+		rcPos = rc
+		if rc != 0 {
+			t.Fatalf("标了 stdout_bytes_unpinned、rc 对 ⇒ 应 rc=0，得 rc=%d\n%s", rc, out)
+		}
+	})
+	t.Run("UnpinnedAbsent_Rc1", func(t *testing.T) {
+		rc, out, _ := cctRun(t, cctUnpinnedFixture(t, false, 0.0), "--verify-live")
+		rcNeg = rc
+		if rc != 1 || !strings.Contains(out, "两次现跑不等") {
+			t.Fatalf("拿掉旗标、stdout 两遍变 ⇒ 应 rc=1 且报「两次现跑不等」，得 rc=%d\n%s", rc, out)
+		}
+	})
+	t.Run("UnpinnedButRcWrong_Rc1", func(t *testing.T) {
+		rc, out, _ := cctRun(t, cctUnpinnedFixture(t, true, 3.0), "--verify-live")
+		if rc == 0 || !strings.Contains(out, "退码") {
+			t.Fatalf("标了旗标但 want_rc 错 ⇒ 仍应 rc≠0 且报退码差，得 rc=%d\n%s", rc, out)
+		}
+	})
+	if rcPos == rcNeg {
+		t.Fatalf("成对负控失效：正控 rc=%d 与负控 rc=%d 必须不等", rcPos, rcNeg)
+	}
+}
+
+// cctChangingBin —— 每次现跑 stdout 字节数 +1 的假制品（用自身目录下的 `.n` 计数）。
+const cctChangingBin = `#!/bin/sh
+d=$(dirname "$0")
+n=$(cat "$d/.n" 2>/dev/null || printf 0)
+n=$((n+1))
+printf '%s' "$n" > "$d/.n"
+i=0
+while [ "$i" -lt "$n" ]; do printf x; i=$((i+1)); done
+exit 0
+`

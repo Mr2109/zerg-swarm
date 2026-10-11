@@ -950,7 +950,83 @@ func r2(res *result, sl *jv) {
 			"改成现读得出的落点，例：先把目标文件建出来（`touch <路径>`）或把 landing 指向已存在文件")
 	} else {
 		res.note("R2-OK", fmt.Sprintf("landing 前状态检查通过：%s", found))
+		r2ContentAnchor(res, sl, found)
 	}
+}
+
+// r2FirstSnippet —— 「落点原文片段」真源：context_needed 首个 kind=="snippet" 的 value
+// （与 R10/R11 同源定义：`{"kind":"snippet","value":"<落点那一行原文>"}`）。
+func r2FirstSnippet(sl *jv) string {
+	ctx := jget(sl, "context_needed")
+	items := []*jv{}
+	if ctx != nil && ctx.kind == 'a' {
+		items = ctx.arr
+	} else if jNonempty(ctx) {
+		items = []*jv{ctx}
+	}
+	for _, x := range items {
+		if isSnippetItem(x) {
+			return ctxValues(x)
+		}
+	}
+	return ""
+}
+
+// r2DeclaredLine —— 取 landing 首 token 的「:N」的 N（无 / 非数 ⇒ 0）。
+func r2DeclaredLine(landing string) int {
+	tok := csPyStrip(landing)
+	if parts := strings.Fields(tok); len(parts) > 0 {
+		tok = parts[0]
+	}
+	tok = strings.TrimRight(tok, "。，,;；)）】」")
+	i := strings.LastIndex(tok, ":")
+	if i < 0 || i == len(tok)-1 {
+		return 0
+	}
+	if n, err := strconv.Atoi(tok[i+1:]); err == nil && n >= 1 {
+		return n
+	}
+	return 0
+}
+
+// r2ContentAnchor —— R2 内容锚：**声明片段**必须在 **landing 声明的行**里逐字命中。
+// 「锚不适用」（无行号 / 无片段 / 件读不到）⇒ 只记 note；锚适用而不命中 ⇒ 红。
+func r2ContentAnchor(res *result, sl *jv, found string) {
+	land := jget(sl, "landing")
+	if !jIsStr(land) {
+		return
+	}
+	n := r2DeclaredLine(land.s)
+	snip := r2FirstSnippet(sl)
+	if n == 0 || snip == "" {
+		res.note("R2-ANCHOR-SKIP", "内容锚跳过：landing 无「:行号」或片无「落点原文片段」")
+		return
+	}
+	p := found
+	if !pyIsAbs(p) {
+		p = pyJoin(csRepoRoot, p)
+	}
+	data, err := os.ReadFile(p)
+	if err != nil {
+		res.note("R2-ANCHOR-SKIP", fmt.Sprintf("内容锚跳过：落点件读不到（%s）", found))
+		return
+	}
+	lines := strings.Split(string(data), "\n")
+	if n > len(lines) {
+		res.hit("R2", "R2-SNIPPET-DRIFT",
+			fmt.Sprintf("landing 声明行 %d 超出件行数 %d（%s）", n, len(lines), found),
+			"把 landing 的「:行号」改成片段真身所在行")
+		return
+	}
+	line := lines[n-1]
+	if !strings.Contains(line, snip) {
+		res.hit("R2", "R2-SNIPPET-DRIFT",
+			fmt.Sprintf("声明片段与声明行不逐字命中（%s:%d）：片段=%q｜该行=%q",
+				found, n, runeSliceStr(snip, 0, 60), runeSliceStr(line, 0, 60)),
+			"二选一：① 把「:行号」改成片段真身所在行；② 把片段改成该行现读逐字（片段 = 落点那一行原文）")
+		return
+	}
+	res.note("R2-SNIPPET-OK", fmt.Sprintf("内容锚命中：%s:%d 含声明片段", found, n))
 }
 
 func r3(res *result, sl *jv) {

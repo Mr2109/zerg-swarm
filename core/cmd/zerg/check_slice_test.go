@@ -205,6 +205,70 @@ func TestCheckSliceGatePort(t *testing.T) {
 	}
 }
 
+// TestCheckSliceR2ContentAnchor —— ★ GAP-20260926-162 · R2 内容锚（R2-SNIPPET-DRIFT）一对正负控。
+// 牙在哪：正控断言「锚命中」（R2-SNIPPET-OK 且无 R2-ANCHOR-SKIP）——哑化 check_slice.go 的
+// r2ContentAnchor 调用（现读 :953）⇒ 正控失「OK」、负控失「DRIFT」⇒ 本件 FAIL。
+// 靶 = 测试内合成件（t.TempDir 内，✗ 不钉会被正常开发改动的真源件）。
+func TestCheckSliceR2ContentAnchor(t *testing.T) {
+	const (
+		// 合成件第 2 行现读逐字（片段正控值 = 该行原文；无 `"`/`\` ⇒ JSON 里免转义）
+		r2Line = "const r2AnchorLine = 2 // R2-CONTENT-ANCHOR-HIT"
+		// csGoodSliceJSON 首条 snippet 的 value 现读逐字（替换锚 · 全件恰 1 处）
+		r2OldSnip = "本片中的 MUST/SHOULD/MAY 按 BCP 14 解释（BCP 14 = RFC 2119 + RFC 8174；RFC 8174 逐字：only UPPERCASE usage of the key words have the defined special meanings）。"
+		r2BadSnip = "ZZ-NO-SUCH-SNIPPET-ZZ"
+	)
+	dir := t.TempDir()
+	// ① 合成靶件：第 2 行 = 片段真身（:2 非首行 ⇒ 证锚读「声明的行」而非整件）
+	target := filepath.Join(dir, "r2anchor", "target.go")
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte("package r2anchor\n"+r2Line+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w := func(name, body string) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	// ② 由 csGoodSliceJSON 派生：landing 指合成件真行 :2；首条 snippet 换成指定串（含自校）
+	mk := func(snip string) string {
+		s := strings.Replace(csGoodSliceJSON, "../Zerg-内部文档/01-设计/切片合同-模板.md:1", "r2anchor/target.go:2", 1)
+		s = strings.Replace(s, r2OldSnip, snip, 1)
+		if !strings.Contains(s, "r2anchor/target.go:2") || !strings.Contains(s, snip) {
+			t.Fatalf("夹具自校失败：替换锚未命中（landing/snippet 未生效）")
+		}
+		return s
+	}
+
+	// ── 正控（锚必命中）：landing 真件真行 + 片段 = 该行现读逐字 ⇒ rc=0 且记 R2-SNIPPET-OK ──
+	fp := w("r2pos.json", mk(r2Line))
+	rcP, outP, _ := csRun(t, "--check", fp, "--repo-root", dir)
+	if rcP != 0 || !strings.Contains(outP, "rc = 0（全部合法）") {
+		t.Fatalf("正控失败：合法片应 rc=0，得 rc=%d out尾=%q", rcP, csTailStr(outP, 300))
+	}
+	if !strings.Contains(outP, "R2-SNIPPET-OK") {
+		t.Fatalf("正控失败：锚应命中（R2-SNIPPET-OK），得 out尾=%q", csTailStr(outP, 300))
+	}
+	if strings.Contains(outP, "R2-ANCHOR-SKIP") {
+		t.Fatalf("正控失败：锚被跳过（R2-ANCHOR-SKIP）⇒ 本用例对内容锚零鉴别力，得 out尾=%q", csTailStr(outP, 300))
+	}
+
+	// ── 负控（锚必报红）：同件同 landing，片段改成「件内根本不存在」的串 ⇒ rc≠0 且点名 R2-SNIPPET-DRIFT ──
+	fn := w("r2neg.json", mk(r2BadSnip))
+	rcN, outN, _ := csRun(t, "--check", fn, "--repo-root", dir)
+	if rcN == 0 || !strings.Contains(outN, "R2-SNIPPET-DRIFT") {
+		t.Fatalf("负控失败：片段漂移应判红并点名 R2-SNIPPET-DRIFT，得 rc=%d out尾=%q", rcN, csTailStr(outN, 300))
+	}
+
+	// ── 成对断言：正负控退码必须不同（同码 ⇒ 无鉴别力）──
+	if rcP == rcN {
+		t.Fatalf("成对断言失败：正控 rc=%d 与负控 rc=%d 同码 ⇒ 内容锚无鉴别力", rcP, rcN)
+	}
+}
+
 // TestCheckSliceSelfTestAlign —— 战线① 对齐回归牙：自证面逐字对拍 py 现件。
 // 牙在哪：① joinOrNo 空值恰「无」（回退成 joinOr ⇒ 变「(无)」→ 红）；② (a)/(c)/(d) 明细行捕获（不捕获 ⇒ 红）；
 // ③ (f) 把探针件拷进仿真仓后走到缺件闸（不拷 ⇒ 先撞「探针集文件不存在」→ 缺件路径不出现 → 红）。

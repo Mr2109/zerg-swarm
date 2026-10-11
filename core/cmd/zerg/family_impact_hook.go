@@ -86,6 +86,13 @@ type impactHookFacts struct {
 	GitSHA    string // 末笔碰过本件的提交 sha（`git log -1 --format=%H -- <件>`）—— **不是退点**（只作「那件在 git 历史里」的线索；退点判据 = 写回后件 sha256 == BeforeSHA · `GAP-20260927-216` 同族）
 	Archive   string // 归档区里的副本路径（可找回路径之二；空 = 取不到）
 	Outside   bool   // 件不在仓根下
+	// ★ `GAP-20261001-77`（丙案 · 只登记 · 零写盘 · 覆盖面取粗）：提案退点件 ——
+	//   提案 `--rollback`/`rollback_ref` 逐字（空 = 提案没给退点）。它**不是归档副本**、
+	//   也可能指向**仓外**（实例 `DEV-1036` 指 `zerg-preflight-backup-<日期>/…`）。
+	RollbackRef string
+	// RollbackHere —— 那份退点件**现读在盘**（只读：一个 `os.Stat`）。真 = 「能找回」多一条路。
+	//   取粗：**提案级**（不逐件挑、不核 sha256）；清单形态（`{`-开头）按**本件**（`Rel`）退化为逐件。
+	RollbackHere bool
 }
 
 // impactHook —— 一枚**钩子判决**（分档 + 依据 + 三条判据现读 + 可找回证据两件）。
@@ -171,8 +178,11 @@ func impactGoSymbolsOfSource(src []byte) (map[string]int, error) {
 // ---- ② 三条不可找回判据 + 可找回证据的取数（只读）------------------------------------------
 
 // impactHookFactsOf 取判档要的事实（只读：`git ls-files` / `git log` / 走查归档区）。
-func impactHookFactsOf(root, rel string, before []byte) impactHookFacts {
+func impactHookFactsOf(root, rel string, before []byte, rollbackRef string) impactHookFacts {
 	f := impactHookFacts{Rel: rel, BeforeSHA: sha256Of(before)}
+	// ★ `GAP-20261001-77`（丙案）：提案退点件**先登记**（在「本件在不在仓根下」两判之前 ——
+	//   退点件与本件在不在仓根下**无关**）。只读（一个 `os.Stat`），不写盘、不核 sha256。
+	f.RollbackRef, f.RollbackHere = impactRollbackRefOf(root, rollbackRef, rel)
 	if filepath.IsAbs(rel) {
 		f.Outside = true
 		return f
@@ -190,6 +200,45 @@ func impactHookFactsOf(root, rel string, before []byte) impactHookFacts {
 	f.GitSHA = impactLastCommit(root, rel)
 	f.Archive = impactArchiveCopy(root, rel)
 	return f
+}
+
+// impactRollbackRefOf —— ★ `GAP-20261001-77`（丙案 · 只登记 · 零写盘 · 覆盖面取粗）：把提案
+// `--rollback`/`rollback_ref` 指的那份件**登记**成一枚事实（路径逐字 + 现读在不在盘）。
+//
+// 口径（写死 · 第三方可复算）：
+//
+//	· **只读**：一个 `os.Stat`；不写盘、不改件、不碰归档区（丙案红线「零写盘」）；
+//	· **取粗（提案级）**：退点件**不必**跟本次改的件同名 —— 实例 `DEV-1036` 的退点件指 A 件、
+//	  实际改 B 件（A、B 都在提案 `files[]` 里）⇒ 按「提案里有一枚**在盘**的退点件即认」收；
+//	· **清单形态自动退化为逐件**（更细）：值是 `{`-开头（`rollbackManifestOf`）⇒ 只按**本件**
+//	  （`rel`）挑那一格，挑不到 / 解不出 ⇒ 当没这一条（✗ 不猜、✗ 不逐条扫）；
+//	· 路径解析与 `devEditReturnPointOf` / `rollbackUsableWhy` **同源**（绝对按原样 · 相对按仓根拼）。
+//
+// 返回 (登记用的退点件串, 现读在不在盘)。
+func impactRollbackRefOf(root, ref, rel string) (string, bool) {
+	s := strings.TrimSpace(ref)
+	if s == "" {
+		return "", false
+	}
+	if rollbackLooksLikeManifest(s) {
+		m, ok := rollbackManifestOf(s)
+		if !ok {
+			return "", false
+		}
+		pre, found := m[rel]
+		if !found || strings.TrimSpace(pre) == "" {
+			return "", false
+		}
+		s = strings.TrimSpace(pre)
+	}
+	p := s
+	if !filepath.IsAbs(p) {
+		p = filepath.Join(root, filepath.FromSlash(p))
+	}
+	if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
+		return s, true
+	}
+	return s, false
 }
 
 // impactArchiveCopy —— 归档区里有没有这一件的副本（**只读**：不写归档区、不 `chmod` —— 红线）。
@@ -242,12 +291,15 @@ func impactHookDecide(f impactHookFacts) impactHook {
 	h := impactHook{Class: f.Class, Facts: f}
 	// 三条不可找回判据（`R28` 保险 · 逐条现读，可用读数复算）。
 	c1 := !f.Tracked
-	c2 := strings.TrimSpace(f.Archive) == "" && strings.TrimSpace(f.GitSHA) == ""
+	// ★ `GAP-20261001-77`（丙案）：找回路径**多一条** —— 提案退点件（`RollbackHere`）。
+	//   三条都取不到才算第 ② 条命中（与文件头口径「两条都取不到才算」同一条纪律）。
+	c2 := strings.TrimSpace(f.Archive) == "" && strings.TrimSpace(f.GitSHA) == "" && !f.RollbackHere
 	c3 := f.Outside
 	h.Recall[0] = impactRecallLine("① 未跟踪件（无 git 历史）", c1, ifStr(!f.Tracked,
 		"`git ls-files --error-unmatch -- "+f.Rel+"` 不认它（未跟踪 或 该目录不是 git 仓）", "认它（tracked）"))
-	h.Recall[1] = impactRecallLine("② 无归档副本（两条找回路径都取不到）", c2,
-		"git 提交="+dashIfEmpty(f.GitSHA)+" · 归档副本="+dashIfEmpty(f.Archive))
+	h.Recall[1] = impactRecallLine("② 无归档副本（三条找回路径都取不到）", c2,
+		"git 提交="+dashIfEmpty(f.GitSHA)+" · 归档副本="+dashIfEmpty(f.Archive)+
+			" · 提案退点件="+dashIfEmpty(f.RollbackRef)+"（现读"+ifStr(f.RollbackHere, "在盘", "不在盘 / 取不到")+"）")
 	h.Recall[2] = impactRecallLine("③ 仓外件", c3, ifStr(f.Outside, "件不在仓根下（绝对路径 / 带 `..` 段）", "件在仓根下"))
 	hits := []string{}
 	if c1 {
@@ -264,6 +316,16 @@ func impactHookDecide(f impactHookFacts) impactHook {
 	path := ""
 	if f.Archive != "" {
 		path = "归档副本 `" + f.Archive + "`"
+	}
+	// ★ `GAP-20261001-77`（丙案 · 只登记）：提案退点件也是一条找回路径 —— 与归档副本并列
+	//   （谁在前不影响判定：`c2` 只看「有没有一条」）。只登记，**不核 sha256**（核 sha 是退点档的事）。
+	if f.RollbackHere {
+		p := "提案退点件 `" + f.RollbackRef + "`（**现读在盘** · 只登记、未核 sha256）"
+		if path == "" {
+			path = p
+		} else {
+			path += " 或 " + p
+		}
 	}
 	if f.GitSHA != "" {
 		short := f.GitSHA
@@ -306,7 +368,7 @@ func impactHookDecide(f impactHookFacts) impactHook {
 		} else {
 			h.Tier = impactHookTierReport
 			h.Why = "**件级（整件）删，可找回** ⇒ **只报 + 附一行「可找回证据」**（`R28` 分档表第 2 行）" +
-				"—— 两条找回路径至少一条在：git 历史 / 归档副本"
+				"—— 三条找回路径至少一条在：git 历史 / 归档副本 / 提案退点件"
 		}
 	default: // 改 / 不判（判不了）
 		h.Tier = impactHookTierRecord
@@ -327,9 +389,9 @@ func impactRecallLine(name string, hit bool, reading string) string {
 }
 
 // impactHookOf 取事实 ⇒ 判档（`dev edit` 干跑与真写两条路都走这一个口）。
-func impactHookOf(root, rel string, before, after []byte) impactHook {
+func impactHookOf(root, rel string, before, after []byte, rollbackRef string) impactHook {
 	class, why := impactHookClassOf(rel, before, after)
-	f := impactHookFactsOf(root, rel, before)
+	f := impactHookFactsOf(root, rel, before, rollbackRef)
 	f.Class = class
 	h := impactHookDecide(f)
 	h.Why = "类=" + class + "（" + why + "）· " + h.Why
@@ -459,10 +521,11 @@ func emitImpactHookBlock(w io.Writer, hook impactHook) {
 	}
 	fmt.Fprintf(w, "  ★ 卡片铁律（§3.5）：**只做参考 · 永不构成批准**（提 ≠ 批）—— 本判决**不是放行条件** ✗\n")
 	// 机器可读两行（key=value · 一行一事实；**纯 ASCII 取值**，便于脚本切分；不给封包的第七键）。
-	fmt.Fprintf(w, "impact_hook tier=%s class=%s retrievable=%s tracked=%s archive=%s git_sha=%s outside=%s rel=%s\n",
+	fmt.Fprintf(w, "impact_hook tier=%s class=%s retrievable=%s tracked=%s archive=%s git_sha=%s outside=%s rollback_ref=%s rollback_here=%s rel=%s\n",
 		hook.Tier, hook.Class, yn(hook.Tier != impactHookTierBlock),
 		yn(hook.Facts.Tracked), yn(strings.TrimSpace(hook.Facts.Archive) != ""),
-		kvOrDash(hook.Facts.GitSHA), yn(hook.Facts.Outside), hook.Facts.Rel)
+		kvOrDash(hook.Facts.GitSHA), yn(hook.Facts.Outside),
+		kvOrDash(hook.Facts.RollbackRef), yn(hook.Facts.RollbackHere), hook.Facts.Rel)
 	fmt.Fprintf(w, "impact_criteria untracked=%s no_archive_copy=%s outside_repo=%s criteria_hits=%d\n",
 		yn(strings.Contains(hook.Recall[0], "**命中**")),
 		yn(strings.Contains(hook.Recall[1], "**命中**")),
