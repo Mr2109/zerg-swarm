@@ -790,6 +790,68 @@ func gsaVisibleNotes(row map[string]any) []string {
 	return out
 }
 
+// ── R6：注内「计数断言」写法约定（缺口 GAP-20261005-59）─────────────────────────
+//
+// 写法约定（v1）：注文里凡 **计数/数量断言** 必须落成固定标记
+//
+//	计数断言[<量>]=<N>
+//
+// `<量>` 取自**闭集**（✗ 不跑子进程 · 只用门已读到的面）：
+//	账.总 · 账.仍缺 · 账.已解 · 件.<相对路径>.行 · 件.<相对路径>.含:<子串>
+//
+// 量不在闭集 ⇒ 只报告「不可机检」；在闭集内 ⇒ 现读求值与 <N> 比，
+// 不符 ⇒ 新增判红 / 存量只报告（分档同 R3/R5）。
+// ⚠ 需跑子进程才能复核的量（如 `zerg code find <串>`）v1 不承接 ⇒ 走「不在闭集」只报告。
+
+var gsaCountClaimRe = regexp.MustCompile(`计数断言\[([^\]]+)\]=\s*([0-9]+)`)
+
+// gsaCountQty —— 求 `<量>` 真值；ok=false ⇒ 量不在闭集（不可机检）。
+func gsaCountQty(qty string, rows []map[string]any, repoRoot string) (int, bool) {
+	switch qty {
+	case "账.总":
+		return len(rows), true
+	case "账.仍缺", "账.已解":
+		want := strings.TrimPrefix(qty, "账.")
+		n := 0
+		for _, r := range rows {
+			if gsaPyStr(gsaGetDef(r, "state", "")) == want {
+				n++
+			}
+		}
+		return n, true
+	}
+	if strings.HasPrefix(qty, "件.") {
+		if i := strings.LastIndex(qty, ".含:"); i > 0 {
+			rel := qty[len("件."):i]
+			sub := qty[i+len(".含:"):]
+			data, err := os.ReadFile(pyJoin(repoRoot, rel))
+			if err != nil {
+				return 0, true
+			}
+			n := 0
+			for _, ln := range strings.Split(string(data), "\n") {
+				if strings.Contains(ln, sub) {
+					n++
+				}
+			}
+			return n, true
+		}
+		if strings.HasSuffix(qty, ".行") {
+			rel := strings.TrimSuffix(qty[len("件."):], ".行")
+			data, err := os.ReadFile(pyJoin(repoRoot, rel))
+			if err != nil {
+				return 0, true
+			}
+			body := strings.TrimRight(string(data), "\n")
+			if body == "" {
+				return 0, true
+			}
+			return len(strings.Split(body, "\n")), true
+		}
+	}
+	return 0, false
+}
+
 // gsaUnitIsPath —— py `unit_is_path(unit)`。
 func gsaUnitIsPath(v any) bool {
 	u := pyStrip(gsaOrEmptyStr(v))
@@ -905,6 +967,28 @@ func gsaJudge(rows []map[string]any, repoRoot, cutoff string) (int, []gsaRed, []
 				}
 			}
 		}
+		// R6（缺口 GAP-20261005-59）：注内「计数断言」写法约定复核（只报告档首落）。
+		// 写法约定见件头/gsaCountQty：`计数断言[<量>]=<N>`，量取自 subprocess-free 闭集。
+		for _, note := range gsaVisibleNotes(r) {
+			for _, m := range gsaCountClaimRe.FindAllStringSubmatch(note, -1) {
+				qty, wantStr := m[1], m[2]
+				wantN, _ := strconv.Atoi(wantStr)
+				got, ok := gsaCountQty(qty, rows, repoRoot)
+				if !ok {
+					reports = append(reports, gsaRed{"R6", fmt.Sprintf("%s 注内计数断言量「%s」不在闭集 ⇒ 不可机检（写法约定要求改写成可机检量）", rid, qty), gsaObj{{"qty", qty}}})
+					continue
+				}
+				if got != wantN {
+					what := fmt.Sprintf("%s 注内计数断言 计数断言[%s]=%d 与现读 %d 不符", rid, qty, wantN, got)
+					read := gsaObj{{"qty", qty}, {"claim", wantN}, {"now", got}}
+					if gsaRowIsNew(r, cutoff) {
+						reds = append(reds, gsaRed{"R6", what + "（新增 ⇒ 判红）", read})
+					} else {
+						reports = append(reports, gsaRed{"R6", what + "（存量 ⇒ 只报告）", read})
+					}
+				}
+			}
+		}
 	}
 	rc := 0
 	if len(reds) > 0 {
@@ -1008,6 +1092,12 @@ func gsaItemsJSON(reds, reports []gsaRed) []any {
 	} else if hasRep("R5") {
 		r5 = "report"
 	}
+	r6 := "ok"
+	if hasR("R6") {
+		r6 = "red"
+	} else if hasRep("R6") {
+		r6 = "report"
+	}
 	st := func(b bool) string {
 		if b {
 			return "red"
@@ -1020,6 +1110,7 @@ func gsaItemsJSON(reds, reports []gsaRed) []any {
 		gsaObj{{"rule", "R3"}, {"state", st(hasR("R3"))}},
 		gsaObj{{"rule", "R4"}, {"state", "ok"}},
 		gsaObj{{"rule", "R5"}, {"state", r5}},
+		gsaObj{{"rule", "R6"}, {"state", r6}},
 	}
 }
 
@@ -1088,6 +1179,7 @@ func gsaListRules(stdout io.Writer, cutoff string) {
 	fmt.Fprintf(stdout, "  R5 语境  : 只有「真路径主张」才判 —— 反引号包住 或 紧跟指令性前缀 %s；纯散文提及不判\n",
 		strings.Join(gsaClaimPrefixesTrimmed(), ", "))
 	fmt.Fprintf(stdout, "  R5 划界  : found_at >= %s ∨ 号内日期 >= %s ⇒ 新增（其余存量只报告 · 不进 rc）\n", cutoff, gsaNewIDDate)
+	fmt.Fprintln(stdout, "  R6 只报告: 注内计数断言写法约定 `计数断言[<量>]=<N>`；量 ∈ {账.总,账.仍缺,账.已解,件.<路径>.行,件.<路径>.含:<子串>}（✗不跑子进程）；比对不符 ⇒ 新增判红 / 存量只报告；量不在闭集 ⇒ 只报告不可机检")
 	fmt.Fprintln(stdout, "  退码     : 0 过 · 1 判红 · 2 不给结论")
 }
 
@@ -1129,11 +1221,18 @@ func gsaRunHuman(stdout io.Writer, rc int, fp1 string, ln1, nrows int, path, rep
 	fmt.Fprintf(stdout, "  R4  : 过（两次读 %s/%d 一致）\n", fp1[:12], ln1)
 	r5r := gsaCountRule(reds, "R5")
 	r5p := gsaCountRule(reports, "R5")
+	r6r := gsaCountRule(reds, "R6")
+	r6p := gsaCountRule(reports, "R6")
 	lead := "过"
 	if r5r > 0 {
 		lead = fmt.Sprintf("判红 %d 条", r5r)
 	}
 	fmt.Fprintf(stdout, "  R5  : %s｜销案证据点名仓内路径违例：新增 %d 条（判红）· 存量 %d 条（只报告）\n", lead, r5r, r5p)
+	r6lead := "过"
+	if r6r > 0 {
+		r6lead = fmt.Sprintf("判红 %d 条", r6r)
+	}
+	fmt.Fprintf(stdout, "  R6  : %s｜注内计数断言（写法约定）：新增 %d 条（判红）· 存量只报告 %d 条\n", r6lead, r6r, r6p)
 	for _, r := range reds {
 		fmt.Fprintf(stdout, "  ✗ [%s] %s\n", r.rule, r.what)
 	}

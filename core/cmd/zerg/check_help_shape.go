@@ -1136,8 +1136,8 @@ type chsFaceBl struct {
 type chsBaselineSet map[string]chsFaceBl
 
 var chsBaseline = chsBaselineSet{
-	"help --all":     {HasLines: true, Lines: 411, HasBytes: true, Bytes: 310528},
-	"help":           {HasLines: true, Lines: 297, HasBytes: true, Bytes: 82942, HasLast: true, Last: "      非交互用 `--token-stdin`；详见 `zerg help credentials`）。"},
+	"help --all":     {HasLines: true, Lines: 411, HasBytes: true, Bytes: 210268},
+	"help":           {HasLines: true, Lines: 297, HasBytes: true, Bytes: 73612, HasLast: true, Last: "      非交互用 `--token-stdin`；详见 `zerg help credentials`）。"},
 	"help dangerous": {HasLines: true, Lines: 116, HasBytes: true, Bytes: 40847, HasRows: true, Rows: 105, HasTail: true, Tail: "上表 105 条：**已开放 89 条**（确认档齐就真执行 —— 逐条见上行标记）；**未开放 16 条**（真跑一律**拒执**、退码 2 = 不给结论，只有 `--dry-run` 出计划件 = 退码 0）。", ConfirmNotInUsage: []string{"agent reap", "itask start"}, ConfirmValueMismatch: [][]string{}},
 	"help config":    {HasLines: true, Lines: 21, HasBytes: true, Bytes: 1748},
 }
@@ -1678,11 +1678,70 @@ func chsSelfTest(out io.Writer) bool {
 	return failed == 0
 }
 
+// chsFaceBlJSON —— `--baseline <件>` 覆盖件的逐面形状（指针三态：缺键 ⇒ 沿用内置读数）。
+type chsFaceBlJSON struct {
+	Lines                *int        `json:"lines"`
+	Bytes                *int        `json:"bytes"`
+	Rows                 *int        `json:"rows"`
+	Last                 *string     `json:"last"`
+	Tail                 *string     `json:"tail"`
+	ConfirmNotInUsage    *[]string   `json:"confirm_not_in_usage"`
+	ConfirmValueMismatch *[][]string `json:"confirm_value_mismatch"`
+}
+
+// chsLoadBaseline —— 只读覆盖口（`--baseline <件>` · 缺口 GAP-20260927-427）：读 JSON 覆盖件，逐面
+// 把被点名的格替换进冻结基线 `chsBaseline` 的副本；缺键面沿用内置（✗ 不写盘 · ✗ 不改冻结常量）。
+// 件不在盘 / 读不回 / 非 JSON / 顶层非对象 / 某面非对象 ⇒ fail-closed（返回理由 ⇒ 调用方不给结论）。
+func chsLoadBaseline(base chsBaselineSet, path string) (chsBaselineSet, string) {
+	if !chsIsFile(path) {
+		return nil, "基线覆盖件不在盘：" + path
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, "基线覆盖件读不回来（" + chsOSErrStr(path, err) + "）"
+	}
+	var obj map[string]chsFaceBlJSON
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return nil, "基线覆盖件读不回来（" + chsJSONErrStr(raw, err) + "）"
+	}
+	out := chsBaselineSet{}
+	for k, v := range base {
+		out[k] = v
+	}
+	for face, fj := range obj {
+		cur := out[face]
+		if fj.Lines != nil {
+			cur.HasLines, cur.Lines = true, *fj.Lines
+		}
+		if fj.Bytes != nil {
+			cur.HasBytes, cur.Bytes = true, *fj.Bytes
+		}
+		if fj.Rows != nil {
+			cur.HasRows, cur.Rows = true, *fj.Rows
+		}
+		if fj.Last != nil {
+			cur.HasLast, cur.Last = true, *fj.Last
+		}
+		if fj.Tail != nil {
+			cur.HasTail, cur.Tail = true, *fj.Tail
+		}
+		if fj.ConfirmNotInUsage != nil {
+			cur.ConfirmNotInUsage = *fj.ConfirmNotInUsage
+		}
+		if fj.ConfirmValueMismatch != nil {
+			cur.ConfirmValueMismatch = *fj.ConfirmValueMismatch
+		}
+		out[face] = cur
+	}
+	return out, ""
+}
+
 // ── argparse 复刻（`-h/--help` · 长旗标前缀匹配 · `=` 取值 · 缺值报话 · 未知旗标）──
 
 const chsUsageText = "usage: check-help-shape.py [-h] [--repo-root REPO_ROOT] [--bin BIN]\n" +
-	"                           [--matrix MATRIX] [--faces-dir FACES_DIR] [--json]\n" +
-	"                           [--emit-baseline] [--list-rules] [--self-test]\n"
+	"                           [--matrix MATRIX] [--faces-dir FACES_DIR]\n" +
+	"                           [--baseline BASELINE] [--json] [--emit-baseline]\n" +
+	"                           [--list-rules] [--self-test]\n"
 
 const chsHelpText = chsUsageText + "\n" +
 	"`help` 面的形状判据（族级段 / 条数 / 末行）\n" +
@@ -1695,6 +1754,9 @@ const chsHelpText = chsUsageText + "\n" +
 	"  --faces-dir FACES_DIR\n" +
 	"                        A 档：四个 help 面改「读落盘制品目录」（help-all.txt/help.txt/help-\n" +
 	"                        dangerous.txt/help-config.txt · 缺口 GAP-20261001-47）\n" +
+	"  --baseline BASELINE\n" +
+	"                        只读覆盖口：读 JSON 覆盖件替代冻结基线（逐面 lines/bytes/\n" +
+	"                        rows/last/tail/confirm_*；缺键面沿用内置）· 不写盘\n" +
 	"  --json\n" +
 	"  --emit-baseline\n" +
 	"  --list-rules\n" +
@@ -1709,6 +1771,8 @@ type chsArgs struct {
 	matrixSet   bool
 	facesDir    string
 	facesDirSet bool
+	baseline    string
+	baselineSet bool
 	json        bool
 	emitBase    bool
 	listRules   bool
@@ -1720,8 +1784,8 @@ type chsArgs struct {
 
 func chsParseArgs(argv []string) chsArgs {
 	var a chsArgs
-	longs := []string{"--repo-root", "--bin", "--matrix", "--faces-dir", "--json", "--emit-baseline", "--list-rules", "--self-test", "--help"}
-	takesVal := map[string]bool{"--repo-root": true, "--bin": true, "--matrix": true, "--faces-dir": true}
+	longs := []string{"--repo-root", "--bin", "--matrix", "--faces-dir", "--baseline", "--json", "--emit-baseline", "--list-rules", "--self-test", "--help"}
+	takesVal := map[string]bool{"--repo-root": true, "--bin": true, "--matrix": true, "--faces-dir": true, "--baseline": true}
 	for i := 0; i < len(argv); i++ {
 		s := argv[i]
 		if s == "-h" || s == "--help" {
@@ -1785,6 +1849,8 @@ func chsParseArgs(argv []string) chsArgs {
 				a.matrix, a.matrixSet = val, true
 			case "--faces-dir":
 				a.facesDir, a.facesDirSet = val, true
+			case "--baseline":
+				a.baseline, a.baselineSet = val, true
 			}
 			continue
 		}
@@ -1903,6 +1969,16 @@ func checkHelpShapeGateMain(stdout, stderr io.Writer, argv []string) int {
 	if a.emitBase {
 		return chsEmitBaseline(stdout, faces, order)
 	}
+	bl := chsBaseline
+	if a.baselineSet {
+		ov, why := chsLoadBaseline(chsBaseline, a.baseline)
+		if why != "" {
+			fmt.Fprintf(stdout, "⛔ 不给结论（rc=2）：%s\n", why)
+			return 2
+		}
+		bl = ov
+		fmt.Fprintf(stdout, "  基线档 = 只读覆盖件（%s）—— 冻结基线被替代（✗ 不写盘）\n", a.baseline)
+	}
 
 	fmt.Fprintf(stdout, "`help` 面形状判据 · v%s（族级段 / 条数 / 末行 / 危险档 / 配置主题）\n", chsVersion)
 	fams := chsFamiliesOf(cmds)
@@ -1917,7 +1993,7 @@ func checkHelpShapeGateMain(stdout, stderr io.Writer, argv []string) int {
 		len(faces["help --all"]), len(chsSplitLines(faces["help"])), secStr, len(toks))
 
 	cfg := faces["help config"]
-	bad := chsJudge(faces["help --all"], faces["help"], faces["help dangerous"], cmds, chsBaseline, &cfg)
+	bad := chsJudge(faces["help --all"], faces["help"], faces["help dangerous"], cmds, bl, &cfg)
 	d := faces["help dangerous"]
 	if len(bad) > 0 {
 		fmt.Fprint(stdout, "⇒ 判红（rc=1）：\n")

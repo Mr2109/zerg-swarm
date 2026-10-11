@@ -851,6 +851,11 @@ func doctorItemsRaw(inv *invocation) []map[string]string {
 	// ⑧ 回收候选（§十五.3 对象清册 · §九 M9：**幽灵服务不进自动候选**）
 	items = append(items, ghostReapItem())
 
+	// ⑨ 制品件权限 / 签名核验面 / 摘要方言（缺口 `GAP-20260926-89`/`-90`/`-133`）
+	items = append(items, doctorBinPermsItem())
+	items = append(items, doctorSignatureItem())
+	items = append(items, doctorDigestDialectItem())
+
 	return items
 }
 
@@ -1058,4 +1063,164 @@ func ghostReapItem() map[string]string {
 		"name": "回收候选（幽灵服务）", "verdict": "REPORT",
 		"detail": fmt.Sprintf("%d 条：%s", len(ghosts), strings.Join(ghosts, " | ")),
 		"advice": "现值有 · 声明无 ⇒ 进 `reap` 干跑单并**列「不属管辖」**；幽灵服务**不进自动候选**（§九 M9）"}
+}
+
+// doctorBinPermsItem —— 「制品件权限」体检项（缺口 `GAP-20260926-89`）。
+//
+// 病：`bin/` 各件的权限位没有机读面 ⇒ 「内核件有没有 x 位」「有没有组可写」只能靠人 `ls -l` 看；
+// 组可写让「只读面自证可执行」这类完整性判据只抗误操作、不抗有意篡改。
+//
+// 只读：只 `os.ReadDir` + `Info()` 读权限位（不写盘、不改权限、不起子进程）。
+// 机读键 `bin_perms` = 现读计数一行（真值，不截断）。
+func doctorBinPermsItem() map[string]string {
+	root := repoRoot()
+	if root == "" {
+		return map[string]string{
+			"name": "制品件权限", "verdict": "SKIP",
+			"detail": "取不到仓根 ⇒ `bin/` 权限读不到",
+			"advice": "读不到就不给结论（SKIP ⇒ 退码 8）", "bin_perms": ""}
+	}
+	ents, err := os.ReadDir(filepath.Join(root, "bin"))
+	if err != nil {
+		return map[string]string{
+			"name": "制品件权限", "verdict": "SKIP",
+			"detail": "`bin/` 读不到（" + err.Error() + "）",
+			"advice": "读不到就不给结论（SKIP ⇒ 退码 8）", "bin_perms": ""}
+	}
+	files, execOK, noExec, gW, oW := 0, 0, 0, 0, 0
+	var off []string
+	for _, e := range ents {
+		if e.IsDir() {
+			continue
+		}
+		fi, ierr := e.Info()
+		if ierr != nil {
+			continue
+		}
+		files++
+		perm := fi.Mode().Perm()
+		if perm&0o111 != 0 {
+			execOK++
+		} else {
+			noExec++
+			off = append(off, e.Name()+"(无 x 位)")
+		}
+		if perm&0o020 != 0 {
+			gW++
+			off = append(off, e.Name()+"(组可写)")
+		}
+		if perm&0o002 != 0 {
+			oW++
+		}
+	}
+	read := fmt.Sprintf("件 %d · 可执行 %d · 无 x 位 %d · 组可写 %d · 世界可写 %d", files, execOK, noExec, gW, oW)
+	verdict, advice := "PASS", ""
+	if gW > 0 || oW > 0 {
+		verdict = "REPORT"
+		advice = "组/世界可写 ⇒ 完整性判据只抗误操作、不抗有意篡改；收回写位：`chmod go-w bin/<件>`"
+	} else if noExec > 0 {
+		verdict = "REPORT"
+		advice = "有件无 x 位：非可执行件（如 JSON）属正常；若该件本应可跑 ⇒ `chmod +x bin/<件>`"
+	}
+	detail := "`bin/` 权限现读（真值 · 只 `stat` 不写盘）：" + read
+	if len(off) > 0 {
+		detail += "；离群件：" + strings.Join(off, " · ")
+	}
+	return map[string]string{
+		"name": "制品件权限", "verdict": verdict, "detail": detail, "advice": advice, "bin_perms": read}
+}
+
+// doctorSignatureItem —— 「签名核验面」体检项（缺口 `GAP-20260926-90`）。
+//
+// 病：签名核验面（钥匙在不在、能不能验）不在任何门或稿里，是空白 ⇒ 排障时无法回答「本机能不能验签名」。
+//
+// 只读：只 `exec.LookPath` + 对 `./bin/zerg` 真跑一次 `codesign -v`（只验签、不写盘、不联网）。
+// 机读键 `signature` = 「在/缺」两份名单 + 本机件验签结论一行（真值）。
+func doctorSignatureItem() map[string]string {
+	all := []string{"codesign", "spctl", "openssl", "gpg", "minisign", "signify", "keyctl", "tpm2"}
+	var have, miss []string
+	for _, t := range all {
+		if _, err := exec.LookPath(t); err == nil {
+			have = append(have, t)
+		} else {
+			miss = append(miss, t)
+		}
+	}
+	if len(have) == 0 {
+		return map[string]string{
+			"name": "签名核验面", "verdict": "SKIP",
+			"detail": "本机没有可用的核验工具（找过 " + strings.Join(all, ",") + "）",
+			"advice": "读不到就不给结论（SKIP ⇒ 退码 8）", "signature": "在：(空) · 缺：" + strings.Join(miss, ",")}
+	}
+	verify := "未验（本机无 codesign）"
+	if _, err := exec.LookPath("codesign"); err == nil {
+		if root := repoRoot(); root != "" {
+			bin := filepath.Join(root, "bin", "zerg")
+			if _, serr := os.Stat(bin); serr == nil {
+				out, cerr := exec.Command("codesign", "-v", bin).CombinedOutput()
+				txt := strings.ReplaceAll(strings.TrimSpace(string(out)), "\n", " / ")
+				if len(txt) > 160 {
+					txt = txt[:160]
+				}
+				if cerr == nil {
+					verify = "codesign -v ./bin/zerg ⇒ 通过"
+				} else {
+					verify = "codesign -v ./bin/zerg ⇒ 未通过/未签（" + txt + "）"
+				}
+			}
+		}
+	}
+	read := "在：" + strings.Join(have, ",") + " · 缺：" + strings.Join(miss, ",") + " · " + verify
+	return map[string]string{
+		"name": "签名核验面", "verdict": "PASS",
+		"detail": "核验工具面（真读 `LookPath` + 真跑一次 `codesign -v`）：" + read,
+		"advice": "", "signature": read}
+}
+
+// doctorDigestDialectItem —— 「摘要方言」体检项（缺口 `GAP-20260926-133`）。
+//
+// 病：`sha256sum` 的方言（GNU / uutils / Darwin-BSD 各派）与 `--check`/`--status` 可用性
+// 不在任何门或稿里 ⇒ 按字节冻结摘要输出的判据在不同机上会静默漂。
+//
+// 只读：只跑 `sha256sum --version` 与逐旗标探（`/dev/null` 作哑元 · 不写盘）。
+// 机读键 `digest_dialect` = 方言名 + 旗标可用性一行（真值）。
+func doctorDigestDialectItem() map[string]string {
+	bin, err := exec.LookPath("sha256sum")
+	if err != nil {
+		return map[string]string{
+			"name": "摘要方言", "verdict": "SKIP",
+			"detail": "本机没有 `sha256sum`（找过 PATH）",
+			"advice": "读不到就不给结论（SKIP ⇒ 退码 8）", "digest_dialect": ""}
+	}
+	dialect := "未知"
+	if out, verr := exec.Command(bin, "--version").CombinedOutput(); verr == nil {
+		s := string(out)
+		switch {
+		case strings.Contains(s, "uutils"):
+			dialect = "uutils"
+		case strings.Contains(s, "GNU"):
+			dialect = "GNU"
+		case strings.Contains(s, "Darwin") || strings.Contains(s, "BSD"):
+			dialect = "Darwin/BSD"
+		}
+	}
+	var okFlags, noFlags []string
+	for _, fl := range []string{"--check", "--status", "-c", "--quiet"} {
+		cerr := exec.Command(bin, fl, "/dev/null").Run()
+		if cerr == nil {
+			okFlags = append(okFlags, fl)
+			continue
+		}
+		msg := strings.ToLower(cerr.Error())
+		if strings.Contains(msg, "unrecognized") || strings.Contains(msg, "invalid option") || strings.Contains(msg, "illegal option") {
+			noFlags = append(noFlags, fl)
+		} else {
+			okFlags = append(okFlags, fl)
+		}
+	}
+	read := "方言=" + dialect + " · 认：" + strings.Join(okFlags, ",") + " · 不认：" + strings.Join(noFlags, ",")
+	return map[string]string{
+		"name": "摘要方言", "verdict": "PASS",
+		"detail": "摘要工具方言面（真跑 `sha256sum --version` 与逐旗标探）：" + read,
+		"advice": "", "digest_dialect": read}
 }

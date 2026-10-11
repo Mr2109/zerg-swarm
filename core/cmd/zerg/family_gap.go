@@ -1247,6 +1247,10 @@ func cmdGapLs(inv *invocation, stdout, stderr io.Writer) int {
 			// ★ 本枚（缺口账 `GAP-20260929-38` ①）：`--unit`/`--module` 筛得到却吐不出 ⇒ 补两格。
 			"unit":   r.Unit,
 			"module": r.Module,
+			// ★ 本枚（缺口账 `GAP-20260929-42` ①）：件面字段 `file` —— 该条判据逐字
+			//   `zerg gap ls --json file`；取值口与 `unit` **同一枚**（`r.Unit` · 件面路径）
+			//   ⇒ 只增一格别名，✗ 不动 unit/module 两格的取值与语义。
+			"file": r.Unit,
 			// ★ 本枚（缺口 `GAP-20260928-54`）：`triage_batch` —— 分诊批次标记的只读回吐（走**可选字段层**
 			//   `optFields`：点得出来，但不进冻结帮助 / 文档导出面字段表 ⇒ 无需重生成命令页）。
 			"triage_batch": r.TriageBatch,

@@ -91,7 +91,7 @@
         "--confirm=<目标>"
       ],
       "控制层": "allow",
-      "判据": "干跑 + 点名目标：本次不执行 ⇒ 放行；`--confirm` 的值仍按真跑判据**执行前判**（值不逐字相同 ⇒ 该行落 `block`，与档位无关）"
+      "判据": "干跑 + 点名目标：本次不执行 ⇒ 放行。★（GAP-20260927-354）实测 `--dry-run` 判在确认档**之前**（core restart / task pause / sched pause / itask interval set / agent workers set 现跑 `--dry-run --confirm=<别的值>` 一律 rc=0）⇒ **本行不得用作「`--confirm` 校验存在」的证据**；判值校验一律走不带干跑、不带 `--yes` 的 `--confirm=<别的值>` 那一格（rc=2 · 零写）"
     },
     {
       "命令面": [

@@ -262,9 +262,14 @@ func gateFilesMatching(root, probe string) ([]string, error) {
 		return nil, err
 	}
 	needle := strings.ToLower(probe)
+	// ★ 治 GAP-20260928-150：门件面原只用**整串** probe 做子串 ⇒ 传**仓内相对路径**
+	//   （scripts/gates/x.py）恒零命中，而传**基名**（x.py）才命中 ⇒ 同一件因入参形态
+	//   而在/不在可见面（假阴）。现并上**基名**那一档（filepath.Base），与步名面/门件面同尺。
+	baseNeedle := strings.ToLower(filepath.Base(filepath.FromSlash(probe)))
 	out := []string{}
 	for _, e := range ents {
-		if e.IsDir() || !strings.Contains(strings.ToLower(e.Name()), needle) {
+		n := strings.ToLower(e.Name())
+		if e.IsDir() || (!strings.Contains(n, needle) && !strings.Contains(n, baseNeedle)) {
 			continue
 		}
 		out = append(out, filepath.ToSlash(filepath.Join("scripts", "gates", e.Name())))
@@ -449,15 +454,11 @@ func gateWiringNote(root, what string, decls []gateStepDecl, unc []gateStepUncer
 	}
 
 	if rb, err := os.ReadFile(filepath.Join(root, "scripts", "gates", "real-gates.sh")); err == nil {
-		line := 0
-		for i, ln := range strings.Split(string(rb), "\n") {
-			if strings.Contains(ln, base) {
-				line = i + 1
-				break
-			}
-		}
-		if line > 0 {
-			parts = append(parts, fmt.Sprintf("real-gates: 名录点名@%d", line))
+		// ★ 治 GAP-20260928-149：旧形态对**整件原文**做裸子串扫 ⇒ 件头注释里出现的自己的名字
+		//   （如 real-gates.sh 第 2 行、precommit-gates.sh 第 10 行）被读成「名录点名」＝**假报**。
+		//   现只认**真名录**：SH_TABLE 清册块（heredoc 里 名<TAB>class<TAB>理由 形态）的条目行。
+		if rline, _, rok := gateRealGatesRoster(string(rb), base); rok {
+			parts = append(parts, fmt.Sprintf("real-gates: 名录点名@%d", rline))
 		} else if strings.HasSuffix(base, ".sh") {
 			// ★ 治法（`GAP-20260928-129`）：名录外的 `.sh` 门件在这一面**两处都不是**旧文案说的那样 ——
 			//   ① 它是名录外件 ⇒ **默认档口径＝`skip-unclassified` 保守不进真跑面**（不是「可跑」）；
@@ -492,4 +493,39 @@ func gateWiringNote(root, what string, decls []gateStepDecl, unc []gateStepUncer
 	}
 
 	return strings.Join(parts, " ｜ ")
+}
+
+// gateRealGatesRoster —— real-gates 面**真名录**的现读（缺口 `GAP-20260928-149`）。
+//
+// 病（父代理 2026-10-12 现读 · 两条逐字读数）：旧形态对 `real-gates.sh` **整件原文**逐行做裸子串
+// Contains(ln, base) 并取**首个命中行**当「名录点名」⇒ 件头注释里出现的自己的名字被读成名录条目：
+//
+//	zerg gate find real-gates.sh      ⇒ 「名录点名@2」（第 2 行是它自己的件头注释）
+//	zerg gate find precommit-gates.sh ⇒ 「名录点名@10」（第 10 行是件头里那句「一字未动 all.sh /
+//	                                        precommit-gates.sh」；真条目在 SH_TABLE@208）
+//
+// 治法（**只改读数、不新造语义**）：只认 SH_TABLE 清册块里的**条目行**（heredoc 内
+// 名<TAB>class<TAB>理由），返回它的**真行号**；块外的任何提到（注释/散文）**不再**算「点名」。
+// .py 面本无名录（FAST_NAMES/SLOW_NAMES 已随 C 类退役离盘 · 2026-10-09）⇒ .py 件恒走
+// else 支的「名单外」口径（与现读真源一致）。
+func gateRealGatesRoster(src, base string) (line int, class string, ok bool) {
+	inTable := false
+	for i, ln := range strings.Split(src, "\n") {
+		t := strings.TrimSpace(ln)
+		if strings.HasPrefix(t, "SH_TABLE=") {
+			inTable = true
+			continue
+		}
+		if !inTable {
+			continue
+		}
+		if t == "EOF" {
+			return 0, "", false
+		}
+		cols := strings.SplitN(ln, "\t", 3)
+		if len(cols) >= 2 && cols[0] == base {
+			return i + 1, cols[1], true
+		}
+	}
+	return 0, "", false
 }

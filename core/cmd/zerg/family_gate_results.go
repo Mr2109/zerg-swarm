@@ -59,7 +59,13 @@ const gateResultsTSV = "results.tsv"
 // `freshness.json`（由 `gate run` 那一趟写，见 `gate_freshness.go`）。两格是**跑级**（整趟一个值），
 // 在这里按行重复渲染（本命令的行面本来就是逐行投影；跑级值放行内 = 不必另开第二种渲染面）。
 // 读不到随件 ⇒ 两格出空串（**不当绿也不编造**：人面上写「未记」）。
-var gateResultsFields = []string{"step", "status", "rc", "secs", "log", "worktree_fp", "head"}
+// ★ 缺口 `GAP-20260927-286`（P2 · 命令面）：再续**两格逐规则读数** `per_rule` / `examples` ——
+//
+//	门步（`check-doc-name`/`check-doc-meta` 一族）的**逐规则命中数**与**样例命中**过去只落在那一步
+//	自己的日志正文里 ⇒ 消费者只能翻文本。两格取自**已经落盘的那一趟**（`results.tsv` 第 5 列 ⇒ 日志件，
+//	本命令本来就是只读门）⇒ **不新增任何运行**；解析口径与 `gate run --step --json` 同一枚
+//	`gateRunStepPerRule`（✗ 不另写第二份）。读不到 ⇒ 哨兵，✗ 不编数。
+var gateResultsFields = []string{"step", "status", "rc", "secs", "log", "worktree_fp", "head", "per_rule", "examples"}
 
 // gateResultsStatuses —— 状态列的四档闭集（逐字取自脚本 `_judge` 的四个出口）。
 var gateResultsStatuses = []string{"PASS", "FAIL", "BLOCKED", "REPORT"}
@@ -89,6 +95,24 @@ func gateResultsStatusLegal(s string) bool {
 		}
 	}
 	return false
+}
+
+// gateResultsPerRule —— 缺口 `GAP-20260927-286`：从**已经落盘的那一步日志**里取逐规则两格。
+//
+// 只读：一个 `os.ReadFile`（**不写不删不改**任何日志/结果表 —— 与件头「只读三件」同一条纪律）。
+// 空路径 / 读不到 / 日志里没有这一形态 ⇒ 两格都写哨兵（`gateRunStepPerRule` 的同一枚
+// `gateRunStepPerRuleMiss`），✗ 不编数、✗ 不当绿。解析**复用** `gateRunStepPerRule`
+// （`family_gate_run_step.go`）⇒ 命令面只有**一份**解析口径。
+func gateResultsPerRule(logPath string) (string, string) {
+	p := strings.TrimSpace(logPath)
+	if p == "" {
+		return gateRunStepPerRuleMiss, gateRunStepPerRuleMiss
+	}
+	body, err := os.ReadFile(p)
+	if err != nil {
+		return gateRunStepPerRuleMiss, gateRunStepPerRuleMiss
+	}
+	return gateRunStepPerRule(string(body))
 }
 
 // gateResults —— `gate results [--last] [--dir <目录>] [--json <字段>]`。
@@ -207,9 +231,12 @@ func gateResults(inv *invocation, stdout, stderr io.Writer, root string) int {
 		}
 		items := make([]map[string]string, 0, len(rows))
 		for _, r := range rows {
+			// ★ 缺口 `GAP-20260927-286`：逐规则两格从**这一行点名的那个日志件**（已落盘 · 只读）解析。
+			perRule, examples := gateResultsPerRule(r.Log)
 			items = append(items, map[string]string{
 				"step": r.Name, "status": r.Status, "rc": r.RC, "secs": r.Secs, "log": r.Log,
 				"worktree_fp": fpOut, "head": headOut,
+				"per_rule": perRule, "examples": examples,
 			})
 		}
 		rc := selectJSONList(stdout, stderr, inv, inv.path, fields, items)

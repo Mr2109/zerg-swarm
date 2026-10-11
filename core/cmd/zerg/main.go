@@ -741,7 +741,7 @@ func init() {
 			kind:     "DoctorCheck",
 			summary:  "环境自检（本机项 + 主控可达）· 逐项判定词",
 			usage:    "zerg doctor [--json <字段>]",
-			fields:   []string{"name", "verdict", "detail", "advice", "artifact_commit", "source_head"},
+			fields:   []string{"name", "verdict", "detail", "advice", "artifact_commit", "source_head", "bin_perms", "signature", "digest_dialect"},
 			endpoint: "",
 			run:      cmdDoctor,
 		},
@@ -834,7 +834,7 @@ func init() {
 			summary:     "门禁步骤表（逐行等于脚本 --list；薄壳不另写一份）",
 			usage:       "zerg gate ls [--json <字段>]",
 			fields:      []string{"total", "scope", "mode", "step"},
-			optFields:   []string{"name", "gates_total"},
+			optFields:   []string{"name", "gates_total", "fast"},
 			endpoint:    "",
 			passthrough: true,
 			run:         cmdGate,
@@ -1343,7 +1343,7 @@ func init() {
 			usage:    "zerg model show <模型 id> [--json <字段>]",
 			arity:    "any",
 			args:     []string{"模型 id"},
-			fields:   []string{"id", "host", "backend", "modality", "mem_gb", "file"},
+			fields:   []string{"id", "host", "backend", "modality", "mem_gb", "peak_mem_gb", "file", "registry_id"},
 			endpoint: "GET /api/fleet/models",
 			run:      cmdModelShow,
 		},
@@ -1497,10 +1497,10 @@ func init() {
 		{
 			path:     []string{"script", "ls"},
 			kind:     "Script",
-			summary:  "本机脚本清单（scripts/ 逐件 + 公开标记表）",
+			summary:  "本机脚本清单（scripts/ · deploy/ · gateway/ 下的脚本件逐件 + 公开标记表）",
 			usage:    "zerg script ls [--json <字段>]",
 			arity:    "none",
-			fields:   []string{"path", "public", "kind", "count_basis"},
+			fields:   []string{"path", "public", "kind", "count_basis", "refs"},
 			endpoint: "",
 			run:      cmdScriptLs,
 		},
@@ -1582,7 +1582,7 @@ func init() {
 			path:    []string{"code", "find"},
 			kind:    "CodeFind",
 			summary: "在码里找一处东西在哪（只读取证 · 手搓 grep/git grep 的替身 · **扫工作树**：含未跟踪件与被忽略目录，比 `git grep` 的索引面多一片（两个面各扫多少件，命令每跑一次自己报一行「扫了 N 件」—— **不在这里写死**，写了就会烂；差值由运行时的数说话）；跳过 >2MB 的件）",
-			usage:   "zerg code find <正则> [--path <目录或单件·仓外根用绝对路径显式指（只读）>] [--glob <模式>] [--limit <N>] [-i|--ignore-case] [--after <N>|-A<N>] [--before <N>|-B<N>|-C<N>] [--kind <代码|注释>] [--timeout <秒>] [--count | --files-only] [--full] [--hidden] [--include-runtime] [--json <字段>]",
+			usage:   "zerg code find <正则> [--path <目录或单件·仓外根用绝对路径显式指（只读）>] [--glob <模式>] [--limit <N>] [-i|--ignore-case] [--after <N>|-A<N>] [--before <N>|-B<N>|-C<N>] [--kind <代码|注释>] [--timeout <秒>] [--count | --files-only] [--full] [--hidden] [--include-runtime] [--tracked] [--json <字段>]",
 			arity:   "any",
 			args:    []string{"正则（**Go/RE2 语法** —— 不是 POSIX BRE；**交替**用**裸** `|`（例：a|b）；写 `\\|` 会被**拒**：本命令退 2 并给替身，因 RE2 里 `\\|` 是**字面竖线**不是交替）"},
 			// ★ `GAP-20260928-118`（2026-09-28 · 本枚）：字段表补上 `truncated` —— 截断位此前
@@ -1675,7 +1675,7 @@ func init() {
 			kind:     "RepoStatus",
 			summary:  "看仓脏没脏 / HEAD 在哪 / 有没有别人在写它（手敲 git status 的替身）· `--root` 给 ≥2 次 ⇒ **多仓汇总**（一条只读命令出两仓 HEAD + 脏件数；写旗标一律拒 2）· **三态面**：行面七栏 `head/branch/path/status/untracked/mtime/sha256`，其中 `untracked` 栏只答「**未被忽略的真未跟踪**」（**件数随仓变 · 不在这里写死任何数** —— 写了就会烂；要数就现跑一条，按行面 `path` 前缀数「`untracked`=是」的行）；**被忽略**（`.gitignore` 命中）态现读**无栏** ✗",
 			usage:    "zerg repo status [--root <仓根>] [--json <字段>]",
-			fields:   []string{"head", "branch", "path", "status", "untracked", "mtime", "sha256"},
+			fields:   []string{"head", "branch", "path", "status", "untracked", "mtime", "sha256", "head_files"},
 			endpoint: "",
 			run:      cmdRepoStatus,
 		},
@@ -3272,7 +3272,7 @@ func init() {
 			//   标记的直读口，登在出口白名单、`--json` 点得出来，但**不进** `fields` 那份冻结帮助 /
 			//   文档导出面字段表（与 `truncated`/`hits`/`total`、`code find` 的 `count` 同一体例）
 			//   ⇒ 无需重生成命令页，也不造「表列着、面不产出」的反例。
-			optFields: []string{"truncated", "hits", "total", "triage_batch"},
+			optFields: []string{"truncated", "hits", "total", "triage_batch", "file"},
 		},
 		// ★ `gap status` —— **排行面**（批1 第四片 · 只读面 · 2026-09-28）：按件（`--by unit` · 缺省）
 		//   或按模块（`--by module`）分桶排行；**批4 第二片**再加 `--by tier`（按判据分级分桶 ——

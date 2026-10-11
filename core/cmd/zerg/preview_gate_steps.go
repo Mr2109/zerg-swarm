@@ -539,6 +539,18 @@ func pgsRawJSONStr(raw json.RawMessage) (string, bool) {
 	return s, true
 }
 
+// pgsRawJSONBool —— 从机读面一格（RawMessage）取布尔格；缺格/非布尔 ⇒ (false, false)。
+func pgsRawJSONBool(raw json.RawMessage) (bool, bool) {
+	if len(raw) == 0 {
+		return false, false
+	}
+	var b bool
+	if err := json.Unmarshal(raw, &b); err != nil {
+		return false, false
+	}
+	return b, true
+}
+
 // pgsParseListJSON —— 读步骤表**机读面**（`precommit-gates.sh --list --json` 的单对象
 // `{"count":N,"steps":[{"scope":..,"mode":..,"name":..},…]}` · 缺口 GAP-20260926-119 落的口子）。
 //
@@ -585,7 +597,18 @@ func pgsParseListJSON(text string) ([]pgsStep, int, bool, string) {
 			}
 			sc, _ := pgsRawJSONStr(it["scope"])
 			md, _ := pgsRawJSONStr(it["mode"])
-			steps = append(steps, pgsStep{Scope: sc, Mode: md, Name: nm})
+			// ★ 缺口 `GAP-20260927-21`（本片）：每步的**快速档归属** `fast` 格（真源 = 门脚本现读
+			//   `FAST_STEPS` 算出 · 命令面只转发）。缺格 ⇒ 不判（向后兼容：旧机读面/合成夹具没有这一格，
+			//   行为与改前逐字相同；同 `gates_total` 体例）；有格而**非布尔** ⇒ 响亮失败，✗ 不静默当 false。
+			ft := false
+			if rawF, okF := it["fast"]; okF {
+				fb, okB := pgsRawJSONBool(rawF)
+				if !okB {
+					return []pgsStep{}, 0, true, fmt.Sprintf("步表机读面第 %d 条 `fast` 格不是布尔 ⇒ 不给结论", i+1)
+				}
+				ft = fb
+			}
+			steps = append(steps, pgsStep{Scope: sc, Mode: md, Name: nm, fast: ft})
 		}
 		if count != len(steps) {
 			return steps, count, true, fmt.Sprintf("步表机读面计数自证不过：`count`=%d 但 `steps` 解出 %d 条 ⇒ 不许当绿", count, len(steps))
@@ -877,6 +900,9 @@ type pgsStep struct {
 	Scope string `json:"scope"`
 	Mode  string `json:"mode"`
 	Name  string `json:"name"`
+	// fast —— 该步是否在快速档（门脚本 `FAST_STEPS` 名单 · 缺口 `GAP-20260927-21`）。
+	// **小写且无 tag** ⇒ 本结构体的 JSON 面一字不改（只有 `gate ls --json fast` 手工读它）。
+	fast bool
 }
 
 type pgsChange struct {

@@ -1828,7 +1828,42 @@ func clicWriteJSON(path string, doc any) error {
 	if err := enc.Encode(doc); err != nil {
 		return err
 	}
-	return os.WriteFile(path, buf.Bytes(), 0o644)
+	// ★ 缺口 `GAP-20260927-303`：**临时件 + `rename` 原子替换**，✗ 不再裸 `os.WriteFile` 直接截断写。
+	//   过程：同目录开临时件 → 整份写 → `Sync` 落盘 → `Chmod 0644` → `os.Rename` 顶上真源件。
+	//   同目录 ⇒ 同文件系统 ⇒ `rename` 原子；任何一步失败 ⇒ 删临时件、**原目标一个字节不动**。
+	//   （改前裸截断写：编码/落盘中途失败会把真源矩阵毁成半截 —— 这一版把「失败不伤原件」补上。）
+	dir := clicPyDirname(path)
+	if dir == "" {
+		dir = "."
+	}
+	tmp, err := os.CreateTemp(dir, ".clic-matrix-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.Write(buf.Bytes()); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	if err := os.Chmod(tmpName, 0o644); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	return nil
 }
 
 func clicCasesOf(m map[string]any) []map[string]any {
@@ -2877,8 +2912,7 @@ const clicProg = "check-cli-contract.py"
 
 func clicUsage() string {
 	return "usage: " + clicProg + " [-h] [--bin PATH] [--self-test] [--no-runtime]\n" +
-		"                             [--emit-matrix [PATH]] [--dry-run]\n" +
-		"                             [--verify-live]\n" +
+		"                             [--emit-matrix [PATH] | --verify-live] [--dry-run]\n" +
 		"                             [root]\n"
 }
 
@@ -2894,7 +2928,7 @@ func clicHelp() string {
 		"  --no-runtime          **只给夹具用**：跳过 T4 的 go test（真目标不许带这个开关）\n" +
 		"  --emit-matrix [PATH]  按命令树 + 现跑 bin/zerg **重生成** must-fail 矩阵（先用 `zerg build all --only cli` 出新制品）\n" +
 		"  --dry-run             **只判定 · 不落任何产物**（缺口 GAP-20260927-372）：与 --emit-matrix 同给时只报将要合并的增量、**不写**矩阵件；不给 --emit-matrix 时 = 只读判定（同裸跑）\n" +
-		"  --verify-live         §六 R-6：拿冻结的矩阵逐格现跑同一 argv（每格两遍）、核 rc 与 stdout 字节数 —— 抓「多余格 / 幽灵格」（0 全合 / 1 mismatch / 2 不给结论）\n"
+		"  --verify-live         §六 R-6：拿冻结的矩阵逐格现跑同一 argv（每格两遍）、核 rc 与 stdout 字节数 —— 抓「多余格 / 幽灵格」（0 全合 / 1 mismatch / 2 不给结论）；★ 与 --emit-matrix **互斥**（同给 ⇒ 用法错 rc=2）\n"
 }
 
 func clicParseArgs(argv []string, stdout, stderr io.Writer) (clicArgs, *int) {
@@ -2955,6 +2989,14 @@ func clicParseArgs(argv []string, stdout, stderr io.Writer) (clicArgs, *int) {
 			a.root = x
 		}
 		i++
+	}
+	// ★ 缺口 `GAP-20260927-304`：`--emit-matrix` 与 `--verify-live` 两档**互斥**（按 argparse
+	//   互斥组口径：同给 ⇒ 用法错 rc=2 · ✗ 不静默挑一个）。缘由：入口分派里 `if a.verifyLive`
+	//   在 `if a.emitMatrix != nil` 之前 ⇒ 同给时**写矩阵那档被静默忽略**、只剩逐格回放；而 emit
+	//   档自带的那次现读复核**只报不判**（`clicEmitMatrixOpt` 恒退 0）⇒ 同给时极易把「emit 的只报
+	//   复核」误当验收证据。两样都要 ⇒ 分两次单跑，一次只做一件事。
+	if a.emitMatrix != nil && a.verifyLive {
+		return fail("argument --verify-live: not allowed with argument --emit-matrix")
 	}
 	return a, nil
 }

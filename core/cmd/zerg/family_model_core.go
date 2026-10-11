@@ -34,7 +34,7 @@ func cmdModelShow(inv *invocation, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 	want := inv.args[0]
-	fields := []string{"id", "host", "backend", "modality", "mem_gb", "file"}
+	fields := []string{"id", "host", "backend", "modality", "mem_gb", "peak_mem_gb", "file", "registry_id"}
 	// ★ 缺口 `GAP-20260926-231` ②（2026-10-04 · 本枚）：**字段面前置判定** —— 把 `--json`
 	//   的字段名校验从「fetch 之后 → `listCmd`→`selectJSONList`→`marshalObject` 逐行查 row
 	//   缺键」前移到**取数之前**（与 `family_code.go` 的 `GAP-20260928-141` 同款 · 与本族
@@ -72,7 +72,18 @@ func cmdModelShow(inv *invocation, stdout, stderr io.Writer) int {
 		}
 		ids = append(ids, cell(o["id"]))
 		if cell(o["id"]) == want {
-			rows = append(rows, project(o, fields))
+			// ★ 缺口 `GAP-20260926-87`（本枚）：端点载荷里**没有** `peak_mem_gb` 这一键 ⇒ 行面**新接档案读取**补它。
+			//   值 = **实测峰值**（事实），真源 `~/.zerg/egg-profiles/<模型 id>.yaml` 的 `peak_mem_gb` 一键
+			//   （读法与 `gateway.ProfileCtxWindow` 同源：只扫一行 · 忽略注释 · 文件名大小写不敏感兜底）。
+			//   档案里读不到 ⇒ **整键略去**（照 `GAP-20260926-11` 口径：在册但本行缺值 ⇒ 略键，
+			//   ✗ 不落 `0`/空串 —— 缺席与真值 0 必须可分）。
+			row := project(o, fields)
+			if v, ok := peakMemGBFromProfile(cell(o["id"])); ok {
+				row["peak_mem_gb"] = v
+			} else {
+				delete(row, "peak_mem_gb")
+			}
+			rows = append(rows, row)
 		}
 	}
 	if len(rows) == 0 {
@@ -85,6 +96,38 @@ func cmdModelShow(inv *invocation, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 	return listCmd(inv, stdout, stderr, fields, rows)
+}
+
+// peakMemGBFromProfile —— 从实测档案 `<模型 id>.yaml` 读 `peak_mem_gb`（**实测峰值** · 原样文本）。
+//
+// ★ 缺口 `GAP-20260926-87`（本枚）：`mem_gb`（名册声明的容量**意图**）与**实测峰值**此前只能靠人读
+// 注释判断头寸是否合理 ⇒ 本格把**事实**（实测峰值）摆到同一条 `model show` 行上，与 `mem_gb` 同屏可比。
+//
+// 真源与读法与 `gateway.ProfileCtxWindow`（`core/internal/gateway/eggprofile.go:34`）逐字同源：
+// 只扫一行 · 忽略 `#` 注释 · 文件名精确不中时**大小写不敏感**兜底（复用本包 `readEggProfileFile` /
+// `eggProfileDir`，与子端 `monitor` 一族同口径）。无档案 / 无该键 / 空值 ⇒ ("", false)
+// （如实 —— **绝不编造**峰值）。
+func peakMemGBFromProfile(id string) (string, bool) {
+	dir := eggProfileDir()
+	if dir == "" || strings.TrimSpace(id) == "" {
+		return "", false
+	}
+	b, ok := readEggProfileFile(dir, id)
+	if !ok {
+		return "", false
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		t := strings.TrimSpace(line)
+		if strings.HasPrefix(t, "#") || !strings.HasPrefix(t, "peak_mem_gb:") {
+			continue
+		}
+		v := strings.TrimSpace(strings.TrimPrefix(t, "peak_mem_gb:"))
+		if v == "" {
+			continue
+		}
+		return v, true
+	}
+	return "", false
 }
 
 // cmdModelOpts —— `zerg model opts get|set <模型 id>`。

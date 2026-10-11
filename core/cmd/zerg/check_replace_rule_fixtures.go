@@ -1453,6 +1453,22 @@ func crrfSelfTest(stdout io.Writer) int {
 		bad = append(bad, "files_sum")
 		P(fmt.Sprintf("   ✗ 新三格：keys=%v files_sum=%d dedup=%v", newKeys, newSum, newDedup))
 	}
+	// 缺口 GAP-20260926-145：件面清单格 `fixture_files` 的成对负控 ——
+	//   ① 请求它 ⇒ 出**全部入判件**（含未命中的件 · ✗ 不只是命中件）；② 请求老格 `files` ⇒ 只出命中件
+	//   ⇒ 两格可辨（哑化「全量」语义 ⇒ 必红）。
+	ffAll := []string{"core/x/a_test.go", "core/x/b_test.go", "core/x/c_test.go"}
+	ffPayload := crrfJSONPayload([]string{"fixture_files"}, 0, 0, hitsM, ffAll, nil, 0, nil)
+	ffHitsOnly := crrfJSONPayload([]string{"files"}, 0, 0, hitsM, ffAll, nil, 0, nil)
+	wantFF := `{"fixture_files": ["core/x/a_test.go", "core/x/b_test.go", "core/x/c_test.go"]}`
+	wantHitsOnly := `{"files": ["core/x/a_test.go", "core/x/b_test.go"]}`
+	if ffPayload == wantFF && ffHitsOnly == wantHitsOnly {
+		ok++
+		P("   ✓ 件面清单格 `fixture_files`：请求 ⇒ 出**全部入判件 3 个**（含未命中的 `c_test.go`）· " +
+			"老格 `files` 仍只出命中件 2 个（两格可辨 · 缺口 GAP-20260926-145）")
+	} else {
+		bad = append(bad, "fixture_files")
+		P(fmt.Sprintf("   ✗ 件面清单格：fixture_files=%s · files=%s", ffPayload, ffHitsOnly))
+	}
 	prOK := len(hitsM) == 2 && hitsM[0].total == 2 && hitsM[1].total == 1 &&
 		len(hitsM[0].detail) == 2 &&
 		hitsM[0].detail[0].rel == "core/x/a_test.go" && len(hitsM[0].detail[0].lines) == 1 &&

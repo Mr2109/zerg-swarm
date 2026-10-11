@@ -17,7 +17,7 @@
 //	  且要吃输入物料（`--file`/stdin）。
 //	✗ 不选 `who-references.py`（397 行）：`resolve_trees()` 指向仓外两棵树（`Zerg-内部文档`/`Zerg-归档`）⇒
 //	  **外部树依赖**；且默认带 `--dump` 写面、靠 `git ls-files` 外部命令。
-//	✗ 不选 `seal-ledger.py`（531 行）/ `two-states-gate-mutate.py`（635 行）：带真写面（`--seal` / 就地改坏再还原）。
+//	✗ 不选 `seal-ledger.py`（531 行）/ `two-states-gate-mutate.py`：带真写面（`--seal` / 就地改坏再还原）。
 //	✗ 不选 `real-gates.sh` / `redaction-probes.sh` / `shard-go-test.sh`：跑测试/流程，非纯静态判据。
 //
 // ⚠ 本单边界（照实）：本件**只落码、不接线** ——

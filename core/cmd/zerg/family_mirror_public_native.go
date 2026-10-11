@@ -3,7 +3,7 @@
 //
 // 病（原壳）：`publish/mirror-public.sh` 是公开面**真源**发布器（规则指纹 / 全树重写模式长在它身上），
 // 但它的六段编排（环境检查 / 逐提交镜像 / 私有面门禁 / 软门禁 / 私有仓未被动过 / 推送）长在 shell 里，
-// CLI 面看不见真身。本笔把编排**搬进进程内**，逐段与旧壳 `publish/mirror-public.sh`（191 行）逐字对齐。
+// CLI 面看不见真身。本笔把编排**搬进进程内**，逐段与旧壳 `publish/mirror-public.sh`逐字对齐。
 //
 // ★ 数据处理面（引擎 `publish/mirror-public-lib.py`）**逐字节照旧**：
 //
