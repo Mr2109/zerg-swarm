@@ -143,4 +143,69 @@ func TestGateCheckSelfcaseLabelsWindow(t *testing.T) {
 	}
 }
 
+// ── 件解析回落（批A · P3 新增 · 缺口 GAP-20260927-240 的第二半）────────────────────
+// 病：合成路径写死 `.py`（<名录根>/gates/<名>.py）⇒ Go 化后件已离盘 ⇒ `--list-selfcases`
+// 恒 rc=8「判据件读不到」，只读面用不了。
+// 治（本判据钉住）：inproc 判据（在 `gateCheckGoEntry` 里）合成 `.py` 读不到 ⇒ 回落 Go 真身件；
+// ✗ 回落门槛**不用** inclass —— 只登类表的 4 条没有 Go 真身 ⇒ 必须保持 rc=8（✗ 不假绿）。
+
+// gcsSet —— 临时改包级表（★ 用合成键，✗ 不撞真键）；用完必还原（✗ 不残留污染后续用例）。
+func gcsSet(t *testing.T, m map[string]func(stdout, stderr io.Writer, argv []string) int, k string,
+	fn func(stdout, stderr io.Writer, argv []string) int) {
+	t.Helper()
+	old, had := m[k]
+	m[k] = fn
+	t.Cleanup(func() {
+		if had {
+			m[k] = old
+		} else {
+			delete(m, k)
+		}
+	})
+}
+
+// 正控：py 离盘 ＋ 键在 gateCheckGoEntry ⇒ 回落 <root>/core/cmd/zerg/<键,->_.go> ⇒ 列真格 rc=0。
+func TestGateCheckSelfcasesGoFallback(t *testing.T) {
+	root := gcsMakeRoot(t) // 名录根（scripts/gates）在即可
+	dir := filepath.Join(root, "core", "cmd", "zerg")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "package main\n\n" +
+		"const a = \"① 正控：Go 真身件里的格名\"\n" +
+		"const b = \"② 回落：py 离盘仍列本件\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "gcs_pos.go"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gcsSet(t, gateCheckGoEntry, "gcs-pos", func(io.Writer, io.Writer, []string) int { return 0 })
+
+	rc, out, errs := gcsRun(t, root, []string{"gate", "check", "gcs-pos", "--list-selfcases"}, false)
+	if rc != exitOK {
+		t.Fatalf("回落档 rc=%d want %d（stdout=%q stderr=%q）", rc, exitOK, out, errs)
+	}
+	for _, want := range []string{"① 正控：Go 真身件里的格名", "② 回落：py 离盘仍列本件"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("回落未列出格名 %q；stdout=%q", want, out)
+		}
+	}
+}
+
+// 负控：键**只**登类表（✗ 不在 gateCheckGoEntry）⇒ 合成 .py 读不到 ⇒ 仍 rc=8（fail-closed）。
+func TestGateCheckSelfcasesInclassOnlyFailClosed(t *testing.T) {
+	root := gcsMakeRoot(t)
+	old, had := gateCheckClassEntry["gcs-neg"]
+	gateCheckClassEntry["gcs-neg"] = gateCheckClassSpec{"write", dangerD2}
+	t.Cleanup(func() {
+		if had {
+			gateCheckClassEntry["gcs-neg"] = old
+		} else {
+			delete(gateCheckClassEntry, "gcs-neg")
+		}
+	})
+
+	if rc, out, errs := gcsRun(t, root, []string{"gate", "check", "gcs-neg", "--list-selfcases"}, false); rc != exitBlocked {
+		t.Fatalf("inclass-only rc=%d want %d（fail-closed · stdout=%q stderr=%q）", rc, exitBlocked, out, errs)
+	}
+}
+
 var _ io.Writer = (*bytes.Buffer)(nil)

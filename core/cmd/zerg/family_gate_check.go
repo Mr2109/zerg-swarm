@@ -1092,7 +1092,15 @@ func gateCheck(inv *invocation, stdout, stderr io.Writer, root string) int {
 	//   （与同族 `gate check --dry-run` 全表干跑同一种零副作用口径）⇒ 放行在**写工具危险档闸之前**
 	//   （该档零写盘，与 `--dry-run`/`--help` 同档 · 不受写工具确认盾约束）。
 	if listSelfcases {
-		return gateCheckListSelfcases(name, full, stdout, stderr, inv.jsonGiven)
+		// ★ 本批（批A · P3）：合成 `.py` 路径读不到时，inproc 判据回落到 Go 真身件。✗ 不动 `full`
+		//  本身 —— 它仍喂下游路径边界/类判/台账 sha256。回落拿不到件 ⇒ sc 留 full ⇒ 原样 rc=8。
+		sc := full
+		if !gateCheckFileReadable(sc) {
+			if _, inproc := gateCheckGoEntry[name]; inproc {
+				sc = gateCheckSelfcaseGoFile(root, name)
+			}
+		}
+		return gateCheckListSelfcases(name, sc, stdout, stderr, inv.jsonGiven)
 	}
 
 	// ★ M1 批B · **写工具危险档闸**（壳侧 exec 前 · **唯一写盘点之前**）：
@@ -1380,6 +1388,25 @@ func gateCheckJudgeBodySpawns(root, name string) bool {
 		return true // fail-closed
 	}
 	return strings.Contains(string(b), "os/exec")
+}
+
+// gateCheckSelfcaseGoFile —— 【批A · P3】`--list-selfcases` 的**件解析回落**：合成 `.py` 路径读不到时，
+//
+//	若该名在 inproc 表（`gateCheckGoEntry`）里 ⇒ 回落到 Go 真身件（自测格名以圈号串字面量写在 `.go` 里）。
+//	★ 回落门槛**只看 inproc**（✗ 不用 inclass）—— 只登类表的 4 条判据（build-all / build-wall-mutate /
+//	zerg-swap-core / run_all）没有 Go 真身 ⇒ 必须**保持如实 rc=8**（✗ 不许拿空件冒充「无格」）。
+//	★ 返回空串 ⇒ 调用方 `ReadFile("")` 失败 ⇒ 原样 rc=8（fail-closed）。同法见 gateCheckJudgeBodySpawns。
+func gateCheckSelfcaseGoFile(root, name string) string {
+	fn, hit := gateCheckGoEntry[name]
+	if !hit {
+		return ""
+	}
+	dir := filepath.Join(root, "core", "cmd", "zerg")
+	p := filepath.Join(dir, strings.ReplaceAll(name, "-", "_")+".go")
+	if !gateCheckFileReadable(p) {
+		p = gateCheckHandlerFile(dir, fn)
+	}
+	return p
 }
 
 // gateCheckShouldReexecSelf —— 分派点分档决策（纯函数 · 便于定向单测）：
