@@ -194,12 +194,19 @@ func gapRereadWhy(cmdStr string) string {
 	if len(fields) == 0 {
 		return "只有 `zerg` 前缀、没有命令名"
 	}
-	cmd, _ := resolve(fields)
+	cmd, rest := resolve(fields)
 	if cmd == nil {
 		return fmt.Sprintf("命令树里没有 %q（判不了是不是写面 ⇒ 不执行）", strings.Join(fields, " "))
 	}
 	if name := strings.Join(cmd.path, " "); name == "gap reread" {
 		return "判据是本命令自己（**自递归** ⇒ 不执行）"
+	}
+	// ★ 本批（批A · P1 丁③）：`gate check <只读判据名>` 命中中央分类表的**只读档** ⇒ 判据本体零副作用
+	//   ⇒ 放行。★ 本短路**必须早于**下方 danger 与 passthrough 两道拒 —— 因 `gate check` 节点
+	//   自带 `passthrough:true`（`main.go:939`），只改 danger 那条仍会被 passthrough 拒掉。
+	//   ✗ 不放宽其余档：透传 / 拒执 / 非开放三档一字不松（判不准仍跳过 ⇒ `not_rereadable`）。
+	if gateCheckReadJudgeEscape(cmd.path, rest) {
+		return ""
 	}
 	if cmd.danger != nil {
 		return fmt.Sprintf("落在**危险档** %s（写面 ⇒ 不执行；本面只跑非危险档）", cmd.danger.Level)

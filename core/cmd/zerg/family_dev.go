@@ -1423,9 +1423,13 @@ func criterionRunnable(spec string) (string, string) {
 		if c == nil {
 			continue
 		}
-		if c.danger != nil && !hasDryRunFlag(fields) {
+		// ★ 本批（批A · P1 丁②）：`gate check <只读判据名>` 命中中央分类表的**只读档** ⇒ 判据本体
+		//   零副作用 ⇒ 与判据链同口径放行（共口 `gateCheckReadJudgeEscape`）。✗ 不放宽其余危险档。
+		if c.danger != nil && !hasDryRunFlag(fields) && !gateCheckReadJudgeEscape(c.path, words[n:]) {
 			// ★ GAP-20261001-40：拒执时**给出替代只读判据名**（不逼人退到无意义值）。
-			//   `gate check <判据名>` 的只读等价档 = 它的 `--dry-run` 那一态（永远跑得动、零副作用）；
+			//   ★ 本批修正（批A · 同批）：原文案称「`gate check <判据名>` 的只读等价档 = 它的
+			//   `--dry-run` 那一态（永远跑得动、零副作用）」**不成立** —— 多数判据件本体不收
+			//   `--dry-run`（真给即 rc=2「未知参数」）。正解＝**只读判据名直接可跑**（本批已放开）。
 			//   其余危险档命令一律给「单步只读门跑 / 族级帮助」两条现成只读面。
 			alt := "或换一条**只读**判据（例：`" + progName + " gate run --step '<步名>' --only-step` · `" + progName + " help <族>`）"
 			if strings.Join(c.path, " ") == "gate check" {
