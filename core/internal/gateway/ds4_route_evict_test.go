@@ -3,6 +3,7 @@ package gateway
 import (
 	"encoding/json"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -266,36 +267,46 @@ func TestAgentURL_ComesFromConfig(t *testing.T) {
 	}
 }
 
-// 无硬编码（源码级断言）：gateway 包的生产代码里不得再出现 <worker-ip> 或字面 http:// 地址。
+// 无硬编码（源码级断言）：core/internal 下与取址相关的各包（本包 gateway + agent/chat/plugin）
+// 的生产代码里不得再出现 <worker-ip> 或字面 http:// 地址。断言面与声明面对齐（GAP-20261010-20）。
+// 递归扫描各包**全部子目录**（不再只扫顶层 *.go）——曾经真出错的那处就在子目录
+// （plugin/adapters/cluster_plugin.go），非递归 glob 会漏掉它（GAP-20260926-52 残面：以本断言代扫盘）。
 // 注释行不参与扫描——注释里保留旧值是为了留下"改过什么"的痕迹（traceability），不是代码。
+// 负控：往任一被扫包（含其子目录）的 .go 里写死 <worker-ip>（或 "http://10.x"）⇒ 本用例红。
 func TestNoHardcodedAgentURLInSource(t *testing.T) {
-	files, err := filepath.Glob("*.go")
-	if err != nil {
-		t.Fatal(err)
-	}
+	dirs := []string{".", "../agent", "../chat", "../plugin"}
 	scanned := 0
-	for _, f := range files {
-		if strings.HasSuffix(f, "_test.go") {
-			continue
-		}
-		b, err := os.ReadFile(f)
+	for _, dir := range dirs {
+		err := filepath.WalkDir(dir, func(f string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() || !strings.HasSuffix(f, ".go") || strings.HasSuffix(f, "_test.go") {
+				return nil
+			}
+			b, err := os.ReadFile(f)
+			if err != nil {
+				return err
+			}
+			scanned++
+			var code []string
+			for _, line := range strings.Split(string(b), "\n") {
+				if strings.HasPrefix(strings.TrimSpace(line), "//") {
+					continue
+				}
+				code = append(code, line)
+			}
+			src := strings.Join(code, "\n")
+			if strings.Contains(src, "<worker-ip>") {
+				t.Fatalf("%s 的代码里仍含硬编码 IP <worker-ip>——地址必须来自 fleet.yaml", f)
+			}
+			if strings.Contains(src, `"http://10.`) || strings.Contains(src, `"http://192.`) {
+				t.Fatalf("%s 的代码里仍含硬编码 http 地址", f)
+			}
+			return nil
+		})
 		if err != nil {
 			t.Fatal(err)
-		}
-		scanned++
-		var code []string
-		for _, line := range strings.Split(string(b), "\n") {
-			if strings.HasPrefix(strings.TrimSpace(line), "//") {
-				continue
-			}
-			code = append(code, line)
-		}
-		src := strings.Join(code, "\n")
-		if strings.Contains(src, "<worker-ip>") {
-			t.Fatalf("%s 的代码里仍含硬编码 IP <worker-ip>——地址必须来自 fleet.yaml", f)
-		}
-		if strings.Contains(src, `"http://10.`) || strings.Contains(src, `"http://192.`) {
-			t.Fatalf("%s 的代码里仍含硬编码 http 地址", f)
 		}
 	}
 	if scanned == 0 {

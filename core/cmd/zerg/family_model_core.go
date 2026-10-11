@@ -169,6 +169,7 @@ func cmdModelOpts(inv *invocation, stdout, stderr io.Writer) int {
 		}
 		if !inv.yes {
 			inv.setErr("usage", "yes_required", "D2 档缺 --yes ⇒ 不执行")
+			guardMarkDecision(inv, guardDecisionApproval)
 			fmt.Fprintf(stderr, "%s: `model opts set` 是 D2 档（**实时生效**）—— 缺 --yes ⇒ 不执行\n", progName)
 			fmt.Fprintf(stderr, "先看计划件：%s model opts set %s --set k=v --dry-run\n", progName, name)
 			return exitUsage

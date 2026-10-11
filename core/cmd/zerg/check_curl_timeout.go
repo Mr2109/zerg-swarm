@@ -14,8 +14,8 @@
 //	    合成假仓根（本批新口径：外部树走**显式入参旋钮**，旋钮名照 py 同名旗标 `--root` / env `ZERG_REPO_ROOT`）；
 //	  · 退码 `0/1/2` 三档齐 · **纯只读、无写面**（`--self-test` 只在 `tempfile.mkdtemp()` 里造件）；
 //	  · 行数适中（167 行）· `git status` 现读**不含它**（无人正在改）。
-//	  · ⚠ 已知线索（现读硬伤）：py `:60` 有 `except OSError: continue`（**B 类读失败静默** —— 读不了的 `.sh`/`.py`
-//	    被**静默跳过**、不点名、不影响退码）。本件**逐字沿用**该静默档（✗ 不私自改成红）：见「现读硬伤清单」。
+//	  · ⚠ 已知线索（py 侧硬伤 · 本件 Go 侧**已修**）：py `:60` 有 `except OSError: continue`（**B 类读失败静默** ——
+//	    读不了的 `.sh`/`.py` / 目录**静默跳过**）。本件**有意分叉**：读失败 ⇒ `cktReadFails` 登记 + 判红 rc=2（见未覆盖面⑤）。
 //	  · ⚠ **外部工具依赖判据**：本件**不依赖真实 curl / 网络 / 任何外部工具**（判据面只在源码文本上做正则）⇒
 //	    符合 M2 选件「纯静态」条，**不需换件**。py 名里的 `curl` 是**被判对象**，不是**执行对象**。
 //	✗ 不选 `check-exit-codes.py` / `audit_go_logs.py`：扫描根靠 `os.walk` 且带外部子进程 / 非确定面。
@@ -112,10 +112,10 @@
 //	④ **`--self-test` 手段**：py 用 `subprocess.run([sys.executable, SELF_PATH])` **真跑自身**；本件**进程内**
 //	   直调入口（同 argv · 读数一致）。⇒ 打印文案逐字对齐，差在**实现手段**（子进程 ⟷ 进程内）；且临时目录名
 //	   带随机后缀（`mkdtemp`）⇒ 自检档属**非确定面**（掩码随机后缀后逐字节比）。
-//	⑤ **B 类读失败静默（py 现读硬伤 · py `:60`）**：读不了的 `.sh`/`.py`（权限 / IsADirectory）被 `except OSError:
-//	   continue` **静默跳过** —— 本件**逐字沿用**（`os.ReadFile` 出错 ⇒ `continue`）⇒ 两态都**不点名、不影响退码**。
-//	   ★ 这是 py **真口子**（缺口账面 · 非本单可改）：**✗ 本单不自行修 py**；如需「读不到即红/即 BLOCKED」应
-//	   走 `zerg gap add` 入账后另立判据，**不**混进本件的逐字对齐承诺。
+//	⑤ **B 类读失败静默 —— 本件 Go 侧已修**（与原 py `:60` 的 `except OSError: continue` / `os.walk(onerror=None)`
+//	   **有意分叉** · 同族先例 `check_doc_cmds.go` 的 `dcmdReadFails`）：读不了的 `.sh`/`.py` **或目录** ⇒
+//	   登记（相对路径 + err 正文）入 `cktReadFails`；入口 `cktRun` 补判红（stderr BLOCKED 头 + 逐件点名）⇒
+//	   rc=2（不再静默少判 · 两态：改前静默不点名／不影响退码 ⟷ 改后 BLOCKED rc=2 逐件点名）。✗ py 半仍静默。
 //	⑥ **符号链接面**：扫描根判用 `os.Stat`（跟随），目录分类用 `entry.IsDir()`（lstat 语义）；py `entry.is_dir()`
 //	   跟随。⇒ 有软链时「软链指目录」的分叉存在；真仓 `scripts/` 现读软链 0 枚 ⇒ 不触发，对拍**一律不落符号链接路径**。
 //	⑦ **`splitlines()` 全集**：py `str.splitlines()` 认 `\n \r \r\n \v \f \x1c \x1d \x1e \x85 \u2028 \u2029`；
@@ -314,7 +314,8 @@ func cktScan(root string) (real, fixtures []cktHit, scanned int, ok bool) {
 	walk = func(dir, rel string) {
 		f, err := os.Open(dir)
 		if err != nil {
-			// py os.walk(onerror=None)：该层 scandir 失败 ⇒ 静默跳过（不 yield）。
+			// ★ B 类真口子修（原 py `os.walk(onerror=None)` 静默 · ✗ 不再静默）：登记 + 判红 + rc=2。
+			cktReadFails = append(cktReadFails, cktHit{Rel: rel, Line: 0, Text: err.Error()})
 			return
 		}
 		entries, err := f.ReadDir(-1) // ★ 保原序读法（✗ 不用 os.ReadDir / WalkDir 的排序）

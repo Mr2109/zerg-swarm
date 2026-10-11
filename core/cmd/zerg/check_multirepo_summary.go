@@ -773,6 +773,24 @@ func mrsSummarize(repo, zerg, source string) (*mrsRead, string) {
 }
 
 // ── 指纹（只读自证）────────────────────────────────────────────────────────
+// mrsReadFails —— B 类读失败登记面（refs 目录遍历失败 ⇒ 逐处登记「目录 + 原因」）。
+// ★ B 类真口子修（与 py **有意分叉** · 同族先例 check_error_kinds.go 的 cekReadFails）：
+//
+//	原 py 语义 = `os.walk(onerror=None)` 读不了的目录**静默跳过** ⇒ 判据面被抽空也不出声。
+//	本件收紧：读失败 ⇒ 登记 + 入口判红（stdout BLOCKED 头 + 逐件点名）⇒ rc=2（✗ 不再静默少判）。
+//	自清点：每次 mrsRun 起手清空 ⇒ 不许跨调用残留。目录面自成一句（标「读不了目录」）。
+var mrsReadFails []string
+
+// mrsNoteReadFail —— 登记一处读失败（同一目录只登一次 ⇒ ✗ 不重复点名）。
+func mrsNoteReadFail(what string) {
+	for _, u := range mrsReadFails {
+		if u == what {
+			return
+		}
+	}
+	mrsReadFails = append(mrsReadFails, what)
+}
+
 func mrsRepoFingerprint(repo string, tree bool) map[string]string {
 	fp := map[string]string{}
 	gd, ok := mrsGitDir(repo)
@@ -791,6 +809,11 @@ func mrsRepoFingerprint(repo string, tree bool) map[string]string {
 		walk = func(dir string) {
 			ents, err := os.ReadDir(dir)
 			if err != nil {
+				// ★ B 类真口子修（原读不了的目录静默跳过 · ✗ 不再静默）。
+				// ★ 只有「在盘却读不了」才是真读失败（✗ 不把「目录本就缺席」记成读失败 · 与同族先例 cek 一致）。
+				if fi, serr := os.Stat(dir); serr == nil && fi.IsDir() {
+					mrsNoteReadFail(dir + "（读不了目录：" + err.Error() + "）")
+				}
 				return
 			}
 			var files, dirs []string
@@ -942,6 +965,7 @@ type mrsProofDiff struct {
 }
 
 func mrsRun(stdout io.Writer, root, docsRoot, source, prove string, jsonOut bool, zerg string) int {
+	mrsReadFails = nil // ★ 自清：包级登记面不许跨调用残留（否则上一 Test 残留一进门就 BLOCKED）
 	repos := []mrsRepoLabel{{"主仓", mrsPyAbspath(root)}, {"文档仓", mrsPyAbspath(docsRoot)}}
 	var problems []string
 	for _, rl := range repos {
@@ -963,6 +987,14 @@ func mrsRun(stdout io.Writer, root, docsRoot, source, prove string, jsonOut bool
 		for _, rl := range repos {
 			fpBefore[rl.label] = mrsRepoFingerprint(rl.root, prove == "tree")
 		}
+	}
+	// ★ B 类真口子修：refs 目录遍历（只读自证指纹面）跑完 ⇒ 有登记即 BLOCKED rc=2（✗ 不给结论）。
+	if len(mrsReadFails) > 0 {
+		fmt.Fprintf(stdout, "BLOCKED —— 有 %d 件读不到（B 类读失败 ⇒ 登记 + 判红 · rc=2 · 不给结论）：\n", len(mrsReadFails))
+		for _, u := range mrsReadFails {
+			fmt.Fprintf(stdout, "  [读失败] %s\n", u)
+		}
+		return 2
 	}
 
 	type readRow = mrsReadRow

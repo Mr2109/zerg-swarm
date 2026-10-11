@@ -117,11 +117,11 @@ func cmdDevProposal(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s: `dev proposal` 要给动作：new | list | show | check | revise\n", progName)
 		fmt.Fprintf(stderr, "用法：zerg dev proposal new --title <题> --target <既有编号（只收 D/E/F/G 族 · 逐条闭集真源 core/internal/contract/dev-targets.json）> --goal <目标> "+
 			"--evidence <出处（必填 · 至少一条）—— 两类：① **id 形状**（首部 `GAP-…` / `DEV-…`，如 `GAP-YYYYMMDD-NN`）须**在册**（缺口账 / 在册提案件里查得到）—— 查不到 ⇒ 退码 2「出处 … 在缺口账 / 在册件里查不到 ⇒ 不给结论」；② **描述性证据**（无前缀自由文本）直接收，不要求在册> --rollback <退点件（必填 · 仓外整件路径 —— 退建议照它核 sha256 取改前态）> "+
-			"--criterion <判据（必填 · 一条首词是 zerg、本版真跑得动的命令）> [--criterion-new <前瞻判据（可选 · 一条首词是 zerg、本版**还跑不动**的命令形态 ⇒ 显式标前瞻；本版已能真跑的命令写 --criterion）>] [--file <要改的件>]… [--by <提出者>] [--batch <件.json（可机读批量档：JSON 数组 · 逐格一对象 · 键 = 旗标名去 --）>]\n")
+			"--criterion <判据（必填 · 一条首词是 zerg、本版真跑得动的命令）> [--criterion-new <前瞻判据（可选 · 一条首词是 zerg、本版**还跑不动**的命令形态 ⇒ 显式标前瞻；本版已能真跑的命令写 --criterion）>] [--file <要改的件>]… [--by <提出者>] [--batch <件.json（可机读批量档：JSON 数组 · 逐格一对象 · 键 = 旗标名去 --）>] [--from-file <件.json（单片档 · 读一枚 JSON 对象 = 一片提案的字段 · 与单片旗标互斥）>]\n")
 		fmt.Fprintf(stderr, "       zerg dev proposal list [--state 未决|已批准|已否决]\n")
 		fmt.Fprintf(stderr, "       zerg dev proposal show <提案 id>\n")
 		fmt.Fprintf(stderr, "       zerg dev proposal check [<提案 id>] [--deep]   # 判据复核（缺判据/判据跑不动 ⇒ 退码 2；--deep 真跑每件判据 · 报 rc 与命中数）\n")
-		fmt.Fprintf(stderr, "       zerg dev proposal revise <提案 id> (--criterion <新判据> | --criterion-new <新前瞻判据>) [--dry-run | --yes]   # 改判据：就地改既有提案的判据（闸与 new 同源）\n")
+		fmt.Fprintf(stderr, "       zerg dev proposal revise <提案 id> (--criterion <新判据> | --criterion-new <新前瞻判据> | --add-file <路径（仓内相对 · 可重复 · 补进既有提案的 files[]）>…) [--dry-run | --yes]   # 改判据／补件：就地改既有提案（闸与 new 同源）\n")
 		fmt.Fprintf(stderr, "       zerg dev proposal (--retract <提案 id> | --void <提案 id>) --reason <理由> [--by <谁>] [--dry-run | --yes]   # 作废：打作废标记（号不复用 · 落审计一行）\n")
 		inv.setErr("usage", "missing_action", "缺动作")
 		return exitUsage
@@ -140,6 +140,58 @@ func cmdProposeLs(inv *invocation, stdout, stderr io.Writer) int {
 	return proposalList(inv, stdout, stderr)
 }
 
+// rejectRepeatedSingleValFlags —— 重复给**单值语义**旗标 ⇒ 拒执并点名（与上面 `--rollback` 那一处**同一形态**：
+// 同名旗标只许给一次）。病灶：`flagVal` 只取**末值** ⇒ 重复给被静默收成末值、无拒执（「给错了」被读成
+// 「给对了」· §4.1 K14 四件套 · 缺口 Q-154 同族）。★ **多值语义**旗标（`--evidence` / `--file`）**不在本闸**
+// —— 它们本就该能重复给。detail = 旗标名去 `--`、`-` 换 `_` ＋ `_repeated`（照 `rollback_repeated` 的命名）；
+// 位置：单片档路径里、**任何盘面动作之前**判（与 `--rollback` / 「多余位置参数」同段 · 未写任何件）。
+func rejectRepeatedSingleValFlags(inv *invocation, stderr io.Writer, names ...string) int {
+	for _, name := range names {
+		if n := len(inv.flagVals(name)); n > 1 {
+			detail := strings.ReplaceAll(strings.TrimPrefix(name, "--"), "-", "_") + "_repeated"
+			inv.setErr("usage", detail, "`"+name+"` 只许给一次（重复给会被静默收成末值）")
+			fmt.Fprintf(stderr, "%s: `%s` 只许给一次（现读给了 %d 次）—— 同名旗标重复 ⇒ 用法错 2（✗ 不静默收成末值 · 未写任何件）\n", progName, name, n)
+			return exitUsage
+		}
+	}
+	return exitOK
+}
+
+// proposalCommandFaceWhy —— 命令面随动预检（缺口 `GAP-20260928-100` · 本单）：**提前到创建时说清**。
+//
+// 病灶（缺口正文逐字）：新增 / 改动命令面的落地单若不含 `cli-matrix.json` + `cli-contract-baseline.json`
+// ⇒ 新命令 / 新旗标必成矩阵 1 条空白（门⑪ `TestCLIContractMatrixNoBlank` 必红），而消红只能改这两件；
+// 而 `dev edit` 只许改**提案声明过**的件（越界写 ⇒ 2）⇒ 没在提案里声明 = 子代理写不进去、门⑪ 必红。
+//
+// 判据面**复用仓内既有登记**（门78 `check-newcmd-followup` 的同一份命令面真源三件：`cnfMainRel`
+// 命令树 / `cnfMatrixRel` 矩阵 / `cnfContractBaseline` 棘轮基线）—— ★ ✗ 不自造第二套判据。
+// 触发 = 声明件含**命令树件**（`main.go` · 新增/改动命令面的命令树落点）；缺任一随动件 ⇒ 返回一句明说。
+// 只**明说**、**不改退码**（提得成仍 0 · 与「空声明提案」那条同档：只报不拦）。
+func proposalCommandFaceWhy(files []string) string {
+	has := func(rel string) bool {
+		for _, f := range files {
+			if f == rel {
+				return true
+			}
+		}
+		return false
+	}
+	if !has(cnfMainRel) {
+		return ""
+	}
+	missing := []string{}
+	for _, rel := range []string{cnfMatrixRel, cnfContractBaseline} {
+		if !has(rel) {
+			missing = append(missing, rel)
+		}
+	}
+	if len(missing) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("本提案声明件含命令面**命令树**件 `%s`，但未同批声明命令面随动两件：%s",
+		cnfMainRel, strings.Join(missing, " · "))
+}
+
 // ---- new ----
 
 func cmdDevProposalNew(inv *invocation, stdout, stderr io.Writer) int {
@@ -153,14 +205,51 @@ func cmdDevProposalNew(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s: dev proposal new 不收位置参数（new 之后多给了 %q）—— 字段一律走旗标 · 未写任何件\n", progName, inv.args[1])
 		return exitUsage
 	}
+	// ★（本单 · 缺口 `GAP-20260928-65` 的**权威判据**半）`--from-file <件>`：单片档的**可机读声明件** ——
+	//   读一枚 JSON **对象**（一片提案的字段 · 键 = 单片档旗标名去 `--`）⇒ 走**与 `--batch` 同一条**
+	//   字段注入/校验链（✗ 不造第二套闸）。为什么要有它（want 逐字）：`dev proposal new` 的自由文本字段
+	//   （--evidence/--goal/--rollback/--title）对反引号 / `$(` / `${` 无防呆 —— shell 会先做**命令替换**、
+	//   把片段整个吃掉或替换成空（实害 = 提案内容静默残废而工具不报错）。本档从**盘上**读这些文本 ⇒
+	//   **不经 shell** ⇒ 从根上避开「自由文本在进程内无法分辨真危险/纯文本」的死结（✗ 不做「检测⇒rc=2」
+	//   那一支 —— 已实测为误杀器：应放的样本被误杀、应拦的样本反被漏放）。定位：与 `--batch` 同段
+	//   （都在**任何盘面动作之前**判）；单值语义 ⇒ 重复给同型拒执。
+	if rc := rejectRepeatedSingleValFlags(inv, stderr, "--from-file"); rc != exitOK {
+		return rc
+	}
+	if strings.TrimSpace(inv.flagVal("--from-file")) != "" {
+		return cmdDevProposalNewFromFile(inv, stdout, stderr)
+	}
 	// ★ GAP-20260927-413（本枚 · 甲案「可机读批量档」）：`--batch <件.json>` —— 把「批量建提案」
 	//   落成**一条可控形态**（读一枚 JSON 数组件 · 逐格走**与单片档完全同一条**闸）。
 	//   为什么要有它：`dev proposal new` 在「多旗标 + for 循环 / 管道」拼命令的形态下会卡**调用侧**
 	//   的人工应答（调用侧审批层判「无法解析的嵌套执行体」⇒ BLOCKED · 零写入）⇒ 批量建提案时子代理必停手。
 	//   本档让调用侧只发**一条**命令（不用 for / 不用管道），批量意图写进**可机读**的声明件里。
 	//   定位在此：与单片档同一入口分叉；下面那片单片路径**一字未动**（旧档位行为逐字不变）。
+	// ★（本单 · `--rollback` 的同型续作）`--batch` 也是**单值语义**（一枚 JSON 件）⇒ 重复给同型拒执
+	//   （位置在最前：与下面那排单片旗标同一段 —— 都在**任何盘面动作之前**判）。
+	if rc := rejectRepeatedSingleValFlags(inv, stderr, "--batch"); rc != exitOK {
+		return rc
+	}
 	if strings.TrimSpace(inv.flagVal("--batch")) != "" {
 		return cmdDevProposalNewBatch(inv, stdout, stderr)
+	}
+	// ★ 重复给 `--rollback` ⇒ **拒执并点名**（照 `family_ci.go` 的 `ci green --run` 先例：同名旗标只许给一次）。
+	//   病灶（本单现读）：`--rollback A --rollback B` 被 `flagVal` 静默收成末值（只取最后一个）⇒ rc=0 且
+	//   `rollback_ref=B`、无拒执 ⇒ 「给错了」被读成「给对了」（§4.1 K14 四件套 · 缺口 Q-154 同族）。
+	//   位置：与「多余位置参数」同段（都在**任何盘面动作之前**判）。
+	if n := len(inv.flagVals("--rollback")); n > 1 {
+		inv.setErr("usage", "rollback_repeated", "`--rollback` 只许给一次（重复给会被静默收成末值）")
+		fmt.Fprintf(stderr, "%s: `--rollback` 只许给一次（现读给了 %d 次）—— 同名旗标重复 ⇒ 用法错 2（✗ 不静默收成末值 · 未写任何件）\n", progName, n)
+		return exitUsage
+	}
+	// ★（本单 · 缺口 `GAP-20261005-70` 现读反证 · `--rollback` 那一处的**同型续作**）其余**单值语义**旗标
+	//   重复给 ⇒ 同型拒执并点名（照上面 `--rollback` 那一处的形态：同名旗标只许给一次）。
+	//   病灶（本单现读实据）：`flagVal` 只取**末值** ⇒ `--title A --title B` 静默收成 B（rc=0、无拒执）。
+	//   ★ **多值语义**旗标（`--evidence` / `--file`）**不在本闸** —— 它们本就该能重复给（逐枚 append · `trimAll`）。
+	if rc := rejectRepeatedSingleValFlags(inv, stderr,
+		"--title", "--target", "--goal", "--criterion", "--criterion-new",
+		"--by", "--subject", "--subject-kind", "--egg-id", "--approver", "--approver-kind"); rc != exitOK {
+		return rc
 	}
 	rec := proposalRecord{
 		Title:     strings.TrimSpace(inv.flagVal("--title")),
@@ -286,11 +375,32 @@ func cmdDevProposalNew(inv *invocation, stdout, stderr io.Writer) int {
 			return exitUsage
 		}
 	}
+	// ★ GAP-20260928-136（本单 · **路径口径归一**）：声明面与改件面（`dev edit --file`）用**同一套**口径 ——
+	//   仓内**绝对**路径自动转成**仓内相对**（复用 `devPathCanonical` 同一枚函数 ⇒ 两侧可互换、可对拍）；
+	//   仓外绝对路径**不转**（`--file` 是作用域真源 ⇒ 仍是越界声明 ⇒ 下面那条闸拒）。
+	//   位置：在任何**盘面动作**之前判（与 `--criterion` / `--evidence` 同段）。
+	if r := repoRoot(); r != "" {
+		for i, f := range rec.Files {
+			rec.Files[i] = devPathCanonical(r, f)
+		}
+	}
 	if why := declaredFilesWhy(rec.Files); why != "" {
 		inv.setErr("usage", "bad_declared_file", why)
 		fmt.Fprintf(stderr, "%s: %s\n", progName, why)
 		fmt.Fprintf(stderr, "`--file` 收的是**仓内相对路径**（`zerg dev edit` 的唯一作用域真源 · 不许绝对路径、不许 `..`）\n")
 		return exitUsage
+	}
+	// ★ GAP-20260928-100（本单 · 提案面预检）：**命令面随动预检** —— 把「新命令/新旗标必成矩阵空白」
+	//   这件事**提前到创建时**说清（✗ 不再等门⑪ 红了才点名那两件）。
+	//   位置：与「声明件路」同段（都在**任何盘面动作之前**判）；dry-run 与真写**都**过这一段。
+	//   ★ 只**明说**、**不改退码**（提得成仍 0）—— 与上面「空声明提案」那条同档（只报不拦）。
+	if why := proposalCommandFaceWhy(rec.Files); why != "" {
+		fmt.Fprintf(stderr, "★ 警告（命令面随动预检 · GAP-20260928-100）：%s\n", why)
+		fmt.Fprintf(stderr, "  命令面随动两件（新增/改动命令或旗标 ⇒ 同批必带，门78 `check-newcmd-followup` 同一份真源）：\n")
+		fmt.Fprintf(stderr, "    `%s` · `%s`\n", cnfMatrixRel, cnfContractBaseline)
+		fmt.Fprintf(stderr, "  为何：新命令/新旗标必成矩阵 1 条空白 ⇒ 门⑪ 命令面契约（`TestCLIContractMatrixNoBlank` + 棘轮基线）判红；\n")
+		fmt.Fprintf(stderr, "  而 `dev edit` 只许改本提案**声明过**的件（越界写 ⇒ 2）⇒ 漏声明 = 那两件写不进去、门⑪ 必红。\n")
+		fmt.Fprintf(stderr, "  下一步：把这两件补进 `--file`（提得成仍 0 —— 本预检只报、不拦）。\n")
 	}
 	rec.ContractNo = contractVersionText()
 	rec.CreatedAt = time.Now().Format(time.RFC3339)
@@ -401,6 +511,76 @@ func cmdDevProposalNew(inv *invocation, stdout, stderr io.Writer) int {
 	return exitOK
 }
 
+// ---- 单片档的可机读声明件（★ GAP-20260928-65 的权威判据半 · `--from-file`）----
+
+// cmdDevProposalNewFromFile —— `dev proposal new --from-file <件>`：读一枚 JSON **对象**（一片提案的字段）
+// ⇒ 走**与 `--batch` 同一条**字段注入/校验链（`proposalFromItemInvocation` ＋ 上面那片单片路径）。
+//
+// 缺口（GAP-20260928-65）want 逐字给的病：`dev proposal new` 的自由文本字段（--evidence/--goal/--rollback/
+// --title）对反引号 / `$(` / `${` 无任何防呆 —— bash 会先做**命令替换**，把片段整个吃掉或替换成空；实害 =
+// 提案内容静默残废而工具不报错。★ 本档从**盘上**读这些文本（`os.ReadFile`）⇒ **不经 shell** ⇒ 从根上避开
+// 「自由文本在进程内无法分辨真危险/纯文本」那个死结（CLI 收到的是 shell 处理后的文本，真值已丢在 shell 里）。
+//
+// 三条口径（与 `--batch` 同源 · 一条都不放宽）：
+//
+//	① **读档 ≠ 放宽闸**：对象里认得的键摊成单片档旗标 ⇒ 逐条走**同一**校验链（目标回指 / 退点现读 /
+//	   出处 / 判据 / 声明件路）；真写仍要 `--yes`（同一 `writeGuardYes` 门）。本档只做**读档注入**，不新开闸、不跳闸。
+//	② **读档失败 / JSON 非法 ⇒ 明确报错并 rc=2**（✗ 别静默）：件还必须是一枚 JSON **对象**（数组 / 标量 / `null` ⇒ 退 2 点名）。
+//	③ **与单片旗标 / `--batch` 互斥**（意图不唯一 ⇒ 不猜、不静默选一路）。
+func cmdDevProposalNewFromFile(inv *invocation, stdout, stderr io.Writer) int {
+	specPath := strings.TrimSpace(inv.flagVal("--from-file"))
+	// ① 与单片旗标互斥（读档面给的就是这一整片字段 ⇒ 与逐枚旗标同给 = 意图不唯一）
+	if dup := proposalSingleFlagsPresent(inv); len(dup) > 0 {
+		msg := fmt.Sprintf("`--from-file` 与单片旗标互斥（同时给了：%s）—— 字段写进 `--from-file` 的件里",
+			strings.Join(dup, " · "))
+		inv.setErr("usage", "from_file_conflicts_single", msg)
+		fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
+		fmt.Fprintf(stderr, "⇒ 退 2 · 一件未写（要么逐枚旗标、要么一枚件 · 不许混着给）\n")
+		return exitUsage
+	}
+	// ①b 与 `--batch` 互斥（两枚读档口并存 ⇒ 意图不唯一 · 不猜、不静默选一路）
+	if strings.TrimSpace(inv.flagVal("--batch")) != "" {
+		inv.setErr("usage", "batch_fromfile_conflict", "`--batch` 与 `--from-file` 并存")
+		fmt.Fprintf(stderr, "%s: `--batch` 与 `--from-file` 两枚读档口并存 ⇒ 退 2 · 一件未写（批量走 `--batch`、单片走 `--from-file` · 不许同给）\n", progName)
+		return exitUsage
+	}
+	// ② 读件（读不到 ⇒ 退 2 点名 · ✗ 不静默）
+	raw, err := os.ReadFile(specPath)
+	if err != nil {
+		inv.setErr("usage", "from_file_unreadable", "--from-file 件读不到")
+		fmt.Fprintf(stderr, "%s: `--from-file` 件读不到 %s：%v ⇒ 不给结论（退 2 · 一件未写）\n", progName, specPath, err)
+		return exitUsage
+	}
+	// ③ 解成 JSON **对象**（数组 / 标量 / 非法 ⇒ 退 2 点名 · ✗ 不静默）
+	var item map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &item); err != nil {
+		inv.setErr("usage", "from_file_unparsable", "--from-file 件解不动")
+		fmt.Fprintf(stderr, "%s: `--from-file` 件解不动 %s：%v ⇒ 不给结论（退 2 · 一件未写）\n", progName, specPath, err)
+		fmt.Fprintf(stderr, "件形态：JSON **对象**（一片档 · 键 = 单片档旗标名去 `--`）· 例：\n")
+		fmt.Fprintf(stderr, "  {\"title\":\"…\",\"target\":\"D3b\",\"goal\":\"…\",\"evidence\":[\"GAP-…\"],\"rollback\":\"/…\",\"criterion\":\"%s gate run --fast\",\"file\":[\"core/…\"]}\n", progName)
+		return exitUsage
+	}
+	if item == nil {
+		inv.setErr("usage", "from_file_not_object", "--from-file 件不是一枚 JSON 对象")
+		fmt.Fprintf(stderr, "%s: `--from-file` 件里**不是一枚 JSON 对象**（收到 `null`）⇒ 不给结论（退 2 · 一件未写）\n", progName)
+		return exitUsage
+	}
+	// ④ 摊成合成 invocation（复用 `--batch` 同一条键注入面 · 认不得的键 / 坏值 ⇒ 退 2 点名）
+	s, why := proposalFromItemInvocation(inv, "`--from-file` 件", item)
+	if why != "" {
+		inv.setErr("usage", "from_file_bad_item", why)
+		fmt.Fprintf(stderr, "%s: %s\n", progName, why)
+		fmt.Fprintf(stderr, "⇒ 退 2 · 一件未写\n")
+		return exitUsage
+	}
+	// ⑤ 走**与单片档完全同一条**路（同一函数）：字段注入 → 逐条闸 → 干跑 / 真写 / 回读对拍。
+	//   只把「读档**之外**由 shell 决定的档位」（--dry-run / --yes / --json）从父 invocation 透传下去 ——
+	//   其余字段一律只从**件**来（✗ 不与父的逐枚旗标混：已在 ① 里互斥拒掉）。
+	s.dryRun, s.yes = inv.dryRun, inv.yes
+	s.jsonGiven, s.fields = inv.jsonGiven, inv.fields
+	return cmdDevProposalNew(s, stdout, stderr)
+}
+
 // ---- 批量档（★ GAP-20260927-413 · 甲案「可机读批量档」）----
 
 // proposalBatchKeys —— `--batch` 件里每一格**认得的键**（键 = 单片档旗标名去掉前导 `--`）。
@@ -431,23 +611,30 @@ func proposalSingleFlagsPresent(inv *invocation) []string {
 	return hit
 }
 
-// proposalBatchItemInvocation 把 `--batch` 件里的**一格**摊成一次「单片档」的合成 invocation
-// （键 = 旗标名去 `--` · 值 = 字符串或字符串数组）—— 逐格复用单片档那条**唯一**的路，不另写第二套闸。
-// why 非空 ⇒ 这一格形状不合法（点名到底）。
-func proposalBatchItemInvocation(parent *invocation, idx int, item map[string]json.RawMessage) (*invocation, string) {
+// proposalFromItemInvocation 把一枚 JSON 对象（键 = 单片档旗标名去 `--` · 值 = 字符串或字符串数组）
+// 摊成一次「单片档」的合成 invocation —— **唯一**的 JSON→字段注入面：`--batch` 的每一格与 `--from-file`
+// 的那一枚对象**共用**它（✗ 不造第二套闸）。label 用于报错点名（例：「`--batch` 第 3 格」/「`--from-file` 件」）。
+// why 非空 ⇒ 这一枚形状不合法（点名到底）。
+func proposalFromItemInvocation(parent *invocation, label string, item map[string]json.RawMessage) (*invocation, string) {
 	s := &invocation{path: parent.path, args: []string{"new"}, kv: map[string][]string{}}
 	for k, raw := range item {
 		if !proposalBatchKnownKey(k) {
-			return nil, fmt.Sprintf("`--batch` 第 %d 格认不得的键 %q —— 认得的键（= 单片档旗标名去 `--`）：%s",
-				idx+1, k, strings.Join(proposalBatchKeys, " · "))
+			return nil, fmt.Sprintf("%s认不得的键 %q —— 认得的键（= 单片档旗标名去 `--`）：%s",
+				label, k, strings.Join(proposalBatchKeys, " · "))
 		}
 		vals, why := proposalBatchKeyVals(raw)
 		if why != "" {
-			return nil, fmt.Sprintf("`--batch` 第 %d 格的键 %q %s", idx+1, k, why)
+			return nil, fmt.Sprintf("%s的键 %q %s", label, k, why)
 		}
 		s.kv["--"+k] = append(s.kv["--"+k], vals...)
 	}
 	return s, ""
+}
+
+// proposalBatchItemInvocation 把 `--batch` 件里的**一格**摊成一次「单片档」的合成 invocation
+// —— 逐格复用单片档那条**唯一**的路（转调 `proposalFromItemInvocation` · 与 `--from-file` 同一面）。
+func proposalBatchItemInvocation(parent *invocation, idx int, item map[string]json.RawMessage) (*invocation, string) {
+	return proposalFromItemInvocation(parent, fmt.Sprintf("`--batch` 第 %d 格", idx+1), item)
 }
 
 // proposalBatchKeyVals 收一格的键值（字符串 / 字符串数组两形态 —— 别的形态拒执，不猜）。
@@ -884,6 +1071,27 @@ func cmdDevProposalShow(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "  要点   : %s\n", r.Goal)
 		fmt.Fprintf(stdout, "  出处   : %s\n", strings.Join(r.Evidence, " · "))
 		fmt.Fprintf(stdout, "  退点   : %s\n", r.Rollback)
+		// ★ GAP-20261005-70（本单）：**提案级退点清单**在读回面**逐件列出**（每件一条退点 ⇒ 多件提案不再「只
+		//   有一件有退点」）。只在清单形态时多印这块；单值形态（legacy）逐字不变。
+		if m, ok := rollbackManifestOf(r.Rollback); ok {
+			keys := make([]string, 0, len(m))
+			for k := range m {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			fmt.Fprintf(stdout, "  ★ 退点清单（提案级 · 每件一条 · %d 件）—— 逐件可读：\n", len(keys))
+			for _, k := range keys {
+				mark := "★ 前态件读不到（现读不可得）"
+				rp := m[k]
+				if !filepath.IsAbs(rp) {
+					rp = filepath.Join(repoRoot(), filepath.FromSlash(rp))
+				}
+				if st, err := os.Stat(rp); err == nil && !st.IsDir() {
+					mark = fmt.Sprintf("现读可得（%d 字节）", st.Size())
+				}
+				fmt.Fprintf(stdout, "      %s → %s（%s）\n", k, m[k], mark)
+			}
+		}
 		fmt.Fprintf(stdout, "  判据   : %s\n", orDash(r.Criterion))
 		fmt.Fprintf(stdout, "  提出者 : %s（kind=%s%s）\n", r.Subject, r.SubjectKind, eggSuffix(r.EggID))
 		fmt.Fprintf(stdout, "  批准者 : %s（kind=%s）—— 「提 ≠ 批」两个字段 · 批只人给（§九 M18 C4）\n",
@@ -924,10 +1132,15 @@ func cmdDevProposalRevise(inv *invocation, stdout, stderr io.Writer) int {
 	id := inv.args[1]
 	newCrit := strings.TrimSpace(inv.flagVal("--criterion"))
 	newCritNew := strings.TrimSpace(inv.flagVal("--criterion-new"))
+	// ★ 本枚（main.go 开窗第 5 条）：`--add-file <路径>` —— 补件档（可选 · 可重复 · 幂等：已在
+	//   `files[]` 里 ⇒ 不重复加、不当错误）。取值面与同族 `--file` 逐字同（`inv.flagVals` 逐枚收 +
+	//   `trimAll`），且**不做路径存在性校验** —— 与 `new --file` 的既有口径一致（该族只声明路径、
+	//   由 `dev edit` 那一步按提案声明判）。
+	addFiles := trimAll(inv.flagVals("--add-file"))
 	// ① 至少给一格（都不给 ⇒ 没改任何东西 ⇒ 用法错 2 · 零写）
-	if newCrit == "" && newCritNew == "" {
+	if newCrit == "" && newCritNew == "" && len(addFiles) == 0 {
 		inv.setErr("usage", "nothing_to_revise", "没给要改的判据")
-		fmt.Fprintf(stderr, "%s: `dev proposal revise` 至少要给 `--criterion` 或 `--criterion-new` 之一（都没给 = 没改任何东西 ⇒ 退 2 · 零写）\n", progName)
+		fmt.Fprintf(stderr, "%s: `dev proposal revise` 至少要给 `--criterion` / `--criterion-new` / `--add-file` 之一（都没给 = 没改任何东西 ⇒ 退 2 · 零写）\n", progName)
 		return exitUsage
 	}
 	// ② 判据校验 —— 与 `new` 同源的两个唯一判定口（强档 criterionRunnable / 前瞻档 criterionForward）。
@@ -981,6 +1194,15 @@ func cmdDevProposalRevise(inv *invocation, stdout, stderr io.Writer) int {
 	if newCritNew != "" {
 		rec.CriterionNew = newCritNew
 	}
+	// ★ 本枚：把 `--add-file` 的每一枚**加进** `rec.Files`（**幂等** —— `containsStr` 保「已在该数组里 ⇒
+	//   不重复加、且不当错误」）；`oldFiles` 留作改动前后对拍读数（dry-run / 真写都印）。
+	oldFiles := append([]string(nil), rec.Files...)
+	for _, f := range addFiles {
+		if containsStr(rec.Files, f) {
+			continue
+		}
+		rec.Files = append(rec.Files, f)
+	}
 	// ④ `--dry-run`：只出计划件、零副作用（与单片 `new` 同一条三态口径）
 	if inv.dryRun {
 		if inv.jsonGiven {
@@ -992,6 +1214,9 @@ func cmdDevProposalRevise(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "提案 id  : %s（--dry-run 未写盘）\n", rec.ID)
 		fmt.Fprintf(stdout, "  判据   : %s → %s\n", orDash(oldCrit), orDash(rec.Criterion))
 		fmt.Fprintf(stdout, "  前瞻   : %s → %s\n", orDash(oldCritNew), orDash(rec.CriterionNew))
+		if len(addFiles) > 0 {
+			fmt.Fprintf(stdout, "  补件   : [%s] → [%s]\n", strings.Join(oldFiles, ", "), strings.Join(rec.Files, ", "))
+		}
 		fmt.Fprintf(stderr, "（--dry-run：只出件 · 零副作用 —— 未改任何文件）\n")
 		return exitOK
 	}
@@ -1048,6 +1273,9 @@ func cmdDevProposalRevise(inv *invocation, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stderr, "提案件（已改判据）: %s\n", rec.Path)
 	fmt.Fprintf(stderr, "  判据   : %s → %s\n", orDash(oldCrit), orDash(rec.Criterion))
 	fmt.Fprintf(stderr, "  前瞻   : %s → %s\n", orDash(oldCritNew), orDash(rec.CriterionNew))
+	if len(addFiles) > 0 {
+		fmt.Fprintf(stderr, "  补件   : [%s] → [%s]\n", strings.Join(oldFiles, ", "), strings.Join(rec.Files, ", "))
+	}
 	fmt.Fprintf(stderr, "零副作用口径：本命令**不触主控**（零 HTTP）· **不写入仓** —— 只改本提案一份（状态目录）\n")
 	return exitOK
 }
@@ -1399,10 +1627,80 @@ func declaredFilesWhy(files []string) string {
 //	   （✗ 不把合法形态一并拒）。
 //
 // 返回空串 = 现读可得；非空 = **逐字**的「退点不可得」理由（调用方据此拒执 rc=2）。
+// rollbackManifestOf —— `--rollback` 的**提案级退点清单**形态（缺口 `GAP-20261005-70` · 本单）。
+//
+// 病灶：一件提案声明多件（`--file` 可重复）时 `--rollback` 只有**一个槽**、只盖得住一件 ⇒
+// 多件提案里其余件退不了（2026-10-05 当日 58 件多件提案：42 件只盖 1 件 · 16 件零盖）。
+// 本形态让**一件提案**装下**每件的退点**（一枚 JSON `{件仓内相对路径: 该件前态件路径}`），
+// 而提案仍**只占一个 `rollback_ref` 槽** —— ✗ 不放宽成多槽（那会撞已定的「一件一退点」口径）。
+//
+// 判定（唯一判定口）：`{`-开头且解得出**非空**的 string→string 映射 ⇒ 清单形态。
+// 接口面：`dev proposal show` 逐件列出（本单）；退点档按件挑匹配（`dev edit` 侧，见缺口账目标值）。
+func rollbackManifestOf(v string) (map[string]string, bool) {
+	s := strings.TrimSpace(v)
+	if !strings.HasPrefix(s, "{") {
+		return nil, false
+	}
+	var m map[string]string
+	if err := json.Unmarshal([]byte(s), &m); err != nil || len(m) == 0 {
+		return nil, false
+	}
+	return m, true
+}
+
+// rollbackLooksLikeManifest —— 值「看起来是清单」（`{`-开头）。解不出时由 `rollbackUsableWhy`
+// 判死（✗ 不许悄悄退回单值形态 —— 把一枚残废的清单读成「合法方式文本」= 假绿）。
+func rollbackLooksLikeManifest(v string) bool {
+	return strings.HasPrefix(strings.TrimSpace(v), "{")
+}
+
+// rollbackUsableWhy —— 退点「现读可得」判定（**fail-closed** · `GAP-20261009-01`）。
+//
+// 病灶：`--rollback` 此前只判**非空** ⇒ 一个**读不到的裸名**（如 `/core__cmd__zerg__family_build.go`：
+// 既非仓内相对路径、也非可执行命令）也满足「没退点的件不许提」并落地，而 `dev edit` 的退建议照它核
+// sha256 取改前态时**取不到任何东西**（`rollback_cmd=""` · 档 2）⇒ 退点在**提出这一步**就该判死。
+//
+// 判法（✗ 不新创形态）：
+//
+//	⓪ **提案级退点清单**（`GAP-20261005-70` · 本单）：`{`-开头 ⇒ 按清单收 —— 逐条核「键 = 仓内相对
+//	   路径」、「值 = 现读可得的普通件」；解不出 / 任一条不过 ⇒ 判死（✗ 退回单值形态）。
+//	① **路径形**退点（`filepath.IsAbs` 或含目录分隔符 `/`）：按 `devEditReturnPointOf` 同一口径解析
+//	   （绝对按原样、相对按仓根拼）⇒ 必须是**现读得到的普通件**（不是读不到、也不是目录）；
+//	② 其余 = schema 已认的**「方式」**文本（`--rollback <方式>`，如 `git revert …`）⇒ 按其本义收
+//	   （✗ 不把合法形态一并拒）。
+//
+// 返回空串 = 现读可得；非空 = **逐字**的「退点不可得」理由（调用方据此拒执 rc=2）。
 func rollbackUsableWhy(v string) string {
 	v = strings.TrimSpace(v)
 	if v == "" {
 		return "" // 非空那一档由上游 `rollback_required` 单独判
+	}
+	if rollbackLooksLikeManifest(v) {
+		m, ok := rollbackManifestOf(v)
+		if !ok {
+			return "退点不可得：退点看起来是**清单**（`{`-开头）却解不出 `{件: 前态件路径}` 的 JSON 映射 —— 退点要么一条**读得到的路径**（单值形态），要么一枚**能解的清单**"
+		}
+		keys := make([]string, 0, len(m))
+		for k := range m {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, file := range keys {
+			pre := m[file]
+			if file == "" || pre == "" {
+				return "退点不可得：清单里件路径 / 前态件路径不许为空（`{\"<件>\":\"<前态件>\"}` 两栏都要非空）"
+			}
+			if filepath.IsAbs(file) || strings.Contains(file, "..") {
+				return fmt.Sprintf("退点不可得：清单的键 %q 要是**仓内相对路径**（不许绝对路径、不许 `..`）", file)
+			}
+			if rollbackLooksLikeManifest(pre) {
+				return fmt.Sprintf("退点不可得：清单里件 %q 的前态件也是清单（%s）—— 前态件要一条**路径**，不是第二层清单", file, pre)
+			}
+			if why := rollbackUsableWhy(pre); why != "" {
+				return fmt.Sprintf("退点不可得：清单里件 %q 的前态件 %q 取不回改前态 —— %s", file, pre, why)
+			}
+		}
+		return ""
 	}
 	if !filepath.IsAbs(v) && !strings.Contains(v, "/") {
 		// 非路径形 = 「方式」文本（schema 认的形态）⇒ 按其本义收。

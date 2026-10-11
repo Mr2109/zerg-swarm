@@ -32,11 +32,14 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -45,7 +48,12 @@ import (
 )
 
 // gateRunStepFields —— `gate run --step … --json` 的全部字段（K1：机器面先定）。
-var gateRunStepFields = []string{"step", "scope", "mode", "verdict", "rc", "secs", "log", "outdir", "log_body"}
+//
+// ★ 2026-10-10（缺口 `GAP-20260927-286`）：补 `per_rule` / `examples` 两格 —— 门步
+// （`check-doc-name`/`check-doc-meta` 一族）的**逐规则命中数**与**样例命中**过去只落在
+// 那一步的日志正文里 ⇒ 消费者只能翻文本。本表是**族件变量**（`main.go` 的 `gate run` 命令
+// 树用 `fields: gateRunStepFields` 引用它）⇒ 加格**不动 `main.go`**（登记面/帮助面同源随动）。
+var gateRunStepFields = []string{"step", "scope", "mode", "verdict", "rc", "secs", "log", "outdir", "log_body", "per_rule", "examples"}
 
 // normStepName —— 步名**归一**（★ 2026-10-01 · 缺口 `GAP-20261001-31`）：只做「去掉全部反斜杠」，
 // 与**权威面同一串空间** —— 脚本自己的 `filter_step` / `step_decl_count` 就是这么比的
@@ -233,6 +241,12 @@ func gateRunStepJSON(inv *invocation, stdout, stderr io.Writer, root, script str
 				progName, lp, lerr)
 		}
 	}
+	// ⑥ 缺口 `GAP-20260927-286`（P2 · 命令面）：`gate run --json` 面补 `per_rule` 与 `examples` ——
+	//   门步（`check-doc-name`/`check-doc-meta` 一族）的**逐规则命中数**与**样例命中**只在**那一步自己的
+	//   日志正文**里（= `log_body` 的真源，上一段已读回）⇒ 过去消费者只能翻文本。本处从那正文解析出两格：
+	//   `per_rule` = `{"N2":8,…}`（规则号 ⇒ 命中数）· `examples` = `{"N2":["…"],…}`（规则号 ⇒ 样例行）。
+	//   口径：日志里没有这一形态 ⇒ 两格写「（读不到…）」哨兵（与 `verdict`/`log_body` 同一条纪律 · 不许编数）。
+	row["per_rule"], row["examples"] = gateRunStepPerRule(row["log_body"])
 	// ★ 缺口 `GAP-20260927-430`（P1 · 命令面）：机器面**不印可变路径** —— `outdir`/`log` 两格印的是
 	//   日志目录（**调用方给的** `--outdir` 或命令面**自建**的临时目录）⇒ 目录名（含本机 TMPDIR 段 ·
 	//   名字长短）漏进 stdout，同一 argv 换个目录名 / 换个 TMPDIR 形态就换一串字节，矩阵格与字节型
@@ -924,4 +938,120 @@ func gateRunAcquireInstance(step string, stderr io.Writer) (*gateInstanceLock, i
 		os.Getpid(), time.Now().Format(time.RFC3339), step, strings.Join(os.Args, " "))
 	_ = f.Sync()
 	return &gateInstanceLock{f: f}, exitOK
+}
+
+// ── 缺口 `GAP-20260927-286`：`gate run --json` 面补 `per_rule` 与 `examples`（P2 · 命令面）────────────
+//
+// 病（现读实测 · 2026-09-27）：`zerg gate run --step <步名> --json <字段>` 只出九格；而门步
+// （`check-doc-name`/`check-doc-meta` 一族）的**逐规则命中数**与**样例命中**只落在**那一步自己的
+// 日志正文**里（`log_body` 的真源 = 结果表第 5 列那件日志）⇒ 消费者要拿到「哪条规则命中几条、
+// 典型例子是什么」只能翻文本。本补两格**从那段日志正文解析出来**：
+//
+//	per_rule —— `{"N2":8,"N3":43,…}`（规则号 ⇒ 命中数）
+//	examples —— `{"N2":["…","…"],…}`（规则号 ⇒ 样例行，前缀 `· ` 已剥）
+//
+// 口径（与 `verdict`/`log_body` 同一条纪律）：
+//
+//	· 真源仍是**脚本自己落的日志正文** ⇒ 命令面不自己跑任何东西（✗ 不另起子进程、✗ 不自己判 PASS/FAIL）；
+//	· 日志里没有这一形态（别的门没有逐规则段 / 日志读不到 / 结果表没落）⇒ 两格写「（读不到…）」哨兵，**不许编数**；
+//	· 行形逐字取自 `check-doc-name` 的 `cdnPrint` 与 `check-doc-meta` 的 `cdmPrintLines`（同一方言）：
+//	     `  N2 [FAIL] ②空格/全角：… —— 命中 8（可改面 8 · 冻结区 0）`
+//	     `      · 设计-判据 CLI 化-v1.0-20260930.md → 名称含 U+0020`
+//	· 哑化负控：`ZERG_GATE_STEP_NOPERRULE` 非空 ⇒ 跳过解析（判据件据此证「解析出来的值」那条断言能判红）。
+
+// gateRunStepNoPerRuleEnv —— 关掉 `per_rule`/`examples` 解析的现成口子（非空即关；默认**开**）。哑化负控用。
+const gateRunStepNoPerRuleEnv = "ZERG_GATE_STEP_NOPERRULE"
+
+// gateRunStepPerRuleMiss —— 日志里没有逐规则/样例段时两格共用的哨兵（不许编数）。
+const gateRunStepPerRuleMiss = "（读不到：这一步的日志里没有逐规则/样例段）"
+
+// gateRunStepPerRuleRe —— 「逐规则命中」那一行的形态：`  <规则号> [<档>] <说明> —— 命中 <N>（…）`。
+//
+//	规则号 = 字母＋数字（`N1..N7` / `M1…`）；命中数取 `—— 命中 <N>（` 里的 N。
+var gateRunStepPerRuleRe = regexp.MustCompile(`^  ([A-Za-z]+[0-9]+) \[[^\]]*\] .*—— 命中 ([0-9]+)（`)
+
+// gateRunStepPerRule —— 从门步日志正文里抠「逐规则命中数」+「样例行」（缺口 `GAP-20260927-286`）。
+// 返回两条 **JSON 字符串**（信封的值格是字符串 ⇒ 逐字 JSON 串，消费者可再解一层）；没有这一形态 ⇒ 哨兵。
+func gateRunStepPerRule(logBody string) (string, string) {
+	if strings.TrimSpace(logBody) == "" ||
+		strings.HasPrefix(strings.TrimSpace(logBody), "（读不到") ||
+		strings.TrimSpace(os.Getenv(gateRunStepNoPerRuleEnv)) != "" {
+		return gateRunStepPerRuleMiss, gateRunStepPerRuleMiss
+	}
+	perRule := map[string]int{}
+	examples := map[string][]string{}
+	cur := ""
+	for _, ln := range strings.Split(logBody, "\n") {
+		if m := gateRunStepPerRuleRe.FindStringSubmatch(ln); m != nil {
+			if n, err := strconv.Atoi(m[2]); err == nil {
+				perRule[m[1]] = n
+			}
+			cur = m[1]
+			continue
+		}
+		body := strings.TrimSpace(ln)
+		if cur == "" || !strings.HasPrefix(body, "· ") {
+			continue
+		}
+		ex := strings.TrimPrefix(body, "· ")
+		if strings.HasPrefix(ex, "…另 ") {
+			continue // 截断标记（`…另 N 条（--max-examples 调整）`）不是一条样例
+		}
+		examples[cur] = append(examples[cur], ex)
+	}
+	if len(perRule) == 0 {
+		return gateRunStepPerRuleMiss, gateRunStepPerRuleMiss
+	}
+	pb, _ := json.Marshal(perRule)
+	eb, _ := json.Marshal(examples)
+	return string(pb), string(eb)
+}
+
+// ── 缺口 `GAP-20261001-35`：单步档**不带 `--only-step`** 时 stdout 首行显式声明 ──────────────────────
+//
+// 病（现读实测 · 2026-10-01 · laneB431 专核）：`zerg gate run --step <步名>` **不给** `--only-step`
+// 时，脚本先跑整套『合成步骤·不碰真目标』自检（`precommit-gates.sh` 的 `self_test()`），其输出与
+// 真那一步的输出**混在同一条 stdout** 上（自检在 :1 与 :91 印出 glossary 等脚本名，真那一步在 :200）
+// ⇒ 已有**两次独立证人**把它当成「跑成了别门」并据此报缺口（`GAP-20261001-31` 因此误入账后又销为不做）。
+//
+// 治法（只补命令面能补的那一半）：命令面在 exec **之前**往 stdout 补一行**显式声明**（= stdout 首行 ·
+// 逐字串见 `gateRunStepMixedNotice`）—— 它同时就是**自检段的可机检分隔标记**（按该串定位即知
+// 「以下全是自检、不是你要跑的那一步」）；真跑段的分隔标记是脚本自己那行 `── 单步档（--step）：… ──`。
+//
+// 排除面（声明会失真的都排除）：
+//
+//	· `--only-step`（跳过整套合成自检）/ `--self-test`（只跑该门**自己**的自检）—— 两者都不产合成段；
+//	· `--json` / `--show-log` / `--verify-live` / `--` 四档由 `gate.go` 的 run 支**更早返回**
+//	  （它们各自的 stdout 面是包封 / 只有那一步的日志正文 / 那一步命令串的 stdout —— 不混合成段）
+//	  ⇒ 根本走不到本函数；
+//	· 全档（缺 `--step`）⇒ 没有「你要跑的那一步」，本函数不触发。
+//
+// 哑化负控：`ZERG_GATE_STEP_NONOTICE` 非空 ⇒ 不打这行（判据件据此证「首行必须出现」那条断言能判红）。
+
+// gateRunStepMixedNotice —— stdout 首行那串**逐字声明**（缺口账 `GAP-20261001-35` 的 want 原文）。
+const gateRunStepMixedNotice = "以下为合成自检输出，不是你要跑的那一步"
+
+// gateRunStepNoNoticeEnv —— 关掉该声明的现成口子（非空即关；默认**开**）。哑化负控用。
+const gateRunStepNoNoticeEnv = "ZERG_GATE_STEP_NONOTICE"
+
+// gateRunWantsMixedNotice —— 这一发是不是「单步档 · 不带 `--only-step`」那种会先跑整套合成自检的形态。
+func gateRunWantsMixedNotice(tail []string) bool {
+	if strings.TrimSpace(os.Getenv(gateRunStepNoNoticeEnv)) != "" {
+		return false // 现成口子：关声明（哑化负控用）
+	}
+	if strings.TrimSpace(gateStepNameFrom(tail)) == "" {
+		return false // 非单步档：没有「你要跑的那一步」这一说法
+	}
+	for _, a := range tail {
+		if a == "--only-step" || a == "--self-test" {
+			return false // 这两档不产合成自检段 ⇒ 声明会失真
+		}
+	}
+	return true
+}
+
+// gateRunStepNotice —— 把那行显式声明写进 stdout（由 `gate.go` 的 run 支在 exec **之前**调 ⇒ 它是 stdout 首行）。
+func gateRunStepNotice(stdout io.Writer) {
+	fmt.Fprintf(stdout, "%s（不带 `--only-step` 时先跑整套『合成步骤·不碰真目标』自检；你要跑的那一步在自检段之后）\n",
+		gateRunStepMixedNotice)
 }

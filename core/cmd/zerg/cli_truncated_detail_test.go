@@ -73,8 +73,8 @@ func cutWarningCount(warns []string) int {
 // （`impactResolve`：绝对路径 / `..` ⇒ rc=2「目标解析不到」）⇒ **仓外件**
 // （含 `t.TempDir()`）拿不到 rc=1，只有仓内路径才是「目标有效但零命中」。
 //
-// 为什么**稳定**：④ 词法层拿件名（`path.Base`）当查询词，走 git 的 grep -w
-// （只搜 **tracked** 件）⇒ 未跟踪的合成件既不在面内、件名也在 tracked 面里无人提
+// 为什么**稳定**：④ 词法层拿件名（`path.Base`）当查询词，走**工作树面**
+// （tracked + 未跟踪 · 与 `zerg code find` 同源 · 共用同一排除表）—— 合成件虽**在面内**，但其件名（连同随机临时目录名）无人写进任何件的正文
 // ⇒ 零命中。★ 旧靶钉在一枚**真源件**上（靠它当时恰好零命中），正常开发一动那件
 // 就翻成有命中 ⇒ 前提失效（本用例就是这么红的）——合成件的件名连同临时目录名一起
 // 随机 ⇒ 与任何真源件都不撞名，谁的正常开发都改不到它。
@@ -276,6 +276,12 @@ func TestTruncatedDetail_CardLevelSameSource(t *testing.T) {
 	_ = json.Unmarshal(d["kept_items"], &kept)
 	_ = json.Unmarshal(d["dropped_items"], &dropped)
 	_ = json.Unmarshal(d["total_items"], &total)
+	// ★ ② 冻结下限 = 12（棘轮 · 只许增不许减）：13 条 > 上限 12 ⇒ 卡片现读留下 12 条
+	//   —— 结构静默变小（留下 < 12）⇒ 本格判红，✗ 不许静默绿。
+	tdN := len(card.Items)
+	if tdN < 12 {
+		t.Fatalf("② 冻结下限 12 被破：卡片只留下 %d 条（棘轮 · 只许增不许减）", tdN)
+	}
 	if kept != len(card.Items) {
 		t.Errorf("卡片面：`kept_items` = %d 而卡片留下 %d 条", kept, len(card.Items))
 	}
@@ -297,6 +303,12 @@ func TestTruncatedDetail_CardLevelSameSource(t *testing.T) {
 	}
 	if !inSet {
 		t.Errorf("卡片面：`cut_from` = %q 不在三值闭集 %v 内", cutFrom, cutSet)
+	}
+	// ★ ② 冻结下限 = 12（棘轮 · 只许增不许减）：同一条卡片 ⇒ 现读留下 12 条
+	//   —— 结构静默变小（留下 < 12）⇒ 本格判红，✗ 不许静默绿。
+	tdM := len(card.Items)
+	if tdM < 12 {
+		t.Fatalf("② 冻结下限 12 被破：卡片只留下 %d 条（棘轮 · 只许增不许减）", tdM)
 	}
 	t.Logf("卡片面逐字：%s（留下 %d 条 · 卡片警告 %v）", detail, len(card.Items), card.Warnings)
 

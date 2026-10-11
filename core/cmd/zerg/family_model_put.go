@@ -74,7 +74,9 @@ func mputFirstToken(s string) string {
 // mputRsync —— 跑一次传输：`rsync -a --partial -e <ssh 通道> <源件> <机>:<落点>`（stdout/stderr 逐字透传）。
 // 返回 (rc, err)：err≠nil ⇒ rsync 程序起不动（缺 `rsync`）。
 func mputRsync(host, src, to string, stdout, stderr io.Writer) (int, error) {
-	cmd := exec.Command(mputRsyncBin, "-a", "--partial", "-e", mputSSHTransport(), src, host+":"+to)
+	cmd := armChildGroup(exec.Command(mputRsyncBin, "-a", "--partial", "-e", mputSSHTransport(), src, host+":"+to))
+	runningChild = cmd
+	defer func() { runningChild = nil }()
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	if err := cmd.Run(); err != nil {
@@ -205,6 +207,7 @@ func cmdModelPut(inv *invocation, stdout, stderr io.Writer) int {
 	}
 	if !inv.yes {
 		inv.setErr("usage", "yes_required", "D2 档缺 --yes ⇒ 不执行")
+		guardMarkDecision(inv, guardDecisionApproval)
 		fmt.Fprintf(stderr, "%s: `model put` 是 D2 档（真传输）—— 缺 --yes ⇒ 不执行\n", progName)
 		plan(stderr)
 		fmt.Fprintf(stderr, "先看计划件：%s model put %s --to %s --dry-run\n", progName, eggID, to)

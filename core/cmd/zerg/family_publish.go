@@ -124,6 +124,11 @@ func hasFieldName(fields []string, want string) bool {
 
 // cmdPublishTreeHas —— `zerg publish tree has <件> --tree <树>…`：一树一行、行行带口径 + `head_sha`。
 func cmdPublishTreeHas(inv *invocation, stdout, stderr io.Writer) int {
+	// ③ 件级负控入口：`--self-test` ⇒ 走**合成夹具成对负控**（不碰真目标）—— 与 `approve --self-test`
+	// 同形（`family_approve.go:451`）。`--self-test` 是全局布尔（`main.go` 已解析进 `inv.selfTest`）。
+	if inv.selfTest {
+		return publishTreeHasSelfTest(stdout, stderr)
+	}
 	// ── ① `K2` 甲档：给了 `--json` 而不给字段 ⇒ 退码取自退码表（`usage` = 2）+ stdout 0 字节 ──
 	if inv.jsonGiven {
 		if rc := requireFields(inv, stderr); rc != exitOK {
@@ -251,4 +256,40 @@ func cmdPublishTreeHas(inv *invocation, stdout, stderr io.Writer) int {
 	// 「不在」也是一条答案（与 `net probe` 档② 同一条口径：答案是「否」⇒ 照出 · 退 0）：
 	// 本命令的 `8` 只留给「讲不出答案」（树不在盘 / 身份读不到）。
 	return listCmd(inv, stdout, stderr, publishTreeHasFields, items)
+}
+
+// publishTreeHasSelfTest —— `zerg publish tree has --self-test`：合成夹具**成对负控**（不碰真目标 ·
+// 零写盘）。覆盖本件两条纯口径函数：
+//
+//	① 正控 = 合规相对件名 ⇒ 判合格（空串）；② 负控 = 绝对路径 / 前导 `./` / `..` 出树 / 空段 / 空名
+//	   ⇒ **逐个判不合格**（期望非空 ⇒ 证「件名形状门」真会红）。
+//	② 正控 = `publishTreeAbs` 相对名 ⇒ 得绝对路径。
+//
+// 任一格与期望不符 ⇒ rc=1（本自检**自己就能红** —— 负控不是装饰）。
+func publishTreeHasSelfTest(stdout, stderr io.Writer) int {
+	bad := 0
+	chk := func(cond bool, label string) {
+		if cond {
+			fmt.Fprintf(stdout, "   ✓ %s\n", label)
+			return
+		}
+		fmt.Fprintf(stderr, "   ✗ %s\n", label)
+		bad++
+	}
+	// ① 正控：合规件名 ⇒ 判合格（空串 = 合格）
+	chk(publishPathBad("docs/zh/参考-命令行.md") == "", "正控：合规相对件名 ⇒ 判合格")
+	// ② 负控（期望 = 不合格）：逐档证「件名形状门」真会红
+	chk(publishPathBad("/etc/passwd") != "", "负控：绝对路径 ⇒ 判不合格（期望非空）")
+	chk(publishPathBad("./x.md") != "", "负控：前导 `./` ⇒ 判不合格")
+	chk(publishPathBad("a/../b.md") != "", "负控：`..` 出树 ⇒ 判不合格")
+	chk(publishPathBad("a//b.md") != "", "负控：空路径段 ⇒ 判不合格")
+	chk(publishPathBad("") != "", "负控：空件名 ⇒ 判不合格")
+	// ② 正控：树名绝对化（相对写法 ⇒ 绝对）
+	chk(publishTreeAbs(".") != "", "正控：树名绝对化后非空（口径 = 绝对路径）")
+	if bad > 0 {
+		fmt.Fprintf(stderr, "%s: `publish tree has --self-test` 判红：%d 格不过\n", progName, bad)
+		return exitFail
+	}
+	fmt.Fprintln(stdout, "publish tree has --self-test：成对负控全过（正控 2 + 负控 5 · 合成夹具 · 未碰真目标）")
+	return exitOK
 }

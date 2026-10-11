@@ -551,12 +551,42 @@ func cmdSandboxProbe(inv *invocation, stdout, stderr io.Writer) int {
 	return sandboxRunScript(inv, stdout, stderr, "python3", rel, extra)
 }
 
+// stripGlobalLeak —— 从**透传尾巴**里摘掉由**全局层**（`parseInvocation` / 墙钟面）**已消费**的旗标（连值）。
+//
+// 病：`parseInvocation` 把 `--node` / `--context` / `--timeout` 收进 `inv`，却**不清 `inv.orig`**
+// ⇒ 凡「透传型壳」按 `orig[len(path):]` 拼尾巴者，会把**已消费**的它们再转给底层 ⇒ 底层闭白名单
+// 一律拒（`isolate-ro` 报「未知旗标 --node」· `cocoon egg` / `sandbox verify` 报 argparse
+// 「unrecognized arguments」）。
+//
+// ★ 只摘这 **3** 枚：其余全局布尔/取值（`--all`/`--full`/`--fast`/`--deep`/`--strict`/`--wide`/
+// `--idempotency-key`/`--schema`/`--accept`…）**无全局消费者**，摘了就成**静默吞**（硬约束⑤：
+// 既有退码一字不动）；尤其 `--all`/`--self-test` 在 `isolate-ro`/`cocoon egg` 里是**真旗标**
+// ⇒ ✗ 一律不摘。
+func stripGlobalLeak(tail []string) []string {
+	out := make([]string, 0, len(tail))
+	for i := 0; i < len(tail); i++ {
+		a := tail[i]
+		switch {
+		case a == "--node" || a == "--context" || a == "--timeout":
+			// 取值形（裸）：连值一并摘（✗ 别把值留下当位置参）。
+			if i+1 < len(tail) && !strings.HasPrefix(tail[i+1], "-") {
+				i++
+			}
+			continue
+		case strings.HasPrefix(a, "--node=") || strings.HasPrefix(a, "--context=") || strings.HasPrefix(a, "--timeout="):
+			continue
+		}
+		out = append(out, a)
+	}
+	return out
+}
+
 // cmdSandboxVerify —— `zerg sandbox verify [--wall <茧壁二进制> | --self-test]`（判据7 两态门禁 · 批1）。
 // 旗标原样透传给 `verify-two-states.py`（`--wall` / `--self-test` 等由底层脚本认）。
 func cmdSandboxVerify(inv *invocation, stdout, stderr io.Writer) int {
 	tail := []string{}
 	if len(inv.orig) > len(inv.path) {
-		tail = inv.orig[len(inv.path):]
+		tail = stripGlobalLeak(inv.orig[len(inv.path):])
 	}
 	return sandboxRunScript(inv, stdout, stderr, "python3", sandboxVerifyRel, tail)
 }
@@ -565,7 +595,7 @@ func cmdSandboxVerify(inv *invocation, stdout, stderr io.Writer) int {
 func cmdSandboxNegctl(inv *invocation, stdout, stderr io.Writer) int {
 	tail := []string{}
 	if len(inv.orig) > len(inv.path) {
-		tail = inv.orig[len(inv.path):]
+		tail = stripGlobalLeak(inv.orig[len(inv.path):])
 	}
 	return sandboxRunScript(inv, stdout, stderr, "bash", sandboxNegctlRel, tail)
 }
@@ -597,7 +627,7 @@ func cmdSandboxTest(inv *invocation, stdout, stderr io.Writer) int {
 	// 子动作名已消费（只是分派键）⇒ 其后的实参原样转给**该子动作各自的**夹具脚本（✗ 不翻译 · ✗ 四支不并壳）。
 	tail := []string{}
 	if len(inv.orig) > len(inv.path) {
-		tail = inv.orig[len(inv.path):]
+		tail = stripGlobalLeak(inv.orig[len(inv.path):])
 		if len(tail) > 0 {
 			tail = tail[1:]
 		}
@@ -691,11 +721,18 @@ func cmdWallEvidence(inv *invocation, stdout, stderr io.Writer) int {
 			progName, strings.Join(names, " | "), name)
 		return exitUsage
 	}
-	extra := []string{}
-	if len(inv.args) > 1 {
-		extra = inv.args[1:]
+	// ★ 本单 12a 诚实化：本命令 `passthrough:true`、用法串（`main.go` 命令树）承诺「旗标原样透传」
+	// ⇒ 尾巴照**同族一族**口径取 `inv.orig`（与 `cmdSandboxVerify` / `cmdSandboxNegctl` /
+	// `cmdSandboxTest` 同形），✗ 不用 `inv.args`（那样会把旗标丢掉、还把旗标的值当位置参漏下去）。
+	// 摘掉全局层已消费的旗标。
+	tail := []string{}
+	if len(inv.orig) > len(inv.path) {
+		tail = stripGlobalLeak(inv.orig[len(inv.path):])
+		if len(tail) > 0 {
+			tail = tail[1:]
+		}
 	}
-	return wallRunScript(inv, stdout, stderr, "python3", rel, extra)
+	return wallRunScript(inv, stdout, stderr, "python3", rel, tail)
 }
 
 // ── L1 批3（2026-10-08）：`zerg mcp serve` 真动作承载入口（★ 真 Go 化 · 非壳搬运 · 占位下架）──────

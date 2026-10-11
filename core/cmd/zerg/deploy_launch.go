@@ -164,6 +164,20 @@ func cmdDeployLaunch(inv *invocation, stdout, stderr io.Writer) int {
 		case "--yes":
 			// ★ 命令面的授权旗标 —— 已被上面的 `writeGuardYes` **消费**（本件原件没有它）。
 			//   这里**只吞下、不另立语义**（`[--dry-run | --yes]` 两枚同给已由共享判定退 2）。
+		// ★ 全局旗标「吞下」键：`--timeout` / `--cancel-on-interrupt` 由**全局面**（`main.go` 解析器 +
+		//   `wallclock.go`/信号面）消费；命令面**只吞下、不另立语义**（同族先例 `gate run` 的
+		//   `gateRunValueFlags`/`gateRunBoolFlags` · 缺口 `GAP-20261002-15` 同病同修）。`--timeout`
+		//   连同它的值一并跳过（照全局取值旗标口径）。
+		case "--timeout":
+			_, i = dplTakeValue(tail, i)
+		case "--cancel-on-interrupt":
+		// ★ 全局旗标「吞下」键：`--node` / `--json` 由**全局面**（`main.go` 的机器名册校验 / 错误包封面）
+		//   消费；命令面**只吞下、不另立语义**（同族先例见上条）。两枚都是**取值旗标** ⇒ 连同
+		//   它们的值一并跳过（照全局取值旗标口径）。
+		case "--node":
+			_, i = dplTakeValue(tail, i)
+		case "--json":
+			_, i = dplTakeValue(tail, i)
 		case "-h", "--help":
 			fmt.Fprint(stdout, dplHelpText)
 			return exitOK
@@ -362,7 +376,9 @@ func dplWriteIntent(path string, doc dplIntentDoc) error {
 // dplSSH 起 `ssh -o BatchMode=yes -o ConnectTimeout=10 <host> <remoteCmd>`（stdin 继承 · stdout/stderr 逐字透传）。
 // 返回 ssh 退码（✗ 起不动 ⇒ `dplRCSSHAbsent`(127)，与 bash 的 command-not-found 同档）。
 func dplSSH(host, remoteCmd string, outW io.Writer, stderr io.Writer) (int, error) {
-	cmd := exec.Command(dplSSHBin, "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", host, remoteCmd)
+	cmd := armChildGroup(exec.Command(dplSSHBin, "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", host, remoteCmd))
+	runningChild = cmd
+	defer func() { runningChild = nil }()
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = outW
 	cmd.Stderr = stderr

@@ -111,8 +111,9 @@
 //
 //	A=tempdir 泄漏：**未见**（`--self-test` 分支 `atexit.register(cleanup)` · `_TMPDIRS` 全收；
 //	  本件同 = `defer os.RemoveAll`）。
-//	B=读失败静默：**部分命中** —— `os.walk` 缺省 `onerror=None` ⇒ **目录 scandir 失败静默跳过**（本件 `aglWalk` 照搬）；
-//	  但**件读失败不静默**（见 C）。
+//	B=读失败静默：**本件 Go 侧已修目录面** —— `os.walk` 缺省 `onerror=None` ⇒ 目录 scandir 失败**静默跳过**
+//	  （原 py 真口子 · 与 py **有意分叉**）：打不开的目录 ⇒ `aglReadFails` 登记 + `aglMain` 补判红（stderr BLOCKED 头 +
+//	  逐件点名）⇒ rc=2。**件读失败仍不静默**（走 C 类 · rc=1 traceback）。
 //	C=无最外层兜底：**命中** —— `scan()` 无 try ⇒ 件读失败 / 非 UTF-8 ⇒ **抛穿到顶层**（traceback · rc=1）；
 //	  ★ 本件对 **EACCES** 路逐字复刻 traceback（三帧 + 末行）；**非 UTF-8** 路只对齐 rc=1/stdout 空（stderr 正文不追
 //	    系统 `codecs.py` 帧 · 见「未覆盖面⑥」）。
@@ -121,7 +122,8 @@
 // ═══════════════════ 退码 / 口径差 ═══════════════════
 //
 //	· 0 = 真跑（恒 0 · 进度尺）· 1 = `--self-test` 有格不过（或真跑时 py 抛穿 · 见 C）· 2 = 判不了（用法错 / 扫不动）。
-//	· py 本就是 rc=1 的档（自检有格不过 / 抛穿）⇒ **逐字沿用**（本件 `self_test` 返 1；读失败返 1）。
+//	· py 本就是 rc=1 的档（自检有格不过 / 抛穿）⇒ **逐字沿用**（本件 `self_test` 返 1；**件**读失败返 1）。
+//	· ★ B 类真口子修后新增档（与 py 有意分叉）：**目录**读失败 ⇒ BLOCKED rc=2（逐件点名 · 不给结论）。
 //	· `--json` 面：本门**无机器读面** ⇒ 前置拒收 rc=2（两态逐字同）。
 
 package main
@@ -139,6 +141,13 @@ import (
 // ── 常量 / 判据真源 ────────────────────────────────────────────────────────────
 
 const aglProg = "audit_go_logs.py"
+
+// aglReadFails —— B 类读失败登记面（打不开的目录 ⇒ 逐条登记 err 正文）。
+// ★ B 类真口子修（原 py `os.walk(onerror=None)` 静默 · 与 py **有意分叉** · 同族先例 `check_doc_cmds.go` 的
+//
+//	`dcmdReadFails`）：目录 scandir 失败 ⇒ 登记 + 入口判红（stderr BLOCKED 头 + 逐件点名）⇒ rc=2（不再静默少判）。
+//	自清点：每次 `aglMain` / `aglSelfTest` 起手清空 ⇒ 不许跨调用残留。件读失败仍走 C 类（rc=1 traceback · 见 aglScan）。
+var aglReadFails []string
 
 // aglOthers —— py `batch_of` 的兜底批名。
 const aglOthers = "其他/内部诊断"
@@ -381,7 +390,9 @@ func aglIsLink(p string) bool {
 func aglWalk(dir string, filter func(string, []string) []string, visit func(string, []string, []string)) {
 	f, err := os.Open(dir)
 	if err != nil {
-		return // py os.walk onerror=None ⇒ scandir 失败**静默跳过**（B 类真口子 · 照搬）
+		// ★ B 类真口子修（原 py `os.walk(onerror=None)` 静默 · ✗ 不再静默）：登记 + 判红 + rc=2。
+		aglReadFails = append(aglReadFails, dir+"（"+err.Error()+"）")
+		return
 	}
 	entries, err := f.ReadDir(-1) // ★ 原序（✗ 不用 os.ReadDir / WalkDir ⇒ 那两者会排序）
 	f.Close()
@@ -671,6 +682,7 @@ func aglMostCommon(rows []aglRow, n int) []struct {
 }
 
 func aglMain(stdout, stderr io.Writer, argv []string) int {
+	aglReadFails = nil // ★ 自清：包级登记面不许跨调用残留
 	if rc, hit := aglRefuseJSON(stderr, argv); hit {
 		return rc
 	}
@@ -698,6 +710,15 @@ func aglMain(stdout, stderr io.Writer, argv []string) int {
 	}
 
 	rows, failPath, failPerm := aglScan(root, core, false, false)
+	// ★ B 类真口子修：目录读失败 ⇒ 响亮 BLOCKED rc=2 + 逐件点名（✗ 不再静默少判）。
+	//   同族先例 check_doc_cmds.go 的 dcmdReadFails —— 读失败 ⇒ BLOCKED 头 + 逐件点名 + 不给结论。
+	if len(aglReadFails) > 0 {
+		fmt.Fprintf(stderr, "BLOCKED —— 有 %d 个目录读不到（B 类读失败 ⇒ 登记 + 判红 · rc=2 · 不给结论）：\n", len(aglReadFails))
+		for _, u := range aglReadFails {
+			fmt.Fprintf(stderr, "  [读失败] %s\n", u)
+		}
+		return 2
+	}
 	if failPath != "" {
 		if failPerm {
 			aglEmitReadTraceback(stderr, root, failPath) // py C 类：EACCES ⇒ traceback 逐字
@@ -853,6 +874,7 @@ func aglWriteFixture(base, name string, files []aglFixtureFile) string {
 }
 
 func aglSelfTest(stdout, stderr io.Writer) int {
+	aglReadFails = nil // ★ 自清：包级登记面不许跨调用残留
 	d, err := os.MkdirTemp("", "agl-selftest-")
 	if err != nil {
 		fmt.Fprintln(stderr, aglMsgNoTmp)

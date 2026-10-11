@@ -44,6 +44,15 @@ const pfRCNotFound = 127
 // 属**底层壳件自有码空间**（✗ 不在命令面真源退码表 ⇒ ✗ 写裸数字，门⑪ T3）；与 `pfRCNotFound` 同值不同义；先例同上 `dplRCSSHAbsent`/`prExitSpawnFail`。
 const pfExitSpawnFail = 127
 
+// pfLeakScanCommitCap —— 闸③ 逐笔扫描的**提交数上限**（本单新增的「扫描上限」·照本件既有「判不了 ⇒ 记 BLOCKED」口径）。
+// 现读 `git rev-list --count main` = 1607 ⇒ 取 4096（约 2.5× 头寸）：当前树全扫 ⇒ 与改前逐字相同；
+// 全史超限（未来膨胀 / 异常输入）⇒ **不静默通过**（扫不完 ≠ 扫干净），交调用方记 BLOCKED（fail-closed）。
+// ★ 不用 `rev-list -n<cap>`：那会**静默截断**（老提交里的泄漏被漏掉 ⇒ 假阴）—— 照实取全表再比。
+const pfLeakScanCommitCap = 4096
+
+// pfLeakScanOverCapRC —— 闸③「扫不完 ⇒ 判不了」的信号码（**不给结论**档 · 与「查到泄漏」档 1 分家）。
+const pfLeakScanOverCapRC = 2
+
 var (
 	pfVerRe    = regexp.MustCompile(`(?m)^const Version = "([^"]+)"`)
 	pfVerAnyRe = regexp.MustCompile(`(?m)^const Version = "([^"]*)"`)
@@ -266,7 +275,10 @@ func publishPreflightNative(inv *invocation, stdout, stderr io.Writer, D string)
 	fmt.Fprintln(stdout, "── 闸③ 旧 token / 绝对路径（逐笔）──")
 	rc3, log3 := pfLeakScan(D)
 	pfTail(stdout, log3, 2, "   ")
-	if rc3 != 0 {
+	if rc3 == pfLeakScanOverCapRC {
+		fmt.Fprintf(stdout, "   ⚠ 闸③ 判不了（rc=%d · 全史超扫描上限）⇒ 记 BLOCKED（缺件 ≠ 绿 · 不给结论 · 但也不许推送）\n", rc3)
+		blocked = 1
+	} else if rc3 != 0 {
 		fmt.Fprintf(stdout, "   ✗ 闸③ 不过（rc=%d）\n", rc3)
 		fail = 1
 	}
@@ -471,10 +483,20 @@ func publishPreflightNative(inv *invocation, stdout, stderr io.Writer, D string)
 
 // pfLeakScan —— 闸③ 旧壳内联 python 的逐字镜像：逐个提交 × 逐个私有串跑 `git grep -q -I`。
 func pfLeakScan(D string) (int, string) {
+	return pfLeakScanCapped(D, pfLeakScanCommitCap)
+}
+
+// pfLeakScanCapped —— pfLeakScan 的本体（cap 作参数 ⇒ 本单「超限」负控／夹具用；生产入口恒传 pfLeakScanCommitCap）。
+func pfLeakScanCapped(D string, cap int) (int, string) {
 	var b strings.Builder
 	commits := []string{}
 	if _, out := pfGitOut(D, "rev-list", "main"); out != "" {
 		commits = strings.Fields(out)
+	}
+	// ★ 扫描上限（本单新增）：全史提交数超上限 ⇒ **不给结论**（判不了 ≠ 绿 ⇒ 交调用方记 BLOCKED · fail-closed）。
+	if len(commits) > cap {
+		fmt.Fprintf(&b, "   提交数=%d 超扫描上限 %d ⇒ 判不了（不给结论 · 不当绿）\n", len(commits), cap)
+		return pfLeakScanOverCapRC, b.String()
 	}
 	pats := []string{"Mr2109", "Mr2109", "Mr2109", "/Volumes/" + "AHZ", "/Users/" + "Mr2109"}
 	type hit struct{ pat, c string }

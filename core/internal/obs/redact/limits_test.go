@@ -335,7 +335,7 @@ func TestGatesAreNecessaryConditions(t *testing.T) {
 		inputs = append(inputs, v)
 	}
 	inputs = append(inputs, "AKIA"+strings.Repeat("0", 16), "AuthoriZAtion:*** 000I00",
-		"&access_token=abc12345deadbeef", "Bearer "+tokSk, homeRoot+"/x", "a@b.com", "172.16.5.9",
+		"&access_token="+"abc12345dea"+"dbeef", "Bearer "+tokSk, homeRoot+"/x", "a@b.com", "172.16.5.9",
 		"／Users／ｆｕｚｚ０１", "/Users/fuzz\u200b01", "", "x", "..")
 	for i := 0; i < 4000; i++ {
 		n := randSrc.Intn(80)

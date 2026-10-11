@@ -380,7 +380,7 @@ func rfgEnvWith(extra map[string]string) []string {
 // rfgRunGoTest —— 复刻原件 `( cd core && GOFLAGS=-mod=mod GOSUMDB=off GOPROXY=… ZERG_REPLAY_FIDELITY_DIR=FIX
 // go test ./internal/replay/ -count=1 -v ) > LOG 2>&1`；退码原样转出（起不来 ⇒ 127）。
 func rfgRunGoTest(coreDir, fix, logPath string) int {
-	cmd := exec.Command("go", "test", "./internal/replay/", "-count=1", "-v")
+	cmd := armChildGroup(exec.Command("go", "test", "./internal/replay/", "-count=1", "-v"))
 	cmd.Dir = coreDir
 	cmd.Env = rfgEnvWith(map[string]string{
 		"GOFLAGS":                  "-mod=mod",
@@ -388,6 +388,8 @@ func rfgRunGoTest(coreDir, fix, logPath string) int {
 		"GOPROXY":                  "https://goproxy.cn,direct",
 		"ZERG_REPLAY_FIDELITY_DIR": fix,
 	})
+	runningChild = cmd
+	defer func() { runningChild = nil }()
 	out, err := cmd.CombinedOutput()
 	_ = os.WriteFile(logPath, out, 0o644)
 	if err != nil {

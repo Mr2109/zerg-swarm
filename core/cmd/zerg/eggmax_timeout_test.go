@@ -78,6 +78,32 @@ func TestTaskSubmitBodyCarriesEggMax(t *testing.T) {
 }
 
 // TestTaskSubmitDryRunEndToEnd —— `cmdTaskSubmit --dry-run` 端到端（零网络）：正控体带值 · 负控退 2。
+// TestTaskSubmitDeadTimeoutWarnsDeadField —— 缺口 `GAP-20261010-09`：`--timeout` 在**任务面**的死字段
+// （`Task.EggMaxS` 无处消费）必须**明说**（响亮警告 · rc 不变 · ✗ 不静默空转）。
+//
+//	正控 —— 给了 `--timeout` ⇒ stderr 响亮点名「不生效」且点名那枚旗标；
+//	负控 —— **不给** ⇒ 一字不加（默认态既有输出逐字不动 ⇒ 这条要能真红）。
+func TestTaskSubmitDeadTimeoutWarnsDeadField(t *testing.T) {
+	with := &invocation{dryRun: true, path: []string{"task", "submit"}, desc: "x",
+		kv: map[string][]string{wallclockFlag: {"5s"}}}
+	var out, errb bytes.Buffer
+	if rc := cmdTaskSubmit(with, &out, &errb); rc != exitOK {
+		t.Fatalf("dry-run 该退 0，得 %d：%s", rc, errb.String())
+	}
+	if !strings.Contains(errb.String(), "不生效") || !strings.Contains(errb.String(), wallclockFlag) {
+		t.Fatalf("`--timeout` 在任务面不生效必须**明说**（点名旗标 + 「不生效」），实得 stderr=%q", errb.String())
+	}
+	without := &invocation{dryRun: true, path: []string{"task", "submit"}, desc: "x",
+		kv: map[string][]string{}}
+	var out2, errb2 bytes.Buffer
+	if rc := cmdTaskSubmit(without, &out2, &errb2); rc != exitOK {
+		t.Fatalf("不给 --timeout 的 dry-run 该退 0，得 %d：%s", rc, errb2.String())
+	}
+	if strings.Contains(errb2.String(), "不生效") {
+		t.Fatalf("没给 --timeout 不该出警告（默认态一字不加），实得 stderr=%q", errb2.String())
+	}
+}
+
 func TestTaskSubmitDryRunEndToEnd(t *testing.T) {
 	// 正控
 	inv := &invocation{dryRun: true, path: []string{"task", "submit"}, desc: "x",

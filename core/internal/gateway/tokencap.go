@@ -237,7 +237,7 @@ func (g *Gateway) ApplyAdapterOverrides(model string, forwardBody []byte, ada pl
 	// 为什么可以覆盖袋子里的同名键：袋子是"这次请求的声明面"，而 fleet 是这台机器对**这个模型的
 	// 部署真源**（适配器配置是另一处声明，两者冲突时以部署声明为准 —— 报告 ④ 的优先级：
 	// 档案(事实) > 声明(fleet) > 默认）。
-	fleetCtx, fleetMax := FleetDeclared(g.config, model)
+	fleetCtx, fleetMax := FleetDeclared(g.currentConfig(), model)
 	if fleetCtx > 0 {
 		res["ctx_window"] = fleetCtx
 	}

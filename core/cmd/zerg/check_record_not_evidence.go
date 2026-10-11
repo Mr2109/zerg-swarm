@@ -76,6 +76,13 @@ var (
 	crneSha64    = regexp.MustCompile(`^[0-9a-f]{64}$`)
 )
 
+// crneReadFails —— B 类读失败登记面（读不了的件/目录 ⇒ 逐件登记 相对路径 + err 正文）。
+// ★ B 类真口子修（与 py 有意分叉 · 同族先例 check_doc_cmds.go 的 dcmdReadFails）：
+//
+//	读失败 ⇒ 登记 + 入口判红（stderr BLOCKED 头 + 逐件点名）⇒ rc=2（✗ 不再静默少判）。
+//	自清点：每次 crneTextFiles 起手清空 ⇒ 不许跨调用残留。
+var crneReadFails []string
+
 func init() {
 	for _, e := range crneFileExt {
 		crneTextExt[e] = true
@@ -96,6 +103,9 @@ type crneMeta struct {
 	Surfaces []string `json:"surfaces"`
 	Scanned  int      `json:"scanned"`
 	Findings int      `json:"findings"`
+	// SurfaceReads —— ①「当场印出抽到 N 条」的读数（逐候选的行数 / 仓内路径数）。
+	// ★ `json:"-"`：**不改** `--json` 的 meta 形状（键序与 py 逐字同）—— 只在文本档照出（crneReport）。
+	SurfaceReads []string `json:"-"`
 }
 
 type crneOut struct {
@@ -238,6 +248,8 @@ func crneReadDirUnsorted(dir string) []os.DirEntry {
 func crneWalk(relDir, absDir string, order *[]string, lookup map[string]string) {
 	ents := crneReadDirUnsorted(absDir)
 	if ents == nil {
+		// ★ B 类真口子修（原 py `os.walk(onerror=None)` 静默 · ✗ 不再静默）：登记 + 判红 + rc=2。
+		crneReadFails = append(crneReadFails, fmt.Sprintf("%s（读不了目录）", relDir))
 		return
 	}
 	var dirs, files []string
@@ -263,6 +275,8 @@ func crneWalk(relDir, absDir string, order *[]string, lookup map[string]string) 
 		}
 		b, err := os.ReadFile(ap)
 		if err != nil {
+			// ★ B 类真口子修（原 py `except OSError: continue` 静默 · ✗ 不再静默）：登记 + 判红 + rc=2。
+			crneReadFails = append(crneReadFails, fmt.Sprintf("%s/%s（%v）", relDir, fn, err))
 			continue
 		}
 		rel := relDir + "/" + fn
@@ -285,6 +299,7 @@ func crneWalk(relDir, absDir string, order *[]string, lookup map[string]string) 
 
 // crneTextFiles 复刻 py text_files：返回插入序（= os.walk 序）+ 查值表。
 func crneTextFiles(root string, dirs []string) ([]string, map[string]string) {
+	crneReadFails = nil // ★ 自清：包级登记面不许跨调用残留
 	order := []string{}
 	lookup := map[string]string{}
 	for _, d := range dirs {
@@ -409,6 +424,8 @@ func crneAnalyze(root string, dirs, tables []string) ([]crneFinding, crneMeta, [
 	order, lookup := crneTextFiles(root, dirs)
 	findings := []crneFinding{}
 	var surfaces []string
+	// ① 逐候选当场收集「抽到 N 条」读数（文本档照出 ⇒ 读者可自查读数与结构是否相符）。
+	var surfaceReads []string
 	if len(tables) > 0 {
 		surfaces = append(surfaces, tables...)
 	} else {
@@ -428,6 +445,9 @@ func crneAnalyze(root string, dirs, tables []string) ([]crneFinding, crneMeta, [
 				}
 			}
 			if len(rows) >= 5 && paths*2 >= len(rows) {
+				// ① 当场印出抽到 N 条（分母可读 ⇒ 读者自查读数与结构是否相符 · ✗ 不只印结论）。
+				surfaceReads = append(surfaceReads,
+					fmt.Sprintf("%s：记录面候选 · 抽到 %d 行（其中 %d 条仓内路径）", rel, len(rows), paths))
 				surfaces = append(surfaces, rel)
 			}
 		}
@@ -445,6 +465,8 @@ func crneAnalyze(root string, dirs, tables []string) ([]crneFinding, crneMeta, [
 		if !ok {
 			b, err := os.ReadFile(ap)
 			if err != nil {
+				// ★ B 类真口子修（原 py `except OSError: continue` 静默 · ✗ 不再静默）：登记 + 判红 + rc=2。
+				crneReadFails = append(crneReadFails, fmt.Sprintf("%s（%v）", rel, err))
 				continue
 			}
 			text = crneUniversalNewlines(crneReplaceErrors(b))
@@ -456,7 +478,9 @@ func crneAnalyze(root string, dirs, tables []string) ([]crneFinding, crneMeta, [
 				members = append(members, r)
 			}
 		}
+		// ① 当场印出抽到 N 条（不足下界 ⇒ 判非记录面 · 读数照出 ✗ 不静默丢弃）。
 		if len(rows) < 5 || len(members)*2 < len(rows) {
+			surfaceReads = append(surfaceReads, fmt.Sprintf("%s：抽到 %d 行（不足下界或成员不足半数 ⇒ 判非记录面）", rel, len(rows)))
 			continue
 		}
 		headRows := []string{}
@@ -544,7 +568,7 @@ func crneAnalyze(root string, dirs, tables []string) ([]crneFinding, crneMeta, [
 	}
 
 	meta := crneMeta{Root: root, ScanDirs: append([]string{}, dirs...),
-		Surfaces: surfaces, Scanned: len(order), Findings: len(findings)}
+		Surfaces: surfaces, SurfaceReads: surfaceReads, Scanned: len(order), Findings: len(findings)}
 	return findings, meta, order, lookup
 }
 
@@ -581,6 +605,10 @@ func crneReport(stdout io.Writer, findings []crneFinding, meta crneMeta, asJSON 
 		strings.Join(meta.ScanDirs, " · "), len(meta.Surfaces))
 	for _, s := range meta.Surfaces {
 		fmt.Fprintf(stdout, "   · 记录面：%s\n", s)
+	}
+	// ① 读数照出（抽到 N 条 · 分母可读）：逐候选的「抽到几行 / 几条仓内路径」。
+	for _, rd := range meta.SurfaceReads {
+		fmt.Fprintf(stdout, "   ◦ 读数：%s\n", rd)
 	}
 	for _, r := range []string{"R1", "R2", "R3"} {
 		hits := []crneFinding{}
@@ -847,6 +875,14 @@ func checkRecordNotEvidenceGateMain(stdout, stderr io.Writer, argv []string) int
 		dirs = []string{"scripts", "core/cmd/zerg"}
 	}
 	findings, meta, _, _ := crneAnalyze(root, dirs, a.tables)
+	// ★ B 类真口子修：读失败 ⇒ 响亮 BLOCKED rc=2 + 逐件点名（✗ 不再静默少判）。
+	if len(crneReadFails) > 0 {
+		fmt.Fprintf(stderr, "BLOCKED —— 有 %d 件读不到（B 类读失败 ⇒ 登记 + 判红 · rc=2 · 不给结论）：\n", len(crneReadFails))
+		for _, u := range crneReadFails {
+			fmt.Fprintf(stderr, "  [读失败] %s\n", u)
+		}
+		return 2
+	}
 	if crneRequireDomain(meta.Scanned, 1, 2,
 		"扫描面 "+strings.Join(dirs, " · ")+" 下的文本件", stderr) != 0 {
 		return 2

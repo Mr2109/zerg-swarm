@@ -7,7 +7,7 @@
 //	   `--proposal <id>` 必给，`--file` 必须在那件提案的 `files[]` 里 ⇒ 没声明过的件**写不进去**（退码 2）。
 //	   提案本身就是那次写的「可审查物 + 回滚路径（`rollback_ref`）」。
 //	② **默认干跑**（§九 M3 `C4` 三态的第一态）：不带旗标 = `--dry-run`，只出计划件、零副作用；
-//	   真写要 D3 档齐 —— `--confirm=<本机名>`（值必须与主机名逐字相同）+ `--yes`。
+//	   真写要 D3 档齐 —— `--confirm=<本机名>`（值必须与本机名逐字相同）+ `--yes`。
 //	③ **逐条审计**（§九 M3 `C5`：一行一事件 · 追加只写 · **写失败即拒**）：审计行**先落盘**，
 //	   落不下就不改件（「写不进日志就不许执行」）。审计记：谁 / 何时 / 改哪件 / 前后 sha256 / 字节数。
 //	④ **可回滚**（§17.3 铁律③③）：件在 git 工作树里 ⇒ 回滚路径 = 提案的 `rollback_ref`（件级回滚见 `dev rollback`）。
@@ -89,7 +89,15 @@ import (
 //	治法（**两片拼接 · 名字仍只此一处**）：把「两档都产出」与「只干跑档产出」拆成两片、
 //	本表由两片拼出（次序 = 帮助面次序，逐字与拆前相同），帮助面那句注解由**后一片派生** ——
 //	这样注解里的名字**不可能与表漂**，也不新立第二份字段名单 ✗。
+//
+//	★ `GAP-20260928-106`（本单）：病灶逐字 =「回执的 warnings[] 恒为空数组，**且件正文不进回执** ⇒
+//	  改后正文只能靠仓内现读 sha16 复核，**回执本身不足以验改动**」。本格补的是**件正文摘要**：
+//	  `before_sha256_full` / `after_sha256_full` = 改前 / 改后正文本体的**全 64 位 sha256**（不是 16 位截断）。
+//	  ★ 这两枚值**本就在 row 里**（`GAP-20260927-239` 起只由人面直接打出来、**不进字段表**）⇒ 本单只把它们
+//	  登进字段表（**零新算法 · 零新取值**）：至此 `--json file,after_sha256_full` 就能从回执自身核改动，
+//	  不必回仓现读。两片拼接结构（两档都产出 ⟷ 只干跑档产出）**一字未动** —— 这两枚**两档都产出**，故进前一片。
 var devEditFieldsShared = []string{"proposal", "file", "mode", "result", "before_sha256", "after_sha256",
+	"before_sha256_full", "after_sha256_full",
 	"before_bytes", "after_bytes", "audit_path", "out_path", "approval"}
 
 // devEditDryRunOnlyFields —— 只由**干跑档**填的那几格（真写档产出不了 ⇒ 写前拒）。
@@ -133,6 +141,59 @@ func devEditContractHitsCell(s impactDryRunSummary) string {
 // 名字由上面那片**派生** ⇒ 字段表改了它自己跟着改（`GAP-20260928-115` 要的「表与产出集同源」落在这里）。
 var devEditDryRunOnlyNote = "（★ `--json` 字段表里的这几格 " + strings.Join(devEditDryRunOnlyFields, ",") +
 	" **只有干跑档**（`--dry-run` / 未走确认档那一态）产出 —— 真写档给出这些名字 ⇒ **写前拒**（退 2 · `json_field_unknown`）；脚本要这几格就先跑 `--dry-run`）"
+
+// ── GAP-20260928-136（本单）：`--file` / `--from` / `--replace` 的**同一套路径口径** ──────────────
+//
+// 病灶（缺口正文逐字）：提案面的 `--file` 只收**仓内相对路径**，而改件面的 `--from` 只收**仓外整件路径**
+// ⇒ 同一次改动要在两种形态间手工搬运，**无自动转换**。
+//
+// 归一（**无新旗标 · 只动解析口径**）：
+//
+//	① `--file`（提案面与改件面同一处置）：**仓内绝对**路径 ⇒ 自动转成**仓内相对**（与旧口径同形 ⇒
+//	   两侧可互换）；**仓外绝对**路径不转（`--file` 是作用域真源 ⇒ 仍是越界写 / 越界声明 ⇒ 退 2）。
+//	② `--from` / `--replace`：**仓内相对**路径 ⇒ 按**仓根**解析（旧口径是相对 cwd）；绝对路径按原样。
+//
+// ⇒ 同一件，写「仓内相对」或写「仓内绝对」两侧都认（这就是缺口要的「自动转换」）—— 见 `devPathCanonical`
+// 与 `devPathResolveFrom`（纯函数 · 可单测）。
+func devPathCanonical(root, p string) string {
+	s := strings.TrimSpace(p)
+	if s == "" {
+		return ""
+	}
+	// 仓内绝对 ⇒ 仓内相对（`filepath.Rel` 落在仓根外时给出 `..` 起头的串 ⇒ 不转、原样）。
+	if root != "" && filepath.IsAbs(s) {
+		if rel, err := filepath.Rel(root, s); err == nil {
+			if rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+				return filepath.ToSlash(rel)
+			}
+		}
+	}
+	return filepath.ToSlash(filepath.Clean(s))
+}
+
+// devPathResolveFrom —— `--from` / `--replace` 的落点：**仓内相对**按仓根解析，绝对按原样
+// （与 `--file` 同一套口径 · GAP-20260928-136）。空串原样回（调用方自己判空）。
+func devPathResolveFrom(root, p string) string {
+	s := strings.TrimSpace(p)
+	if s == "" || filepath.IsAbs(s) {
+		return s
+	}
+	return filepath.Join(root, filepath.FromSlash(s))
+}
+
+// devEditNote —— 一条**真事**同时落两处（GAP-20260928-106）：`warnings[]`（机器面 · 只读包封）
+// 与 stderr（人面）。空串不落（**不编造**）。
+//
+// 病灶（缺口正文逐字）：真写档此前只在 stderr 出声、**从不进 `warnings[]`** ⇒ 包封的 `warnings[]`
+// 恒 `[]`（件自己印「CLI 缺口，`A4` 再点一次名」）。人面一字不动（仍打 stderr），机器面从此有落点。
+func devEditNote(stderr io.Writer, inv *invocation, format string, a ...any) {
+	msg := strings.TrimSpace(fmt.Sprintf(format, a...))
+	if msg == "" {
+		return
+	}
+	inv.warnf("%s", msg)
+	fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
+}
 
 // replacePair —— `--replace <件>` 里的一枚替换（JSON 数组的一格）。
 // 形态：`[{"old":"…","new":"…"}, …]` —— **精确、唯一命中**才许改（模糊替换会静默改错地方）。
@@ -244,8 +305,42 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 	fileRel := strings.TrimSpace(inv.flagVal("--file"))
 	fromPath := strings.TrimSpace(inv.flagVal("--from"))
 	replacePath := strings.TrimSpace(inv.flagVal("--replace"))
+	// ★ GAP-20260928-136（本单）：**路径口径归一** —— 三条路径入参（`--file` / `--from` / `--replace`）
+	//   先过同一套口径 `devPathCanonical`：**仓内绝对**路径自动转成**仓内相对**（与提案面声明的形态同形
+	//   ⇒ 两侧可互换；仓外绝对不转 —— `--file` 仍是越界写 ⇒ 2，矩阵格 `dev/edit#--file 绝对路径（越界写）` 不变）。
+	//   位置：在**任何盘面动作**与作用域判定（`declaredFilesWhy` / 声明清单比对）之前 ⇒ 下游一律读归一后的形态。
+	//   ★ 默认态（给的是仓内相对路径）**逐字不变**（`filepath.Clean` 对已净的串是恒等）。
+	if r := repoRoot(); r != "" {
+		fileRel = devPathCanonical(r, fileRel)
+		fromPath = devPathCanonical(r, fromPath)
+		replacePath = devPathCanonical(r, replacePath)
+	}
 	// ★ GAP-20261009-10 修法①（本枚）：**基线回放** `--base <件路径|HEAD|sha>`。
 	baseSpec := strings.TrimSpace(inv.flagVal("--base"))
+
+	// ★ GAP-20260928-22（本单）：**字段面先判** —— 照正解先例 `routeCheckFields`（`family_route.go`）把
+	//   `--json <未知字段>` 的点名放到**处理器最前**（先于一切「前置缺参」判定）。修前坏字段名被
+	//   `missing_proposal` 先撞（改前：`dev edit --json __zzbad__` ⇒ rc=2 detail=missing_proposal）⇒
+	//   字段面够不到；前移后 ⇒ rc=2 detail=json_field_unknown:<字段>（与 `route ls` / `approve show` 同形）。
+	//   ★ 口径一字不新立：判据仍是 `reportBadField`（同一句「未知字段 %q」+ 合法字段清单）；退码仍 2。
+	if inv.jsonGiven {
+		if rc := requireFields(inv, stderr); rc != exitOK {
+			return rc
+		}
+		for _, f := range inv.fields {
+			ok := false
+			for _, l := range fieldListOf(inv.path) {
+				if l == f {
+					ok = true
+					break
+				}
+			}
+			if !ok {
+				inv.setErr("usage", "json_field_unknown:"+f, fmt.Sprintf("未知字段 %q", f))
+				return reportBadField(stderr, inv.path, f)
+			}
+		}
+	}
 
 	// ①② 用法面先判（在任何盘面动作之前）
 	if proposalID == "" {
@@ -423,15 +518,18 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 	mode := "from"
 	after := []byte{}
 	if fromPath != "" {
-		after, err = os.ReadFile(fromPath)
+		// ★ GAP-20260928-136：`--from` 与 `--file` 同一套口径 —— **仓内相对**按仓根解析、绝对原样。
+		fromResolved := devPathResolveFrom(root, fromPath)
+		after, err = os.ReadFile(fromResolved)
 		if err != nil {
 			inv.setErr("usage", "content_unreadable", err.Error())
-			fmt.Fprintf(stderr, "%s: 读不了内容来源 %s：%v（退码 2 · 不猜内容）\n", progName, fromPath, err)
+			fmt.Fprintf(stderr, "%s: 读不了内容来源 %s：%v（退码 2 · 不猜内容）\n", progName, fromResolved, err)
 			return exitUsage
 		}
 	} else {
 		mode = "replace"
-		after, err = applyReplacements(before, replacePath)
+		// ★ GAP-20260928-136：`--replace` 同口径（仓内相对 ⇒ 仓根）。
+		after, err = applyReplacements(before, devPathResolveFrom(root, replacePath))
 		if err != nil {
 			inv.setErr("usage", "replace_failed", err.Error())
 			fmt.Fprintf(stderr, "%s: %v\n", progName, err)
@@ -689,23 +787,9 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 	//   同一枚字段面判定：`emitDevEditPlan` 传 `inv.fields`）与确认档 / 语法闸 / 批准件闸的**优先级一字不动**：
 	//   干跑档倍数与天平都跟修前**逐字同值**，变的只有一件事 —— 真写档不再先写后报。
 	//   第一个真写动作 = 下面的 `appendEditAudit`（审计先落盘）⇒ 本块在它之前 ✓（本条下面的两道门都只读）。
+	// ★ GAP-20260928-22（本单）：**字段面（名字校验）已前移到 `cmdDevEdit` 处理器最前**（见本件上方入口那一块）
+	//   ⇒ 本处不再重复名字校验；`--json` 走到这里时字段名**必已在闭集内**（否则早在入口退 2）。
 	if inv.jsonGiven {
-		if rc := requireFields(inv, stderr); rc != exitOK {
-			return rc
-		}
-		for _, f := range inv.fields {
-			ok := false
-			for _, l := range fieldListOf(inv.path) {
-				if l == f {
-					ok = true
-					break
-				}
-			}
-			if !ok {
-				inv.setErr("usage", "json_field_unknown:"+f, fmt.Sprintf("未知字段 %q", f))
-				return reportBadField(stderr, inv.path, f)
-			}
-		}
 		// ★ 2026-09-28（`GAP-20260928-09` **残留** · 本枚）**本档必不产出的字段名 ⇒ 写前拒**。
 		//   上面那一段只判「名字在不在命令的字段表里」：`approver` / `rollback_verdict` / `rollback_tier` /
 		//   `rollback_cmd` / `rollback_why` 五格**在表里**（`devEditFields` 列着），却只由**干跑档**填
@@ -772,23 +856,44 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 	if beforeMissing {
 		line.Note = "新建件（写前不存在）"
 	}
+	// ★★ 退点前置（本单 · 任务单 退-1·拍-6）：**写盘之前**先把改前整件落进退点归档 ＋ 落一枚可执行
+	//   退点档（`cp -p <退点件> <原路径>` ＋ `sha256 == before_sha256` 断言）。落不下 ⇒ **fail-closed
+	//   拒写** —— 目标件一字节不动、审计也不落（「退点没落下 ⇒ 拒写」）。顺序：本步**先于** appendEditAudit。
+	rpArchive, rpRestore, rpErr := devEditLandReturnPoint(outPath, fileRel, before, beforeSHA, beforeMissing)
+	if rpErr != nil {
+		inv.setErr("failed", "rollback_point_unlanded", rpErr.Error())
+		fmt.Fprintf(stderr, "%s: **退点没落下 ⇒ 拒写**（fail-closed · 退点前置）：%v\n", progName, rpErr)
+		fmt.Fprintf(stderr, "%s: 口径：写盘**之前**先把改前整件落 `<状态目录>/退点归档-<日期>/`（同目录落一枚可执行退点档 `<件名>.恢复.sh`）—— 落不下就**不动件、不记账**\n", progName)
+		fmt.Fprintf(stderr, "%s: 目标件一个字节未动：%s（审计也未落 —— 没写就不记账）\n", progName, outPath)
+		fmt.Fprintf(stderr, "error.kind=failed · detail=rollback_point_unlanded · retryable=true · remedy=fix_env\n")
+		return exitFail
+	}
+	if rpArchive != "" {
+		fmt.Fprintf(stderr, "%s: ★ 退点前置：改前整件已落退点归档 —— 退点件 %s · 可执行退点档 %s\n", progName, rpArchive, rpRestore)
+	} else {
+		fmt.Fprintf(stderr, "%s: ★ 退点前置：本件写前不在盘（新件）⇒ 无退点件可落；可执行退点档（`rm`）→ %s\n", progName, rpRestore)
+	}
 	if err := appendEditAudit(auditPath, line); err != nil {
 		inv.setErr("failed", "audit_unwritable", err.Error())
 		fmt.Fprintf(stderr, "%s: **审计落不下盘 ⇒ 拒执**（§九 M3 C5「写不进日志就不许执行」）：%v\n", progName, err)
 		return exitFail
 	}
 	if digest == "" {
+		// ★ GAP-20260928-106（本单）：这三条**真事**经 `devEditNote` 同时落两处 —— stderr（人面**一字未变**）
+		//   与包封 `warnings[]`（机器面）。修前它们**只在 stderr 出声** ⇒ 真写档的 `warnings[]` 恒 `[]`。
 		if impactSum.State == impactSummaryNewFile {
-			fmt.Fprintf(stderr, "%s: ★ 波纹指纹：**新增件**（本件改前本来就没有前态 ⇒ 没有「改前波纹」可摘要）—— 不是「取不到」，也不是「没有」：%s\n",
-				progName, impactSum.Reason)
+			devEditNote(stderr, inv, "★ 波纹指纹：**新增件**（本件改前本来就没有前态 ⇒ 没有「改前波纹」可摘要）—— 不是「取不到」，也不是「没有」：%s",
+				impactSum.Reason)
 		} else if impactSum.State == impactSummaryUnreadable {
-			fmt.Fprintf(stderr, "%s: ★ 波纹指纹**读不到**（改前态取不到 —— 不是「没有」）⇒ 不给结论：%s\n",
-				progName, impactSum.Reason)
+			devEditNote(stderr, inv, "★ 波纹指纹**读不到**（改前态取不到 —— 不是「没有」）⇒ 不给结论：%s",
+				impactSum.Reason)
 		} else {
-			fmt.Fprintf(stderr, "%s: ★ 波纹指纹**取不到**（`impact_digest` 那一格没写 —— 「读不到」不当「没有」）：%s\n",
-				progName, impactSum.Text)
+			devEditNote(stderr, inv, "★ 波纹指纹**取不到**（`impact_digest` 那一格没写 —— 「读不到」不当「没有」）：%s",
+				impactSum.Text)
 		}
-		fmt.Fprintf(stderr, "%s: 包封的 `warnings[]` 今天恒 `[]` ⇒ 「缺摘要要点名」这一格没有落点（CLI 缺口，`A4` 再点一次名）\n", progName)
+		// ★ 上面那句「包封的 `warnings[]` 今天恒 `[]` ⇒ 没有落点」的**症状**已治（GAP-20260928-106）：
+		//   缺摘要这一格现在**有落点**（`warnings[]`）。此句改为声明落点，机器面可读、不再恒 `[]`。
+		devEditNote(stderr, inv, "★ 本趟 `impact_digest` 未写 ⇒ 「缺摘要」这一格**已进包封的 `warnings[]`**（机器面可读 · 不再恒 `[]` · GAP-20260928-106）")
 	} else {
 		fmt.Fprintf(stderr, "%s: 波纹指纹 impact_digest=%s（摘要正文**不进审计** · §四.2 第 3 件；%s）\n",
 			progName, digest, impactSum.Reason)
@@ -995,7 +1100,7 @@ func emitDevEditPlan(stdout, stderr io.Writer, row map[string]string, prop *prop
 	fmt.Fprintf(stdout, "  影响面钩子: %s（类=%s · §4.3 分档 —— 判据见 stderr 的 `impact_hook` 那两行）\n", hook.Tier, hook.Class)
 	fmt.Fprintf(stdout, "  回滚路径 : %s（提案的退点件 —— **退建议见 stderr 那一块**：判据 = 回到 before_sha256；`git revert` 不算退点）\n", orDash(prop.Rollback))
 	if blocked {
-		fmt.Fprintf(stdout, "  未执行   : D3 档确认不齐 —— 要 `--confirm=%s --yes` 同时到（fail-closed：从不提问）\n", planHost())
+		fmt.Fprintf(stdout, "  未执行   : D3 档确认不齐 —— 要 `--confirm=<本机名> --yes` 同时到（fail-closed：从不提问）\n")
 	} else if hook.Tier == impactHookTierBlock {
 		fmt.Fprintf(stdout, "  未执行   : 钩子判决「必拦」（类=%s）⇒ 干跑退 2 · **真写前置一字未动**（差口见 stderr 那一块）\n", hook.Class)
 	} else if row["approval_outside"] != "" {
@@ -1827,6 +1932,16 @@ func devEditReturnPointOf(root string, prop *proposalRecord, fileRel, beforeSHA 
 	if rb == "" {
 		return devEditReturnPoint{Tier: 4, Why: "没给 `--rollback` 退点件"}
 	}
+	// ★ GAP-20261005-70（本单）：**提案级退点清单**在场 ⇒ 按件（`fileRel`）挑该件的退点，再照单值路核
+	//   `before_sha256`（清单= `{件仓内相对路径: 该件前态件路径}` · 提案仍只占一个 `rollback_ref` 槽）。
+	//   清单不在场 ⇒ 逐字走下面那条原单值路（单值形态语义一字不改 · 既有调用不受影响 —— ✗ 不放宽/不换口径）。
+	if m, ok := rollbackManifestOf(rb); ok {
+		pre, found := m[fileRel]
+		if !found {
+			return devEditReturnPoint{Tier: 4, Why: fmt.Sprintf("提案退点清单（%d 件）里没有本件 %q ⇒ 本件无退点可用", len(m), fileRel)}
+		}
+		rb = pre
+	}
 	p := rb
 	if !filepath.IsAbs(p) {
 		p = filepath.Join(root, filepath.FromSlash(p))
@@ -1839,6 +1954,121 @@ func devEditReturnPointOf(root string, prop *proposalRecord, fileRel, beforeSHA 
 		return devEditReturnPoint{Tier: 2, Why: fmt.Sprintf("退点件现读 sha256 = %s ≠ 改前态 sha256 = %s（**不是同一版** ⇒ 照它写回取不到改前态）", got, beforeSHA)}
 	}
 	return devEditReturnPoint{Tier: 1, Cmd: fmt.Sprintf("cp -p %s %s", rb, fileRel)}
+}
+
+// ── ★ 退点前置（本单 · 任务单 退-1·拍-6）：写盘**之前**把整件落进退点归档 · 失败 ⇒ 拒写 ------------
+//
+// 病灶（本单 · 缺口逐字）：`dev edit` 的退点档（`devEditReturnPoint` 四档）只产出「退点件在不在盘 ·
+// sha 对不对」的**记录**，**没有**在写盘之前**亲手**把改前整件落进退点归档 ⇒ 回退的正门缺前半截：
+// 写盘一旦落定，改前那一版（常含未提交改动）就只活在提案 `--rollback` 指的那份件里 ——
+// 那份件谁落、落没落、落得下来吗，写盘**不闻不问**（退点落不下也照写 ⇒ 退不回头）。
+//
+// 本前置（**件全复用 · 零新机制** —— 不动四档语义、不新旗标、不新命令、不碰 `dev rollback`）：
+//
+//	① **落退点**：写盘**之前**把改前整件（审计面的 `before` · 常态下逐字节等于盘上改前件）落
+//	   `<状态目录>/退点归档-<YYYYMMDD>/<件名>`；
+//	② **可执行退点档**：同目录再落一枚 `<件名>.恢复.sh` —— 里面是**能直接跑**的恢复命令
+//	   （`cp -p <退点件> <原路径>`；写前不在盘 ⇒ `rm <原路径>`）＋**断言**（恢复后 `sha256` 要 == 写前
+//	   指纹；不等 ⇒ 非 0 退出）。空前态那一档断言 = 恢复后该件**不存在**。
+//	③ **fail-closed**：①或②任一步落不下（目录建不出 / 件写不进 / 落下的版本 sha 对不上）⇒ **拒写** ——
+//	   目标件一字节不动、审计也不落（「退点没落下 ⇒ 拒写」）。
+func devEditArchiveDir() string {
+	return filepath.Join(stateDirOf(), "退点归档-"+time.Now().Format("20060102"))
+}
+
+// devEditSafeName —— 把仓内相对路径压成一枚安全的退点档件名（分隔符 ⇒ `__`，不留子目录）。
+func devEditSafeName(fileRel string) string {
+	return strings.ReplaceAll(filepath.ToSlash(fileRel), "/", "__")
+}
+
+// devEditSHQuote —— 把一枚路径包成 POSIX shell 单引号字面量（恢复档里的路径要能原样跑）。
+func devEditSHQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// devEditLandReturnPoint —— ★ 退点前置（本单）：写盘**之前**落退点；失败 ⇒ 返回非 nil（调用方据此拒写）。
+// 返回 (退点件路径, 恢复档路径, err)。空前态 ⇒ 退点件为空串（无改前内容可落），恢复档给 `rm` 那条。
+func devEditLandReturnPoint(outPath, fileRel string, before []byte, beforeSHA string, beforeMissing bool) (string, string, error) {
+	dir := devEditArchiveDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", "", fmt.Errorf("退点归档目录建不出来（%s）：%w", dir, err)
+	}
+	base := devEditSafeName(fileRel)
+	archivePath := filepath.Join(dir, base)
+	restorePath := filepath.Join(dir, base+".恢复.sh")
+
+	// ① 落退点件（写前在盘 ⇒ 落改前整件；写前不在盘 ⇒ 无改前内容可落，只落恢复档）。
+	//   ★ 落的是**审计面的 `before` 整件**（sha256 == 写前指纹 `before_sha256`）：常态下它逐字节
+	//     等于盘上改前件（`before` 就取自盘上件）；`--base` 基线回放那一档 `before` 取**基线内容**
+	//     而盘上已是回放后的结果 ⇒ 只能照 `before` 落 —— 照盘上件落会把结果当成改前态（落错版本）。
+	if !beforeMissing {
+		mode := os.FileMode(0o644)
+		if fi, serr := os.Stat(outPath); serr == nil {
+			mode = fi.Mode().Perm()
+		}
+		if werr := os.WriteFile(archivePath, before, mode); werr != nil {
+			return "", "", fmt.Errorf("退点件落不下（%s）：%w", archivePath, werr)
+		}
+		// 回读自校：刚落下的退点件 sha256 要 == 写前指纹（写坏 / 写残 ⇒ 落错版本 ⇒ 拒写）。
+		got, rerr := os.ReadFile(archivePath)
+		if rerr != nil {
+			return "", "", fmt.Errorf("退点件刚落又读不回（%s）：%w", archivePath, rerr)
+		}
+		if g := sha256Of(got); g != beforeSHA {
+			return "", "", fmt.Errorf("落下的退点件 sha256 = %s ≠ 写前指纹 %s（落错版本 ⇒ 拒写）", shortSHA(g), shortSHA(beforeSHA))
+		}
+	}
+
+	// ② 可执行退点档：能直接跑的恢复命令 ＋ 断言（`sha256 == before_sha256`；不等 ⇒ 非 0 退出）。
+	var sb strings.Builder
+	sb.WriteString("#!/bin/sh\n")
+	sb.WriteString("# 可执行退点档 —— 由 `zerg dev edit` 写盘前落（退点前置 · 任务单 退-1·拍-6）。\n")
+	sb.WriteString("# 用法：sh " + devEditSHQuote(restorePath) + "\n")
+	sb.WriteString("# 恢复命令把退点件整件写回原路径，并断言写回后的 sha256 == 写前指纹。\n")
+	sb.WriteString("set -e\n")
+	if beforeMissing {
+		sb.WriteString("# 写前不在盘（新件）⇒ 回到写前态 = 删掉该件。\n")
+		sb.WriteString("rm -f " + devEditSHQuote(outPath) + "\n")
+		sb.WriteString("if [ -e " + devEditSHQuote(outPath) + " ]; then\n")
+		sb.WriteString("  echo \"退点恢复断言失败：" + outPath + " 仍在盘（写前不在盘 ⇒ 恢复后应不存在）\" >&2\n")
+		sb.WriteString("  exit 1\n")
+		sb.WriteString("fi\n")
+		sb.WriteString("echo \"退点恢复 OK：" + outPath + " 已不存在（回到写前态）\"\n")
+	} else {
+		sb.WriteString("cp -p " + devEditSHQuote(archivePath) + " " + devEditSHQuote(outPath) + "\n")
+		sb.WriteString("got=$(shasum -a 256 " + devEditSHQuote(outPath) + " | awk '{print $1}')\n")
+		sb.WriteString("if [ \"$got\" != " + devEditSHQuote(beforeSHA) + " ]; then\n")
+		sb.WriteString("  echo \"退点恢复断言失败：sha256=$got ≠ 写前指纹 " + beforeSHA + "\" >&2\n")
+		sb.WriteString("  exit 1\n")
+		sb.WriteString("fi\n")
+		sb.WriteString("echo \"退点恢复 OK：" + outPath + " sha256=" + beforeSHA + "\"\n")
+	}
+	// ★ 退-3（本单 · 退点档补栏）：**需复位的派生面 ＋ 正门命令 ＋ 次序**（★ 只列出 · 本档**不代跑**下列正门）。
+	//   理据：本档复位的是**源件**；与它同批的**派生面**是源件的**确定性函数** ⇒ 复位源件**不会**顺带改它们 ⇒ 须**另跑**下列正门。
+	//   ★ 次序铁律：与「切」**同向**（✗ 非逆序）—— 拓扑序恒「**源件 → 制品 → 派生**」；先复位派生在方向上是错的
+	//     （生成器读的是**未复位**的源 ⇒ 产出仍是「切后」文本）。
+	//   ★ 本清单**硬编**（本仓**无**「需复位派生面」的登记面 —— `affected-map.json` 是「件→步/面 声明表」而非复位命令表）
+	//     ⇒ ★ **须与本仓派生面同步**。门步锚：`precommit-gates.sh:2688`（gen-cli-reference · 阻断）/ `:2690`（help-snapshot）/ `:3645`（affected-map · 门84 · 阻断）。
+	sb.WriteString("# ★ 需复位的派生面 ＋ 正门命令 ＋ 次序（源件 → 制品 → 派生）—— ★ 只列出 · 本档不代跑下列正门。\n")
+	sb.WriteString("echo \"★ 需复位的派生面（本件是源件 · 上面的恢复只复位它 · 下列派生面须按此次序另跑 · 本档只列出不代跑）：\"\n")
+	sb.WriteString("echo \"  次序铁律：源件 → 制品 → 派生（派生面是源件的确定性函数 ⇒ 先复位源件 · 再重编 · 后重导派生）。\"\n")
+	sb.WriteString("echo \"  ① 制品       bin/zerg                                 ⇒ zerg build all --only cli\"\n")
+	sb.WriteString("echo \"  ② 命令页 zh  docs/zh/参考-命令行.md                   ⇒ zerg gate check gen-cli-reference --emit\"\n")
+	sb.WriteString("echo \"  ③ 命令页 en  docs/en/参考-命令行.md                   ⇒ 同上（--emit 同刷 zh/en）\"\n")
+	sb.WriteString("echo \"  ④ 帮助快照   zerg help export --dry-run --out <目录>  ⇒ zerg gate check check-help-snapshot --runtime-artifact <目录>\"\n")
+	sb.WriteString("echo \"  ⑤ 契约矩阵   core/cmd/zerg/testdata/cli-matrix.json   ⇒ zerg gate check check-cli-contract --emit-matrix\"\n")
+	sb.WriteString("echo \"  ⑥ 契约基线   scripts/gates/cli-contract-baseline.json ⇒ 随 ⑤ 同批重冻\"\n")
+	sb.WriteString("echo \"  ⑦ 新命令基线 scripts/gates/newcmd-paths-baseline.json ⇒ 随 ⑤ 同批重冻\"\n")
+	sb.WriteString("echo \"  ⑧ 判据注册表 scripts/gates/judge-registry.json        ⇒ zerg gate check check-judge-registry --emit\"\n")
+	sb.WriteString("echo \"  ⑨ 受影响面表 scripts/gates/affected-map.json          ⇒ zerg gate check check-affected-map --emit\"\n")
+	sb.WriteString("echo \"  ★ 收口门：gen-cli-reference（步:2688 · 阻断） · help-snapshot（步:2690） · affected-map（门84 · 步:3645 · 阻断）\"\n")
+	if err := os.WriteFile(restorePath, []byte(sb.String()), 0o755); err != nil {
+		return "", "", fmt.Errorf("可执行退点档落不下（%s）：%w", restorePath, err)
+	}
+	if beforeMissing {
+		return "", restorePath, nil
+	}
+	return archivePath, restorePath, nil
 }
 
 // emitDevEditRollbackAdvice —— 干跑档的**退建议**（stderr 一块 · 人读 + 逐条理由）。

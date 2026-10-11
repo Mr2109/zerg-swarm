@@ -163,7 +163,7 @@ func TestCheckDocCmdsGatePort(t *testing.T) {
 
 	// ── ⑬ --self-test 自身必须全过（防恒绿/恒红）⇒ rc=0 + 末行自印组数 ────────
 	rcST, outST, _ := dcmdRunIn(t, good, "--self-test")
-	if rcST != 0 || !strings.Contains(outST, "自检全过（26 组") {
+	if rcST != 0 || !strings.Contains(outST, "自检全过（28 组") {
 		t.Fatalf("--self-test 失败：得 rc=%d out=%q", rcST, outST)
 	}
 }

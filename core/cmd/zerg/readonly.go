@@ -15,7 +15,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -231,10 +233,18 @@ func cmdAgentLs(inv *invocation, stdout, stderr io.Writer) int {
 				row[f] = cell(v)
 			}
 		}
+		// ★ 与 `agent show` 同一口径（单一真源助手 `agentMarkUnknownGPU`）：macOS 上 `gpu_pct`
+		//   缺键、`gpu_used_gb` 是「未知」哨兵 0 ⇒ 两格示 `n/a`。改前 ls 面此处**没做**这一步
+		//   ⇒ 同一份载荷在 ls/show 两处**两套口径**（ls 留空串 / 印假 0，show 示 `n/a`）
+		//   —— 正是缺口 GAP-20260925-34 的「不反映真实值」在 ls 面的残格。
+		agentMarkUnknownGPU(o, row)
 		rows = append(rows, row)
 	}
-	return listCmd(inv, stdout, stderr, []string{"machine", "healthy", "code_version", "code_sha",
-		"cpu_pct", "gpu_pct", "mem_available_gb", "mem_total_gb"}, rows)
+	// ★ 2026-10-10（缺口 `GAP-20261010-29` / `GAP-20261010-06`）：人面列 = **字段面同源**
+	//   （`fieldListOf` 单一真源）。改前这里另写一份硬编 8 格清单 ⇒ 人面看不到机读面（`--json`）
+	//   与登记面已有的 `active_requests` 等 8 格 ⇒ 「默认 ls 即判某台在不在干活」做不到。
+	//   ⇒ 人面与机读面同源，✗ 不再造第三套口径。
+	return listCmd(inv, stdout, stderr, fields, rows)
 }
 
 // ---- task 族（只读：ls）----
@@ -540,6 +550,134 @@ func doctorMemCells(fleet jsonObj, known bool) []map[string]string {
 	return []map[string]string{oom, mem}
 }
 
+// doctorHostLoadItem —— 本机过载体检（只读 · 缺口 `GAP-20260926-202` 候选 c1 的只读落点）。
+//
+// 回答「本机现在**过载了吗**」：此前**无一面**可答 —— 负载 vs 核数、本机并发上限（卵占槽/上限）都只能事后手查
+// （真因＝并发总量无上限：卵数 × 每卵 `-np` 槽）。本格把三样摊成一格：
+//
+//	① `loadavg` 三均值 vs 核数（`hw.ncpu`）⇒ **明确「过载/不过载」判定**（✗ 不只印数字）；
+//	② 本机并发上限 = `config/workers.yaml` 本机条的 `max_workers`（复用 `agentDeviceMaxFor` 单一真源，✗ 不造第二份）；
+//	③ 本机在跑（`active_requests`）—— 只有机群载荷读得到才报（✗ 取不到不编）。
+//
+// 判定词取 **REPORT**（只报告）—— 照 `doctorMemCells` 资源类项先例（过载 = 机器忙 ≠ 配置坏，不混进退码 ·
+// REPORT **不影响** `doctor` 退码）；`loadavg` / 核数读不到 ⇒ SKIP（§九 M9：读不到不当健康）。
+// ★ 只读：读 `/proc/loadavg` 或 `sysctl -n vm.loadavg` 与 `config/workers.yaml`，✗ 不写件、✗ 不改 workers.yaml、
+// ✗ 不触发调度、✗ 不启停服务。
+func doctorHostLoadItem(fleet jsonObj, fleetKnown bool) map[string]string {
+	l1, l5, l15, ok := hostLoadAvg()
+	if !ok {
+		return map[string]string{
+			"name": "本机过载体检", "verdict": "SKIP",
+			"detail": "读不到 loadavg（/proc/loadavg 与 `sysctl -n vm.loadavg` 都取不到）—— 读不到不当健康",
+			"advice": "确认 sysctl 可用（macOS: `/usr/sbin/sysctl -n vm.loadavg`）；本格不编一个数"}
+	}
+	ncpu := hostNCPU()
+	if ncpu <= 0 {
+		return map[string]string{
+			"name": "本机过载体检", "verdict": "SKIP",
+			"detail": fmt.Sprintf("读到 loadavg=%.2f/%.2f/%.2f 但拿不到核数（`hw.ncpu`）⇒ 无从判过载（不编一个分母）", l1, l5, l15),
+			"advice": "确认 `sysctl -n hw.ncpu` 可用；核数是「过载」判据的分母"}
+	}
+	overload := l1 > float64(ncpu)
+	word, cmp := "不过载", "≤"
+	if overload {
+		word, cmp = "过载", ">"
+	}
+	verdict := "PASS"
+	advice := ""
+	if overload {
+		verdict = "REPORT"
+		advice = "核数忙满：先看谁在跑（`zerg agent ls` 的 active_requests）· 本机可 `zerg agent workers set <本机> --max N` 降并发上限（0 = 暂停派活）；本格只读、不动调度"
+	}
+	detail := fmt.Sprintf("%s：load1=%.2f %s ncpu=%d（load5=%.2f · load15=%.2f）", word, l1, cmp, ncpu, l5, l15)
+	// ② 本机并发上限（卵占槽/上限）：读仓内 `config/workers.yaml` 本机条的 max_workers（复用同族只读解析，单一真源）。
+	if p := agentWorkersConfigPath(); p != "" {
+		if b, err := os.ReadFile(p); err == nil {
+			if v, found := agentDeviceMaxFor(string(b), planHost()); found {
+				if strings.TrimSpace(v) == "0" {
+					detail += " · 本机并发上限 max_workers=0（显式暂停派活）"
+				} else {
+					detail += " · 本机并发上限 max_workers=" + v
+				}
+			} else {
+				detail += " · 本机不在 devices 段（回退内置默认并发）"
+			}
+		}
+	}
+	// ③ 本机在跑（占槽）：机群载荷读得到才报（机名取本机名，逐字小写比；取不到 ⇒ 不编）。
+	if fleetKnown {
+		if ms := asObj(fleet["machines"]); ms != nil {
+			want := strings.ToLower(strings.TrimSpace(planHost()))
+			for name, v := range ms {
+				if strings.ToLower(strings.TrimSpace(name)) != want {
+					continue
+				}
+				if ar, aok := numOf(asObj(v)["active_requests"]); aok {
+					detail += fmt.Sprintf(" · 在跑 active_requests=%d", int(ar))
+				}
+				break
+			}
+		}
+	}
+	return map[string]string{"name": "本机过载体检", "verdict": verdict, "detail": detail, "advice": advice}
+}
+
+// hostLoadAvg —— 本机 loadavg 三均值（1/5/15 分钟）。只读：Linux 读 `/proc/loadavg`；macOS/BSD 走
+// `sysctl -n vm.loadavg`（照同族 `agent/internal/monitor` 口径，✗ 不另造）。两条通路都取不到 ⇒ ok=false。
+// ★ 首参一律**带引号的字面量**（✗ 不用变量当首个实参）—— 门103 `check-exec-two-condition` 的 P3 档专报
+// `exec.Command(<变量>` 形态；用字面量即不命中该报告档。
+func hostLoadAvg() (l1, l5, l15 float64, ok bool) {
+	if b, err := os.ReadFile("/proc/loadavg"); err == nil {
+		if a, c, d, aok := parseLoadAvgFields(strings.Fields(string(b))); aok {
+			return a, c, d, true
+		}
+	}
+	out, err := exec.Command("/usr/sbin/sysctl", "-n", "vm.loadavg").Output()
+	if err != nil {
+		out, err = exec.Command("sysctl", "-n", "vm.loadavg").Output()
+	}
+	if err == nil {
+		// 形如 `{ 3.19 4.12 4.90 }`（花括号两枚去掉后按字段取三枚）。
+		f := strings.Fields(strings.NewReplacer("{", " ", "}", " ").Replace(string(out)))
+		if a, c, d, aok := parseLoadAvgFields(f); aok {
+			return a, c, d, true
+		}
+	}
+	return 0, 0, 0, false
+}
+
+// parseLoadAvgFields —— 从字段序列取前三枚浮点（1/5/15 分钟均值）；不足 / 坏值 ⇒ ok=false（不编）。
+func parseLoadAvgFields(f []string) (l1, l5, l15 float64, ok bool) {
+	if len(f) < 3 {
+		return 0, 0, 0, false
+	}
+	a, e1 := strconv.ParseFloat(f[0], 64)
+	b, e2 := strconv.ParseFloat(f[1], 64)
+	c, e3 := strconv.ParseFloat(f[2], 64)
+	if e1 != nil || e2 != nil || e3 != nil {
+		return 0, 0, 0, false
+	}
+	return a, b, c, true
+}
+
+// hostNCPU —— 本机逻辑核数（`hw.ncpu`）。macOS 走 `sysctl -n hw.ncpu`；取不到 ⇒ 回落 `runtime.NumCPU()`（Linux：
+// `hw.ncpu` 不存在 ⇒ 用逻辑 CPU 数当分母，语义同「核数」）。两者都 0 ⇒ 0（调用方 SKIP，不猜一个分母）。
+func hostNCPU() int {
+	out, err := exec.Command("/usr/sbin/sysctl", "-n", "hw.ncpu").Output()
+	if err != nil {
+		out, err = exec.Command("sysctl", "-n", "hw.ncpu").Output()
+	}
+	if err == nil {
+		if n, aerr := strconv.Atoi(strings.TrimSpace(string(out))); aerr == nil && n > 0 {
+			return n
+		}
+	}
+	if n := runtime.NumCPU(); n > 0 {
+		return n
+	}
+	return 0
+}
+
 // numOf —— 把一个载荷值取成 float64（JSON 数是 float64；字符串形态也认，取不到 ⇒ ok=false）。
 func numOf(v any) (float64, bool) {
 	switch t := v.(type) {
@@ -635,6 +773,8 @@ func doctorItemsRaw(inv *invocation) []map[string]string {
 		items = append(items, ghostReapItem())
 		// 缺口 `GAP-20260925-47`：`--quick` 下两格**仍在表里**（==SKIP），不许整格消失（E 型「绿着错」）。
 		items = append(items, doctorMemCells(nil, false)...)
+		// 本机过载体检（本地读 · 快档也出；机群载荷未读 ⇒ 占槽那格缺席，不编）。
+		items = append(items, doctorHostLoadItem(nil, false))
 		return items
 	}
 	var fleet jsonObj
@@ -689,6 +829,8 @@ func doctorItemsRaw(inv *invocation) []map[string]string {
 	}
 	// 缺口 `GAP-20260925-47`：内存余量 / 内核 OOM 归因两格（读得到才判；读不到 ⇒ SKIP · 不当健康）。
 	items = append(items, doctorMemCells(fleet, fleetKnown)...)
+	// 本机过载体检（GAP-20260926-202 候选 c1 的只读落点）：本地负载 vs 核数 ＋ 本机并发上限（占槽）。
+	items = append(items, doctorHostLoadItem(fleet, fleetKnown))
 
 	// ⑥ 档位名册（离线也出表）
 	rows := contextRows()

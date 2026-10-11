@@ -206,6 +206,15 @@ func cmdGate(inv *invocation, stdout, stderr io.Writer) int {
 		if rc := gateRunPrecheckScopeValues(script, tail, stderr); rc != exitOK {
 			return rc
 		}
+		// ★ 缺口 `GAP-20261001-35`（本片）：单步档**不带 `--only-step`** ⇒ 脚本会先跑整套
+		//   『合成步骤·不碰真目标』自检，其输出与真那一步**混在同一条 stdout**（既有两次误读）。
+		//   命令面在 exec **之前**补一行**显式声明**（= stdout 首行 · 逐字串见 `family_gate_run_step.go`
+		//   的 `gateRunStepMixedNotice`）；本支是三处前移校验**都过了**才走到 ⇒ 被拒执的发（未知旗标 /
+		//   坏值）不会多打这行。`--only-step`/`--self-test` 不产合成段 ⇒ 不打；`--json`/`--show-log`/
+		//   `--verify-live`/`--` 四档已在上面更早返回。哑化负控：`ZERG_GATE_STEP_NONOTICE`。
+		if gateRunWantsMixedNotice(tail) {
+			gateRunStepNotice(stdout)
+		}
 		args = append(args, tail...)
 		// 指纹**在执行前**取：它就是这一趟门跑**看到**的那棵树。
 		runOutdirArg, runSince = gateRunOutdirArg(tail), time.Now()
@@ -356,7 +365,14 @@ var gateLsFields = []string{"total", "scope", "mode", "step"}
 // 的 `name` 逐字同名），而 `step` 是本命令既有的**冻结键**。可选字段**不进** `main.go` 登记 `fields:`
 // 那一份（= 帮助/导出面的冻结表）⇒ 帮助面与命令页一行不动，只多一个点得出来的键（与 `code find`
 // 的 `count` 同一体例）。`name` 与 `step` **同值**（都指同一步名）；裸 `--json` 一字不改。
-var gateLsOptFields = []string{"name"}
+// ★ 缺口 `GAP-20261010-13`（本片）：`gates_total` 同走**可选字段层** —— 步表机读面
+// （`precommit-gates.sh --list --json`）新增的顶层格 `gates_total`（前序 DEV-2400 落的），
+// 命令面此前**未随动** ⇒ `zerg gate ls --json gates_total` 退 2「未知字段」（加格到机读面 ≠
+// CLI 打得着）。本处把它登进出口白名单（顶层标量格，与 `total` 同形：值 = `total` = `count`，
+// 已由 `pgsParseListJSON` 的 `gates_total==len(steps)` 自证钉住）—— ✗ 不进冻结 `fields:`
+// （帮助/导出面与命令页一行不动，同 `name` 体例）。逐字：`zerg gate ls --json gates_total`
+// ⇒ `{"gates_total":N}`。
+var gateLsOptFields = []string{"name", "gates_total"}
 
 // gateLsFieldLegal —— 字段是否在闭集四格内（与 `gateShowFieldLegal` 同形 · 不另写第二份口径）。
 func gateLsFieldLegal(f string) bool {
@@ -405,15 +421,11 @@ func gateLsJSON(inv *invocation, stdout, stderr io.Writer, root, script string) 
 		}
 	}
 
-	c := exec.Command("bash", script, "--list")
-	c.Dir = root
-	var buf bytes.Buffer
-	c.Stdout = &buf
-	c.Stderr = stderr
-	if err := c.Run(); err != nil {
-		fmt.Fprintf(stderr, "%s: 跑不动 `--list`：%v\n", progName, err)
-		return exitFail
-	}
+	// ★ GAP-20261010-25（本片）：**步表机读面优先**（`--list --json` 的单对象
+	//   `{"count":N,"steps":[{scope,mode,name},…]}`）—— 复用同族助手 `pgsParseListJSON`
+	//   （✗ 不另造第二套解析）；机读面在场而形状坏/自证不过 ⇒ **响亮失败**（rc=2 不给结论），
+	//   ✗ 不许静默退回人面把读数当绿。人面（`--list` 逐行抠「共 N 步」+ 三列）**只作退化路**。
+	//   两态：改前只抠人面 ⇒ 现读改走机读面；机读面不在（脚本不认 `--json`）⇒ 落回人面（与改前逐字相同）。
 	type row struct {
 		Scope string `json:"scope"`
 		Mode  string `json:"mode"`
@@ -421,27 +433,66 @@ func gateLsJSON(inv *invocation, stdout, stderr io.Writer, root, script string) 
 	}
 	rows := []row{}
 	total := 0
-	for _, ln := range strings.Split(buf.String(), "\n") {
-		t := strings.TrimSpace(ln)
-		if t == "" {
-			continue
+	machineDone := false
+	// ★ 家族可取消面（本片 · 同族最后报出的一处）：此处原先是**裸 `exec.Command`**（未成组、未登记
+	//   `runningChild`）⇒ 全局 `--timeout` / 墙钟到点（`wallclockGuard` ⇒ `cancelRunningChild` ⇒
+	//   `terminateChildTree`）**打不到它**（到点子进程改嫁后照跑）。照同族正确形态补「成组 + 登记」
+	//   两件（`armChildGroup` · `main.go:103` ＋ `runningChild` · `main.go:91`）—— 参数/语义/输出
+	//   一字不动（仍 `bash <script> --list --json` 取 `.Output()`）；✗ 不用 `CommandContext`（它只杀
+	//   直接子）—— 照树收先例 `ffpRunProbe`（`check_fields_face_parity.go:691`）走 `terminateChildTree`。
+	mcmd := armChildGroup(exec.Command("bash", script, "--list", "--json"))
+	runningChild = mcmd
+	defer func() { runningChild = nil }()
+	if mout, merr := mcmd.Output(); merr == nil {
+		if msteps, mtotal, isM, perr := pgsParseListJSON(string(mout)); isM {
+			if perr != "" {
+				inv.setErr("usage", "gate_ls_machine_face_broken", perr)
+				fmt.Fprintf(stderr, "%s: 步表机读面（`%s --list --json`）形状坏：%s ⇒ **不给结论**（✗ 不退回人面）\n",
+					progName, gateScriptRel, perr)
+				return exitUsage
+			}
+			for _, s := range msteps {
+				rows = append(rows, row{Scope: s.Scope, Mode: s.Mode, Step: s.Name})
+			}
+			total = mtotal
+			machineDone = true
 		}
-		if strings.HasPrefix(t, "共") {
-			fmt.Sscanf(t, "共 %d 步", &total)
-			continue
+	}
+	if !machineDone {
+		// ② 退化路：机读面不在 ⇒ 人面 `--list`（与改前逐字相同）。
+		c := armChildGroup(exec.Command("bash", script, "--list"))
+		runningChild = c
+		defer func() { runningChild = nil }()
+		c.Dir = root
+		var buf bytes.Buffer
+		c.Stdout = &buf
+		c.Stderr = stderr
+		if err := c.Run(); err != nil {
+			fmt.Fprintf(stderr, "%s: 跑不动 `--list`：%v\n", progName, err)
+			return exitFail
 		}
-		if strings.HasPrefix(t, "──") {
-			continue
+		for _, ln := range strings.Split(buf.String(), "\n") {
+			t := strings.TrimSpace(ln)
+			if t == "" {
+				continue
+			}
+			if strings.HasPrefix(t, "共") {
+				fmt.Sscanf(t, "共 %d 步", &total)
+				continue
+			}
+			if strings.HasPrefix(t, "──") {
+				continue
+			}
+			// ★ 2026-10-05（缺口 `GAP-20261005-49`）：步名**取原文、不折叠空白** —— 本仓有步名含连续两个
+			//   ASCII 空格（`core: linux  build ./...`），而 `strings.Fields`＋`Join` 会把它折成单空格 ⇒
+			//   机器面读出**另一个名字**（与默认面 `--list` 的逐字形态不符；折后形拿去调 `--emit-cmd`/`gate show`
+			//   一律零命中）。行形与切法**复用** `impactStepListLineRe`（`--list` 清单列的唯一切法 · ✗ 不另造第二套）。
+			if m := impactStepListLineRe.FindStringSubmatch(t); m != nil {
+				rows = append(rows, row{Scope: m[1], Mode: m[2], Step: m[3]})
+				continue
+			}
+			rows = append(rows, row{Step: t})
 		}
-		// ★ 2026-10-05（缺口 `GAP-20261005-49`）：步名**取原文、不折叠空白** —— 本仓有步名含连续两个
-		//   ASCII 空格（`core: linux  build ./...`），而 `strings.Fields`＋`Join` 会把它折成单空格 ⇒
-		//   机器面读出**另一个名字**（与默认面 `--list` 的逐字形态不符；折后形拿去调 `--emit-cmd`/`gate show`
-		//   一律零命中）。行形与切法**复用** `impactStepListLineRe`（`--list` 清单列的唯一切法 · ✗ 不另造第二套）。
-		if m := impactStepListLineRe.FindStringSubmatch(t); m != nil {
-			rows = append(rows, row{Scope: m[1], Mode: m[2], Step: m[3]})
-			continue
-		}
-		rows = append(rows, row{Step: t})
 	}
 	// 裸 `--json`（不给字段）= 闭集全量：与改前**逐字节相同**（默认面一字不动）。
 	if len(inv.fields) == 0 {
@@ -456,11 +507,15 @@ func gateLsJSON(inv *invocation, stdout, stderr io.Writer, root, script string) 
 
 	// ② 点名档：只出点到的几格（顶层 `total` + 行级 `scope`/`mode`/`step` · 序即用户给的序）。
 	wantTotal := false
+	wantGatesTotal := false
 	rowKeys := []string{}
 	for _, f := range fields {
 		switch f {
 		case "total":
 			wantTotal = true
+		case "gates_total":
+			// ★ GAP-20261010-13：顶层标量格（值 = total = count，已被 pgsParseListJSON 自证钉住）。
+			wantGatesTotal = true
 		case "scope", "mode", "step", "name":
 			rowKeys = append(rowKeys, f)
 		}
@@ -470,6 +525,13 @@ func gateLsJSON(inv *invocation, stdout, stderr io.Writer, root, script string) 
 	n := 0
 	if wantTotal {
 		fmt.Fprintf(&b, "\"total\":%d", total)
+		n++
+	}
+	if wantGatesTotal {
+		if n > 0 {
+			b.WriteString(",")
+		}
+		fmt.Fprintf(&b, "\"gates_total\":%d", total)
 		n++
 	}
 	if len(rowKeys) > 0 {

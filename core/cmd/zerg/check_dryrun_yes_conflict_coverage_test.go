@@ -218,3 +218,38 @@ func TestDycSelfTestCleanupDelta0(t *testing.T) {
 		t.Fatalf("A 类 tempdir 未回收：私有 TMPDIR 残留 %d 项（应 0）", len(ents))
 	}
 }
+
+// ── B 类（读失败静默）回归牙 ────────────────────────────────────────────────────
+// 应产者件锁成 chmod 000（**仓外夹具**）⇒ 读失败登记面（dycReadFails）必响：
+// rc=2 + stderr BLOCKED 头 + 逐件点名 a.go。删回静默（原 py `except OSError: continue`）⇒ 该件静默少判。
+func TestDycReadFailTeeth(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root 绕过权限位 ⇒ chmod 000 不挡读，本用例无鉴别力")
+	}
+	d := dycTestFx(t, map[string]string{
+		"core/cmd/zerg/a.go": "package main\nfunc f(inv *invocation) int { if " + dycTestInvDry + " { return 0 }; return 1 }\n",
+		"core/cmd/zerg/b.go": "package main\nfunc g(inv *invocation) int { if rc := dryRun" + "YesConflict(inv, nil); rc != 0 { return rc }; _ = " + dycTestInvDry + "; return 0 }\n",
+	})
+	locked := filepath.Join(d, "core", "cmd", "zerg", "a.go")
+	if err := os.Chmod(locked, 0); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(locked, 0o644)
+
+	rc, _, errs := dycTestRun([]string{"--root", d})
+	if rc != 2 {
+		t.Fatalf("读失败回归牙：锁死件 ⇒ 应 rc=2，得 rc=%d err=%q", rc, errs)
+	}
+	if !strings.Contains(errs, "BLOCKED") || !strings.Contains(errs, "a.go") {
+		t.Fatalf("读失败回归牙：stderr 须带 BLOCKED 头 + 点名 a.go，得 err=%q", errs)
+	}
+
+	// 成对反控（✗ 禁恒红）：可读同构夹具 ⇒ rc=1（缺者报红）且 stderr 无 BLOCKED。
+	d2 := dycTestFx(t, map[string]string{
+		"core/cmd/zerg/a.go": "package main\nfunc f(inv *invocation) int { if " + dycTestInvDry + " { return 0 }; return 1 }\n",
+	})
+	rcOK, _, errOK := dycTestRun([]string{"--root", d2})
+	if rcOK != 1 || strings.Contains(errOK, "BLOCKED") {
+		t.Fatalf("成对反控失败：应 rc=1 且无 BLOCKED，得 rc=%d err=%q", rcOK, errOK)
+	}
+}

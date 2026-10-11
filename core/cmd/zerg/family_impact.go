@@ -143,6 +143,7 @@ func cmdImpact(inv *invocation, stdout, stderr io.Writer) int {
 		}
 		if inv.confirmGiven && !devEditHostAccept(inv.confirm) {
 			inv.setErr("usage", "confirm_mismatch", "确认值不匹配主机名")
+			guardMarkDecision(inv, guardDecisionBlock)
 			fmt.Fprintf(stderr, "%s: 确认值不匹配目标（--confirm 给的是 %q，本机主机名是 %q）⇒ 不写回填件（退码 2）\n",
 				progName, inv.confirm, planHost())
 			return exitUsage

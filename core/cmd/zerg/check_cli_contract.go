@@ -333,6 +333,24 @@ var (
 	clicBareRetRE     = regexp.MustCompile(`\b(?:(?:return|os\.Exit)\s+|rc[A-Za-z_]*\s*=\s*)\(?\s*(\d+)\b`)
 )
 
+// clicBlockHasFields —— 一条命令块是否**有字段表**（缺口 GAP-20260928-159）。
+//
+//	① 字面量形态 `fields: []string{…}`；
+//	② 标识符形态 `fields: <ident>,` —— 含 `append(append([]string{}, A...), B...)` **两片拼接** 与
+//	   裸标识符常量 —— 走 `ffpIdentDefs`/`ffpResolveIdentNames`（与字段面对拍门 `check_fields_face_parity.go`
+//	   **同源**）。解析不到名字（没定义 / 展开为空）⇒ **不算**「有字段表」（与 `ffpDeclaredFaces` 同判）。
+//	⇒ 契约矩阵侧与字段面对拍侧读**同一张**字段表，消除「同一条命令两面口径相左」。
+func clicBlockHasFields(block string, lit, refs map[string][][]string, memo map[string]map[string]bool) bool {
+	if clicFieldsRE.MatchString(block) {
+		return true
+	}
+	im := ffpReFieldsIdent.FindStringSubmatch(block)
+	if im == nil {
+		return false
+	}
+	return len(ffpResolveIdentNames(lit, refs, im[1], memo, 0)) > 0
+}
+
 const clicNoConclusionRC = 8
 
 var clicPlaceholderRE = regexp.MustCompile(`^<[^<>]+>$`)
@@ -497,6 +515,12 @@ func clicParseTree(root string) []clicCmd {
 		end = start + rel
 	}
 	seg := src[start:end]
+	// ★ 缺口 GAP-20260928-159（「两片拼接治法」**同源**）：字段表**不只认 `[]string{…}` 字面量** ——
+	//   `fields: devEditFields,` 一类**拼接变量 / 裸标识符**也要读成「有字段表」。解析**直接复用**
+	//   字段面对拍门（`check_fields_face_parity.go`）的标识符解析（`ffpIdentDefs`/`ffpResolveIdentNames`）
+	//   ⇒ 契约矩阵侧与字段面对拍侧**同一取数面**，不再把同一张字段表在契约那侧读成「没有字段表」。
+	fldLit, fldRefs := ffpIdentDefs(ffpPkgSources(root))
+	fldMemo := map[string]map[string]bool{}
 	locs := clicCmdRE.FindAllStringSubmatchIndex(seg, -1)
 	var out []clicCmd
 	for i, m := range locs {
@@ -524,7 +548,7 @@ func clicParseTree(root string) []clicCmd {
 			path: strings.Join(names, " "),
 			shape: clicShape{
 				danger:      danger,
-				fields:      clicFieldsRE.MatchString(block),
+				fields:      clicBlockHasFields(block, fldLit, fldRefs, fldMemo),
 				net:         net,
 				passthrough: clicPassthroughRE.MatchString(block),
 			},
@@ -2729,6 +2753,27 @@ func clicSelfTest(w io.Writer) int {
 	caseFn("⑳ R-6 负控（没有制品 ⇒ 2 不给结论）", 2, rc, "")
 	if !clicAnyLine(lines, "找不到 bin/zerg") {
 		bad = append(bad, "⑳ R-6 负控：判词没有点名缺制品")
+	}
+
+	// ㉑ 字段表标识符/拼接解析（缺口 GAP-20260928-159：契约矩阵侧与字段面对拍侧「同源」）——
+	//    `fields: zzFields,`（`append(append([]string{}, A...), B...)` 两片拼接变量）必须读成
+	//    **有字段表**；旧「只认单行 []string{…}」的解析器在这一格必 FAIL（把同一张字段表读成「没有字段表」）。
+	//    负控见 `check_cli_contract_test.go`（标识符未定义 ⇒ 仍不算有字段表）。
+	r = clicPyJoin(tmp, "fldident")
+	clicFixture(r, clicGoodMain, clicGoodExitcodes, clicGoodMatrix(), clicGoodBaseline(), clicGoodRegistry(), "")
+	fp := clicPyJoin(r, clicMainRel)
+	fb, _ := clicReadFile(fp)
+	fb = strings.ReplaceAll(fb, "fields:  []string{\"name\"},", "fields:  zzFields,")
+	fb += "\nvar zzShare = []string{\"probe\", \"plan\"}\nvar zzExtra = []string{\"apply\"}\nvar zzFields = append(append([]string{}, zzShare...), zzExtra...)\n"
+	_ = os.WriteFile(fp, []byte(fb), 0o644)
+	hasIdent := false
+	for _, c := range clicParseTree(r) {
+		if c.path == "version" {
+			hasIdent = c.shape.fields
+		}
+	}
+	if !hasIdent {
+		bad = append(bad, "㉑ 字段表标识符/拼接解析：`fields: zzFields,`（append 两片拼接变量）应读成有字段表，实得 false（契约矩阵侧读成了「没有字段表」）")
 	}
 
 	verdict := "全过"

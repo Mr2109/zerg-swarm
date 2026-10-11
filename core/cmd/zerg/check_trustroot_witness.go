@@ -36,7 +36,10 @@
 //	   混合键未实测。
 //	⑥ `judge_pair` 里 `str(t[2]) > str(copy_stamp)` 为**字符串比较**（逐字照搬）；非字符串 `approved_at`
 //	   的字面折值面（int/bool）本件按 py `str()` 语义折。
-//	⑦ 真口子（B 类 `except Exception: continue` 两处 · :352 / :387）逐字保留，✗ 不自修（见件尾注）。
+//	⑦ 真口子（B 类 `except Exception: continue` 两处 · py :352 / :387）**原逐字照搬静默 `continue`**，现已按
+//	   「静默降级 ⇒ 明说」正解体例改为**响亮登记**：读失败 ⇒ 逐件登记（批件面 `readFails` / 源码面
+//	   `twReaderReadFails`）⇒ 入口 `twScan` 汇总处 `BLOCKED` + rc=2（逐件点名 · 不给结论）；
+//	   出处 DEV-1047（py:352 · 2026-10-01）/ DEV-2348（py:387 · 2026-10-10）。本件已无静默口子。
 package main
 
 import (
@@ -945,6 +948,10 @@ type twHit struct {
 	text string
 }
 
+// twReaderReadFails —— `scan_readers` 的 B 类读失败登记面（读不了的件 · 权限/IO · 逐件登记）。
+// 读失败 ⇒ 登记（相对路径 + err 正文）；入口 `twScan` 每次自清并在汇总处判红 rc=2（BLOCKED · 不给结论）。
+var twReaderReadFails []string
+
 // twScanReaders —— py `scan_readers`：已跟踪源码面里副本路径字面串逐行取。
 func twScanReaders(repo string, tracked []string, copyRel string) []twHit {
 	rel := strings.ReplaceAll(copyRel, string(os.PathSeparator), "/")
@@ -987,7 +994,10 @@ func twScanReaders(repo string, tracked []string, copyRel string) []twHit {
 		full := filepath.Join(repo, p)
 		txt, err := twReadTextReplace(full)
 		if err != nil {
-			continue // B 类：读不了的件静默跳过（真口子 · 逐字照搬）
+			// ★ 读失败不再静默（原 py `scan_readers` 的 `except Exception: continue` 口子）：
+			//   登记后继续 —— 覆盖面不完整 ⇒ 入口汇总处判红退 2（不给结论）
+			twReaderReadFails = append(twReaderReadFails, p+"（"+err.Error()+"）")
+			continue
 		}
 		if !strings.Contains(txt, rel) && !(d != "" && strings.Contains(txt, d)) {
 			continue
@@ -1479,20 +1489,13 @@ func twResolveRoot(arg string) string {
 // ── 人读面 ──────────────────────────────────────────────────────────────────
 
 func twScan(stdout, stderr io.Writer, repo, state, copyRel string, asJSON bool) int {
+	twReaderReadFails = nil // ★ 自清包级登记面：防上一次调用残留（否则一进门即 BLOCKED）
 	say := func(s string) {
 		if !asJSON {
 			fmt.Fprintln(stdout, s)
 		}
 	}
 	r, why := twReadAll(repo, state, copyRel)
-	if r != nil && len(r.readFails) > 0 {
-		// ★ 汇总处判红：读失败 ⇒ stderr BLOCKED 头 + 逐件点名 + 退 2
-		fmt.Fprint(stderr, "⛔ BLOCKED：以下件读失败，覆盖面不完整 —— 不给结论（原 py 此处 `continue` 静默）\n")
-		for _, p := range r.readFails {
-			fmt.Fprintln(stderr, "   · "+p)
-		}
-		return 2
-	}
 	if r == nil {
 		if asJSON {
 			m := &twOM{}
@@ -1505,6 +1508,18 @@ func twScan(stdout, stderr io.Writer, repo, state, copyRel string, asJSON bool) 
 		return 2
 	}
 	readers := twScanReaders(repo, r.tracked, r.copyRel)
+	if len(twReaderReadFails) > 0 {
+		// ★ 源码扫描面读失败（原 py `scan_readers` 的 `except: continue` 口子）⇒ 并进登记面 ⇒ 汇总判红
+		r.readFails = append(r.readFails, twReaderReadFails...)
+	}
+	if len(r.readFails) > 0 {
+		// ★ 汇总处判红：读失败（批件面 ∨ 源码扫描面）⇒ stderr BLOCKED 头 + 逐件点名 + 退 2
+		fmt.Fprint(stderr, "⛔ BLOCKED：以下件读失败，覆盖面不完整 —— 不给结论（原 py 此处 `continue` 静默）\n")
+		for _, p := range r.readFails {
+			fmt.Fprintln(stderr, "   · "+p)
+		}
+		return 2
+	}
 	anchors := twReadTableAnchors(repo)
 	reds, nocalls, info := twJudgeAll(r, readers, anchors)
 	rel := strings.ReplaceAll(copyRel, string(os.PathSeparator), "/")

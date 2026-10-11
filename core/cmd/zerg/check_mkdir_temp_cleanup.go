@@ -321,12 +321,24 @@ func cmkFuncBounds(lines []string, idx int) (int, int) {
 	return s, len(lines) - 1
 }
 
+// cmkReadFails —— B 类读失败登记面（读不了的目录/件 ⇒ 逐件登记 相对路径 + err 正文）。
+// ★ B 类真口子修（与 py 有意分叉 · 同族先例 check_doc_cmds.go 的 dcmdReadFails）：
+//
+//	读失败 ⇒ 登记 + 入口判红（stderr BLOCKED 头 + 逐件点名）⇒ rc=2（✗ 不再静默少判）。
+//	自清点：每次 cmkScan 起手清空 ⇒ 不许跨调用残留。
+var cmkReadFails []string
+
 // cmkWalkOne —— 处理一个 dp：先出本层全部文件（readdir 原序），再按子目录原序下钻（复刻 `os.walk`）。
 func cmkWalkOne(dp, root string, wlset map[string]bool, sites, t1, t2 *int, t3 *[]string) {
 	skipped := strings.Contains(dp, "/vendor") || strings.Contains(dp, "/testdata")
 	ents, ok := cmkReadDirRaw(dp)
 	if !ok {
-		return // os.walk onerror=None ⇒ 读不了的目录静默跳过（B 类：不产结论、也不报错）
+		// ★ B 类真口子修（原 py os.walk(onerror=None) 静默 · ✗ 不再静默）：**在盘却读不了**才是真读失败
+		//	（目录不存在 = 本就不该扫 · 同 py os.walk 静默跳过）⇒ 登记 + 判红 + rc=2。
+		if fi, serr := os.Stat(dp); serr == nil && fi.IsDir() {
+			cmkReadFails = append(cmkReadFails, cmkPyRelpath(dp, root)+"（读不了目录）")
+		}
+		return
 	}
 	var dirs, files []os.DirEntry
 	for _, e := range ents {
@@ -346,6 +358,14 @@ func cmkWalkOne(dp, root string, wlset map[string]bool, sites, t1, t2 *int, t3 *
 			rel := cmkPyRelpath(p, root)
 			lines, rok := cmkReadLines(p)
 			if !rok {
+				// ★ B 类真口子修（原 py 读失败静默跳过 · ✗ 不再静默）：登记 + 判红 + rc=2。
+				why := "读不了件（权限/IO）"
+				if _, rerr := os.ReadFile(p); rerr != nil {
+					why = rerr.Error()
+				} else {
+					why = "非法 UTF-8（py strict decode 抛异常）"
+				}
+				cmkReadFails = append(cmkReadFails, rel+"（"+why+"）")
 				continue
 			}
 			fileHasRall := false
@@ -385,6 +405,7 @@ func cmkWalkOne(dp, root string, wlset map[string]bool, sites, t1, t2 *int, t3 *
 
 // cmkScan —— py `scan` 逐字直译。
 func cmkScan(root, dirs string, whitelist []string) (sites, t1, t2 int, t3, t3f []string) {
+	cmkReadFails = nil // ★ 自清：包级登记面不许跨调用残留
 	wlset := map[string]bool{}
 	for _, x := range whitelist {
 		wlset[x] = true
@@ -543,6 +564,14 @@ func checkMkdirTempCleanupGateMain(stdout, stderr io.Writer, argv []string) int 
 		}
 	}
 	sites, t1, t2, t3, t3f := cmkScan(absRoot, dirs, wl)
+	// ★ B 类真口子修：读失败 ⇒ 响亮 BLOCKED rc=2 + 逐件点名（✗ 不再静默少判）。
+	if len(cmkReadFails) > 0 {
+		fmt.Fprintf(stderr, "BLOCKED —— 有 %d 件读不到（B 类读失败 ⇒ 登记 + 判红 · rc=2 · 不给结论）：\n", len(cmkReadFails))
+		for _, u := range cmkReadFails {
+			fmt.Fprintf(stderr, "  [读失败] %s\n", u)
+		}
+		return 2
+	}
 	if sites == 0 {
 		fmt.Fprint(stderr, "⛔ 不给结论（rc=2）：扫面内 0 个 `"+cmkKTok+"`（空转 = 假覆盖）\n")
 		return 2

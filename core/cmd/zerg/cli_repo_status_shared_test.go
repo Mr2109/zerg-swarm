@@ -308,6 +308,12 @@ func TestRepoStatusFieldsFaceIsTotal(t *testing.T) {
 		if rc != c.wantRC {
 			t.Errorf("%s：rc=%d（要 %d）· stderr=%s", c.name, rc, c.wantRC, errb)
 		}
+		// ★ ② 冻结下限 = 1（棘轮 · 只许增不许减）：逐件面每个 case 至少 1 条（现读 1/1/2）
+		//   —— 结构静默变小（抽到的条目 < 1）⇒ 本格判红，✗ 不许静默绿。
+		rsN := len(items)
+		if rsN < 1 {
+			t.Fatalf("② 冻结下限 1 被破：%s items 抽到 0 条（棘轮 · 只许增不许减）", c.name)
+		}
 		if len(items) != c.wantLen {
 			t.Errorf("%s：items=%d 条（要 %d）：%v", c.name, len(items), c.wantLen, items)
 		}

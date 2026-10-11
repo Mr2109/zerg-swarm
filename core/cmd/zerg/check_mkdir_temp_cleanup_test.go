@@ -219,3 +219,23 @@ func TestCmkNormpathAndSplitLines(t *testing.T) {
 		t.Fatalf("空串应 0 行: %q", l)
 	}
 }
+
+// TestCmkReadFailTeeth —— B 类读失败不再静默的回归牙：扫面里一件 .go 锁成 chmod 000 ⇒
+// 登记面（cmkReadFails）必响：rc=2 + stderr BLOCKED 头 + 逐件点名。删回静默（原 py 静默跳过）本用例必红。
+func TestCmkReadFailTeeth(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root 无视权限位（chmod 000 仍可读）⇒ 跳过")
+	}
+	dir := t.TempDir()
+	cmkWrite(t, dir, "core/ok.go", cmkT3Go) // 可读 ⇒ sites>0（否则落「空转」档，测不到读失败面）
+	cmkWrite(t, dir, "core/locked.go", cmkT3Go)
+	locked := filepath.Join(dir, "core", "locked.go")
+	if err := os.Chmod(locked, 0o000); err != nil {
+		t.Fatalf("chmod 000 失败：%v", err)
+	}
+	defer func() { _ = os.Chmod(locked, 0o644) }()
+	rc, _, errb := cmkRunMain(t, "--root", dir, "--dirs", "core")
+	if rc != 2 || !strings.Contains(errb, "BLOCKED") || !strings.Contains(errb, "core/locked.go") {
+		t.Fatalf("读不到件应 rc=2 + BLOCKED 点名 core/locked.go，得 rc=%d err=%q", rc, errb)
+	}
+}

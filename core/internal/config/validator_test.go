@@ -258,9 +258,29 @@ func TestValidate_UnknownHost(t *testing.T) {
 }
 
 // TestValidate_KnownHostsNoWarning 已知主机不触发 V011
+//
+// ★ 名册**按现读取**：主机集合取自投影 `gateway/fleet.yaml` 的 `fleet:` 键集 —— 正是校验器
+// `knownHosts`（validator.go）用的同一真源 ⇒ ✗ 不再硬编码机名。旧版把 `mini-node-1` 写死成
+// 「已知主机」，mini-node-1 从 `fleet:` 键集退役后本用例恒红（名册减员、用例没跟着变 = 预存腐化）；
+// 动态取则机器退役/入列时用例自动跟着走，不再腐。
+// 语义：本用例只做**正例**（名册内主机不报警）；负例（名册外主机必须报警 V011）由同族
+// TestValidate_GhostHostWarns 承担。
 func TestValidate_KnownHostsNoWarning(t *testing.T) {
-	knownHosts := []string{"Mr2109", "x" + "3", "mini" + "1", "mini" + "2"}
-	for _, host := range knownHosts {
+	p := fleetPath(t)
+	if p == "" {
+		t.Skip("未找到 gateway/fleet.yaml（公开快照形态）——跳过")
+	}
+	if filepath.Base(p) != "fleet.yaml" {
+		t.Skipf("公开快照形态：%s 是模板，跳过严格判据", filepath.Base(p))
+	}
+	cfg, err := LoadFleetConfig(p)
+	if err != nil {
+		t.Fatalf("加载 %s 失败: %v", p, err)
+	}
+	if len(cfg.Fleet) == 0 {
+		t.Fatalf("%s 的 `fleet:` 名册为空 —— 用例失去样本，不许静默通过", filepath.Base(p))
+	}
+	for host := range cfg.Fleet {
 		t.Run(host, func(t *testing.T) {
 			c := validCandidate()
 			c.Host = host

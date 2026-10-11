@@ -33,6 +33,27 @@ import (
 	"testing"
 )
 
+// TestEdgReadFailBlocked ★ 负控：扫面根里一件不可读（chmod 000）⇒ rc=2 BLOCKED + 逐件点名（✗ 不静默少判）。
+func TestEdgReadFailBlocked(t *testing.T) {
+	root := t.TempDir()
+	edgWrite(t, root, "ok.py", edgUnguardedBody)
+	secret := edgWrite(t, root, "secret.py", "import os\n")
+	if err := os.Chmod(secret, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(secret, 0o644) })
+	rc, _, errb := edgT(t, "--root", root)
+	if rc != 2 {
+		t.Fatalf("读失败应 rc=2，得 %d（err=%s）", rc, errb)
+	}
+	if !strings.Contains(errb, "BLOCKED") || !strings.Contains(errb, "[读失败]") {
+		t.Fatalf("未响亮 BLOCKED（读失败被静默）：%s", errb)
+	}
+	if !strings.Contains(errb, "secret.py") {
+		t.Fatalf("未逐件点名：%s", errb)
+	}
+}
+
 func edgT(t *testing.T, args ...string) (int, string, string) {
 	t.Helper()
 	var o, e bytes.Buffer

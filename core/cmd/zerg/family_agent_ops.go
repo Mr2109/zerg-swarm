@@ -56,6 +56,7 @@ import (
 type agentAddr struct {
 	Host string
 	Port int
+	OS   string // 名册 `os:` 字段（`fleet:` 投影源逐字）—— 判远端那一支的命令形态
 }
 
 // agentFleetAddrFileRel —— 地址的现读落点（仓根相对 —— 不写死私有绝对路径）。
@@ -109,10 +110,11 @@ func agentFleetAddrs(stderr io.Writer) (map[string]agentAddr, []string, int) {
 		host := yamlInlineField(rest, "host")
 		portStr := yamlInlineField(rest, "port")
 		port, _ := strconv.Atoi(portStr)
+		osName := yamlInlineField(rest, "os")
 		if name == "" || host == "" || port == 0 {
 			continue
 		}
-		addrs[name] = agentAddr{Host: host, Port: port}
+		addrs[name] = agentAddr{Host: host, Port: port, OS: osName}
 	}
 	if len(addrs) == 0 {
 		inv := &invocation{}
@@ -412,7 +414,8 @@ func agentRegistryParse(text string) []agentRegistryRow {
 //   - 子端**就跑在本机**（fleet 地址是回环）⇒ 落点现读 `deploy/com.zerg.agent-<机>.plist` 里
 //     `--registry` 的实参（= 那台子端的**启动声明真源**，与跑着的进程同一份 args）；
 //   - 远端机 ⇒ 注册表件在那台机的盘上，本命令**没有通路面**（子端今天没有注册表写端点，
-//     `ssh` 属 §十五.4 例外清单 `F-1`–`F-3`）⇒ `kind=blocked` 退 8，**不给结论**（不假装改到了）。
+//     `ssh` 属 §十五.4 例外清单 `F-1`–`F-3` · `F-5`；`F-5`＝**远端子端重启** —— 只做重启、
+//     ✗ 不提权/不喂口令，**不含**注册表改件）⇒ `kind=blocked` 退 8，**不给结论**（不假装改到了）。
 func agentRegistryPath(machine string, a agentAddr, inv *invocation, stderr io.Writer) (string, int) {
 	switch a.Host {
 	case "127.0.0.1", "localhost", "::1":
@@ -422,7 +425,7 @@ func agentRegistryPath(machine string, a agentAddr, inv *invocation, stderr io.W
 		fmt.Fprintf(stderr, "%s: 子端 %s 的地址是 %s（不是本机）⇒ **改不到它的注册表**（退码 8 · 不给结论）\n",
 			progName, machine, agentChildBase(a))
 		fmt.Fprintf(stderr, "为什么：子端今天**没有注册表写端点**（只有 `POST /infer/reload` 重读盘上的件）；\n")
-		fmt.Fprintf(stderr, "        跨机改件要走 `ssh`，而 `ssh` 属 §十五.4 例外清单（F-1/F-2/F-3）—— 本命令不偷偷开这条路\n")
+		fmt.Fprintf(stderr, "        跨机改件要走 `ssh`，而 `ssh` 属 §十五.4 例外清单（F-1/F-2/F-3/F-5；F-5 只开远端子端**重启** —— 只做重启、✗ 不提权/不喂口令，不含注册表改件）—— 本命令不偷偷开这条路\n")
 		fmt.Fprintf(stderr, "现在能做的：在那台机上直接改注册表件，再 `%s agent reload %s`\n", progName, machine)
 		fmt.Fprintf(stderr, "error.kind=blocked · detail=registry_remote_face_absent · retryable=false · remedy=fix_precondition\n")
 		return "", exitBlocked
@@ -1443,8 +1446,12 @@ func agentOpsNames() []string {
 // 本命令把「重启子端进程」收进命令面 —— 形状照同族已开放的 `core restart`（`family_core_restart.go`）：
 // 三态 + **审计先落盘**（写不进就不许动进程）+ 就绪绑**自己的读数**（子端 HTTP 面 200），✗ 不从 env 取命令串。
 //
-// ★ 本版的真跑动作**只有本机回环那一支**（`launchctl kickstart -k`）。远端机（host 非回环）要 ssh，
-// 属 §十五.4 例外清单 ⇒ **不给结论（退 8）**，由人拍板后另开。
+// ★ 真跑动作**两支**：本机回环 ⇒ `launchctl kickstart -k`；远端机（host 非回环）⇒ 经 `ssh` 落
+// `F-5`（§十五.4 例外清单 · **远端子端重启**）那一格 —— 只做**重启**、✗ 不提权/不喂口令：
+//   · edge-node（linux）走**既有 polkit 免密格**（`deploy/polkit/50-zerg-x3-agent-restart.rules`：
+//     只授 g01 × edge-node-agent.service × restart）⇒ `systemctl restart edge-node-agent.service`；
+//   · mini/其它 macOS 走**用户域 `launchctl`** ⇒ 先 `launchctl kickstart -k`，失败回落 `kill`
+//     （launchd 的 `KeepAlive=true` 随即重起 —— B 口径 · 与账内手搓口径一致）。
 //
 // 退码：0 干跑 / 真跑且就绪 · 1 动作失败或没就绪 · 2 用法错（缺确认档 / 名册无名）·
 //       4 未认证 · 8 拿不到结论（远端机 / 审计落不下 / 就绪读不到）。
@@ -1452,6 +1459,9 @@ func agentOpsNames() []string {
 const (
 	agentRestartLabelPrefix = "com.zerg.agent-"           // 子端 job 标签 = 前缀 + 机名（deploy/com.zerg.agent-<机>.plist）
 	agentRestartAuditRel    = "agent_restart_audit.jsonl" // <状态目录>/ 之下（单开一件，语义是「重启进程」）
+	// agentRestartExceptionID —— 远端那一支登记在 §十五.4 例外清单的**格号**。
+	// ★ 真源面 = `family_offline.go` 的 `offlineExceptions()`（`F-*` × 命令 × 为什么能例外）。
+	agentRestartExceptionID = "F-5"
 )
 
 // agentRestartFields `--json` 闭集。
@@ -1462,8 +1472,9 @@ var agentRestartDisplay = []string{"machine", "branch", "readiness", "changed"}
 
 // ── 函数级接缝（测试/自测桩在进程内替换 ⇒ 判据能在「不真重启」的前提下端到端跑；缝只在 Go 里）──
 var (
-	agentRestartAction    = agentRestartKickstart
+	agentRestartAction    = agentRestartRun
 	agentRestartSleep     = time.Sleep
+	agentRestartReady     = agentRestartWaitReady
 	agentRestartReadyWait = 20 * time.Second
 )
 
@@ -1527,7 +1538,22 @@ func appendAgentRestartAudit(path string, line agentRestartAuditLine) error {
 
 // agentRestartKickstart —— `launchctl kickstart -k <域>/<标签>`（本机子端那一支）。
 func agentRestartKickstart(machine string) error {
-	cmd := exec.Command("launchctl", "kickstart", "-k", agentRestartTarget(machine))
+	cmd := armChildGroup(exec.Command("launchctl", "kickstart", "-k", agentRestartTarget(machine)))
+	runningChild = cmd
+	defer func() { runningChild = nil }()
+	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	return cmd.Run()
+}
+
+// agentRestartRun —— 真跑动作按分支分派：本机回环 ⇒ `launchctl kickstart -k`；远端 ⇒ 经 `ssh` 落 `F-5`
+// （只重启、✗ 不提权/不喂口令）。`agentRestartAction` 这枚接缝的默认值就是它（测试可替换 ⇒ 不真重启/不真 ssh）。
+func agentRestartRun(machine string, a agentAddr) error {
+	if agentAddrIsLocal(a) {
+		return agentRestartKickstart(machine)
+	}
+	cmd := armChildGroup(exec.Command("ssh", agentRestartSSHTarget(machine, a.Host), agentRestartRemoteShell(machine, a)))
+	runningChild = cmd
+	defer func() { runningChild = nil }()
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	return cmd.Run()
 }
@@ -1566,13 +1592,80 @@ func agentRestartWaitReady(a agentAddr) (bool, string, int) {
 	}
 }
 
-// agentRestartBranch 判将走哪一支：`local-launchctl`（本机回环 · 本版唯一自动真跑的那一支）/
-// `remote-ssh`（远端 · 本版不给结论 —— ssh 属 §十五.4 例外清单）。
+// agentRestartBranch 判将走哪一支：`local-launchctl`（本机回环）/ `remote-ssh`（远端 · §十五.4 例外清单 `F-5`）。
 func agentRestartBranch(a agentAddr) string {
 	if agentAddrIsLocal(a) {
 		return "local-launchctl"
 	}
 	return "remote-ssh"
+}
+
+// agentRestartSSHTarget —— 远端那一支的 ssh 目标（`<user>@<host>`）。
+//
+// 真源 = 名册 `~/.zerg/contexts/<档>.yaml` 的 `nodes.<机>.ssh`（§九 M13 `Z2`）—— `fleet:` 投影源
+// 里**没有** `ssh` 字段 ⇒ 只能读真源件；取不到 ⇒ 退回裸 `<host>`（ssh 当前用户的默认名 · 只影响
+// 呈现与执行目标的拼法，不改任何判定）。
+func agentRestartSSHTarget(machine, host string) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return host
+	}
+	b, err := os.ReadFile(filepath.Join(home, ".zerg", "contexts", defaultContextName+".yaml"))
+	if err != nil {
+		return host
+	}
+	inNodes, inThisNode := false, false
+	for _, line := range strings.Split(string(b), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") {
+			inNodes = trimmed == "nodes:"
+			inThisNode = false
+			continue
+		}
+		if !inNodes {
+			continue
+		}
+		indent := len(line) - len(strings.TrimLeft(line, " \t"))
+		if indent <= 2 && strings.HasSuffix(trimmed, ":") && !strings.Contains(trimmed, ": ") {
+			inThisNode = strings.TrimSuffix(trimmed, ":") == machine
+			continue
+		}
+		if !inThisNode {
+			continue
+		}
+		if k, v, ok := splitScalar(trimmed); ok && k == "ssh" && v != "" {
+			return v
+		}
+	}
+	return host
+}
+
+// agentRestartRemoteShell —— 远端那一支要跑的**远端命令**（经 ssh 落到那台机上 · 只重启、✗ 不提权/不喂口令）。
+//
+//	· edge-node（linux/ubuntu）⇒ `systemctl restart edge-node-agent.service`（**既有 polkit 免密格**：只授 g01 × 该 unit × restart）；
+//	· 其它（macOS · 用户域 launchctl · B 口径）⇒ 先 `launchctl kickstart -k gui/$(id -u)/<标签>`，
+//	  失败**回落** `kill`（`launchd` 的 `KeepAlive=true` 随即重起 —— 与账内手搓口径一致）。
+func agentRestartRemoteShell(machine string, a agentAddr) string {
+	switch strings.ToLower(strings.TrimSpace(a.OS)) {
+	case "linux", "ubuntu", "debian", "centos", "fedora", "rhel":
+		return "systemctl restart edge-node-agent.service"
+	}
+	return fmt.Sprintf(
+		"launchctl kickstart -k gui/$(id -u)/%s 2>/dev/null || pkill -TERM -f -- \"--machine %s\"",
+		agentRestartLabel(machine), machine)
+}
+
+// agentRestartShQuote —— 单引号包裹（人面逐字可复制）。
+func agentRestartShQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// agentRestartRemoteInvocation —— 远端那一支的**完整 ssh 调用**（本命令执行的就是它）。
+func agentRestartRemoteInvocation(machine string, a agentAddr) string {
+	return "ssh " + agentRestartSSHTarget(machine, a.Host) + " " + agentRestartShQuote(agentRestartRemoteShell(machine, a))
 }
 
 // agentRestartPlan 渲染计划件（--dry-run · 零副作用）。
@@ -1584,10 +1677,12 @@ func agentRestartPlan(machine string, a agentAddr, stdout io.Writer) {
 	fmt.Fprintf(stdout, "  目标     : machine=%s host=%s port=%d\n", machine, a.Host, a.Port)
 	fmt.Fprintf(stdout, "  执行要   : --confirm=<%s> 与 --yes 同时到（`--confirm` 值须与机名逐字相同）\n", machine)
 	if branch == "local-launchctl" {
-		fmt.Fprintf(stdout, "  将走分支 : %s（本版唯一会自动真跑的那一支）\n", branch)
+		fmt.Fprintf(stdout, "  将走分支 : %s（本机回环）\n", branch)
 		fmt.Fprintf(stdout, "  出口语句 : launchctl kickstart -k %s\n", agentRestartTarget(machine))
 	} else {
-		fmt.Fprintf(stdout, "  将走分支 : %s（远端 · 走 ssh 属 §十五.4 例外清单 ⇒ 本版**不给结论** 退 8，由人拍板后另开）\n", branch)
+		fmt.Fprintf(stdout, "  将走分支 : %s（远端 · §十五.4 例外清单 **%s 远端子端重启** —— 经 ssh、只做重启、✗ 不提权/不喂口令）\n", branch, agentRestartExceptionID)
+		fmt.Fprintf(stdout, "  例外登记 : %s（edge-node 走既有 polkit 免密格 `systemctl restart edge-node-agent.service` · mini 走用户域 `launchctl`）\n", agentRestartExceptionID)
+		fmt.Fprintf(stdout, "  将执行   : %s\n", agentRestartRemoteInvocation(machine, a))
 	}
 	fmt.Fprintf(stdout, "  就绪判据 : 重启后轮询 %s/status ⇒ HTTP 200（最长 %v）\n", agentChildBase(a), agentRestartReadyWait)
 	fmt.Fprintf(stdout, "  可逆性   : 进程面可再跑一次本命令；但**进程重启不可撤销**（起时/在跑任务/中断的连接都回不来）\n")
@@ -1651,14 +1746,8 @@ func cmdAgentRestart(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "确认档齐了才真跑：%s agent restart %s --confirm=%s --yes\n", progName, machine, machine)
 		return exitUsage
 	}
-	// ③ 远端那一支本版不给结论（ssh 属例外清单）。
-	if branch != "local-launchctl" {
-		msg := fmt.Sprintf("不给结论：%q 的 host=%s 不是本机回环 ⇒ 远端重启要走 ssh，属 §十五.4 例外清单 —— 本版只自动走本机 `launchctl kickstart -k` 那一支", machine, a.Host)
-		inv.setErr("blocked", "remote_restart_requires_ssh", msg)
-		fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
-		fmt.Fprintf(stderr, "先看计划件：%s agent restart %s --dry-run（③ 那一格写着将走哪一支）\n", progName, machine)
-		return exitBlocked
-	}
+	// ③ 远端那一支**已放行到 §十五.4 例外清单 `F-5`（远端子端重启）** —— 不再退 8；
+	//    真跑时经 `ssh` 落 `F-5`（只重启、✗ 不提权/不喂口令），由下面的动作面与就绪面兜底。
 	// ④ 审计先落盘（写不进就不许动进程）。
 	auditPath := agentRestartAuditPath()
 	by := strings.TrimSpace(inv.flagVal("--by"))
@@ -1680,21 +1769,25 @@ func cmdAgentRestart(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
 		return exitBlocked
 	}
-	// ⑤ 执行动作（唯一一条）。
-	fmt.Fprintf(stderr, "%s: 执行 `launchctl kickstart -k %s`（审计 %s）\n", progName, agentRestartTarget(machine), auditPath)
-	if err := agentRestartAction(machine); err != nil {
+	// ⑤ 执行动作（按分支分派：本机 `launchctl kickstart -k` / 远端经 `ssh` 落 `F-5`）。
+	actionDesc := fmt.Sprintf("launchctl kickstart -k %s", agentRestartTarget(machine))
+	if branch != "local-launchctl" {
+		actionDesc = "ssh " + agentRestartSSHTarget(machine, a.Host) + " " + agentRestartShQuote(agentRestartRemoteShell(machine, a))
+	}
+	fmt.Fprintf(stderr, "%s: 执行 `%s`（分支 %s · 审计 %s）\n", progName, actionDesc, branch, auditPath)
+	if err := agentRestartAction(machine, a); err != nil {
 		line := base
 		line.At, line.Event, line.RC, line.Note = time.Now().Format(time.RFC3339), "failed", exitFail, err.Error()
 		if aerr := appendAgentRestartAudit(auditPath, line); aerr != nil {
 			fmt.Fprintf(stderr, "%s: ⚠ 失败那一行审计落不下：%v（判词照实打出来，不改判决）\n", progName, aerr)
 		}
-		msg := fmt.Sprintf("动作失败（launchctl kickstart -k %s）：%v ⇒ 退码 1", agentRestartTarget(machine), err)
+		msg := fmt.Sprintf("动作失败（%s）：%v ⇒ 退码 1", actionDesc, err)
 		inv.setErr("failed", "restart_action_failed", msg)
 		fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
 		return exitFail
 	}
 	// ⑥ 就绪（HTTP 面 200）。
-	okReady, det, rrc := agentRestartWaitReady(a)
+	okReady, det, rrc := agentRestartReady(a)
 	line := base
 	line.At = time.Now().Format(time.RFC3339)
 	switch {

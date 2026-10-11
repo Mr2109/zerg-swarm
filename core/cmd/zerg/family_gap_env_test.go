@@ -1,7 +1,7 @@
 // family_gap_env_test.go —— gap 族环境旋钮三档 + 状态目录可视输出的**机检**
 // （缺口 `GAP-20260927-75` · 2026-10-10 · `package main_test` · 走 `zerg.RunForTest` 跑当前源码行为）。
 //
-// 一格正控 + 三条负控（逐条对缺口的「三档」硬线）：
+// 一格正控 + 若干负控（逐条对缺口的「三档」硬线）：
 //
 //	正控：正常态（`ZERG_STATE_DIR` 指合成状态目录）⇒ stderr 明示「当前状态目录 + 来源令牌」。
 //	负控①：夹具专用口被设 ⇒ **无条件清**（值真被 unset）且**清理可见**（点名变量）。
@@ -9,6 +9,11 @@
 //	       ✗ 不静默采信继承值。
 //	负控③：来源申报缺失那一半 —— 状态目录被毒化到不存在处 ⇒ **如实申报被毒化的目录 + 来源**且
 //	       fail-closed（退 8 不给结论），**✗ 不静默回落到别的真源**。
+//	负控④（本单 b1 · 2026-10-10）：**非默认根来源点名** —— `ZERG_STATE_DIR` 指仓外 ⇒
+//	       stderr **响亮申报一行**（点名旋钮 + 当前值）；系统临时根（`TMPDIR`）**不进名单**。
+//	       哑化 ④ 分支（去掉那段）⇒ 负控④ 真红。
+//	负控⑤（本单 b1 全局推广 · 2026-10-10）：**非 gap 族**命令（`version`）在非默认根态下也由
+//	       `main.go` 咽喉点响亮申报 ④；默认态**一字不加**。哑化咽喉点的非 gap 支 ⇒ 负控⑤ 真红。
 package main_test
 
 import (
@@ -100,5 +105,58 @@ func TestGapEnvTiers_NoSilentSourceSwap(t *testing.T) {
 	}
 	if !strings.Contains(errb, "来源："+gapEnvStateDirSrcEnv) {
 		t.Errorf("负控③：来源申报必须可见：%q", errb)
+	}
+}
+
+// 负控④（本单 b1）：非默认根来源点名 —— `ZERG_STATE_DIR` 指**仓外**目录 ⇒ stderr 响亮申报一行
+// （点名旋钮名 + 当前值）；且**系统临时根**（`TMPDIR` = `/var/folders/…` 一族）**不进名单**。
+// ★ 哑化 `family_gap_env.go` 的 ④ 分支（去掉「非默认根来源点名」那一段）⇒ 本用例**真红**。
+func TestGapEnvTiers_NonDefaultRootNamedLoudly(t *testing.T) {
+	outside := t.TempDir() // 仓外目录 = 非默认状态根
+	gapEnvLedger(t, outside)
+	t.Setenv("ZERG_STATE_DIR", outside)
+
+	_, _, errb := gapRun(t, "gap", "ls")
+	if !strings.Contains(errb, "非默认根来源点名") {
+		t.Fatalf("负控④：非默认根 ⇒ 必须响亮申报一行（点名「非默认根来源点名」）：%q", errb)
+	}
+	if !strings.Contains(errb, "ZERG_STATE_DIR="+outside) {
+		t.Errorf("负控④：响亮申报名单要点名该旋钮的当前值 %q：%q", outside, errb)
+	}
+	// 系统临时根（本机 `TMPDIR` = `/var/folders/…/T/`）⇒ 不算非默认 ⇒ **不进名单**。
+	if strings.Contains(errb, "TMPDIR=") {
+		t.Errorf("负控④：TMPDIR 走系统临时根 ⇒ 不该进非默认根名单：%q", errb)
+	}
+}
+
+// 负控⑤（本单 b1 · 全局推广）：**非 gap 族**命令（`version`）在非默认根态下也由 `main.go` 咽喉点
+// 响亮申报 ④（点名旋钮名 + 当前值）；**默认态一字不加**（既有默认输出逐字不动）。
+// ★ 哑化 `main.go` 咽喉点的 **非 gap 支**（去掉那半 `gapNonDefaultRootLine()` 调用）⇒ 本用例**真红**。
+func TestGapEnvTiers_GlobalNonDefaultRootNamedLoudly(t *testing.T) {
+	// 非默认根态：`ZERG_STATE_DIR` 指**仓外**目录 ⇒ 非 gap 族命令的 stderr 也必须响亮申报一行。
+	outside := t.TempDir()
+	t.Setenv("ZERG_STATE_DIR", outside)
+
+	rc, _, errb := gapRun(t, "version", "--json", "name")
+	if rc != 0 {
+		t.Fatalf("全局 ④：非 gap 族（version）非默认根态应仍 rc=0，得到 %d · stderr=%q", rc, errb)
+	}
+	if !strings.Contains(errb, "非默认根来源点名") {
+		t.Fatalf("全局 ④ 破：非 gap 族命令没在咽喉点响亮申报：%q", errb)
+	}
+	if !strings.Contains(errb, "ZERG_STATE_DIR="+outside) {
+		t.Errorf("全局 ④ 破：点名单要点名该旋钮的当前值 %q：%q", outside, errb)
+	}
+	// 系统临时根（本机 `TMPDIR` = `/var/folders/…/T/`）⇒ 不算非默认 ⇒ **不进名单**。
+	if strings.Contains(errb, "TMPDIR=") {
+		t.Errorf("全局 ④ 破：TMPDIR 走系统临时根 ⇒ 不该进名单：%q", errb)
+	}
+
+	// 默认态：显式设空（两项都不指非默认根）⇒ **一字不加**（既有默认输出逐字不动）。
+	t.Setenv("ZERG_STATE_DIR", "")
+	t.Setenv("ZERG_REPO", "")
+	_, _, errb2 := gapRun(t, "version", "--json", "name")
+	if strings.Contains(errb2, "非默认根来源点名") {
+		t.Errorf("全局 ④ 破：默认态不该申报：%q", errb2)
 	}
 }

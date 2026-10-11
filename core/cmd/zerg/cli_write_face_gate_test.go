@@ -309,3 +309,32 @@ func TestCWFGNoOpZeroSideEffect(t *testing.T) {
 		t.Fatalf("空转档读数异常：rc=%d out=%q", rc1, out1)
 	}
 }
+
+// ── 成对负控⑧ B 类读失败：扫描面里读不了的 *.go ⇒ 登记 + BLOCKED rc=2 逐件点名（✗ 不静默跳过）──
+// 牙：哑掉 cwfgImplWriteFuncs / cwfgConstUsageMap 的读失败登记（退回静默 continue）⇒ 阳控 rc 变 0 ⇒ FAIL。
+func TestCWFGUnreadableScanFileBlocked(t *testing.T) {
+	// 阳控：family_w.go 换成**目录名恰为 *.go**（读之 EISDIR · 与 chmod 000 同义且确定）⇒ rc=2 且逐件点名。
+	root := cwfgCliMk(t, cwfgCliCatalog("zerg w [--out <件>]", false), cwfgCliWriter())
+	bad := cwaPyJoin(root, "core", "cmd", "zerg", "family_w.go")
+	if err := os.Remove(bad); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(bad, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cwfgCliReg(t, root, nil)
+	rc, _, errs := cwfgCliRun(t, root)
+	if rc != 2 {
+		t.Fatalf("阳控 rc=%d want 2（读失败 ⇒ 不给结论 · ✗ 不静默跳过）", rc)
+	}
+	if !strings.Contains(errs, "BLOCKED") || !strings.Contains(errs, "family_w.go") {
+		t.Fatalf("阳控未登记读失败件：err=%q", errs)
+	}
+	// 阴控：同一夹具该件可读（写面件）⇒ rc=1（w 仍判缺白名单）且无 BLOCKED。
+	root2 := cwfgCliMk(t, cwfgCliCatalog("zerg w [--out <件>]", false), cwfgCliWriter())
+	cwfgCliReg(t, root2, nil)
+	rc2, _, errs2 := cwfgCliRun(t, root2)
+	if rc2 != 1 || strings.Contains(errs2, "BLOCKED") {
+		t.Fatalf("阴控 rc=%d err=%q want rc=1 无 BLOCKED", rc2, errs2)
+	}
+}

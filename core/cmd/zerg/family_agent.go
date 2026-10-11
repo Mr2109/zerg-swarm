@@ -59,6 +59,26 @@ func fleetMachine(inv *invocation, machine string, stderr io.Writer) (jsonObj, i
 	return o, exitOK
 }
 
+// agentMarkUnknownGPU —— 把「平台线不可得」的 GPU 两格如实示 `n/a`（缺口 GAP-20260925-34 剩面①/②）。
+//
+// ★ 单一真源：`agent ls` 与 `agent show` 投影的是**同一份** `/api/fleet/status` 载荷 ⇒ 两处
+//
+//	必须同一口径（✗ 不许一套示 `n/a`、另一套把「未知」印成假 0 或留空串）。
+//	· gpu_pct：macOS 机在主控投影层被剔除该键（ioreg 无可用占用读数）⇒ 载荷**缺键** ⇒ 示 `n/a`。
+//	· gpu_used_gb：macOS 显存不可知（载荷 `vram_known=false`，源出心跳层「拿不到即 false」）⇒
+//	  载荷里的 0 是「未知」哨兵、**不是真值** ⇒ 示 `n/a`。
+//	· 其余平台（如 <机> ubuntu：`vram_known=true` 且有 `gpu_pct` 键）**逐字不动** —— 见有值不碰，
+//	  只有「缺席／哨兵」才改写。口径沿用同族现成写法 `n/a`（family_net.go：「`n/a` 是一条答案，
+//	  不是取不到」）—— ✗ 不自造词。
+func agentMarkUnknownGPU(o jsonObj, row map[string]string) {
+	if _, ok := o["gpu_pct"]; !ok {
+		row["gpu_pct"] = "n/a"
+	}
+	if known, _ := o["vram_known"].(bool); !known {
+		row["gpu_used_gb"] = "n/a"
+	}
+}
+
 // cmdAgentShow —— `zerg agent show <机>`：一台机的逐字段现状（投影 `/api/fleet/status`）。
 func cmdAgentShow(inv *invocation, stdout, stderr io.Writer) int {
 	if len(inv.args) == 0 {
@@ -75,17 +95,10 @@ func cmdAgentShow(inv *invocation, stdout, stderr io.Writer) int {
 		"mem_available_gb", "mem_total_gb", "models", "model", "backend_state", "active_requests", "gpu_used_gb", "backend_rss_gb", "gpu_temp_c", "last_seen"}
 	row := project(o, fields)
 	row["machine"] = machine
-	// gpu_pct：macOS 机在主控投影层被剔除该键（平台线不可得，GAP-20260925-34 剩面①）
-	// ⇒ 缺席如实示 `n/a`，复用 gpu_used_gb 那条同族现成写法 —— ✗ 不把缺席印成空串。
-	if _, ok := o["gpu_pct"]; !ok {
-		row["gpu_pct"] = "n/a"
-	}
-	// gpu_used_gb：显存不可知（载荷 vram_known=false，源出心跳层「拿不到即 vram_known=false」）
-	// ⇒ 如实示 `n/a`，绝不把「缺席」印成真值 0（缺口 GAP-20260925-34 剩面②）。
-	// 口径沿用同族现成写法 `n/a`（family_net.go:「`n/a` 是一条答案，不是取不到」）—— ✗ 不自造词。
-	if known, _ := o["vram_known"].(bool); !known {
-		row["gpu_used_gb"] = "n/a"
-	}
+	// GPU 两格的「不可得示 n/a」= 单一真源助手（`agent ls` / `agent show` 同一口径）——
+	// ✗ 不把 macOS 缺席的 `gpu_pct` 印成空串、✗ 不把 `vram_known=false` 的哨兵 0 当显存真值
+	// （GAP-20260925-34 剩面①②）。
+	agentMarkUnknownGPU(o, row)
 	// 「命令有什么能力」不另造词汇：字段名逐字取自载荷（§4.3 U2）。
 	return listCmd(inv, stdout, stderr, []string{"machine", "healthy", "code_version", "code_sha",
 		"cpu_pct", "gpu_pct", "mem_available_gb", "mem_total_gb", "models", "model", "backend_state", "active_requests", "gpu_used_gb", "backend_rss_gb", "gpu_temp_c", "last_seen"},
@@ -656,4 +669,119 @@ func agentSlotRowsFromPayload(machine, model string, enginePort int, slotsBody, 
 		return nil, exitBlocked
 	}
 	return rows, exitOK // 空数组是合法结论（引擎报了 0 个槽）⇒ 退 0、空表
+}
+
+// ---- 缺口 `GAP-20261010-21`（B 单 · CLI 命令面）：`zerg agent forget <机>`（D2 写面）----
+//
+// 病根（缺口逐字）：主控端点 `POST /api/fleet/forget`（A 单已落 · `core/internal/api/fleet_forget.go`）
+// 此前**无命令面出口** ⇒ 运行态名册里的无效条目（probe / tuntest / …）只能等主控重启才消失
+// （`GAP-20260925-29` 残面）。
+//
+// 口径（照 A 单端点 · ✗ 不另造第二套）：干跑 `dry_run:true` / 真删 `confirm:true`；审计由端点侧
+// `HeartbeatLogger.Info("fleet-forget",…)` 落。命令面三态照同族写面先例 `model pull`（D2）：
+// `--dry-run` = **本地**计划件（**一个请求都不发**）· 缺 `--yes` fail-closed 2（✗ 从不提问）·
+// `--yes` 才真打端点（写面出口 `postJSON` · ✗ 不新开传输层）。✗ 不放宽任何闸 / ✗ 不碰子端 / ✗ 不重启主控。
+
+// agentForgetDisplay —— 人面列（机器面字段表 = 命令树 `fields:` 那一份字面量）。
+var agentForgetDisplay = []string{"machine", "present", "changed", "would_forget"}
+
+// cmdAgentForget —— `zerg agent forget <机> [--dry-run | --yes] [--json <字段>]`：
+// 把一台机从**主控运行态名册**里摘掉（`POST /api/fleet/forget` · 幂等：不在册 ⇒ changed=false 仍退 0）。
+func cmdAgentForget(inv *invocation, stdout, stderr io.Writer) int {
+	// ── 位置参数先判（零副作用 · 不碰任何目标）──
+	if len(inv.args) == 0 {
+		inv.setErr("usage", "missing_target", "缺机器名")
+		fmt.Fprintf(stderr, "%s: `agent forget` 要一台机器名（`%s agent ls` 看名册）\n", progName, progName)
+		return exitUsage
+	}
+	if len(inv.args) > 1 {
+		inv.setErr("usage", "too_many_targets", "多余位置参数（本档只吃一台机）")
+		fmt.Fprintf(stderr, "%s: `agent forget` 只吃**一台**机（多给的是 %q）\n", progName, inv.args[1])
+		return exitUsage
+	}
+	machine := strings.TrimSpace(inv.args[0])
+	if machine == "" {
+		inv.setErr("usage", "missing_target", "缺机器名")
+		fmt.Fprintf(stderr, "%s: `agent forget` 要一台**非空**机器名\n", progName)
+		return exitUsage
+	}
+
+	// ── `--dry-run` 与 `--yes` 同给 ⇒ 两道确认档自相矛盾 ⇒ 用法错 2（唯一共享判定 · 写盘点之前）──
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
+	// ② 干跑：**本地**计划件，零副作用（✗ 一个请求都不发 · 同族先例 model pull）。
+	if inv.dryRun {
+		agentForgetPlan(stdout, machine)
+		fmt.Fprintln(stderr, "（--dry-run：只出计划件 · 零副作用 —— 未打任何请求、未改名册）")
+		return exitOK
+	}
+	// ③ 确认档 fail-closed：缺 `--yes` ⇒ 退 2（✗ 从不提问 · 无 TTY 也一样）。
+	if !inv.yes {
+		inv.setErr("usage", "yes_required", "D2 档缺 --yes ⇒ 不执行")
+		fmt.Fprintf(stderr, "%s: `agent forget` 是 D2 档（真摘除名册条目）—— **缺 --yes ⇒ 不执行**\n", progName)
+		agentForgetPlan(stderr, machine)
+		fmt.Fprintf(stderr, "先看计划件：%s agent forget %s --dry-run\n", progName, machine)
+		fmt.Fprintf(stderr, "error.kind=usage · detail=yes_required · retryable=false · remedy=fix_usage\n")
+		return exitUsage
+	}
+
+	// ── 真跑：一条 POST（**唯一**写面出口 `postJSON` · ✗ 不新开传输层）──
+	body := "{\"machine\":" + jstr(machine) + ",\"confirm\":true}"
+	status, respBody, err := postJSON(newClient(), "/api/fleet/forget", body)
+	var he *httpError
+	if err != nil && asHTTP(err, &he) {
+		// 主控**回话了**（非 2xx）⇒ 不是「打不到」：走下面的「逐字透传」分支。
+		status, respBody, err = he.status, he.body, nil
+	}
+	if err != nil {
+		inv.setErr("unreachable", "dial_failed", err.Error())
+		fmt.Fprintf(stderr, "%s: 打不到主控：%v\n", progName, err)
+		return exitUnreachable
+	}
+	if status == 401 || status == 403 {
+		inv.setErr("unauthenticated", fmt.Sprintf("http_%d", status), "未认证")
+		fmt.Fprintf(stderr, "%s: 主控拒了这次摘除（http_%d）—— 看 `zerg help credentials`\n", progName, status)
+		return exitAuth
+	}
+	if status >= 400 {
+		code := errorCodeOf(respBody)
+		inv.setErr("usage", code, "主控拒绝摘除")
+		// ★ 透传不翻译：主控的码（如 CONFIRM_REQUIRED / MISSING_MACHINE）逐字打出来。
+		fmt.Fprintf(stderr, "%s: 主控拒绝摘除（http_%d）· code=%s\n", progName, status, orDash(code))
+		fmt.Fprintf(stderr, "主控原样响应: %s\n", strings.TrimSpace(respBody))
+		return exitUsage
+	}
+	var resp jsonObj
+	if err := json.Unmarshal([]byte(respBody), &resp); err != nil {
+		inv.setErr("upstream_error", "bad_forget_payload", err.Error())
+		fmt.Fprintf(stderr, "%s: 主控回了 2xx 但响应体不是对象 ⇒ 不给结论（退码 1）\n", progName)
+		return exitFail
+	}
+	row := map[string]string{
+		"dry_run":      cell(resp["dry_run"]),
+		"machine":      machine,
+		"present":      cell(resp["present"]),
+		"changed":      cell(resp["changed"]),
+		"would_forget": cell(resp["would_forget"]),
+	}
+	if cell(resp["changed"]) == "true" {
+		fmt.Fprintf(stderr, "%s: ✅ 已把 %q 从主控运行态名册摘除（它再来一次心跳会重新出现）· 退码 0\n", progName, machine)
+	} else {
+		fmt.Fprintf(stderr, "%s: %q 本就不在名册里 —— **空结论**（幂等 · changed=false · 退码 0），不是错\n", progName, machine)
+	}
+	return listCmd(inv, stdout, stderr, agentForgetDisplay, []map[string]string{row})
+}
+
+// agentForgetPlan —— `--dry-run`（与「缺 `--yes`」那一档）的**本地**计划件：
+// ✗ 不发任何请求（同族先例 `model pull` 的 plan）。真源口径见 cmdAgentForget 件头。
+func agentForgetPlan(w io.Writer, machine string) {
+	fmt.Fprintf(w, "🧹 agent forget 计划件（%s）\n", machine)
+	fmt.Fprintf(w, "  动作     : %s agent forget %s\n", progName, machine)
+	fmt.Fprintf(w, "  危险档   : %s（有影响但可逆 —— 该机再来一次心跳即回名册；要 --yes）\n", dangerD2)
+	fmt.Fprintf(w, "  目标     : %s\n", machine)
+	fmt.Fprintf(w, "  请求     : POST %s/api/fleet/forget {\"machine\":%q,\"confirm\":true}\n", newClient().base, machine)
+	fmt.Fprintf(w, "  它会动   : 主控**运行态名册**（内核 `store.Forget`）里该机的条目 —— ✗ 不真摘除真机 · ✗ 不碰主控其它状态\n")
+	fmt.Fprintf(w, "  授权判据 : 真跑要 `--yes`（D2 档）—— 干跑与真跑**同一张表**：缺它 ⇒ 退码 2（不执行）\n")
+	fmt.Fprintf(w, "  来源     : 缺口账 GAP-20261010-21 · A 单端点 POST /api/fleet/forget · 同族写面先例 model pull（D2）\n")
 }

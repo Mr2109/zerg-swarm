@@ -13,6 +13,11 @@
 //	三态（`--out <件>` 写面 · §九 M3 C1/C2）：`--dry-run` ⇒ 计划件走 stdout + 零落盘；
 //	缺 `--yes` ⇒ 计划件走 stderr + 2；`--dry-run` 与 `--yes` 同给 ⇒ 2（先过门、后落盘）
 //	★ 无 `--out` 时本命令是纯读面，这两枚确认档**被静默忽略**（不判、不报未知旗标）。
+//	★ 2026-10-11（缺口 `GAP-20260927-304`）：`--out`（拆件落盘 · 写面）与 `--json`（机读投影 · 判面）
+//	  **不许同给** —— 与 `family_gap_export.go` 的 `out_json_conflict` 逐字同一形状；同给 ⇒ 用法错 2
+//	  （写面不得兼作判面）。此前只有注释、代码没接线 ⇒ 同给时既落件又把机读面当判据（静默兼作）。
+//	★ 2026-10-11（缺口 `GAP-20260927-303`）：`--out` 写面改**原子替换**（同目录临时件 → `os.Rename` 换名）
+//	  —— 旧形态 `os.WriteFile` 先截断再写，写到一半崩 ⇒ 落点是半份矩阵（无退点无备份）。
 //
 //	★ 2026-10-04（缺口 `GAP-20260927-388`）：格级可选列 `stdout_bytes_unpinned`（只钉 rc、不钉字节）——
 //	  时点变的态（stdout 随账本/时间涨落）也能入格；标了它的格字节列印「（不判）」，判定口同规跳过字节比较。
@@ -108,10 +113,19 @@ func cmdGateMatrix(inv *invocation, stdout, stderr io.Writer) int {
 
 	// `--out <件>`：把**逐格**导成一份可回读的 TSV（含 argv 与 why 原文 —— 补格时要照着它写）。
 	if out := strings.TrimSpace(inv.flagVal("--out")); out != "" {
+		// ★ GAP-20260927-304：`--out`（写面 · 拆件落盘）与 `--json`（判面 · 机读投影）**不许同给**。
+		//   与同族 `family_gap_export.go` 的 `out_json_conflict` **逐字同一形状**（本件头一直写着这句，
+		//   此前只有注释、代码没接线 ⇒ 同给时写面**兼作判面**：既落了件、又把机读面当验收证据）。
+		//   同给 = 自相矛盾 ⇒ 用法错 2（不给结论）。判在**任何 stdout 写入之前**（未过门前不建件、不建目录）。
+		if inv.jsonGiven {
+			inv.setErr("usage", "out_json_conflict", "--out 与 --json 不许同给")
+			fmt.Fprintf(stderr, "%s: `--out`（拆件落盘 · 写面）与 `--json`（机读投影 · 判面）**不许同给** ⇒ 用法错 2（写面不得兼作判面）\n", progName)
+			return exitUsage
+		}
 		// ★ 三态门（D2 · §九 M3 C1/C2 —— 与同族 `gap export` / `gap add|verify` 逐字同一条）：
 		//   `--dry-run` ⇒ 计划件走 stdout + rc=0（**一个字节都不落**）；缺 `--yes` ⇒ 计划件走 stderr + 2
 		//   （fail-closed：从不提问）；两枚**同给**（自相矛盾）⇒ 2（与 `--out`/`--json` 不许同给同一形状）。
-		//   三条都判在**本函数唯一的写盘点**（下面那一行 `os.WriteFile`）**之前** ⇒ 未过门前不建件、不建目录。
+		//   三条都判在**本函数唯一的写盘点**（下面那一处 `gateMatrixAtomicWrite`）**之前** ⇒ 未过门前不建件、不建目录。
 		if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
 			return rc
 		}
@@ -131,7 +145,11 @@ func cmdGateMatrix(inv *invocation, stdout, stderr io.Writer) int {
 		for _, r := range rows {
 			sb.WriteString(strings.Join([]string{r["command"], r["case"], r["want_rc"], r["bytes"], r["argv"], r["why"]}, "\t") + "\n")
 		}
-		if err := os.WriteFile(out, []byte(sb.String()), 0o644); err != nil {
+		// ★ GAP-20260927-303：写面改**原子替换**（同目录临时件 → `os.Rename` 换名）——
+		//   旧形态 `os.WriteFile` 先截断 `out` 再写，写到一半崩 ⇒ 落点是**半份矩阵**（无退点无备份）。
+		//   新形态：全程只往临时件写，`out` 只在最后被 `Rename` **一次性**换成完整件 ⇒ 中途失败
+		//   一字节都不碰 `out`（只清掉临时件）。
+		if err := gateMatrixAtomicWrite(out, sb.String()); err != nil {
 			inv.setErr("failed", "out_write_failed", err.Error())
 			fmt.Fprintf(stderr, "%s: 落点写不进去（%v）—— 给一个**已存在**的目录里的路径\n", progName, err)
 			return exitFail
@@ -154,4 +172,46 @@ func gateMatrixOutPlan(w io.Writer, src, out string, nCases, nonzero, exemptions
 	fmt.Fprintf(w, "  计数     : 格 %d 条（expect-rc≠0 的 %d 条 · 豁免 %d 条）\n", nCases, nonzero, exemptions)
 	fmt.Fprintf(w, "  件内容   : 注释头 1 行 + 列名 1 行 + 逐格 %d 行 = %d 行（制表符分隔）\n", nCases, nCases+2)
 	fmt.Fprintf(w, "  未执行   : %s —— 本档**一个字节都不落**（真写要 `--yes`）\n", why)
+}
+
+// gateMatrixAtomicWrite —— `--out <件>` 的**原子落件**（缺口 `GAP-20260927-303`）。
+//
+// 工序：在同目录建临时件（`filepath.Dir(out)`，保证 `os.Rename` 落在**同一文件系统**内 ⇒ 换名是原子的、
+// 不会跨卷 `EXDEV`）→ 写全文 → `Sync` 落盘 → `Close` → 归一到 `0o644` → `os.Rename` 换名到 `out`。
+//
+// 三条不退让的口径：
+//   - `out` 只被最后那次 `Rename` **一次性**换成完整件 ⇒ 中途任何一步失败都**一字节不碰 `out`**
+//     （旧形态 `os.WriteFile` 先截断，失败即留半成品/空件 —— 无退点、无备份）。
+//   - 失败一律**清临时件**再回错 ⇒ 不留垃圾（同目录里不会积 `.name.tmp-*`）。
+//   - 临时件名以 `.` 起头（对 `ls` 隐藏），且不与 `out` 同形 ⇒ 目录里的既有件不会被误当落点。
+func gateMatrixAtomicWrite(out, content string) error {
+	dir := filepath.Dir(out)
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(out)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.WriteString(content); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		return err
+	}
+	if err := os.Chmod(tmpName, 0o644); err != nil {
+		_ = os.Remove(tmpName)
+		return err
+	}
+	if err := os.Rename(tmpName, out); err != nil {
+		_ = os.Remove(tmpName)
+		return err
+	}
+	return nil
 }

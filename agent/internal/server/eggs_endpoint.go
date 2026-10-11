@@ -71,6 +71,11 @@ type servicesEgg struct {
 	// Argv 引擎实际命令行（可执行 + 参数 · GAP-20260926-01）：机读真 argv 的真源。
 	// 缺席（omitempty）= 本端从未为此卵记下 argv（如实缺席，不编空数组）。
 	Argv []string `json:"argv,omitempty"`
+	// Cmd 本卵的**声明启动命令**（注册表 `cmd:` 逐字 · GAP-20261006-02 远程机取数面）：
+	// 与 argv（实际执行）不同 —— 这是名册声明、可含 {file}/{port} 占位符；
+	// 「四方不一致命令面」（GAP-20260926-04）的远程 side 经本格读子端本地注册表。
+	// 空 = 本端从未声明（走默认命令）⇒ 缺席（omitempty），不编。
+	Cmd string `json:"cmd,omitempty"`
 }
 
 // externalOccupant external_occupancy[] 条目：非引擎 GPU 使用者（§8.7 收窄口径）。
@@ -107,6 +112,7 @@ func eggEntries(obs []backend.EggObservation, attrib map[int]monitor.ProcAttrib,
 			EnclosureNote:     o.EnclosureNote,
 			Enclosure:         o.Enclosure,
 			Argv:              o.Argv,
+			Cmd:               o.Cmd,
 		}
 		if a, ok := attrib[o.PID]; ok {
 			e.GttGb = round1f(a.GttGb)

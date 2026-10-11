@@ -54,6 +54,32 @@ func chglRunIn(t *testing.T, root string, argv ...string) (int, string, string) 
 	return rc, out.String(), errb.String()
 }
 
+// TestChglReadFailBlocked ★ 负控：扫描面里一个子目录不可读（chmod 000）⇒ rc=2 BLOCKED + 逐件点名（✗ 不静默少判）。
+func TestChglReadFailBlocked(t *testing.T) {
+	fx := chglFixture(t)
+	sub := filepath.Join(fx, "docs", "zh", "sub")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sub, "inner.md"), []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(sub, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(sub, 0o755) })
+	rc, _, errb := chglRunIn(t, fx, "--lang", "zh", "--paths", "docs/zh")
+	if rc != 2 {
+		t.Fatalf("读失败应 rc=2，得 %d（err=%s）", rc, errb)
+	}
+	if !strings.Contains(errb, "BLOCKED") || !strings.Contains(errb, "[读失败]") {
+		t.Fatalf("未响亮 BLOCKED（读失败被静默）：%s", errb)
+	}
+	if !strings.Contains(errb, "sub") {
+		t.Fatalf("未逐件点名：%s", errb)
+	}
+}
+
 func TestCheckGlossaryGatePort(t *testing.T) {
 	// ── ① 正控（好件 ⇒ 0）：中文页只写正名 · 词表 1 条 · 白名单 7 篇口径同时核 ──────
 	fx := chglFixture(t)

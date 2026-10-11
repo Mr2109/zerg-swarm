@@ -218,3 +218,42 @@ func TestCskNonKeywordEnvIgnored(t *testing.T) {
 		t.Fatalf("rc=%d out=%q", rc, out)
 	}
 }
+
+// ── B 类（读失败静默）回归牙 ────────────────────────────────────────────────────
+// 提交链点名件锁成 chmod 000（**仓外夹具**）⇒ 读失败登记面（cskReadFails）必响：
+// rc=2 + stderr BLOCKED 头 + 逐件点名。删回静默（原 py `except OSError: continue`）⇒ 该件静默跳过。
+func TestCskReadFailTeeth(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root 绕过权限位 ⇒ chmod 000 不挡读，本用例无鉴别力")
+	}
+	d := cskWriteTree(t, map[string]string{
+		"scripts/gates/precommit-gates.sh": "add_step docs \"门x\" tri \"$R\" \"python3 scripts/gates/check-locked.py\"\n" +
+			"add_step docs \"门y\" tri \"$R\" \"python3 scripts/gates/check-ok.py\"\n",
+		"scripts/gates/check-locked.py": "x = os.environ.get(\"FOO_SELFTEST\")\n",
+		"scripts/gates/check-ok.py":     "y = 1 + 2\n",
+	})
+	locked := filepath.Join(d, "scripts", "gates", "check-locked.py")
+	if err := os.Chmod(locked, 0); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(locked, 0o644)
+
+	rc, _, errb := cskEntry("--root", d)
+	if rc != 2 {
+		t.Fatalf("读失败回归牙：锁死件 ⇒ 应 rc=2，得 rc=%d err=%q", rc, errb)
+	}
+	if !strings.Contains(errb, "BLOCKED") || !strings.Contains(errb, "check-locked.py") {
+		t.Fatalf("读失败回归牙：stderr 须带 BLOCKED 头 + 点名 check-locked.py，得 err=%q", errb)
+	}
+	// --by-tier 出口同档亦须响（✗ 别只在主 report 档接线）
+	rcT, _, errT := cskEntry("--root", d, "--by-tier")
+	if rcT != 2 || !strings.Contains(errT, "BLOCKED") {
+		t.Fatalf("读失败回归牙：--by-tier 应 rc=2 且带 BLOCKED，得 rc=%d err=%q", rcT, errT)
+	}
+
+	// 成对反控（✗ 禁恒红）：同构夹具但件可读 ⇒ 走原档（命中 ⇒ rc=1）且 stderr 无 BLOCKED。
+	rcOK, _, errOK := cskEntry("--root", cskFxHit(t))
+	if rcOK != 1 || strings.Contains(errOK, "BLOCKED") {
+		t.Fatalf("成对反控失败：可读夹具应 rc=1 且无 BLOCKED，得 rc=%d err=%q", rcOK, errOK)
+	}
+}

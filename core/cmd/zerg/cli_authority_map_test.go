@@ -337,3 +337,172 @@ func TestAuthorityMapGridCompleteness(t *testing.T) {
 		t.Fatalf("负控三没牙：把 `无对应` 整键抹掉还判绿")
 	}
 }
+
+// ── 见证命令面（待拍 #22 落地 · `GAP-20260928-18`）────────────────────────────────────
+//
+// 缺口：`authority-map.json` 的 `映射` 每行只有 {命令面, 控制层, 判据}，**行内不带见证命令**
+// ⇒ 表写 allow 而实现已收紧成 block 也能**长期无人红**（`GAP-20260928-18` 复现面）。
+//
+// 本单只钉**三个不写盘子集**当见证命令（真跑 · 只读形态）：∅ / `--dry-run` / `--dry-run --yes`。
+// 其余（写盘类：`--yes` 真跑 / `--confirm <真目标>` …）⇒ **✗ 绝不真跑** ⇒ 显式登记
+// 「无见证命令」＋理由（照仓内既有 `无对应` 一格体例，✗ 不留空）。
+//
+// 对账判口 = **rc ＋ stderr 点名/detail**：`block` 与 `require_approval` **同为 rc=2**，
+// 光看 rc 分不开 —— 那正是本缺口的病灶 ⇒ 判口必须落到 stderr 的 `detail`/缺失旗标上。
+type authorityWitness struct {
+	argv   []string // 见证命令 argv（空 = 无见证命令 ⇒ 必写 reason）
+	rc     int      // 现跑退码
+	needle string   // stderr 必须点名的词 / detail（区分 allow / block / require_approval）
+	ctl    string   // 见证命令应证实的控制层（要与该行 `控制层` 逐字同）
+	reason string   // 无见证命令时：理由，须逐字含「无见证命令」
+}
+
+// authorityRowRawKey —— 一行 `命令面` **逐字**归一（含 `=<值>`；排序后 `+` 连接）。
+// 与 `authorityRowKey` 的区别：后者**剥** `=<值>`（把 `--confirm=<目标>` 与 `--confirm=<别的值>`
+// 并成同一格）。见证表面积按**控制层取值**分（一行 allow 一行 block）⇒ 必须用逐字形态。
+func authorityRowRawKey(vals []any) string {
+	key := []string{}
+	for _, v := range vals {
+		s, _ := v.(string)
+		key = append(key, s)
+	}
+	sort.Strings(key)
+	return strings.Join(key, "+")
+}
+
+// authorityWitnessPinned —— 本批钉死的三个**不写盘**子集（父代理 2026-10-10 口径）。
+var authorityWitnessPinned = []string{"", "--dry-run", "--dry-run+--yes"}
+
+// authorityWitnesses —— 见证命令面，键 = `authorityRowRawKey`。
+var authorityWitnesses = map[string]authorityWitness{
+	// 三个不写盘子集：给**真跑**见证命令（只读形态）。
+	"": {
+		argv:   []string{"model", "opts", "set", "m1", "--set", "temperature=0.8"},
+		rc:     2,
+		needle: "缺 --yes",
+		ctl:    "require_approval",
+	},
+	"--dry-run": {
+		argv:   []string{"model", "opts", "set", "m1", "--set", "temperature=0.8", "--dry-run"},
+		rc:     0,
+		needle: "--dry-run",
+		ctl:    "allow",
+	},
+	"--dry-run+--yes": {
+		argv:   []string{"model", "opts", "set", "m1", "--set", "temperature=0.8", "--dry-run", "--yes"},
+		rc:     2,
+		needle: "dry_run_yes_conflict",
+		ctl:    "block",
+	},
+
+	// 写盘类子集：✗ 绝不真跑 ⇒ 显式登记「无见证命令」＋理由（照 `无对应` 体例）。
+	"--confirm=<目标>": {
+		reason: "无见证命令 —— `--confirm <真目标>` 属写盘形态（真跑会读口令、碰目标）；本单 ✗ 绝不真跑写盘形态 ⇒ 只登记、不给见证命令",
+	},
+	"--yes": {
+		reason: "无见证命令 —— `--yes` 真跑**会写盘**（D2 实时生效）；本单 ✗ 绝不真跑写盘形态 ⇒ 只登记、不给见证命令",
+	},
+	"--confirm=<目标>+--yes": {
+		reason: "无见证命令 —— 含 `--yes` 真跑会写盘，且带 `--confirm <真目标>`；本单 ✗ 绝不真跑写盘形态 ⇒ 只登记、不给见证命令",
+	},
+	"--confirm=<别的值>": {
+		reason: "无见证命令 —— 本批只钉三个不写盘子集（∅ / `--dry-run` / `--dry-run --yes`）；该 block 行不在其内（其见证须真跑 `--confirm <别的值>`，按父代理口径本批 ✗ 不扩到三子集外）⇒ 只登记、不给见证命令",
+	},
+	"--confirm=<目标>+--dry-run": {
+		reason: "无见证命令 —— 带 `--confirm <真目标>`（写盘形态的确认旗标）；本单 ✗ 绝不真跑写盘形态 ⇒ 只登记、不给见证命令",
+	},
+	"--confirm=<目标>+--dry-run+--yes": {
+		reason: "无见证命令 —— 带 `--confirm <真目标>` 与 `--yes`（写盘形态）；本单 ✗ 绝不真跑写盘形态 ⇒ 只登记、不给见证命令",
+	},
+}
+
+// TestAuthorityMapWitness —— 映射 9 行**逐行**要有见证命令登记（可见证 ⇒ 真跑比 rc ＋ stderr；
+// 不可见证 ⇒ 显式「无见证命令」＋理由），且**可见证行的控制层要与现跑逐字对上**（映射漂移即红）。
+//
+// 牙口：改**某行控制层**（如把 `--dry-run` 行从 allow 改 block）⇒ 该行见证命令现跑仍给 allow
+// ⇒ 本用例 FAIL（改前：无人红）。见本单两态 / 负控读数。
+func TestAuthorityMapWitness(t *testing.T) {
+	m := loadAuthorityMap(t)
+	rows, ok := m["映射"].([]any)
+	if !ok || len(rows) == 0 {
+		t.Fatalf("`映射` 不是非空数组")
+	}
+	seen := map[string]bool{}
+	ran := map[string]string{}
+	for i, r := range rows {
+		row := r.(map[string]any)
+		vals, ok := row["命令面"].([]any)
+		if !ok {
+			t.Fatalf("映射[第 %d 行] 的 `命令面` 不是数组", i+1)
+		}
+		k := authorityRowRawKey(vals)
+		ctl, _ := row["控制层"].(string)
+		w, ok := authorityWitnesses[k]
+		if !ok {
+			t.Fatalf("映射[第 %d 行]（命令面 %v · 控制层 %s）**没有见证命令登记** —— 可见证 ⇒ 给 `argv`；不可见证 ⇒ 显式写「无见证命令」＋理由（✗ 别留空）", i+1, vals, ctl)
+		}
+		if seen[k] {
+			t.Fatalf("映射[第 %d 行] 的命令面键 %q 与另一行重了", i+1, k)
+		}
+		seen[k] = true
+		if len(w.argv) == 0 {
+			if w.reason == "" || !strings.Contains(w.reason, "无见证命令") {
+				t.Errorf("映射[第 %d 行]（%q）无见证命令，但 `reason` 没逐字写「无见证命令」（照 `无对应` 体例 ✗ 不许留空）", i+1, k)
+			}
+			continue
+		}
+		// 可见证支：控制层与表里逐字对 + 现跑比 rc ＋ stderr。
+		if w.ctl != ctl {
+			t.Errorf("映射[第 %d 行]（%q）表里写控制层 %q，而见证命令按 %q 判 ⇒ 表/实现分家（映射漂移）", i+1, k, ctl, w.ctl)
+			continue
+		}
+		rc, _, errOut := runCapture(w.argv...)
+		if rc != w.rc {
+			t.Errorf("映射[第 %d 行]（%q · %s）见证命令现跑 rc=%d（要 %d）· stderr=%s", i+1, k, w.ctl, rc, w.rc, errOut)
+			continue
+		}
+		if w.needle != "" && !strings.Contains(errOut, w.needle) {
+			t.Errorf("映射[第 %d 行]（%q · %s）见证命令 stderr 没点名 %q（rc 分不开 block / require_approval ⇒ 判口要看 stderr）\nstderr=%s", i+1, k, w.ctl, w.needle, errOut)
+			continue
+		}
+		ran[k] = errOut
+	}
+	// 反向：表面积里不许有对不上任何映射行的死条目。
+	for k := range authorityWitnesses {
+		if !seen[k] {
+			t.Errorf("见证表面积 %q 对不上任何映射行（死条目 —— 表老了或键写歪了）", k)
+		}
+	}
+	// 口径钉死：本批只钉这三个不写盘子集（✗ 不扩到三子集外）。
+	for _, k := range authorityWitnessPinned {
+		if w, ok := authorityWitnesses[k]; !ok || len(w.argv) == 0 {
+			t.Errorf("钉死的见证子集 %q 没给 `argv`（本批三个不写盘子集必须可见证）", k)
+		}
+	}
+	for k, w := range authorityWitnesses {
+		pinned := false
+		for _, p := range authorityWitnessPinned {
+			if k == p {
+				pinned = true
+			}
+		}
+		if !pinned && len(w.argv) != 0 {
+			t.Errorf("非钉死子集 %q 也给了见证命令（本批只钉三个不写盘子集 · ✗ 不扩到三子集外）", k)
+		}
+	}
+	// 病灶交叉核：`block` 与 `require_approval` 同为 rc=2，靠 stderr 分开 ——
+	// 两档各自的 detail 词**不许**出现在对方那档上（否则判口仍是「rc 一刀切」= 没牙）。
+	if b, ok := ran["--dry-run+--yes"]; ok {
+		if !strings.Contains(b, "dry_run_yes_conflict") {
+			t.Errorf("block 档 stderr 没带 detail=`dry_run_yes_conflict`：%s", b)
+		}
+		if strings.Contains(b, "缺 --yes") {
+			t.Errorf("block 档 stderr 也带 require_approval 的「缺 --yes」⇒ 两档 stderr 分不开：%s", b)
+		}
+	}
+	if a, ok := ran[""]; ok {
+		if strings.Contains(a, "dry_run_yes_conflict") {
+			t.Errorf("require_approval 档 stderr 也带 block 的 detail ⇒ 两档 stderr 分不开：%s", a)
+		}
+	}
+}

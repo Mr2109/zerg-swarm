@@ -102,9 +102,13 @@ const kbsHelpText = "kb_docs_sync v1.0.0 —— 项目文档 → 知识库同步
 // ── 旗标面 ────────────────────────────────────────────────────────────────
 // py known = {--mark, --help, -h}；本件另收 3 个 **Go-only 旋钮**（py 不认 ⇒ 旋钮面不合同，
 // 见未覆盖面：`--repo`/`--kb-dir`/`--now`）。
+// ★ `--timeout` / `--cancel-on-interrupt` 是**全局旗标**：由 `main.go` 全局面消费（墙钟上界 /
+// Ctrl-C 取消）；此处只登记「吞下」、**不另立语义**（同族先例：`gate run` 闭白名单已登记同两枚）。
 var kbsKnownFlags = map[string]bool{
 	"--mark": true, "--help": true, "-h": true,
 	"--repo": true, "--kb-dir": true, "--now": true,
+	"--timeout": true, "--cancel-on-interrupt": true,
+	"--node": true,
 }
 
 type kbsArgs struct {

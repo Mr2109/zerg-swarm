@@ -928,6 +928,7 @@ func eggWriteGate(inv *invocation, stdout, stderr io.Writer, act, eggID, machine
 	}
 	if !inv.yes {
 		inv.setErr("usage", "yes_required", "D2 档缺 --yes ⇒ 不执行")
+		guardMarkDecision(inv, guardDecisionApproval)
 		fmt.Fprintf(stderr, "%s: `%s %s` 是 D2 档（**会在真机上装/卸**）—— **缺 --yes ⇒ 不执行**（§九 M3 C2 fail-closed）\n",
 			progName, progName, act)
 		fmt.Fprintf(stderr, "  命令     : %s %s %s\n", progName, act, eggID)
@@ -1421,7 +1422,7 @@ func cmdCocoonEgg(inv *invocation, stdout, stderr io.Writer) int {
 	}
 	tail := []string{}
 	if len(inv.orig) > len(inv.path) {
-		tail = inv.orig[len(inv.path):]
+		tail = stripGlobalLeak(inv.orig[len(inv.path):])
 	}
 	return zergEggGateMain(stdout, stderr, append([]string{sub}, tail...))
 }

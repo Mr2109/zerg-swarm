@@ -366,6 +366,10 @@ func TestImpactBudget_CapAdmissionAndFiledMath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("读真契约件失败：%v", err)
 	}
+	// ④ 抽空 fail-closed：真契约件抽成 0 字节 ⇒ 不给结论（抽空/空集不算通过，✗ 不许静默绿）。
+	if len(real) == 0 {
+		t.Fatalf("抽空：契约件 0 字节 ⇒ fail-closed（抽空不算通过）")
+	}
 	p := zerg.ImpactBudgetPlanBytesForTest(real)
 	if !p.OK || !p.Armed {
 		t.Fatalf("真契约件该裁：ok=%v armed=%v why=%s", p.OK, p.Armed, p.Why)

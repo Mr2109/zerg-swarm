@@ -525,12 +525,14 @@ func ewaRunGoDump(agentDir, specsDir, outPath string) (int, string) {
 	env = ewaEnvSetDefault(env, "GOPROXY", "https://goproxy.cn,direct")
 	env = ewaEnvSet(env, "ZERG_BRIDGE_SPEC_DIR", specsDir)
 	env = ewaEnvSet(env, "ZERG_BRIDGE_OUT", outPath)
-	cmd := exec.Command("go", "test", "./internal/hatch/", "-run", "^TestWallBridgeDumpBwrapArgv$", "-count=1")
+	cmd := armChildGroup(exec.Command("go", "test", "./internal/hatch/", "-run", "^TestWallBridgeDumpBwrapArgv$", "-count=1"))
 	cmd.Dir = agentDir
 	cmd.Env = env
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf
+	runningChild = cmd
+	defer func() { runningChild = nil }()
 	err := cmd.Run()
 	rc := 0
 	if ee, ok := err.(*exec.ExitError); ok {
@@ -562,11 +564,13 @@ func ewaEnsureWallBin(path, wallDir string, noBuild bool) (string, string) {
 	if _, err := os.Stat(cargo); err != nil {
 		return "", "找不到 cargo（试过 PATH 与 ~/.cargo/bin）—— 先装 Rust 工具链"
 	}
-	cmd := exec.Command(cargo, "build", "--manifest-path", ewaPyJoin(wallDir, "Cargo.toml"))
+	cmd := armChildGroup(exec.Command(cargo, "build", "--manifest-path", ewaPyJoin(wallDir, "Cargo.toml")))
 	cmd.Dir = wallDir
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf
+	runningChild = cmd
+	defer func() { runningChild = nil }()
 	err := cmd.Run()
 	rc := 0
 	if ee, ok := err.(*exec.ExitError); ok {

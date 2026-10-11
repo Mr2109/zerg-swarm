@@ -229,7 +229,7 @@ func cmdApprove(inv *invocation, stdout, stderr io.Writer) int {
 		return cmdApproveKeygen(inv, stdout, stderr)
 	}
 	inv.setErr("usage", "unknown_action", "未知动作")
-	fmt.Fprintf(stderr, "%s: 未知 `approve` 动作 %q（可用：ls · show · new · keygen）\n", progName, action)
+	fmt.Fprintf(stderr, "%s: 未知 `approve` 动作 %q（可用：ls · show · new · rotate · keygen）\n", progName, action)
 	return exitUsage
 }
 
@@ -782,6 +782,235 @@ func cmdApproveKeygen(inv *invocation, stdout, stderr io.Writer) int {
 	return exitOK
 }
 
+// ---- rotate（撤销/覆盖/轮换 · GAP-20261001-76）----
+//
+// 病征（缺口逐字）：批准件**没有撤销/覆盖/轮换正门** —— 族里只有 keygen/ls/new/show；
+// `new` 用 `O_EXCL` 同名不覆盖 ⇒ 要换 scope 只能**手改家目录件**（系统件，按规矩须先问人+仓外备份）。
+//
+// 本动作用**一条正门**补这两件事（口径：撤销/覆盖 = **打标/退位**，✗ **不物理删件** ✗）：
+//
+//	· 给了 `--scope <新范围>` ⇒ **覆盖/轮换**：旧件**退位**（`os.Rename` 进 `<approvals>/retired/`，
+//	  字节一枚不丢）⇒ 再用**同一套人签链**（终端 + 操作员口令 + Ed25519）签出新件（`O_EXCL` 落新件）；
+//	· 不给 `--scope`          ⇒ **撤销**：只把旧件退位（不再签新件）。
+//
+// 人签面**一字不放宽**（硬线①）：终端判据（`isTTYFile(os.Stdin)`）＋ `--confirm=<工具名>` ＋ `--yes`
+// 同时到；覆盖那一档还要**操作员口令**（要签新件）。退位用 `os.Rename`（✗ 用 `os.Remove` · 硬线②）。
+// ★ 三态同族（照 `new`）：`--dry-run` 只出计划件（零副作用）· 确认对缺 ⇒ 执行前判退 2 · 件不在 ⇒ 非 0 不给结论。
+
+// retiredDirOf —— 退位位（撤销/覆盖时旧件的落点 · `<状态目录>/approvals/retired`）。
+// ★ 退位 = `os.Rename`（mv），✗ 不 `os.Remove`（硬线②：批准件不许物理删）。
+func retiredDirOf() string { return filepath.Join(approveDir(), "retired") }
+
+func cmdApproveRotate(inv *invocation, stdout, stderr io.Writer) int {
+	// 干跑与真写同给 ⇒ 自相矛盾 ⇒ 用法错 2（与 `new` 同一条共享判定）。
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
+	// 目标 = 位置参数 `<工具名>`（危险档 ⇒ dispatch 不判「多余位置参数」）。
+	tool := ""
+	if len(inv.args) > 0 {
+		tool = strings.TrimSpace(inv.args[0])
+	}
+	by := strings.TrimSpace(inv.flagVal("--by"))
+	scope := strings.TrimSpace(inv.flagVal("--scope"))
+	note := strings.TrimSpace(inv.flagVal("--note"))
+	if tool == "" || by == "" {
+		missing := []string{}
+		if tool == "" {
+			missing = append(missing, "`<工具名>`（位置参数）")
+		}
+		if by == "" {
+			missing = append(missing, "`--by <人名>`")
+		}
+		inv.setErr("usage", "missing_required_flag", "缺必需参数")
+		fmt.Fprintf(stderr, "%s: `approve rotate` 缺 %s —— 要动哪一枚 + 谁动的（撤销/覆盖都要留痕）\n",
+			progName, strings.Join(missing, " · "))
+		return exitUsage
+	}
+	oldPath := filepath.Join(approveDir(), tool+".json")
+	// 模式：给了 `--scope` ⇒ 覆盖/轮换；没给 ⇒ 撤销。
+	mode := "revoke"
+	verb := "撤销"
+	if scope != "" {
+		mode = "rotate"
+		verb = "覆盖/轮换"
+	}
+	// ★ 干跑那一态：只出**计划件** —— 一个字节都不写（不 mv · 不签 · 不落审计 · 不读口令、不动在册钥）。
+	if inv.dryRun {
+		printApproveStateDir(stderr)
+		fmt.Fprintf(stdout, "计划     : %s %q 的批准件\n", verb, tool)
+		fmt.Fprintf(stdout, "旧件     : %s ⇒ **退位**到 %s（mv · 字节不丢 ✗ 不删）\n", oldPath, retiredDirOf())
+		if mode == "rotate" {
+			fmt.Fprintf(stdout, "新件     : 用**同一套人签链**签出（新范围 %s）—— 旧件退位之后才落新件\n", scope)
+		}
+		fmt.Fprintf(stdout, "落审计   : 一行 `%s`（追加只写）\n", approveRetireAuditEvent)
+		fmt.Fprintf(stderr, "（--dry-run：只出计划面 · **零副作用** —— 未退位 · 未签 · 未落审计 · 未读口令）\n")
+		return exitOK
+	}
+	// ★ D3 确认对（**执行前判** · 与 `approve new` 同一条纪律）：`--confirm=<工具名>` 与 `--yes` 同时到。
+	if err := approveRotateConfirmPair(inv, tool); err != nil {
+		inv.setErr("usage", "confirm_required", err.Error())
+		fmt.Fprintf(stderr, "%s: %v ⇒ 不动作（退码 2）\n", progName, err)
+		fmt.Fprintf(stderr, "  要真动：「%s approve rotate %s%s --by <人名> --confirm=%s --yes」\n",
+			progName, tool, map[bool]string{true: " --scope <新范围>", false: ""}[mode == "rotate"], tool)
+		fmt.Fprintf(stderr, "error.kind=usage · detail=confirm_required · retryable=false · remedy=fix_usage\n")
+		return exitUsage
+	}
+	// ★ 人签面（硬线①）：非终端一律拒 —— 与 `approve new`/`keygen` **逐字同一闸**（`isTTYFile`）。
+	printApproveStateDir(stderr)
+	if !isTTYFile(os.Stdin) {
+		inv.setErr("usage", "not_a_human", "撤销/覆盖批准件要人在终端上敲")
+		fmt.Fprintf(stderr, "%s: **批准件的撤销/覆盖只能人在终端上敲** —— 非交互会话（管道 / 模型）一律拒（退码 2）\n", progName)
+		fmt.Fprintf(stderr, "口径（§17.3 铁律④③）：AI 可提、可建、可测、可验，**不可自批**（也不可自行撤销/覆盖）\n")
+		return exitUsage
+	}
+	// 旧件必须在（✗ 取不到 ⇒ **非 0 不给结论** · 硬线③）—— 与 `show` 的「没有这枚批准件」同码（退 1）。
+	if _, err := os.Stat(oldPath); err != nil {
+		inv.setErr("failed", "approval_not_found", "没有这枚批准件")
+		fmt.Fprintf(stderr, "%s: 没有工具 %q 的批准件（%s）⇒ 无从%s ⇒ 不给结论（退码 1）\n",
+			progName, tool, oldPath, verb)
+		return exitFail
+	}
+	// 覆盖那一档：要签新件 ⇒ 要有在册钥 + 操作员口令（同一套人签链）。
+	var newTicket approvalTicketFile
+	var payload []byte
+	if mode == "rotate" {
+		if _, err := os.Stat(operatorKeyPath()); err != nil {
+			inv.setErr("usage", "operator_key_absent", "还没有操作员密钥")
+			fmt.Fprintf(stderr, "%s: 还没有操作员密钥（%s）⇒ 覆盖要签新件 ⇒ 不给签\n", progName, operatorKeyPath())
+			fmt.Fprintf(stderr, "先由**人**在终端上生成：%s approve keygen --by <人名>\n", progName)
+			return exitUsage
+		}
+		if note == "" {
+			note = "rotate：覆盖旧批准件"
+		}
+		newTicket = approvalTicketFile{
+			Tool: control.SanitizeApprovalField(tool), Approver: control.SanitizeApprovalField(by),
+			ApprovedAt: time.Now().Format(time.RFC3339), Scope: control.SanitizeApprovalField(scope),
+			Note: control.SanitizeApprovalField(note),
+		}
+		payload = control.ApprovalPayload(newTicket.Tool, newTicket.Scope, newTicket.Approver, newTicket.ApprovedAt, newTicket.Note)
+		digest := sha256.Sum256(payload)
+		// ★ 签前摘要两行（照 `new` 的 D2 口径）：人看清「要签什么 + 旧件去哪」再敲口令。
+		fmt.Fprintf(stdout, "摘要     : 工具 %s · 范围 %s · 批准者 %s · 签的时间 %s · 理由 %s\n",
+			newTicket.Tool, newTicket.Scope, newTicket.Approver, newTicket.ApprovedAt, newTicket.Note)
+		fmt.Fprintf(stdout, "待签 sha256: %s（%d 字节 · 待签字节 = `zerg-approval/v1` + 五格）\n",
+			hex.EncodeToString(digest[:]), len(payload))
+		fmt.Fprintf(stderr, "旧件将退位到 %s（mv · 字节不丢 ✗ 不删）\n", retiredDirOf())
+		// 读口令 + 解签（口令错 ⇒ 不给签 ⇒ **一个字节都不动**，旧件原样）。
+		pass, err := readPassphrase("操作员口令（不会回显）：")
+		if err != nil {
+			inv.setErr("failed", "passphrase_unreadable", err.Error())
+			fmt.Fprintf(stderr, "%s: 读不到口令（%v）⇒ 不给签（旧件原样）\n", progName, err)
+			return exitFail
+		}
+		priv, err := unlockOperatorKey(pass)
+		if err != nil {
+			inv.setErr("usage", "passphrase_rejected", err.Error())
+			fmt.Fprintf(stderr, "%s: %v ⇒ **不给签**（旧件原样 · 口令不对就是不签，不重试、不猜）\n", progName, err)
+			return exitUsage
+		}
+		newTicket.SigAlg = "ed25519"
+		newTicket.KeyID = control.KeyID(base64.StdEncoding.EncodeToString(priv.Public().(ed25519.PublicKey)))
+		newTicket.Sig = base64.StdEncoding.EncodeToString(ed25519.Sign(priv, payload))
+	}
+	// ★ 备份先行：先退位旧件（mv · 字节不丢）—— 退位失败 ⇒ 不落新件（旧件原样）。
+	retiredPath, err := retireTicket(oldPath, tool)
+	if err != nil {
+		inv.setErr("failed", "retire_failed", err.Error())
+		fmt.Fprintf(stderr, "%s: %v\n", progName, err)
+		return exitFail
+	}
+	// 覆盖那一档：退位之后才落新件（`O_EXCL` ⇒ 同名不覆盖）。
+	newPath := ""
+	if mode == "rotate" {
+		if err := os.MkdirAll(approveDir(), 0o700); err != nil {
+			inv.setErr("failed", "approvals_dir_failed", err.Error())
+			fmt.Fprintf(stderr, "%s: 建不了批准件目录 %s：%v（**旧件已退位** · 字节在 %s）\n", progName, approveDir(), err, retiredPath)
+			return exitFail
+		}
+		body, _ := json.MarshalIndent(newTicket, "", " ")
+		f, err := os.OpenFile(oldPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if err != nil {
+			inv.setErr("failed", "approval_write_failed", err.Error())
+			fmt.Fprintf(stderr, "%s: 写不进新批准件 %s：%v（**旧件已退位** · 字节在 %s）\n", progName, oldPath, err, retiredPath)
+			return exitFail
+		}
+		if _, err := f.Write(append(body, '\n')); err != nil {
+			f.Close()
+			inv.setErr("failed", "approval_write_failed", err.Error())
+			fmt.Fprintf(stderr, "%s: 写新批准件失败：%v（**旧件已退位** · 字节在 %s）\n", progName, err, retiredPath)
+			return exitFail
+		}
+		f.Close()
+		newPath = oldPath
+	}
+	// 审计（记录面 · **不是放行条件**）：退位一行 + （覆盖那档）签名一行（复用 E1 口径）。
+	if ap, aerr := recordApprovalRetireAudit(tool, by, retiredPath, mode, newPath); aerr != nil {
+		fmt.Fprintf(stderr, "%s: ⚠ 退位审计那一行没落成（%v）—— **本次动作照旧生效**（审计是记录面，不是放行条件 · 落点 %s）\n", progName, aerr, ap)
+	} else {
+		fmt.Fprintf(stderr, "  审计  ：一行 `%s`（追加一行 · 只写不改）\n", approveRetireAuditEvent)
+	}
+	if mode == "rotate" {
+		if ap, aerr := recordApprovalAuditWithTTL(newTicket, payload, newPath, 0); aerr != nil {
+			fmt.Fprintf(stderr, "%s: ⚠ 签名审计那一行没落成（%v）—— **本次签名照旧有效**（落点 %s）\n", progName, aerr, ap)
+		} else {
+			fmt.Fprintf(stderr, "  审计  ：一行 `%s`（追加一行 · 只写不改 · key_id=%s）\n", approveAuditEvent, newTicket.KeyID)
+		}
+	}
+	fmt.Fprintf(stdout, "%s	%s	%s\n", tool, by, time.Now().Format(time.RFC3339))
+	fmt.Fprintf(stderr, "%s: 已%s %q 的批准件 —— 旧件**退位**到 %s（mv · 字节不丢 ✗ 不删）\n", progName, verb, tool, retiredPath)
+	if mode == "rotate" {
+		fmt.Fprintf(stderr, "  新件：%s（范围 %s · key_id=%s）\n", newPath, newTicket.Scope, newTicket.KeyID)
+	} else {
+		fmt.Fprintf(stderr, "  现已**无** %q 的批准件（撤销后 `approve ls` 不再列它）—— 要再放行须由**人**重签\n", tool)
+	}
+	return exitOK
+}
+
+// approveRotateConfirmPair —— `approve rotate`（**D3**）的确认对口径**只有这一处**
+// （与 `approveNewConfirmPair` 同一套：缺 `--confirm` / 缺 `--yes` / 值不逐字相同 ⇒ **执行前判**退 2）。
+func approveRotateConfirmPair(inv *invocation, tool string) error {
+	if inv == nil {
+		return errors.New("调用面缺 invocation（不动作）")
+	}
+	if !inv.confirmGiven {
+		return fmt.Errorf("`approve rotate` 是 D3 档（不可逆：撤销/覆盖批准件）⇒ 缺 `--confirm=<工具名>`（要点名动哪一枚：%q）", tool)
+	}
+	if !inv.yes {
+		return errors.New("`approve rotate` 是 D3 档 ⇒ 缺 `--yes`（不可逆档 ⇒ `--confirm` 与 `--yes` 两枚都要到）")
+	}
+	if got := strings.TrimSpace(inv.confirm); got != tool {
+		return fmt.Errorf("`--confirm` 的值 %q 与目标工具名 %q **不逐字相同** ⇒ 不动作（给错值 = 拒绝，不是「当没给」）", got, tool)
+	}
+	return nil
+}
+
+// retireTicket 把在册批准件**退位**（`os.Rename` 进 `retired/` · ✗ **不** `os.Remove` · 硬线②）。
+// 返回退位件路径；撞名（同秒重复退位）⇒ 加 `-N` 后缀（✗ 不加盖已有退位件）。
+func retireTicket(oldPath, tool string) (string, error) {
+	dir := retiredDirOf()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", fmt.Errorf("建不了退位位 %s：%v ⇒ 不动作（旧件原样）", dir, err)
+	}
+	base := control.SanitizeApprovalField(tool)
+	if base == "" {
+		base = "ticket"
+	}
+	stamp := time.Now().Format("20060102T150405")
+	dst := filepath.Join(dir, base+"."+stamp+".json")
+	for i := 2; ; i++ {
+		if _, err := os.Stat(dst); os.IsNotExist(err) {
+			break
+		}
+		dst = filepath.Join(dir, fmt.Sprintf("%s.%s.%d.json", base, stamp, i))
+	}
+	if err := os.Rename(oldPath, dst); err != nil {
+		return "", fmt.Errorf("退位不了旧件（%s ⇒ %s）：%v ⇒ 旧件原样", oldPath, dst, err)
+	}
+	return dst, nil
+}
+
 // ---- 审计面（`E1` · `I-6`：新增事件类型 + **自己的字段名**）----
 //
 // 为什么单列一节：现网 `edit_audit.jsonl` 那 179 行讲的是**改件**（`before_sha256` / `after_sha256`
@@ -954,6 +1183,62 @@ func approveAuditMarkOf(raw []byte) (string, error) {
 		return "补签", nil
 	}
 	return "在场", nil
+}
+
+// approvalRetireAuditLine —— `rotate`（撤销/覆盖）那一次**退位**的审计行（`E1` 同族：**自己的字段名**）。
+//
+// 为什么单列一行（不蹭 `approve_signed`）：退位与「签一枚件」不是同一件事 —— 退位**没有签名**、
+// 讲的是「哪枚旧件被移到哪」（`retired_path` / `retired_sha256`）⇒ 用自己的字段名（`I-6` 纪律）。
+// ★ 只追加、只写不改；**不是放行条件**（写不进审计 ⇒ 撤销/覆盖照旧生效，只报）。
+type approvalRetireAuditLine struct {
+	At              string `json:"at"`
+	Event           string `json:"event"`
+	Tool            string `json:"tool"`
+	Approver        string `json:"approver"`
+	RetiredPath     string `json:"retired_path"`
+	RetiredSHA256   string `json:"retired_sha256"`
+	Mode            string `json:"mode"` // `rotate`（覆盖/轮换）| `revoke`（撤销）
+	NewApprovalPath string `json:"new_approval_path,omitempty"`
+}
+
+// approveRetireAuditEvent —— 退位事件名（本事件唯一 · 与 `approve_signed` **不同名**）。
+const approveRetireAuditEvent = "approve_retired"
+
+// recordApprovalRetireAudit —— 把一次撤销/覆盖的**退位**落成审计一行（返回落点 · 只追加）。
+// ★ **缺必需格 ⇒ 这一行不写**（退位件路径 / 它的 `sha256` 取不到 ⇒ 报错不写 —— 判据①同族纪律）。
+func recordApprovalRetireAudit(tool, by, retiredPath, mode, newPath string) (string, error) {
+	p := editAuditPath()
+	if p == "" {
+		return "", fmt.Errorf("审计落点解析不出来（HOME / ZERG_STATE_DIR 都取不到）")
+	}
+	sha := ""
+	if b, err := os.ReadFile(retiredPath); err == nil {
+		sha = sha256Of(b)
+	}
+	if strings.TrimSpace(retiredPath) == "" || strings.TrimSpace(sha) == "" {
+		return p, fmt.Errorf("退位审计缺必需格（`retired_path` / `retired_sha256` 取不到）⇒ **这一行不写**")
+	}
+	line := approvalRetireAuditLine{
+		At: time.Now().Format(time.RFC3339), Event: approveRetireAuditEvent,
+		Tool: control.SanitizeApprovalField(tool), Approver: control.SanitizeApprovalField(by),
+		RetiredPath: retiredPath, RetiredSHA256: sha, Mode: mode, NewApprovalPath: newPath,
+	}
+	body, err := json.Marshal(line)
+	if err != nil {
+		return p, err
+	}
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		return p, err
+	}
+	f, err := os.OpenFile(p, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return p, err
+	}
+	defer f.Close()
+	if _, err := f.Write(append(body, '\n')); err != nil {
+		return p, err
+	}
+	return p, f.Sync()
 }
 
 // ---- 有效期面（`E4` · `--ttl`）----

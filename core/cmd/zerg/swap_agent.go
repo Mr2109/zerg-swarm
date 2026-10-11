@@ -428,6 +428,8 @@ func (c *sagCtx) runReport() int {
 	// ── 闸① 构建口径 ──
 	c.hr()
 	c.say("[闸①] 构建口径（件必须由 build-all.sh 产出 · 身份不许丢）")
+	// ★ 本件 `bin/build-info.json` 是**派生件 · 非身份真源**（全量档的聚合生成物 · 设计 §5 `O-12` 取（乙）· 2026-09-24 待拍清单终版 条 4/5）：
+	//	✗ **勿手改**（下次全量档会被覆写）；✗ **勿当身份真源** —— 身份真源 = **制品自身嵌入段**（读法 `zerg version --build-info`）。
 	bi := "bin/build-info.json"
 	if st, err := os.Stat(c.e.abs(bi)); err != nil || st.IsDir() {
 		c.judge("① 构建口径", "BLOCKED", "缺 "+bi+"（读不到构件身份 ⇒ 判不了，不许当绿）")

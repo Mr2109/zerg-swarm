@@ -45,6 +45,10 @@ import (
 
 const csfProg = "check-stale-frozen.py"
 
+// csfJSONFields —— 本门机器面字段表（**唯一真源**：`--json <字段>` 的装包与拒收同读这一处）。
+// 定序 = csfJSONPayload 的全量键序；子集输出按用户给的字段序。
+var csfJSONFields = []string{"root", "faces", "stale_points", "stale_faces", "rc", "mode"}
+
 // csfRefresh 的键与 py 的 REFRESH 字典逐字同（仅按键取值，不被迭代 ⇒ 无插入序问题）；值改现役形（py 原件已退 ⇒ 调用串走 zerg gate check）。
 var csfRefresh = map[string]string{
 	"judge-registry":   "zerg gate check check-judge-registry --emit",
@@ -667,38 +671,72 @@ func csfRender(faces []*csfFace, out io.Writer) (int, int) {
 	return nStale, nFaceStale
 }
 
-func csfJSONPayload(root string, faces []*csfFace, nStale, nFaceStale int) string {
+// csfKV —— 机器面一格的键/值（值已是 JSON 字面），用于按字段表装包。
+type csfKV struct{ k, v string }
+
+func csfJSONPayload(root string, faces []*csfFace, nStale, nFaceStale int, fields string) string {
+	// faces 数组现值渲染（键序与 py 逐字同）。
+	var fb strings.Builder
+	fb.WriteString("[")
+	for i, f := range faces {
+		if i > 0 {
+			fb.WriteString(", ")
+		}
+		fb.WriteString("{")
+		fb.WriteString("\"件\": " + csfPyJSONStr(f.jian))
+		fb.WriteString(", \"冻结形态\": " + csfPyJSONStr(f.xtai))
+		fb.WriteString(", \"状态\": " + csfPyJSONStr(f.status))
+		fb.WriteString(", \"冻结点\": " + csfPyJSONStr(f.dong))
+		fb.WriteString(", \"现读\": " + csfPyJSONStr(f.xian))
+		fb.WriteString(", \"过期数\": " + strconv.Itoa(f.stale))
+		fb.WriteString(", \"明细\": [")
+		for j, d := range f.detail {
+			if j > 0 {
+				fb.WriteString(", ")
+			}
+			fb.WriteString("[" + csfPyJSONStr(d.label) + ", " + csfJSONAny(d.frozen) + ", " + csfJSONAny(d.live) + ", " + csfPyJSONStr(d.note) + "]")
+		}
+		fb.WriteString("]")
+		fb.WriteString(", \"刷新正门\": " + csfPyJSONStr(f.zheng))
+		fb.WriteString("}")
+	}
+	fb.WriteString("]")
+	// 全量 payload（定序 = root, faces, stale_points, stale_faces, rc, mode）。
+	all := []csfKV{
+		{"root", csfPyJSONStr(root)},
+		{"faces", fb.String()},
+		{"stale_points", strconv.Itoa(nStale)},
+		{"stale_faces", strconv.Itoa(nFaceStale)},
+		{"rc", "0"},
+		{"mode", csfPyJSONStr("report-only")},
+	}
+	sel := all
+	if fields != "" {
+		// `--json <字段>`：真收字段 —— 只出所选键（按用户给的字段序），不认的名已由
+		// csfRefuseUnknownJSONFields 先拦（rc=2），此处对残余未知名跳过（防御）。
+		byKey := map[string]string{}
+		for _, kv := range all {
+			byKey[kv.k] = kv.v
+		}
+		sel = nil
+		for _, f := range strings.Split(fields, ",") {
+			k := strings.TrimSpace(f)
+			if k == "" {
+				continue
+			}
+			if v, ok := byKey[k]; ok {
+				sel = append(sel, csfKV{k, v})
+			}
+		}
+	}
 	var b strings.Builder
 	b.WriteString("{")
-	b.WriteString("\"root\": " + csfPyJSONStr(root))
-	b.WriteString(", \"faces\": [")
-	for i, f := range faces {
+	for i, kv := range sel {
 		if i > 0 {
 			b.WriteString(", ")
 		}
-		b.WriteString("{")
-		b.WriteString("\"件\": " + csfPyJSONStr(f.jian))
-		b.WriteString(", \"冻结形态\": " + csfPyJSONStr(f.xtai))
-		b.WriteString(", \"状态\": " + csfPyJSONStr(f.status))
-		b.WriteString(", \"冻结点\": " + csfPyJSONStr(f.dong))
-		b.WriteString(", \"现读\": " + csfPyJSONStr(f.xian))
-		b.WriteString(", \"过期数\": " + strconv.Itoa(f.stale))
-		b.WriteString(", \"明细\": [")
-		for j, d := range f.detail {
-			if j > 0 {
-				b.WriteString(", ")
-			}
-			b.WriteString("[" + csfPyJSONStr(d.label) + ", " + csfJSONAny(d.frozen) + ", " + csfJSONAny(d.live) + ", " + csfPyJSONStr(d.note) + "]")
-		}
-		b.WriteString("]")
-		b.WriteString(", \"刷新正门\": " + csfPyJSONStr(f.zheng))
-		b.WriteString("}")
+		b.WriteString("\"" + kv.k + "\": " + kv.v)
 	}
-	b.WriteString("]")
-	b.WriteString(", \"stale_points\": " + strconv.Itoa(nStale))
-	b.WriteString(", \"stale_faces\": " + strconv.Itoa(nFaceStale))
-	b.WriteString(", \"rc\": 0")
-	b.WriteString(", \"mode\": \"report-only\"")
 	b.WriteString("}")
 	return b.String()
 }
@@ -1036,8 +1074,61 @@ func csfParse(argv []string) (csfArgs, string) {
 	return a, ""
 }
 
+// csfRefuseUnknownJSONFields —— `--json <字段>` 里有不认的名 ⇒ rc=2 ＋ 印可选字段表（Q-176 口径）。
+// 与同族判据件（check_registry_vs_disk / check_public_tree_selfcheck）同形：字段名打错 ≠ 零命中。
+// ★ 先于 argparse 判（与 py 同序）；`--json`（无值 / 后随 `-`）⇒ 收全量，不拒。
+func csfRefuseUnknownJSONFields(stderr io.Writer, argv []string) *int {
+	var want []string
+	for i, x := range argv {
+		if x == "--json" {
+			v := ""
+			if i+1 < len(argv) && !strings.HasPrefix(argv[i+1], "-") {
+				v = argv[i+1]
+			}
+			want = append(want, strings.Split(v, ",")...)
+		} else if strings.HasPrefix(x, "--json=") {
+			want = append(want, strings.Split(strings.SplitN(x, "=", 2)[1], ",")...)
+		}
+	}
+	var fields []string
+	for _, f := range want {
+		if s := strings.TrimSpace(f); s != "" {
+			fields = append(fields, s)
+		}
+	}
+	known := map[string]bool{}
+	for _, f := range csfJSONFields {
+		known[f] = true
+	}
+	var bad []string
+	for _, f := range fields {
+		if !known[f] {
+			bad = append(bad, f)
+		}
+	}
+	if len(bad) == 0 {
+		return nil
+	}
+	quoted := func(xs []string) string {
+		out := make([]string, 0, len(xs))
+		for _, x := range xs {
+			out = append(out, "`"+x+"`")
+		}
+		return strings.Join(out, " · ")
+	}
+	fmt.Fprintf(stderr, "⛔ `--json` 不认的字段名：%s\n", quoted(bad))
+	fmt.Fprintf(stderr, "   可选字段表：%s\n", quoted(csfJSONFields))
+	fmt.Fprint(stderr, "⇒ 用法错（rc=2）：**字段名打错 ≠ 零命中** —— 两态在机器面上必须分得开\n")
+	rc := 2
+	return &rc
+}
+
 // csfRun —— 主逻辑（自检亦经此跑以捕获 stdout）。
 func csfRun(argv []string, stdout, stderr io.Writer) int {
+	// ① Q-176：`--json <字段>` 坏字段名先于 argparse 判（与同族判据件同序）。
+	if rc := csfRefuseUnknownJSONFields(stderr, argv); rc != nil {
+		return *rc
+	}
 	a, errMsg := csfParse(argv)
 	if a.help {
 		fmt.Fprint(stdout, csfHelpText)
@@ -1058,7 +1149,7 @@ func csfRun(argv []string, stdout, stderr io.Writer) int {
 	faces := csfCollect(root, stderr)
 	nStale, nFaceStale := csfRender(faces, stdout)
 	if a.jsonSet {
-		fmt.Fprintln(stdout, csfJSONPayload(root, faces, nStale, nFaceStale))
+		fmt.Fprintln(stdout, csfJSONPayload(root, faces, nStale, nFaceStale, a.jsonVal))
 	}
 	return 0
 }
@@ -1214,6 +1305,39 @@ func csfSelfTest(stdout, stderr io.Writer) int {
 		fails = append(fails, "空转夹具造不出："+err.Error())
 	}
 
+	// ⑤ 字段面：`--json <字段>` 真收字段（只出所选键）＋ 不认字段名 ⇒ rc=2（Q-176）。
+	captureE := func(argv []string) (int, string, string) {
+		var ob, eb bytes.Buffer
+		rc := csfRun(argv, &ob, &eb)
+		return rc, ob.String(), eb.String()
+	}
+	if r5, err := csfSelftestFixture(""); err == nil {
+		rcF, outF, _ := captureE([]string{"--root", r5, "--json", "root"})
+		if rcF != 0 {
+			fails = append(fails, fmt.Sprintf("字段面：--json root 期望 rc=0 实得 rc=%d", rcF))
+		} else {
+			got := ""
+			for _, line := range csfSplitLines(outF) {
+				if strings.HasPrefix(line, "{") {
+					got = line
+				}
+			}
+			if !strings.Contains(got, "\"root\":") || strings.Contains(got, "\"faces\":") {
+				fails = append(fails, "字段面：--json root 该只出 root 键（真收字段）实得 "+got)
+			}
+		}
+		rcB, _, errB := captureE([]string{"--root", r5, "--json", "nope,root"})
+		if rcB != 2 {
+			fails = append(fails, fmt.Sprintf("字段面：--json nope,root 期望 rc=2 实得 rc=%d", rcB))
+		}
+		if !strings.Contains(errB, "不认的字段名") {
+			fails = append(fails, "字段面：--json nope stderr 缺「不认的字段名」")
+		}
+		os.RemoveAll(r5)
+	} else {
+		fails = append(fails, "字段面夹具造不出："+err.Error())
+	}
+
 	if len(fails) > 0 {
 		fmt.Fprintf(stdout, "✗ check-stale-frozen 自检不过（%d 条）：\n", len(fails))
 		for _, f := range fails {
@@ -1221,7 +1345,7 @@ func csfSelfTest(stdout, stderr io.Writer) int {
 		}
 		return 2
 	}
-	fmt.Fprint(stdout, "✓ check-stale-frozen 自检全过（正控 3 面 · 负控成对 · 空转 2 格 · 形状 2 态）\n")
+	fmt.Fprint(stdout, "✓ check-stale-frozen 自检全过（正控 3 面 · 负控成对 · 空转 2 格 · 形状 2 态 · 字段 2 格）\n")
 	return 0
 }
 

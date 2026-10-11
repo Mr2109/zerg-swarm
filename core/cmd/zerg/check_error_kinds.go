@@ -96,6 +96,14 @@ func errorKindsGateMain(stdout, stderr io.Writer, argv []string) int {
 		return 2
 	}
 	rc, lines := errorKindsGateCheck(r)
+	// ★ B 类真口子修：读失败 ⇒ 响亮 BLOCKED rc=2 + 逐件点名（✗ 不再静默少判）。
+	if len(cekReadFails) > 0 {
+		fmt.Fprintf(stderr, "BLOCKED —— 有 %d 件读不到（B 类读失败 ⇒ 登记 + 判红 · rc=2 · 不给结论）：\n", len(cekReadFails))
+		for _, u := range cekReadFails {
+			fmt.Fprintf(stderr, "  [读失败] %s\n", u)
+		}
+		return 2
+	}
 	fmt.Fprintln(stdout, "── 命令面 error.kind 闭集（§九 M7）──")
 	for _, l := range lines {
 		fmt.Fprintln(stdout, l)
@@ -235,7 +243,15 @@ func cekStripGoComments(text string) string {
 }
 
 // errorKindsGateCheck —— py `check()`：返回 (rc, 报告行列表)。rc 0=绿 1=红 2=不给结论。
+// cekReadFails —— B 类读失败登记面（R3 用法面扫描里读不了的目录/件 ⇒ 逐件登记 相对路径 + err 正文）。
+// ★ B 类真口子修（与 py 有意分叉 · 同族先例 check_doc_cmds.go 的 dcmdReadFails）：
+//
+//	读失败 ⇒ 登记 + 入口判红（stderr BLOCKED 头 + 逐件点名）⇒ rc=2（✗ 不再静默少判）。
+//	自清点：每次 errorKindsGateCheck 起手清空 ⇒ 不许跨调用残留。
+var cekReadFails []string
+
 func errorKindsGateCheck(root string) (int, []string) {
+	cekReadFails = nil // ★ 自清：包级登记面不许跨调用残留
 	var errs []string
 
 	rows, err := errorKindsGateReadClosedSet(filepath.Join(root, "core", "cmd", "zerg", "errors.go"))
@@ -274,7 +290,13 @@ func errorKindsGateCheck(root string) (int, []string) {
 
 	// R3 用法面。
 	dir := filepath.Join(root, "core", "cmd", "zerg")
-	entries, _ := os.ReadDir(dir)
+	entries, derr := os.ReadDir(dir)
+	if derr != nil {
+		// ★ B 类真口子修（Go 侧曾丢错 · ✗ 不再静默）：**在盘却读不了**才是真读失败 ⇒ 登记 + 判红 + rc=2。
+		if fi, serr := os.Stat(dir); serr == nil && fi.IsDir() {
+			cekReadFails = append(cekReadFails, "core/cmd/zerg（读不了目录）")
+		}
+	}
 	var names []string
 	for _, e := range entries {
 		n := e.Name()
@@ -287,6 +309,8 @@ func errorKindsGateCheck(root string) (int, []string) {
 	for _, n := range names {
 		b, err := os.ReadFile(filepath.Join(dir, n))
 		if err != nil {
+			// ★ B 类真口子修（原 py 静默跳过 · ✗ 不再静默）：登记 + 判红 + rc=2。
+			cekReadFails = append(cekReadFails, "core/cmd/zerg/"+n+"（"+err.Error()+"）")
 			continue
 		}
 		// 只认**代码位**：先剥注释（注释里提一句 setErr("…") 是散文不是用法；对应 py 的 strip_go_comments）。

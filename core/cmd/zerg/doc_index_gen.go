@@ -399,6 +399,27 @@ func gdixParseArgs(argv []string) (dir, out string, help bool, errMsg string) {
 					}
 					continue
 				}
+				// ★ `--timeout` / `--cancel-on-interrupt` 是**全局旗标**：由 `main.go` 全局面
+				//   消费（墙钟上界 / Ctrl-C 取消）；此处只登记「吞下」、**不另立语义** ——
+				//   `--timeout` 的值（含以连字符开头者）一并跳过（同族先例：`gate run` 闭白名单）。
+				if name == "--timeout" {
+					if !hasVal && i+1 < len(argv) {
+						i++
+					}
+					continue
+				}
+				if name == "--cancel-on-interrupt" {
+					continue
+				}
+				// ★ 全局旗标「吞下」键：`--node` 由全局面（`main.go` 的机器名册校验）消费；此处只登记
+				//   「吞下」、**不另立语义** —— `--node` 是**取值旗标** ⇒ 连同它的值一并跳过
+				//   （同族先例：`gate run` 闭白名单）。
+				if name == "--node" {
+					if !hasVal && i+1 < len(argv) {
+						i++
+					}
+					continue
+				}
 				unrec = append(unrec, tok)
 				continue
 			}

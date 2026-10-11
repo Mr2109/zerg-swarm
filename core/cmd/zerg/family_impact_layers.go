@@ -28,9 +28,12 @@
 //   - 运行期面（反射 / 配置串 / HTTP 路由 / 序列化）标 **「未查」**（§十一：静态图天生看不见）；
 //     `R34` 的「`zerg doctor` 名册四项 verdict 摘要进 `warnings[]` 一条」**仍未接**（落点有了，
 //     接它属 `R34` 那一批）—— **照实标未做**，不许假装全覆盖。
-//   - ④a 只用 `git grep`（**只搜 tracked**）并在口径里写死；仓里另有一条正则面命令
-//     `zerg code find`（**全盘口径**：含未跟踪件）—— 两层口径不同、数不同源，本件**不另抄它的口径**
-//     （`A1` 红线：不动 `code find` 的扫码口径与排除表）。
+//   - ④a 走**工作树面**（tracked + 未跟踪 · 与 `zerg code find` 同源）：计数复用仓内既有的
+//     `codeWorktreeFaceHits`、行清单用同一走法、**共用同一枚排除表**（`codeScanSkipDirs` ∪
+//     点项规则/白名单 `codeScanKeepDots` · `codeScanSkipFile` · `codeFindMaxFileBytes`）—— **不另抄一份**
+//     （`A1` 红线：不动 `code find` 的扫码口径与排除表）。★ 缺口 `GAP-20260927-55` 残面 +
+//     `GAP-20261010-18`：④a 由**索引面**（`git grep` · 只搜 tracked）换到**工作树面** ⇒ 未跟踪
+//     新写件进 ④a 清单。索引面（`git grep -w/-E`）只留作**两面 parity 对照**（不再是 ④a 的答案）。
 //
 // 红线（任务单 §二 `A2` 逐条）：不引 `gopls` / `rust-analyzer` ✗ · 不加 `go.work` ✗ ·
 // 不动 `publish/` 那七件生效面里的任何一行 ✗（第 ⑥ 层**只消费** `check-publish-face-sync.py`
@@ -58,6 +61,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // ---- 层规三件（§二 层规 · `A2` 判据①）-----------------------------------------------------
@@ -453,8 +457,8 @@ func impactCaliberFor(seq, root string, tgt *impactTarget) string {
 		if tgt.Kind == impactKindFile {
 			word = path.Base(tgt.Rel)
 		}
-		cal := "④a `git grep -w`（**词边界** · **只搜 tracked**）+ `git grep -E`（正则面 · 同一件的另一档）· ④b `ast-grep`（结构同形）" +
-			" · 词=" + word + " · 口径标记：词边界=只搜 tracked（未跟踪件不在面内 ⇒ 与 `zerg code find` 的全盘口径**不同源**）"
+		cal := "④a **工作树面**（tracked + 未跟踪 · 与 `zerg code find` 同源 · **共用同一排除表**）+ ④b `ast-grep`（结构同形）" +
+			" · 词=" + word + " · 索引面对照=`git grep -w`/`-E`（**只搜 tracked** · 仅作两面 parity 对照，**不是** ④a 的答案）"
 		if sg := impactAstGrepBin(); sg != "" && tgt.Kind == impactKindFile && strings.HasSuffix(tgt.Rel, ".go") {
 			verOut := ""
 			if v, _, _, verr := impactRunIn(root, sg, "--version"); verr == nil {
@@ -751,9 +755,10 @@ func impactLayerContract(root string, tgt *impactTarget) impactLayer {
 
 // impactFaceParityReading —— ④a 的「两面」判定口（缺口 `GAP-20260927-55` 的第二半 · 2026-10-10）。
 //
-// 同仓两把「词在哪儿」的正门读的是**两个面**：`zerg impact` 的 ④a 走**索引面**（`git grep` ·
-// `codeFaceIndex` = 只搜 tracked 件的工作树内容），`zerg code find` 走**工作树面**
-// （`codeWorktreeFaceHits` · `codeFaceWorktree` = tracked + 未跟踪）。同一个词，两面可给出不同答案。
+// 同仓两把「词在哪儿」的正门**现已同面**：`zerg impact` 的 ④a **已由索引面换到工作树面**
+// （缺口 `GAP-20260927-55` 残面 · `GAP-20261010-18`）—— 与 `zerg code find` 同源、共用同一排除表
+// （`codeWorktreeFaceHits` · `codeFaceWorktree` = tracked + 未跟踪）。本口仍把 ④a **保留的索引面对照**
+// （`git grep` · `codeFaceIndex` = 只搜 tracked 件的工作树内容）与工作树面摆成同一条读数 ⇒ 同一词两面可不同。
 //
 // 契约（fail-loud）：任一面**取不到**（`ok=false`）⇒ 返回 (`不给结论` 串, false) —— 调用方必须写
 // 「读不到」并**不给结论**，✗ 绝不许拿另一面的数当答案（禁静默取其一）。两面都取到 ⇒ 恒返回一段把
@@ -786,52 +791,45 @@ func impactLayerLexical(root string, tgt *impactTarget) impactLayer {
 	if tgt.Kind == impactKindFile {
 		word = path.Base(tgt.Rel)
 	}
-	// ④a-1 词边界（`R41`：默认口径写「词边界」，命中数必须带口径标记）。
+	// ④a **索引面对照**读数（`R41` 词边界 · 只为「两面 parity 对照 + 索引面读不到时 fail-loud」保留，
+	// **不再是 ④a 的答案** —— 答案自缺口 `GAP-20260927-55` 残面/`GAP-20261010-18` 起走工作树面）。
+	// `git grep` 只搜 tracked ⇒ 未跟踪件不在索引面内；非 git 仓（rc>2）也读不到。
 	w1, _, c1, e1 := impactRunIn(root, "git", "grep", "-n", "-w", "--no-color", "--", word)
-	// ④a-2 正则面（`-E`）：与 `-w` 差一个词边界（现读对照：同一查询 7 vs 3）。
 	w2, _, c2, e2 := impactRunIn(root, "git", "grep", "-n", "-E", "--no-color", "--", regexpQuote(word))
 	if e1 != nil || e2 != nil || c1 > 2 || c2 > 2 {
 		lay.Status = "读不到"
-		lay.Detail = fmt.Sprintf("`git grep` 起不来或报错（词边界 rc=%d / 正则 rc=%d）⇒ 词法面不给结论", c1, c2)
+		lay.Detail = fmt.Sprintf("`git grep` 起不来或报错（词边界 rc=%d / 正则 rc=%d）⇒ 词法面不给结论（索引面对照面取不到 · fail-loud）", c1, c2)
 		return lay
 	}
+	indexHits := impactCountNonEmpty(w1)
+	indexHitsR := impactCountNonEmpty(w2)
+	// ④a 的**答案 = 工作树面**（缺口 `GAP-20260927-55` 残面 · `GAP-20261010-18`）：tracked + 未跟踪，
+	// 与 `zerg code find` **同源**、**共用同一枚排除表** —— 计数复用仓内**既有**的 `codeWorktreeFaceHits`，
+	// 行清单由本件 `impactLexicalWorktreeRows` 用**同一走法**给（见其头注）⇒ 未跟踪新写件进 ④a 清单。
 	// 词= 与 ④b 版本= 两句在 `impactCaliberFor("④", …)` 里拼进口径值（层函数与缓存查找口同一份）。
-	rows := []map[string]string{}
-	add := func(out, why, how string, cap int) int {
-		n := 0
-		for _, ln := range strings.Split(out, "\n") {
-			if strings.TrimSpace(ln) == "" {
-				continue
-			}
-			n++
-			if len(rows) >= cap {
-				continue
-			}
-			file, line, text := impactSplitGrepLine(ln)
-			rows = append(rows, impactRow("文件级:"+file+":"+line, why, how+"（"+impactTruncText(text, 80)+"）", ""))
-		}
-		return n
-	}
-	hits := add(w1, "词法", "词边界命中（`git grep -w`）", impactRowPage)
-	hitsR := add(w2, "词法", "正则面命中（`git grep -E`）", impactRowPage)
-	// ④a-3 两面显式读数 + 不一致点名（缺口 `GAP-20260927-55` · 2026-10-10）：上面这两跑 `git grep`
-	// 是**索引面**（只搜 tracked）；下面这一枚 `codeWorktreeFaceHits` 是**工作树面**，与 `zerg code find`
-	// 同源、共用同一枚排除表。同一词两面可不同 ⇒ 任一面取不到就**不给结论**（禁静默取其一）。
 	wtHits, wtErr := codeWorktreeFaceHits(root, word)
-	faceReading, faceOK := impactFaceParityReading(word, hits, true, wtHits, wtErr == nil)
+	rows, rowsErr := impactLexicalWorktreeRows(root, word)
+	if wtErr != nil || rowsErr != nil {
+		lay.Status = "读不到"
+		lay.Detail = fmt.Sprintf("工作树面取不到（计数：%v · 清单：%v）⇒ 词法面不给结论", wtErr, rowsErr)
+		return lay
+	}
+	// ④a-3 两面显式读数 + 不一致点名（缺口 `GAP-20260927-55` · 2026-10-10）：索引面对照（`git grep -w` ·
+	// 只搜 tracked）vs 工作树面（`codeWorktreeFaceHits`）。同一词两面可不同 ⇒ 任一面取不到就**不给结论**。
+	faceReading, faceOK := impactFaceParityReading(word, indexHits, true, wtHits, wtErr == nil)
 	if !faceOK {
 		lay.Status = "读不到"
 		lay.Detail = faceReading
 		return lay
 	}
-	// ④a 面标记（GAP-20260927-55 · 「面」作显式读数而非散文）：④a 走 `git grep` ⇒ **索引面(tracked 件的工作树内容)**，
-	// 未跟踪件不在面内 ⇒ 与 `zerg code find` 的**工作树面**不同源。零命中 ≠ 「没有」。
+	// ④a 面标记（GAP-20260927-55 · 「面」作显式读数而非散文）：④a **已换到工作树面**（tracked + 未跟踪 ·
+	// 与 `zerg code find` 同源 · 共用同一排除表）⇒ 未跟踪新写件**进 ④a 清单**；索引面对照见上。零命中 ≠ 「没有」。
 	// ★ 2026-09-29 订正（GAP-20260927-55 落点修正）：这一句是**面读数、不是命中条目** —— 不许进 `lay.Rows`
 	// （进了会被 `impactCollectRows`（family_impact.go:327）当候选项计入 `truncated_detail.total_items/dropped_items`
 	// 与「已裁 N 条」⇒ 真·零命中件也恒报 `truncated=true`）。落点改用本层**已存在**的人面读数格 `lay.Detail`
 	// （下方 `读数：` 那一行 ⇒ 仍在可见输出里）⇒ **不另加字段**、不进卡片闭集、不算候选。
-	faceMark := "④a 词法面 = **索引面(tracked 件的工作树内容)**（`git grep` 只搜 tracked）" +
-		"：**未跟踪件不在面内** ⇒ 判影响须用工作树面 `zerg code find`；零命中 ≠ 没有"
+	faceMark := "④a 词法面 = **工作树面(tracked + 未跟踪)**（与 `zerg code find` 同源 · 共用同一排除表）" +
+		"：**未跟踪新写件进 ④a 清单**（缺口 GAP-20260927-55 残面/GAP-20261010-18 已换）；索引面对照见上；零命中 ≠ 没有"
 
 	// ④b 形近（`ast-grep` · `R11` 已拍）：目标件的**顶层符号**的**调用形状**（`名($$$A)`）——
 	// 结构面与词法面的分野：注释里提到 `foo` 只有词法面看得见，`foo(` 这种**调用形状**才是形近面。
@@ -893,9 +891,68 @@ func impactLayerLexical(root string, tgt *impactTarget) impactLayer {
 	}
 	lay.Rows = rows
 	lay.Status = "取值"
-	lay.Detail = fmt.Sprintf("④a 词边界 `git grep -w` %d 条 · 正则面 `git grep -E` %d 条（**两个数不同源**，别混用）· %s · 条数上限 %d/档（`truncated` 那一格今天在 `emitEnvelopeWith` 里是死的 ⇒ 上限走这里明说）· 面：%s · %s",
-		hits, hitsR, sgNote, len(rows), faceMark, faceReading)
+	lay.Detail = fmt.Sprintf("④a 词法面（**工作树面** tracked + 未跟踪）%d 条 / 清单列 %d 条 · 索引面对照 `git grep -w` %d 条 · `git grep -E` %d 条（**与 ④a 不同源**，别混用）· %s · 条数上限 %d/档（`truncated` 那一格今天在 `emitEnvelopeWith` 里是死的 ⇒ 上限走这里明说）· 面：%s · %s",
+		wtHits, len(rows), indexHits, indexHitsR, sgNote, len(rows), faceMark, faceReading)
 	return lay
+}
+
+// impactLexicalWorktreeRows —— ④a 的**工作树面行清单**（tracked + 未跟踪 · 与 `zerg code find` 同源）。
+//
+// 为什么在这一件：④a 旧清单走 `git grep`（**索引面** · 只搜 tracked）⇒ 未跟踪新写件不进清单
+// （缺口 `GAP-20260927-55` 残面 · `GAP-20261010-18`）。本函数是 `codeWorktreeFaceHits`
+// （工作树面**只数行** · 在 `family_code.go`）的**成对读法**（多给一份行清单）—— ★ 四道闸
+// **逐条共用** `family_code.go` 里的**同一枚**排除表：目录闸 `codeScanSkipDirs` ∪ 点项规则
+// （白名单 `codeScanKeepDots`）· 件级闸 `codeScanSkipFile` · 尺寸闸 `codeFindMaxFileBytes` ·
+// 非 UTF-8 判 —— **不新抄一份**（`GAP-20260927-55` 助手拍⑤c：两处共用同一枚排除表、禁抄一份）。
+// 只读：不改任何件；读不动的子树跳过（与 `codeWorktreeFaceHits`/`cmdCodeFind` 同一条判法）。
+func impactLexicalWorktreeRows(root, word string) ([]map[string]string, error) {
+	re, err := regexp.Compile(regexpQuote(word))
+	if err != nil {
+		return nil, err
+	}
+	rows := []map[string]string{}
+	walkErr := filepath.Walk(root, func(p string, info os.FileInfo, werr error) error {
+		if werr != nil {
+			return nil
+		}
+		if info.IsDir() {
+			dotDir := strings.HasPrefix(info.Name(), ".") && !codeScanKeepDots[info.Name()]
+			if codeScanSkipDirs[info.Name()] || dotDir {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if codeScanSkipFile(root, p) {
+			return nil
+		}
+		if info.Size() > codeFindMaxFileBytes {
+			return nil
+		}
+		b, rerr := os.ReadFile(p)
+		if rerr != nil || !utf8.Valid(b) {
+			return nil
+		}
+		rel, rerr := filepath.Rel(root, p)
+		if rerr != nil {
+			rel = p
+		}
+		rel = filepath.ToSlash(rel)
+		for i, ln := range strings.Split(string(b), "\n") {
+			if !re.MatchString(ln) {
+				continue
+			}
+			if len(rows) >= impactRowPage {
+				continue
+			}
+			rows = append(rows, impactRow("文件级:"+rel+":"+strconv.Itoa(i+1), "词法",
+				"工作树面命中（tracked + 未跟踪 · 与 `zerg code find` 同源）："+impactTruncText(ln, 80), ""))
+		}
+		return nil
+	})
+	if walkErr != nil {
+		return nil, walkErr
+	}
+	return rows, nil
 }
 
 func regexpQuote(s string) string {

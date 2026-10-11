@@ -596,11 +596,34 @@ func czseIsArchiveMeta(path string) bool {
 	return false
 }
 
+// czseReadFails —— B 类读失败登记面（目录遍历失败 ⇒ 逐处登记「目录 + 原因」）。
+// ★ B 类真口子修（与 py **有意分叉** · 同族先例 check_error_kinds.go 的 cekReadFails）：
+//
+//	原 py 语义 = `os.walk(onerror=None)` 读不了的目录**静默跳过** ⇒ 判据面被抽空也不出声。
+//	本件收紧：读失败 ⇒ 登记 + 入口判红（stdout BLOCKED 头 + 逐件点名）⇒ rc=2（✗ 不再静默少判）。
+//	自清点：每次 czseRun 起手清空 ⇒ 不许跨调用残留。目录面自成一句（标「读不了目录」）。
+var czseReadFails []string
+
+// czseNoteReadFail —— 登记一处读失败（同一目录只登一次 ⇒ ✗ 不重复点名）。
+func czseNoteReadFail(what string) {
+	for _, u := range czseReadFails {
+		if u == what {
+			return
+		}
+	}
+	czseReadFails = append(czseReadFails, what)
+}
+
 // czseWalkMirror —— 复刻 os.walk 产出序：先「当前层全部文件（sorted(fn)）」、再按 readdir 原序下钻；
 // 符号链接目录归入 dirs 但**不下钻**（followlinks=False）。
 func czseWalkMirror(top string, emit func(dir string, files []string)) {
 	entries, err := os.ReadDir(top)
 	if err != nil {
+		// ★ B 类真口子修（原读不了的目录静默跳过 · ✗ 不再静默）。
+		// ★ 只有「在盘却读不了」才是真读失败（✗ 不把「目录本就缺席」记成读失败 · 与同族先例 cek 一致）。
+		if fi, serr := os.Stat(top); serr == nil && fi.IsDir() {
+			czseNoteReadFail(top + "（读不了目录：" + err.Error() + "）")
+		}
 		return
 	}
 	var dirs, nondirs []string
@@ -694,6 +717,8 @@ func czseCollectDefault(archiveRoot string, sealedIn []string, workspace bool, r
 func czseRun(stdout io.Writer, archiveRoot, manifestPath string, assumeMap map[string]string,
 	sealedIn []string, workspace bool, root string, jsonOut bool, nowOverride string) int {
 
+	czseReadFails = nil // ★ 自清：包级登记面不许跨调用残留（否则上一 Test 残留一进门就 BLOCKED）
+
 	var table map[string]string
 	if manifestPath != "" {
 		t, probs := czseParseManifest(manifestPath, archiveRoot)
@@ -734,6 +759,14 @@ func czseRun(stdout io.Writer, archiveRoot, manifestPath string, assumeMap map[s
 	}
 
 	paths, why := czseCollectDefault(archiveRoot, sealedIn, workspace, root)
+	// ★ B 类真口子修：目录遍历（归档区 os.walk）跑完 ⇒ 有登记即 BLOCKED rc=2（✗ 不给结论）。
+	if len(czseReadFails) > 0 {
+		fmt.Fprintf(stdout, "BLOCKED —— 有 %d 件读不到（B 类读失败 ⇒ 登记 + 判红 · rc=2 · 不给结论）：\n", len(czseReadFails))
+		for _, u := range czseReadFails {
+			fmt.Fprintf(stdout, "  [读失败] %s\n", u)
+		}
+		return czseRCnoconc
+	}
 	if len(paths) == 0 {
 		fmt.Fprintf(stdout, "⛔ 不给结论（rc=2）：\n")
 		for _, w := range why {

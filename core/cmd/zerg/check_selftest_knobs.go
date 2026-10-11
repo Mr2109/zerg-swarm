@@ -259,6 +259,13 @@ type cskHit struct {
 	Text string
 }
 
+// cskReadFails —— B 类读失败登记面（读不了的提交链门件 / 子目录 ⇒ 逐件登记 + err 正文）。
+// ★ B 类真口子修（与 py **有意分叉** · 同族先例 `check_doc_cmds.go` 的 `dcmdReadFails`）：
+//
+//	读失败 ⇒ 登记 + 入口判红（stderr BLOCKED 头 + 逐件点名）⇒ rc=2（✗ 不再静默跳过、少判旋钮）。
+//	自清点：每次 `cskScan` 起手清空 ⇒ 不许跨调用残留。
+var cskReadFails []string
+
 // cskIterFiles —— py `iter_files(root)`：按固定子目录次序 · 各子目录内 `sorted(os.listdir)`。
 func cskIterFiles(root string) [][2]string {
 	var out [][2]string
@@ -266,6 +273,11 @@ func cskIterFiles(root string) [][2]string {
 		d := cskPyJoin(root, sub)
 		ents, err := os.ReadDir(d)
 		if err != nil {
+			// 子目录**缺席**是常态（py `iter_files` 对不在盘子目录静默 ⇒ 与 py 同，✗ 不误报）；
+			// **在盘却读不了**才是真读失败 ⇒ 登记 + 判红（B 类真口子修 · ✗ 不再静默）。
+			if _, serr := os.Stat(d); serr == nil {
+				cskReadFails = append(cskReadFails, fmt.Sprintf("%s（%v）", sub, err))
+			}
 			continue
 		}
 		names := make([]string, 0, len(ents))
@@ -296,6 +308,7 @@ func cskHasKeyword(s string) bool {
 
 // cskScan —— py `scan(root)`：回 (hits, pc=precommit 在场, chain_files)。
 func cskScan(root string) ([]cskHit, bool, int) {
+	cskReadFails = nil // ★ 自清：包级登记面不许跨调用残留
 	precommit := cskPyJoin(root, "scripts/gates/precommit-gates.sh")
 	var pcSrc string
 	pc := false
@@ -319,7 +332,9 @@ func cskScan(root string) ([]cskHit, bool, int) {
 		}
 		b, err := os.ReadFile(path)
 		if err != nil {
-			continue // py `except OSError: continue`（读不了静默跳过 · 逐字照搬）
+			// ★ B 类真口子修（原 py `except OSError: continue` 静默 · ✗ 不再静默）：登记 + 判红 + rc=2。
+			cskReadFails = append(cskReadFails, fmt.Sprintf("%s（%v）", name, err))
+			continue
 		}
 		lines := cskSplitLines(cskDecode(b))
 		chainFiles++
@@ -386,6 +401,14 @@ func cskJSONStr(s string) string {
 // cskRun —— py `run(root, as_json)` 逐字复刻（三档退码 · 两档输出）。
 func cskRun(stdout, stderr io.Writer, root string, asJSON bool) int {
 	hits, pc, chainFiles := cskScan(root)
+	// ★ B 类真口子修：读失败 ⇒ 响亮 BLOCKED rc=2 + 逐件点名（✗ 不再静默少判）。
+	if len(cskReadFails) > 0 {
+		fmt.Fprintf(stderr, "BLOCKED —— 有 %d 件读不到（B 类读失败 ⇒ 登记 + 判红 · rc=2 · 不给结论）：\n", len(cskReadFails))
+		for _, u := range cskReadFails {
+			fmt.Fprintf(stderr, "  [读失败] %s\n", u)
+		}
+		return 2
+	}
 	if !pc {
 		fmt.Fprint(stderr, "BLOCKED —— 缺 `scripts/gates/precommit-gates.sh`（无法判定提交链）⇒ rc=2\n")
 		return 2
@@ -662,6 +685,14 @@ func checkSelftestKnobsGateMain(stdout, stderr io.Writer, argv []string) int {
 	}
 	if byTier {
 		hits, pc, chainFiles := cskScan(root)
+		// ★ B 类真口子修：读失败 ⇒ 响亮 BLOCKED rc=2 + 逐件点名（✗ 不再静默少判）。
+		if len(cskReadFails) > 0 {
+			fmt.Fprintf(stderr, "BLOCKED —— 有 %d 件读不到（B 类读失败 ⇒ 登记 + 判红 · rc=2 · 不给结论）：\n", len(cskReadFails))
+			for _, u := range cskReadFails {
+				fmt.Fprintf(stderr, "  [读失败] %s\n", u)
+			}
+			return 2
+		}
 		if !pc {
 			fmt.Fprint(stderr, "BLOCKED —— 缺 precommit-gates.sh（无法判定提交链）⇒ rc=2\n")
 			return 2

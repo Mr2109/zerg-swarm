@@ -46,6 +46,9 @@ const (
 	impactBytesPerToken = 4
 )
 
+// impactWhySixFloor —— ② `why` 闭集（六选一）的**冻结下限**（棘轮 · 只许增不许减；本值 = 当次现读 6 档）。
+const impactWhySixFloor = 6
+
 // impactWhySix —— `why` 的**闭集六选一**（§3.1 v1.6「`why` 闭集扩到六档」逐字六项）。
 //
 // ★ 「词法（**含形近**）」是**一格**：`A2` 层 ④b 的形近条目在进卡片时一律归一成 `词法`
@@ -468,6 +471,16 @@ func (f impactCardBudgetFacts) TruncatedDetailJSON() (string, bool) {
 // impactJudgeCard 判据①（尺寸三条）+ 判据②（硬门槛）+ 判据③（超预算三件）的**唯一判定口**。
 // 抽出来是为了让负控直接喂坏卡片（条数 13 · 单条 61 token · 无 why · 裁了却三件不齐）。
 func impactJudgeCard(c impactCard) error {
+	// ④ 抽空 fail-closed：卡片结构**没抽到**（`items` 为 nil，≠ 合法的「0 条」）⇒ 不给结论
+	//   （✗ 不许把「0 ≤ 12」静默判过 —— 抽空 ≠ 判过）。
+	if c.Items == nil {
+		return fmt.Errorf("抽空 fail-closed：卡片 `items` 为 nil（没抽到结构，非「合法 0 条」）⇒ 不给结论")
+	}
+	if n := len(impactWhySix); n < impactWhySixFloor {
+		return fmt.Errorf("`why` 闭集抽到 %d 档 < 冻结下限 %d（棘轮只许增 · 结构静默变小）", n, impactWhySixFloor)
+	}
+	// ② 冻结下限（棘轮 · 只许增）：`why` 闭集（六选一）现读 6 档 · 条目上限 `impactItemMax` 现读 12
+	//   —— 结构静默变小（抽到的档数 / 上限被改小）即判红（✗ 不许静默绿）。
 	if len(c.Items) > impactItemMax {
 		return fmt.Errorf("条数 %d > 上限 %d（§3.1）", len(c.Items), impactItemMax)
 	}
@@ -817,4 +830,61 @@ func impactPublicLine(layers []impactLayer) string {
 		return ""
 	}
 	return impactPublicLineText(impactPublicLineArgsFromLayer(l))
+}
+
+// ---- `--self-test`：卡片判定口（`impactJudgeCard` 一族）的**成对正/负控**（合成夹具 · 不碰真目标）------
+//
+// 形态照同族 `approveSelfTest`（`family_approve.go`）：① 正控先行 ⇒ ②+ 负控逐条**注入坏样本** ⇒
+// 任一格红 ⇒ `exitFail`。为什么能这么测：`impactJudgeCard` / `impactJudgeCardWhy` /
+// `impactJudgeCardRedLine` 是**纯函数**（判据的判定口）⇒ 直接喂合成卡片，不读盘 / 不写缓存 / 不起子进程。
+//
+// ★ 负控须**真能红**：每格的坏样本都断言判定口**点名**那一条（缺属性样本 ⇒ 该门点名）。
+// 落法在 `zerg impact --self-test`（接线属命令面 —— 本插桩只补**件级自检面** · ✗ 未碰命令树）。
+func impactCardSelfTest(stdout, stderr io.Writer) int {
+	bad := 0
+	chk := func(ok bool, what, detail string) {
+		if ok {
+			fmt.Fprintf(stdout, "  \u2713 %s\n", what)
+			return
+		}
+		fmt.Fprintf(stderr, "%s: 自检 %s 不通过：%s\n", progName, what, detail)
+		bad++
+	}
+
+	// ① 正控：一张合规卡片 ⇒ 判定口返回 nil（正控红 ⇒ 判据面本身坏了）。
+	good := impactCard{Items: []map[string]string{
+		{"what": "件级:S-a", "why": "契约", "how": "登记表自陈「改它会破承诺」", "red": "S-a"},
+		{"what": "文件级:a.go:1", "why": "词法", "how": "命中", "red": ""},
+	}}
+	err := impactJudgeCard(good)
+	chk(err == nil, "① 正控：合规卡片 ⇒ 判定口 nil", fmt.Sprintf("实得 %v", err))
+
+	// ② 负控（注入缺属性样本）：条数 13 > 上限 12 ⇒ 判定口**必须点名**这一条。
+	over := impactCard{Items: make([]map[string]string, impactItemMax+1)}
+	for i := range over.Items {
+		over.Items[i] = map[string]string{"what": "文件级:x.go:1", "why": "词法", "how": "h", "red": ""}
+	}
+	err = impactJudgeCard(over)
+	chk(err != nil && strings.Contains(err.Error(), fmt.Sprintf("条数 %d > 上限 %d", impactItemMax+1, impactItemMax)),
+		fmt.Sprintf("② 负控：注入 %d 条 ⇒ 点名「条数 > 上限」", impactItemMax+1), fmt.Sprintf("实得 %v", err))
+
+	// ③ 负控：why 不在六选一闭集 ⇒ 判定口**必须点名**（第七个 why 键）。
+	badWhy := []map[string]string{{"what": "文件级:a.go:1", "why": "第七格", "how": "h", "red": ""}}
+	err = impactJudgeCardWhy(badWhy)
+	chk(err != nil && strings.Contains(err.Error(), "闭集"), "③ 负控：why 不在六选一 ⇒ 点名", fmt.Sprintf("实得 %v", err))
+
+	// ④ 负控：义近条目带 red ⇒ 判定口**必须点名**（§3.5 铁律：语义级永不进「会红」行）。
+	badRed := []map[string]string{{"what": "件级:近", "why": "义近", "how": "h", "red": "S-a"}}
+	err = impactJudgeCardRedLine(badRed)
+	chk(err != nil && strings.Contains(err.Error(), "义近"), "④ 负控：义近却带 red ⇒ 点名", fmt.Sprintf("实得 %v", err))
+
+	res := "PASS"
+	if bad > 0 {
+		res = "FAIL"
+	}
+	fmt.Fprintf(stdout, "impact 卡片判定口自检 %s（4 格：① 正控 + ②③④ 负控 · 合成夹具 · 未碰真目标）\n", res)
+	if bad > 0 {
+		return exitFail
+	}
+	return exitOK
 }

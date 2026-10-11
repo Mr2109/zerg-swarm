@@ -14,14 +14,17 @@
 //	① 分类（`--stale`）—— 一个门根算**陈旧** iff 它不是本趟自身树，且**两条都成立**：
 //	   · **祖链已断**：门谱系令牌里那个门 pid **已不在进程表**（= 死趟残儿）；或 `ppid == 1`
 //	     （拉起它的那一层壳已经没了）；**并且**
-//	   · **谱系内无活的**：根 + **全部后代**（门与非门，递归）里**没有**任何「在烧 CPU」
-//	     （`pcpu > 0`）或「刚起」的活子进程（后代 `etime < gateReapYoungSecs`）。
-//	   ★ 后一条是 2026-10-01 现读补上的（`GAP-20261001-17` · P0）：原判据只看 `ppid == 1`，
-//	     实测把**活的门跑**（根 pid=69881 `ppid=1`、子 85695 `etime=00:03` 在飞）也判成 `stale`
-//	     ⇒ 带 `--yes` 会杀掉正在跑的真门跑（毁掉唯一反馈通道），与它自称的「活的门跑一个不碰」
-//	     自相矛盾。铁律：僵壳 =「根 + 无子进程 + 0% CPU 持续」或「整棵树里没有任何在烧 CPU 的活」；
+//	   · **组内无活的**：**整组的 start_time**（= 根的 `etime`）在门限外（不是刚起），**且**
+//	     根 + **全部后代**（门与非门，递归）里**没有**任何「在烧 CPU」（`pcpu > 0` = 真在推进）的成员。
+//	   ★ `etime` 口径 2026-10-10 收紧（`GAP-20261002-14` · P1）：原判据看「**谱系内任意成员**的
+//	     `etime < 门限`」⇒ 而 `precommit-gates.sh` 是**循环起子壳**的形态 ⇒ 子成员 pid 一直换、`etime`
+//	     永远是几秒 ⇒ 该组**永远判活、永远收不掉**（实测：根 49942 已 ppid=1 无主 10 分钟仍被判活）。
+//	     ⇒ 循环换壳的子成员**不是在飞证据**；整组的年龄只认**根**（根 = 整组的 start_time）。
+//	   ★ 原判据只看 `ppid == 1`（`GAP-20261001-17` · P0）：实测把**活的门跑**（根 pid=69881 `ppid=1`、
+//	     子 85695 `etime=00:03` 在飞）也判成 `stale` ⇒ 带 `--yes` 会杀掉正在跑的真门跑（毁掉唯一反馈
+//	     通道）。铁律：僵壳 =「根 + 无子进程 + 0% CPU 持续」或「根已老且整组无在烧 CPU 的成员」；
 //	     活门跑永不回收。**保守取向：拿不准就不判 stale**（把活门跑误杀 = 灾难，漏收残儿 = 只多一枚清单行）。
-//	   · 其余（父壳还在、或谱系里还有活的）一律**跳过并如实报**，一个字节都不动。
+//	   · 其余（父壳还在、或组里还有活的）一律**跳过并如实报**，一个字节都不动。
 //	② 回收单位 = 根**及其门谱系**（`precommit-gates.sh` 后代，递归）—— 只掐根会立刻把子门
 //	   变成新的根（实测：43 根之下另有 43 个门），等式收不干净。非门后代（真活工）**不碰**。
 //	③ 每个收回动作落审计（append-only jsonl · 仓外 `<锁目录>/reap-audit.jsonl`），失败即出声。
@@ -44,9 +47,10 @@ import (
 
 const gateReapScriptTag = "precommit-gates.sh"
 
-// gateReapYoungSecs —— 「刚起」门限（秒）：谱系**后代**的 `etime` 小于它 ⇒ 视为活的在飞工
-// （新起的门步子进程正是 `GAP-20261001-17` 的病灶形态）。★ 不是魔数绕法 —— 它是保守取向的显式门限：
-// 拿不准就不判 stale。根的**自身**年龄不参判（孤儿根被收养的时点不代表活跃度），根只看 `pcpu`。
+// gateReapYoungSecs —— 「刚起」门限（秒）：**根本身**（= 整组的 start_time）的 `etime` 小于它
+// ⇒ 视为**整组刚起、真在飞**。★ 只看**根**、✗ 不看后代（缺口 `GAP-20261002-14`：`precommit-gates.sh`
+// 循环起子壳 ⇒ 后代的 `etime` 恒几秒、**不是活跃度证据**；按后代 etime 判活会让该组永远收不掉）。
+// ★ 不是魔数绕法 —— 它是保守取向的显式门限：拿不准就不判 stale。
 const gateReapYoungSecs = 300
 
 // gateReapFields —— `gate reap --json` 的全部字段（K1：机器面先定）。
@@ -287,7 +291,11 @@ func gateReapAllDescendants(root int, allPPID map[int]int) []int {
 }
 
 // gateReapLiveInTree —— 谱系（根 + 全部后代）里是否存在「活的」进程。命中 ⇒ (true, pid, 理由)。
-// 活 = 任一进程 `pcpu > 0`（在烧 CPU）；或任一**后代**（不含根本身）`etime < gateReapYoungSecs`（刚起 ⇒ 在飞）。
+// 活 = **根本身** `etime < gateReapYoungSecs`（整组的 start_time 就在门限内 ⇒ 整组刚起、真在飞）；
+// 或**任一成员**（根或后代）`pcpu > 0`（在烧 CPU = 真在推进）。
+// ★ 只认**根**的 etime、✗ 不认后代的 etime（缺口 `GAP-20261002-14`）：`precommit-gates.sh` 是
+// **循环起子壳**的形态 ⇒ 其子成员 pid 一直在换、`etime` 永远是几秒 ⇒ 按「谱系内任意成员的 etime」
+// 判活，该组**永远判活、永远收不掉**。循环换壳的子成员**不是在飞证据**；整组的年龄只看根。
 // 读不到某个进程的 `ps` 读数 ⇒ 跳过那一行（不据此判活）；**保守取向**：宁可漏收也不误杀活门跑。
 func gateReapLiveInTree(root int, allPPID map[int]int, stat map[int]gateReapStat) (bool, int, string) {
 	for _, p := range gateReapAllDescendants(root, allPPID) {
@@ -298,9 +306,9 @@ func gateReapLiveInTree(root int, allPPID map[int]int, stat map[int]gateReapStat
 		if st.pcpu > 0 {
 			return true, p, fmt.Sprintf("pcpu=%.1f%%", st.pcpu)
 		}
-		if p != root {
+		if p == root {
 			if e := gateReapEtimeSecs(st.etime); e >= 0 && e < gateReapYoungSecs {
-				return true, p, fmt.Sprintf("etime=%s（<%ds ⇒ 刚起在飞）", st.etime, gateReapYoungSecs)
+				return true, p, fmt.Sprintf("根 etime=%s（<%ds ⇒ 整组刚起在飞）", st.etime, gateReapYoungSecs)
 			}
 		}
 	}
@@ -386,7 +394,12 @@ func cmdGateReap(inv *invocation, stdout, stderr io.Writer) int {
 	if len(inv.path) <= len(inv.orig) {
 		tail = inv.orig[len(inv.path):]
 	}
-	known := map[string]bool{"--stale": true, "--dry-run": true, "--yes": true, "--json": true}
+	// ★ 全局旗标「吞下」键：`--timeout` / `--cancel-on-interrupt` 由**全局面**（`main.go` 解析器 +
+	//   `wallclock.go`/信号面）消费；命令面**只吞下、不另立语义**（同族先例 `gate run` 的
+	//   `gateRunValueFlags`/`gateRunBoolFlags` · 缺口 `GAP-20261002-15` 同病同修）；`--timeout` 的值
+	//   在下面连同跳过（照全局取值旗标口径）。
+	known := map[string]bool{"--stale": true, "--dry-run": true, "--yes": true, "--json": true,
+		"--timeout": true, "--cancel-on-interrupt": true, "--node": true}
 	for i := 0; i < len(tail); i++ {
 		a := tail[i]
 		if !strings.HasPrefix(a, "-") {
@@ -400,6 +413,15 @@ func cmdGateReap(inv *invocation, stdout, stderr io.Writer) int {
 		if !known[n] {
 			fmt.Fprintf(stderr, "✗ 未知参数: %s\n", a)
 			return exitUsage
+		}
+		// ★ 全局旗标「吞下」键：`--timeout` 由全局面消费 ⇒ 这里连同它的值一并跳过（照全局取值旗标口径）。
+		if a == "--timeout" && i+1 < len(tail) {
+			i++
+		}
+		// ★ 全局旗标「吞下」键：`--node` 由全局面（`enforceNodeRules` 的机器名册校验）消费 ⇒
+		//   这里连同它的值一并跳过（照全局取值旗标口径）。
+		if a == "--node" && i+1 < len(tail) {
+			i++
 		}
 	}
 	if !gateReapHasFlag(inv, "--stale") {

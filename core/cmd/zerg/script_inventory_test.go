@@ -219,6 +219,10 @@ func TestScriptInventoryJudgeHasTeeth(t *testing.T) {
 	if err != nil {
 		t.Fatalf("正控：好清单解不动：%v", err)
 	}
+	// ④ 抽空 fail-closed：好清单解到 0 行（空集 = parseInventory 抽空）⇒ 不给结论（✗ 不许当绿）。
+	if len(rows) == 0 {
+		t.Fatal("正控：好清单解到 0 行 ⇒ 不给结论（fail-closed · 空集不许当绿）")
+	}
 	if len(rows) != 2 || n != 2 || h != 1 || j != 1 {
 		t.Fatalf("正控：好清单解出来的数不对 rows=%d n=%d h=%d j=%d", len(rows), n, h, j)
 	}

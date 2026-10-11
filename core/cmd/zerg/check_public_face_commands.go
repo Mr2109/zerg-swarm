@@ -22,7 +22,9 @@
 //
 // py 原件边界（✗ 不自行改 · 交回入账）：
 //
-//	① 读不了的公开面件 = **静默少判**（`except OSError: continue`）—— 逐字照搬（保两态对齐）。
+//	① 读失败面**两侧已亮**（与 py **有意分叉** · 不再「逐字照搬」）：件面（`os.ReadFile` 失败 ⇒ 进
+//	   `blocks`）与**目录面**（`cpfcWalkFace` 里 `os.ReadDir` 失败的目录 ⇒ 进 `cpfcReadFails`）——
+//	   原 py 两处分别 `except OSError: continue` / `os.walk(onerror=None)` **静默少判**，Go 侧一律响亮 ⇒ rc=2。
 //	② 件非合法 UTF-8 时 `open(..., encoding="utf-8").read()` 裸抛（最外层无兜底 ⇒ 回溯 rc=1）—— 本件按
 //	   Go 语义读字节（不抛）⇒ 该格**只保 rc 之外的正文**，列入未覆盖面。
 //	③ 子进程被信号终止时 py `returncode` 为负信号号，Go `ExitCode()` 返 -1 ⇒ 未覆盖。
@@ -472,15 +474,26 @@ func cpfcDecodeText(b []byte) string {
 	return cpfcNormNL(string(b))
 }
 
+// cpfcReadFails —— B 类读失败登记面（读不了的公开面**目录** ⇒ 逐处登记 相对路径 + err 正文）。
+// ★ 同族先例 `check_doc_cmds.go` 的 `dcmdReadFails` · `check_bypass_idioms.go` 的 `cbiReadFails`
+// （件面 + 目录面）· `check_selftest_knobs.go` 的 `cskReadFails`。本件件面（`os.ReadFile` 失败）
+// 早已亮（⇒ `blocks` ⇒ rc=2）；本面收的是**遍历面残留**：`os.ReadDir` 失败的目录。
+// 读失败 ⇒ 登记 + 入口判红（stderr BLOCKED 头 + 逐处点名）⇒ rc=2（✗ 不再「读不了的目录静默跳过」）。
+// 自清点：每次 `cpfcJudge` 起手清空 ⇒ 不许跨调用残留（残留会让下一次一进门就被判红）。
+var cpfcReadFails []string
+
 // ── 公开面遍历（复刻 os.walk 产出序：当前层全部文件先出，再按目录名序下钻）─────────
 
-func cpfcWalkFace(face string) []string {
+func cpfcWalkFace(root, face string) []string {
 	var files []string
 	var rec func(dp string)
 	rec = func(dp string) {
 		entries, err := os.ReadDir(dp) // 按文件名排序（= py 的 sorted(fns) / sorted(dns)）
 		if err != nil {
-			return // py os.walk 默认 onerror=None ⇒ 读不了的目录静默跳过
+			// ★ B 类真口子修（目录面 · 与 py `os.walk(onerror=None)` 有意分叉）：
+			//   读不了的目录 ⇒ 登记 + 入口判红 + rc=2（✗ 不再静默跳过 ⇒ 少判）。
+			cpfcReadFails = append(cpfcReadFails, fmt.Sprintf("%s（%v）", cpfcPyRelpath(dp, root), err))
+			return
 		}
 		var fns, dns []string
 		for _, e := range entries {
@@ -556,6 +569,7 @@ func cpfcJudge(root, zerg string, selfExempt bool) (int, []string, *cpfcData) {
 	var blocks []string
 	var hits []cpfcHit
 	data := &cpfcData{root: root, zerg: zerg, hits: []cpfcHit{}}
+	cpfcReadFails = nil // ★ 自清：包级登记面不许跨调用残留（残留会让下一次一进门就被判红）
 
 	st, err := os.Stat(face)
 	if err != nil || !st.IsDir() {
@@ -597,7 +611,7 @@ func cpfcJudge(root, zerg string, selfExempt bool) (int, []string, *cpfcData) {
 	lines = append(lines, fmt.Sprintf("真源：`%s` 现读 —— 命令块 **%d** 条 + 危险块 **%d** 条 = **%d** 条",
 		cpfcPyBase(zerg), len(usage), len(danger), len(tree)))
 
-	files := cpfcWalkFace(face)
+	files := cpfcWalkFace(root, face)
 	faceTexts := map[string]string{}
 	for _, fp := range files {
 		rel := cpfcPyRelpath(fp, root)
@@ -1322,6 +1336,15 @@ func checkPublicFaceCommandsGateMain(stdout, stderr io.Writer, argv []string) in
 	} else if r == 1 {
 		fmt.Fprintln(stdout, "✗ 有红（rc=1）：例外须 0 · 逐条见上（处置只有两条：改页，或改命令面的用法串 —— "+
 			"不许放宽判据来凑绿 ✗）")
+	}
+	// ★ B 类真口子修（目录面）：遍历读失败 ⇒ 响亮 BLOCKED rc=2 + 逐处点名（✗ 不再静默少判）。
+	//   同族先例 `check_doc_cmds.go` 的 `dcmdReadFails` / `check_bypass_idioms.go` 的 `cbiReadFails`。
+	if len(cpfcReadFails) > 0 {
+		fmt.Fprintf(stderr, "BLOCKED —— 有 %d 处读不到（B 类读失败 ⇒ 登记 + 判红 · rc=2 · 不给结论）：\n", len(cpfcReadFails))
+		for _, u := range cpfcReadFails {
+			fmt.Fprintf(stderr, "  [读失败] %s\n", u)
+		}
+		return 2
 	}
 	if selftestFailed {
 		return 2

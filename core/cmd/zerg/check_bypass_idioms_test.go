@@ -249,3 +249,37 @@ func TestCheckBypassIdiomsGatePort(t *testing.T) {
 		}
 	})
 }
+
+// ── B 类（读失败静默）回归牙 ────────────────────────────────────────────────────
+// 扫描面内一件 .sh 锁成 chmod 000（**仓外夹具 · ✗ 不删仓内件**）⇒ 读失败登记面（cbiReadFails）必响：
+// rc=2 + stderr BLOCKED 头 + 逐件点名那份锁死件。把登记/判红删回静默（原 py `except OSError: continue`），
+// 本用例必红（改前该件静默不入判 ⇒ rc=0）。同族先例：check_doc_cmds_test.go 的 TestCheckDocCmdsReadFailTeeth。
+func TestCheckBypassIdiomsReadFailTeeth(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root 绕过权限位 ⇒ chmod 000 不挡读，本用例无鉴别力")
+	}
+	root := t.TempDir()
+	cbiTW(t, filepath.Join(root, "good.sh"), "echo hi\n")
+	locked := filepath.Join(root, "locked.sh")
+	cbiTW(t, locked, "x || true\n")
+	if err := os.Chmod(locked, 0); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(locked, 0o644)
+
+	rc, out, errb := cbiTRun(t, "--root", root)
+	if rc != 2 {
+		t.Fatalf("读失败回归牙：锁死件 ⇒ 应 rc=2（登记 + 判红），得 rc=%d err=%q out=%q", rc, errb, out)
+	}
+	if !strings.Contains(errb, "BLOCKED") || !strings.Contains(errb, "locked.sh") {
+		t.Fatalf("读失败回归牙：stderr 须带 BLOCKED 头 + 点名 locked.sh，得 err=%q", errb)
+	}
+
+	// 成对反控（✗ 禁恒红）：同构夹具但件可读 ⇒ rc=0 且 stderr 无 BLOCKED。
+	ok := t.TempDir()
+	cbiTW(t, filepath.Join(ok, "good.sh"), "echo hi\n")
+	rcOK, _, errOK := cbiTRun(t, "--root", ok)
+	if rcOK != 0 || strings.Contains(errOK, "BLOCKED") {
+		t.Fatalf("成对反控失败：好件应 rc=0 且无 BLOCKED，得 rc=%d err=%q", rcOK, errOK)
+	}
+}

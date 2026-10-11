@@ -156,6 +156,7 @@ func routeWriteGate(inv *invocation, stdout, stderr io.Writer, act, path, effect
 	}
 	if !inv.yes {
 		inv.setErr("usage", "yes_required", "D2 档缺 --yes ⇒ 不执行")
+		guardMarkDecision(inv, guardDecisionApproval)
 		fmt.Fprintf(stderr, "%s: `%s %s` 是 D2 档 —— **缺 --yes ⇒ 不执行**（§九 M3 C2 fail-closed）\n", progName, progName, act)
 		fmt.Fprintf(stderr, "  覆盖表   : %s\n", path)
 		for _, ln := range plan {

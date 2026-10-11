@@ -310,6 +310,16 @@ func TestEnvelopeTruth_MetaSubkeysAndOldKeys(t *testing.T) {
 	if err := json.Unmarshal(meta["count"], &count); err != nil {
 		t.Fatalf("`meta.count` 不是整数：%v", err)
 	}
+	// ★ ② 冻结下限 = 12（棘轮 · 只许增不许减）：`impact` 对 main.go 的条目现读 12
+	//   —— 结构静默变小（抽到的条目 < 12）⇒ 本格判红，✗ 不许静默绿。
+	etN := len(items)
+	if etN < 12 {
+		t.Fatalf("② 冻结下限 12 被破：`items` 只抽到 %d 条（棘轮 · 只许增不许减）", etN)
+	}
+	// ④ 抽空 fail-closed：`items` 抽到 0 条（空集）⇒ 不给结论（✗ 不许把「0 == 0」退回静默绿）。
+	if etN == 0 {
+		t.Fatalf("抽空：`items` 0 条 ⇒ 不给结论（fail-closed · 空集不许当绿）")
+	}
 	if count != len(items) {
 		t.Errorf("旧子键语义破了：`meta.count` = %d，`items` = %d 条", count, len(items))
 	}

@@ -14,6 +14,9 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -89,5 +92,62 @@ func TestImpactLayerLexical_UnreadableIndexFaceRefusesConclusion(t *testing.T) {
 	}
 	if !strings.Contains(lay.Detail, "不给结论") {
 		t.Errorf("取不到面时该明写「不给结论」：%s", lay.Detail)
+	}
+}
+
+// layRowsFloor —— ② ④a 清单行数的**冻结下限**（棘轮 · 只许增不许减；本值 = 当次现读）。
+// 本用例夹具里工作树面命中恰 1 件（未跟踪 `untracked_new.go`）⇒ 下限 = 1。
+const layRowsFloor = 1
+
+// TestImpactLayerLexical_WorktreeFaceIncludesUntracked —— 缺口 `GAP-20261010-18` 的回归牙：
+// ④a 现读走**工作树面**（tracked + 未跟踪 · 与 `zerg code find` 同源）⇒ 一件**未跟踪**的新写件，
+// 只要它的工作树内容里出现 ④a 的查询词，就**必须进 ④a 清单**（旧读法走 `git grep` 索引面 ⇒ 不进）。
+//
+// 夹具：仓外 `t.TempDir()` 里造一棵**真 git 仓**（✗ 不在真仓造未跟踪件污染工作树）——
+// ① 提交一件 tracked 靶 `target.go`（内容**不含**查询词）⇒ 索引面零命中；② 落一件**未跟踪**的
+// `untracked_new.go`，内容含查询词 ⇒ 只有工作树面看得见。判据：④a 清单里必须出现 `untracked_new.go`。
+// ★ 负控真红：拿改前件（`git grep` 索引面版）overlay 本件同一条用例 ⇒ 必须 FAIL（牙长在门上）。
+func TestImpactLayerLexical_WorktreeFaceIncludesUntracked(t *testing.T) {
+	root := t.TempDir()
+	runFixture := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = root
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("夹具命令 %v 失败：%v · %s", args, err, out)
+		}
+	}
+	runFixture("git", "init", "-q")
+	runFixture("git", "config", "user.email", "t@t")
+	runFixture("git", "config", "user.name", "t")
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module fixture\n\ngo 1.25\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// tracked 靶：件名 `target.go`（= ④a 查询词），但**内容不含**它 ⇒ 索引面零命中。
+	if err := os.WriteFile(filepath.Join(root, "target.go"), []byte("package main\n\nfunc main() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runFixture("git", "add", "go.mod", "target.go")
+	runFixture("git", "commit", "-q", "-m", "init")
+	// 未跟踪件（不在索引里）：工作树内容里出现查询词 `target.go`。
+	if err := os.WriteFile(filepath.Join(root, "untracked_new.go"), []byte("// this line mentions target.go on purpose\npackage main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	lay := impactLayerLexical(root, &impactTarget{Kind: impactKindFile, Raw: "target.go", Rel: "target.go"})
+	if lay.Status != "取值" {
+		t.Fatalf("④a 该取值，实得 %q：%s", lay.Status, lay.Detail)
+	}
+	found := false
+	for _, r := range lay.Rows {
+		if strings.Contains(r["what"], "untracked_new.go") {
+			found = true
+		}
+	}
+	// ② 冻结下限（棘轮 · 只许增）：④a 清单行数 < 当次现读数下限 1 ⇒ 判红（结构静默变小）。
+	if n := len(lay.Rows); n < layRowsFloor {
+		t.Fatalf("④a 清单行数 %d < 冻结下限 %d（棘轮只许增 · 结构静默变小）", n, layRowsFloor)
+	}
+	if !found {
+		t.Fatalf("④a 清单里没有未跟踪件 `untracked_new.go` —— 工作树面没接上（正是缺口 GAP-20261010-18）。行数=%d · 读数=%s", len(lay.Rows), lay.Detail)
 	}
 }

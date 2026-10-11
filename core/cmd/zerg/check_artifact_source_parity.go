@@ -13,8 +13,9 @@
 //   ★ 面A 的「sha 落后」本身不判红 —— 只有面B（建构之后输入面又改过）才是真分离。
 //
 // ★ 外部交互点（现读逐点列，全部锁死输入）：
-//   ① 起子进程 `<制品> --version`（对应 py `subprocess.run`）：只取自报身份一行；env 剥掉
-//      ZERG_STATE_DIR / ZERG_REPO / ZERG_PROPOSAL_DIR（与 py 同）；超时 15s。
+//   ① 取制品身份：**先读制品自身嵌入段**（`artifactEmbeddedIdentity` · `debug/buildinfo` 只读文件头 ·
+//      **不执行该件**）；**读不出**才回落到 起子进程 `<制品> --version`（对应 py `subprocess.run`）：
+//      只取自报身份一行；env 剥掉 ZERG_STATE_DIR / ZERG_REPO / ZERG_PROPOSAL_DIR（与 py 同）；超时 15s。
 //   ② 起子进程 `git -C <root> …`：rev-parse HEAD / rev-parse --short HEAD / status --porcelain /
 //      cat-file -e / merge-base --is-ancestor / rev-list --count；超时 30s。
 //   ③ 起子进程 `git`（自检里 init/add/commit，cwd = 夹具目录）。
@@ -615,12 +616,34 @@ func aspStrippedEnv() []string {
 }
 
 // aspReadArtifactIdentity 对应 py `read_artifact_identity` ⇒ (ident, 失败原因, 原始输出)。
+//
+// ★ 2026-10-11（门74 取身份改走**嵌入段** · 设计 §5 `O-12` 取（乙））：**先读制品自身嵌入段**
+//
+//	（`artifactEmbeddedIdentity` ⇒ `-tags commit=<sha>,build_time=<ts>` · `debug/buildinfo` **只读文件头**
+//	⇒ **不执行该件**也读得到 ⇒ 交叉件（如 `linux-amd64`）同样读得出）；**读不出**才回落到
+//	跑 `<制品> --version` 自报。⇒ 判定不再取决于「制品在本机跑得动」这一**架构偶然性**
+//	（旧读法下交叉件恒 rc=2）。★ 本轮**只换取身份的手段**，面A/面B 的严格性逐字未动。
 func aspReadArtifactIdentity(art string) (*aspIdent, string, string) {
+	// ── 甲路（优先 · **不跑件**）：制品自身嵌入段 ──
+	if code, built := artifactEmbeddedIdentity(art); code != buildEmbeddedNone && code != "" {
+		if bt, perr := time.Parse("2006-01-02T15:04:05Z", built); perr == nil {
+			return &aspIdent{
+				commit:    strings.ToLower(strings.TrimSuffix(code, "+dirty")),
+				commitRaw: code,
+				dirty:     strings.HasSuffix(code, "+dirty"),
+				version:   "", // 嵌入段不含 version（见 family_build.go buildIdentity 注）
+				component: "",
+				buildSec:  bt.Unix(),
+				buildTime: built,
+			}, "", ""
+		}
+	}
+	// ── 乙路（回落 · 嵌入段读不出时）：跑 `<制品> --version` 自报 ──
 	if _, err := os.Stat(art); err != nil {
-		return nil, fmt.Sprintf("制品不在盘：%s", art), ""
+		return nil, fmt.Sprintf("无法取自报：制品不在盘（%s）", art), ""
 	}
 	if !aspIsExecutable(art) {
-		return nil, fmt.Sprintf("制品不可执行（不是可跑的一件）：%s", art), ""
+		return nil, fmt.Sprintf("无法取自报：制品不可执行（不是可跑的一件）：%s", art), ""
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), aspVersionTimeout*time.Second)
 	defer cancel()
@@ -631,14 +654,14 @@ func aspReadArtifactIdentity(art string) (*aspIdent, string, string) {
 	cmd.Stderr = &se
 	err := cmd.Run()
 	if ctx.Err() == context.DeadlineExceeded {
-		return nil, fmt.Sprintf("跑 `--version` 超时（>%ds）", aspVersionTimeout), ""
+		return nil, fmt.Sprintf("无法取自报：跑 `--version` 超时（>%ds）", aspVersionTimeout), ""
 	}
 	if err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
 			out := so.String() + aspStderrSuffix(se.String())
 			return nil, fmt.Sprintf("`--version` rc=%d", ee.ExitCode()), aspPyStrip(out)
 		}
-		return nil, fmt.Sprintf("跑不起来：%s", err), ""
+		return nil, fmt.Sprintf("无法取自报：跑不起来：%s", err), ""
 	}
 	out := so.String() + aspStderrSuffix(se.String())
 	for _, line := range aspSplitLines(so.String()) {
@@ -845,7 +868,7 @@ func aspJudge(root, art string) (int, []string, aspDict) {
 	if ident.dirty {
 		dirtyMark = "+dirty"
 	}
-	lines = append(lines, fmt.Sprintf("  制品侧：版本 %s · 代码 %s%s · 构建 %s（现跑 `--version` 取）",
+	lines = append(lines, fmt.Sprintf("  制品侧：版本 %s · 代码 %s%s · 构建 %s（取自制品自身 · 嵌入段优先 · 读不出才跑 `--version`）",
 		ident.version, ident.commitRaw, dirtyMark, ident.buildTime))
 
 	headFull, okHead := aspGit(root, "rev-parse", "HEAD")

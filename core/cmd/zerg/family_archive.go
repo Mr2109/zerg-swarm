@@ -306,6 +306,7 @@ func cmdArchiveManifest(inv *invocation, stdout, stderr io.Writer) int {
 	}
 	if !inv.yes {
 		inv.setErr("usage", "yes_required", "写面缺 --yes ⇒ 不执行")
+		guardMarkDecision(inv, guardDecisionApproval)
 		fmt.Fprintf(stderr, "%s: `archive manifest` 是写面 —— **缺 --yes ⇒ 不执行**（fail-closed）\n", progName)
 		fmt.Fprintf(stderr, "先看计划件：%s archive manifest %s --out %s --dry-run\n", progName, payload, out)
 		return exitUsage

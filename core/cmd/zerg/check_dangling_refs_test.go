@@ -52,7 +52,7 @@ func TestCheckDanglingRefsGatePort(t *testing.T) {
 		// 成对负控：十格的名必须都在（少跑即失效 —— py 有 `assert cases == 10`）。
 		for _, want := range []string{"[必红夹具]", "[必红夹具·有落点]", "[豁免夹具]", "[拼接夹具]",
 			"[前缀夹具]", "[无输入夹具]", "[登记表夹具]", "[整件豁免夹具]", "[前缀登记夹具]", "[缺语料夹具]",
-			"[跨仓夹具]", "[GAP悬空夹具]", "[GAP全在账夹具]", "[GAP负控夹具]", "[GAP账缺夹具]"} {
+			"[跨仓夹具]", "[GAP悬空夹具]", "[GAP全在账夹具]", "[GAP负控夹具]", "[GAP账缺夹具]", "[棘轮夹具]"} {
 			if !strings.Contains(out.String(), want) {
 				t.Fatalf("`--self-test` 少跑一格：缺 %s\n%s", want, out.String())
 			}
@@ -318,4 +318,75 @@ func TestCheckDanglingRefsGatePort(t *testing.T) {
 			t.Fatalf("cdrGapRE 未匹配")
 		}
 	})
+}
+
+// TestCheckDanglingRefsRatchet —— GAP-20260926-113：本门 baseline/棘轮（存量 ≤ 基线 ⇒ 绿 ·
+// 超出 ⇒ 响亮红并点名新增处 · 只许下调）的**成对负控**。
+//
+//	① **纯格**：现测 − 基线 > 0 ⇒ 超额；≤ 0 ⇒ 存量内（三类边界成对）。
+//	② **端到端（仓外夹具）**：仓外 git 仓造一条**新增**悬空引用 ⇒ 基线 0 之下 ⇒ rc=1 +
+//	   stderr 响亮红「棘轮超额」+ stdout 逐条点名该件；基线放到存量之上 ⇒ 同一夹具存量段 rc=0。
+//	   基线经包级 `cdrBaseline` 注入（同包 · 保存/还原 —— ✗ 不改默认常量、✗ 不落盘）。
+func TestCheckDanglingRefsRatchet(t *testing.T) {
+	// ① 纯格（成对）。
+	if _, _, over := cdrRatchetExtra(776, 0, map[string]int{"docs": 775, "gap": 0}); !over {
+		t.Fatalf("docs 776 > 775 应判超额")
+	}
+	if _, _, over := cdrRatchetExtra(775, 0, map[string]int{"docs": 775, "gap": 0}); over {
+		t.Fatalf("docs 775 ≤ 775 应判存量内（不超额）")
+	}
+	if _, _, over := cdrRatchetExtra(0, 1, map[string]int{"docs": 775, "gap": 0}); !over {
+		t.Fatalf("GAP 类 1 > 0 应判超额（两类各一条基线）")
+	}
+
+	// ② 端到端仓外夹具。
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "core"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// 同级语料树在盘（缺席会翻 rc=2，与棘轮无关）。
+	if err := os.MkdirAll(filepath.Join(filepath.Dir(root), "Zerg-内部文档"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	refRel := "core/x.go"
+	// 新增悬空引用：拆拼串落正文（✗ 不落连续被扫原串）。
+	body := "package main\n\n// 见 " + "docs" + "/不存在-新增.md\n"
+	if err := os.WriteFile(filepath.Join(root, "core", "x.go"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if o, err := exec.Command("git", "init", "-q", root).CombinedOutput(); err != nil {
+		t.Fatalf("git init 夹具失败：%v %s", err, o)
+	}
+	if o, err := exec.Command("git", "-C", root, "add", "-A").CombinedOutput(); err != nil {
+		t.Fatalf("git add 夹具失败：%v %s", err, o)
+	}
+
+	saved := cdrBaseline
+	t.Cleanup(func() { cdrBaseline = saved })
+
+	// (a) 基线 0 ⇒ 该悬空引用即「新增」⇒ rc=1 响亮红 + 点名。
+	cdrBaseline = map[string]int{"docs": 0, "gap": 0}
+	var out, errb bytes.Buffer
+	if rc := checkDanglingRefsGateMain(&out, &errb, []string{"--root", root}); rc != 1 {
+		t.Fatalf("基线 0 + 一条新增悬空 ⇒ 期望 rc=1（响亮红）：得 rc=%d\nstdout:\n%s\nstderr:\n%s",
+			rc, out.String(), errb.String())
+	}
+	if !strings.Contains(errb.String(), "棘轮超额") {
+		t.Fatalf("stderr 未见响亮红「棘轮超额」：%q", errb.String())
+	}
+	if !strings.Contains(out.String(), refRel) {
+		t.Fatalf("stdout 未逐条点名新增悬空件 %s：%q", refRel, out.String())
+	}
+
+	// (b) 基线放到存量之上 ⇒ 同一夹具存量段绿（rc=0）—— 成对负控。
+	cdrBaseline = map[string]int{"docs": 99, "gap": 99}
+	out.Reset()
+	errb.Reset()
+	if rc := checkDanglingRefsGateMain(&out, &errb, []string{"--root", root}); rc != 0 {
+		t.Fatalf("存量 ≤ 基线 ⇒ 期望 rc=0（存量段绿）：得 rc=%d\nstdout:\n%s\nstderr:\n%s",
+			rc, out.String(), errb.String())
+	}
+	if !strings.Contains(out.String(), "存量段 rc=0") {
+		t.Fatalf("绿档未见「存量段 rc=0」：%q", out.String())
+	}
 }

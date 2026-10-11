@@ -54,6 +54,16 @@ const (
 	gapRereadNoRun   = "not_rereadable" // 写面 / 含 shell 元字符 / 解析不出 / 自递归 ⇒ 不执行
 	gapRereadSkip    = "skipped"        // 解析不出带键标读数 ⇒ 跳过并计数
 	gapRereadUnknown = "无法判"            // 对拍关（负控）⇒ 不给结论
+	// gapRereadFixedNotClosed —— **已修未销**：未闭条（`state == 仍缺`）的 `verify_cmd` 现跑 rc==0
+	// ⇒ 症状**已不复现**而 state 仍 未闭（缺口 `GAP-20260929-12` want：单列「已修未销」）。
+	gapRereadFixedNotClosed = "已修未销"
+	// gapRereadUnitRotted / gapRereadUnitMissing —— **落点腐检**两档（只读标注 · ✗ 不改账 · ✗ 不进退出码）：
+	//   · 落点行号已腐 —— `件:行` 指的件在盘，但该行现读**不是内容行**（空/注释）或**越界**
+	//     （行号会腐烂 —— 与同族 `gapRereadCiteProbe` 同一条「只判件 · 不判绝对行号」口径的**行级补面**）；
+	//   · 落点件缺失 —— `unit`（**非**兜底档）现读不在盘（件被删/改名 —— 现读实证 M2 退场批的 `.py`/`.sh`）。
+	// ★ 兜底 `unit`（`无件(命令面)` / 拟件 / 空）**不进**「件缺失」（现读 721 条是这类 ⇒ 误判＝造红）。
+	gapRereadUnitRotted  = "落点行号已腐"
+	gapRereadUnitMissing = "落点件缺失"
 )
 
 // gapRereadCompareOn —— 对拍开关（默认开）。负控把它置 false ⇒ 每条可解析读数回「无法判」，
@@ -80,8 +90,8 @@ func gapRereadShowSHA(s string) string {
 	return s
 }
 
-// gapRereadFields —— `--json` 可取字段（每行 = 一条目标账）。
-var gapRereadFields = []string{"id", "fp", "state", "readings", "ok", "reading_stale", "not_rereadable", "skipped"}
+// gapRereadFields —— `--json` 可取字段（每行 = 一条目标账）。★ `unit_rot` = 落点腐检档（既存 + 本枚）。
+var gapRereadFields = []string{"id", "fp", "state", "readings", "ok", "reading_stale", "not_rereadable", "skipped", "stale", "unit_rot"}
 
 // gapRereadCiteRe —— 「件:行」引用的形态（件 = 带扩展名的相对路径 · 行 = 十进制）。
 var gapRereadCiteRe = regexp.MustCompile(`([A-Za-z0-9_][A-Za-z0-9_./-]*\.[A-Za-z][A-Za-z0-9]*):(\d+)`)
@@ -100,11 +110,19 @@ type gapRereadRow struct {
 	NoRun    int
 	Skip     int
 	Unknown  int
-	Lines    []string
+	// FixedNotClosed —— 本条是否「已修未销」（未闭条 verify_cmd 现跑 rc==0）。仅当本条被「点名 /
+	// `--include-open`」档判过时才置位；未判 ⇒ 保持 false（`--json` 的 `stale` 格按「在册缺值 ⇒ 整键略去」）。
+	FixedNotClosed bool
+	// UnitRot / UnitRotNote —— **落点腐检**（只读）：`unit` 与正文 `件:行` 现读的腐档（空 = 无异常）。
+	// 值 = `gapRereadUnitRotted` / `gapRereadUnitMissing` 之一；Note = 一行说明（人面印 · `--json` 不入）。
+	UnitRot     string
+	UnitRotNote string
+	Lines       []string
 }
 
 // gapRereadOpenRow —— 一条**未闭**条（`--include-open`）的判活读数（人面 / 机器面同一份数据）。
-// ★ 本面**不产 `reading_stale`** —— 未闭条没有对拍基线，只有 `ok`（跑通）/ `not_rereadable`（拒跑）两读。
+// ★ 本面**不产 `reading_stale`** —— 未闭条没有对拍基线，只有 `ok`（跑通）/ `not_rereadable`（拒跑）两读；
+// 跑通里再按现跑 rc 分：rc≠0 ⇒ 症状**仍可复现**；rc==0 ⇒ **已修未销**（`FixedNotClosed`）。
 type gapRereadOpenRow struct {
 	ID     string
 	State  string
@@ -112,6 +130,8 @@ type gapRereadOpenRow struct {
 	Status string // ok / not_rereadable
 	RC     string
 	Detail string
+	// FixedNotClosed —— rc==0 ⇒ 症状已不复现（**已修未销** · 单列）。与 Status 正交（Status 仍记 ok）。
+	FixedNotClosed bool
 }
 
 // gapRereadReadings —— 从一条 `solved_evidence` 里取出**带键标读数**的候选段（逐条给判定口）。
@@ -231,6 +251,90 @@ func gapRereadCiteProbe(reading string, tracked map[string]bool, root string) (b
 	return false, ""
 }
 
+// gapRereadUnitFallback —— `unit` 兜底档（命令面无件 / 手写拟件 / 空）⇒ ✗ **不判**「落点件缺失」。
+func gapRereadUnitFallback(u string) bool {
+	return u == "" || strings.HasPrefix(u, "无件") || strings.HasPrefix(u, "拟(")
+}
+
+// gapRereadLineNotContent —— 一行现读**不是内容行**（空 / 注释）⇒ 「行号已腐」的信号。
+// 注释首 = `//` `#` `/*` `<!--` `*/`（跨 Go / py / sh / yaml / md 的常见注释形态）。
+func gapRereadLineNotContent(s string) bool {
+	t := strings.TrimSpace(s)
+	if t == "" {
+		return true
+	}
+	for _, p := range []string{"//", "#", "/*", "<!--", "*/"} {
+		if strings.HasPrefix(t, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// gapRereadCitIndex —— 「件名 → 现读入库路径」的解析面（**主锚 = 件**）：先认**全等**路径，
+// 再认**唯一**裸件名（同名多件 ⇒ 该名解析面作废 `""` —— 宁可漏报不误报）。✗ 不改现盘。
+func gapRereadCitIndex(tracked map[string]bool) map[string]string {
+	base := map[string]string{}
+	for f := range tracked {
+		b := filepath.Base(f)
+		if _, dup := base[b]; dup {
+			base[b] = "" // 同名多件 ⇒ 解析面作废（不判）
+			continue
+		}
+		base[b] = f
+	}
+	return base
+}
+
+// gapRereadUnitRot —— **落点腐检**（只读标注 · 以「件」为主锚 · 勘定单推荐 (iii)）：判一条账的落点
+// （`unit` 字段）与正文里的 `件:行` 引用。返回 ("", "") = 无异常；否则 (档名, 一行说明)。两档：
+//
+//	① 落点件缺失 —— `unit`（**非**兜底档）现读**不在盘**（对齐门101/门88 的「落点件在盘」口径 —— 用
+//	   盘上存在性，✗ 不另造第二套真源）；现读实证 = M2 退场批里被删的 `scripts/gates/*.py` 等；
+//	② 落点行号已腐 —— 件在盘，但 `件:行` 指的**那一行现读不是内容行**（空/注释）或**越界**
+//	   （只判「件在不在 · 该行是不是内容」· ✗ 不判绝对行号等于原值 —— 与 `gapRereadCiteProbe` 同口径的**行级**补面）。
+//
+// ✗ 兜底 `unit`（`无件(命令面)` / 拟件 / 空）**不判**件缺失（现读 721 条是这类 · 误判＝造红）。
+// ✗ 本函数**零写盘**（只 `os.Stat` / `os.ReadFile` 现读件）。
+func gapRereadUnitRot(r gapRecord, tracked map[string]bool, base map[string]string, root string) (string, string) {
+	u := strings.TrimSpace(r.Unit)
+	if u != "" && !gapRereadUnitFallback(u) {
+		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(u))); err != nil {
+			return gapRereadUnitMissing, fmt.Sprintf("`unit` = %s 现读不在盘（件被删/改名）", u)
+		}
+	}
+	for _, txt := range []string{r.Symptom, r.Handmade, r.Evidence, strings.Join(r.Notes, " ⏎ ")} {
+		for _, m := range gapRereadCiteRe.FindAllStringSubmatch(txt, -1) {
+			file := m[1]
+			resolved := ""
+			if tracked[file] {
+				resolved = file
+			} else {
+				resolved = base[filepath.Base(file)] // 空串 = 不判（同名多件 / 不在清单）
+			}
+			if resolved == "" {
+				continue
+			}
+			n, nerr := strconv.Atoi(m[2])
+			if nerr != nil {
+				continue
+			}
+			raw, rerr := os.ReadFile(filepath.Join(root, filepath.FromSlash(resolved)))
+			if rerr != nil {
+				continue
+			}
+			lines := strings.Split(string(raw), "\n")
+			if n < 1 || n > len(lines) {
+				return gapRereadUnitRotted, fmt.Sprintf("`%s:%s` 越界（件 %s 现读 %d 行 —— 件在盘 · 行号已腐）", file, m[2], resolved, len(lines))
+			}
+			if gapRereadLineNotContent(lines[n-1]) {
+				return gapRereadUnitRotted, fmt.Sprintf("`%s:%s` 现读不是内容行（空/注释 ⇒ 件在盘 · 行号已腐）", file, m[2])
+			}
+		}
+	}
+	return "", ""
+}
+
 // gapRereadJudge —— 一条带键标读数的判决（**本面唯一判处**）：
 // 先判「能不能安全重跑」（只读闸），能跑才重跑并与 `rc` 对拍；rc 一致再看 `件:行` 的行内容。
 func gapRereadJudge(cmd, rc, reading string, tracked map[string]bool, root string) (string, string, string) {
@@ -296,16 +400,21 @@ func gapRereadOpenRefuse(cmd string) string {
 
 // gapRereadOpenOne —— 跑一条未闭条（`state == 仍缺`）的 `verify_cmd`（只读 · 判活）。
 // ★ 未闭条**无对拍基线** ⇒ 跑通即记 `ok`（detail 给现跑 rc + 读数行）；✗ 不判 `reading_stale`。
-func gapRereadOpenOne(r gapRecord) (status, rc, detail string) {
+func gapRereadOpenOne(r gapRecord) (status, rc, detail string, fixedNotClosed bool) {
 	cmd := strings.TrimSpace(r.VerifyCmd)
 	if why := gapRereadOpenRefuse(cmd); why != "" {
-		return gapRereadNoRun, "", why
+		return gapRereadNoRun, "", why, false
 	}
 	rcRun, out, jwhy := gapVerifyOneRun(cmd)
 	if jwhy != "" {
-		return gapRereadNoRun, "", jwhy
+		return gapRereadNoRun, "", jwhy, false
 	}
-	return gapRereadOK, strconv.Itoa(rcRun), gapVerifyOneReading(rcRun, out) + "（未闭条 · 无对拍基线）"
+	reading := gapVerifyOneReading(rcRun, out)
+	if rcRun == 0 {
+		// ★ 本枚（缺口 `GAP-20260929-12`）：rc==0 ⇒ 症状**已不复现** ⇒ 「已修未销」（单列）。
+		return gapRereadOK, strconv.Itoa(rcRun), reading + "（症状已不复现 ⇒ " + gapRereadFixedNotClosed + " · 无对拍基线）", true
+	}
+	return gapRereadOK, strconv.Itoa(rcRun), reading + "（症状仍可复现 · 无对拍基线）", false
 }
 
 func cmdGapReread(inv *invocation, stdout, stderr io.Writer) int {
@@ -388,18 +497,29 @@ func cmdGapReread(inv *invocation, stdout, stderr io.Writer) int {
 	for _, f := range gapTrackedFiles() {
 		tracked[f] = true
 	}
+	// ★ 落点腐检的**裸件名解析面**（件在盘而正文只写裸件名 —— 现读实证 `-20260927-301` 写 `family_code.go:54`）。
+	citBase := gapRereadCitIndex(tracked)
 
 	// ⑤ 逐条跑（`--limit` 卡的是**读数条数**，防在真账上一次跑太多）
 	rows := []gapRereadRow{}
 	processed := 0
 	capped := false
 	var nRead, nOK, nStale, nNoRun, nSkip, nUnk int
+	var nUnitMissing, nUnitRotted int
 	for _, idx := range tgts {
 		if limit > 0 && processed >= limit {
 			capped = true
 			break
 		}
 		row := gapRereadOne(led.Recs[idx], tracked, root)
+		// ★ 落点腐检（只读标注 · 与 `--limit` 无关 —— 每目标条都判）：件缺失 / 行号已腐。
+		row.UnitRot, row.UnitRotNote = gapRereadUnitRot(led.Recs[idx], tracked, citBase, root)
+		if row.UnitRot == gapRereadUnitMissing {
+			nUnitMissing++
+		}
+		if row.UnitRot == gapRereadUnitRotted {
+			nUnitRotted++
+		}
 		processed += row.Readings
 		nRead += row.Readings
 		nOK += row.OK
@@ -409,14 +529,18 @@ func cmdGapReread(inv *invocation, stdout, stderr io.Writer) int {
 		nUnk += row.Unknown
 		rows = append(rows, row)
 	}
-	// ⑤b **未闭判活面**（`--include-open`）：把**未闭**（`state == 仍缺`）条目的 `verify_cmd`
+	// ⑤b **未闭判活面**（`--include-open` / 点名档）：把**未闭**（`state == 仍缺`）条目的 `verify_cmd`
 	//   纳入**同一套读数** ——「这条缺口今天还在不在」不必再靠人眼估。★ 安全面一字不放宽
 	//   （危险档 / 元字符 / 占位 / 解析不出 / 自递归 ⇒ 一律拒跑记 `not_rereadable`）。
-	//   ★ 默认档（不给本旗标）**一个字节都不走这里** ⇒ 行为逐字不变。
+	//   ★ 本枚（缺口 `GAP-20260929-12`）：**点名档（非 `--all`）默认也判** —— want「输入一组账条
+	//     ⇒ 逐条现读跑『症状是否仍可复现』并把『已修未销』的条目单列」；`--all`（全账）为控成本仍只
+	//     走 `solved_evidence`（要未闭判活给它 `--include-open`）。rc==0 ⇒ **已修未销**（症状已不
+	//     复现而 `state` 仍 未闭）⇒ 单列；rc≠0 ⇒ 症状仍可复现。
+	judgeOpen := includeOpen || !inv.all
 	openRows := []gapRereadOpenRow{}
-	openTotal, openRan, openRefused, openTrunc := 0, 0, 0, 0
+	openTotal, openRan, openRefused, openTrunc, openStale := 0, 0, 0, 0, 0
 	openConserved := true
-	if includeOpen {
+	if judgeOpen {
 		openIdx := []int{}
 		for _, idx := range tgts {
 			if led.Recs[idx].State == gapStOpen {
@@ -431,18 +555,33 @@ func cmdGapReread(inv *invocation, stdout, stderr io.Writer) int {
 				break
 			}
 			rec := led.Recs[idx]
-			st, rcRun, detail := gapRereadOpenOne(rec)
+			st, rcRun, detail, fnc := gapRereadOpenOne(rec)
 			if st == gapRereadOK {
 				openRan++
+				if fnc {
+					openStale++
+				}
 			} else {
 				openRefused++
 			}
 			openRows = append(openRows, gapRereadOpenRow{
 				ID: rec.ID, State: rec.State, Cmd: strings.TrimSpace(rec.VerifyCmd),
-				Status: st, RC: rcRun, Detail: detail})
+				Status: st, RC: rcRun, Detail: detail, FixedNotClosed: fnc})
 			processedOpen++
 		}
 		openConserved = openTotal == openRan+openRefused+openTrunc
+	}
+	// ★ 「已修未销」落回目标行（`--json` 的 `stale` 格）：只有判过的条才置位（未判 ⇒ 缺键）。
+	staleSet := map[string]bool{}
+	for _, r := range openRows {
+		if r.FixedNotClosed {
+			staleSet[r.ID] = true
+		}
+	}
+	for i := range rows {
+		if staleSet[rows[i].ID] {
+			rows[i].FixedNotClosed = true
+		}
 	}
 	// ★ **外写自发现**（缺口 `GAP-20261005-44`）：上面一切读数都基于 T0 读入的 `led`（`led.Recs`），
 	//   而旧版把 `ledger_sha16` 在**同一刻**（T1）现读一次 ⇒ 「我分析的账」与「印出去的 sha」**不互校**，
@@ -474,13 +613,17 @@ func cmdGapReread(inv *invocation, stdout, stderr io.Writer) int {
 	inv.metaAddJSON("snapshot_lines", strconv.Itoa(snapLines))
 	inv.metaAddStr("readback_sha16", exitSHA16)
 	inv.metaAddJSON("external_write_detected", strconv.FormatBool(extWrite))
+	// ★ 落点腐检两档计数（只读标注 · 不进退出码 · 现读现算）。
+	inv.metaAddJSON("unit_missing", strconv.Itoa(nUnitMissing))
+	inv.metaAddJSON("unit_rotted", strconv.Itoa(nUnitRotted))
 	// ★ 未闭判活面的**守恒三数 + 逐条行**走同族信封的 `meta`（无新增字段白名单 ✗）。
-	if includeOpen {
+	if judgeOpen {
 		inv.metaAddJSON("open_total", strconv.Itoa(openTotal))
 		inv.metaAddJSON("open_ran", strconv.Itoa(openRan))
 		inv.metaAddJSON("open_refused", strconv.Itoa(openRefused))
 		inv.metaAddJSON("open_truncated", strconv.Itoa(openTrunc))
 		inv.metaAddJSON("open_conserved", strconv.FormatBool(openConserved))
+		inv.metaAddJSON("open_stale", strconv.Itoa(openStale)) // ★ 已修未销条数（缺口 GAP-20260929-12）
 		openLines := make([]string, 0, len(openRows))
 		for _, r := range openRows {
 			openLines = append(openLines, fmt.Sprintf("%s [%s] %s · %s", r.ID, r.Status, r.Cmd, r.Detail))
@@ -492,12 +635,23 @@ func cmdGapReread(inv *invocation, stdout, stderr io.Writer) int {
 		sort.SliceStable(rows, func(i, j int) bool { return rows[i].ID < rows[j].ID })
 		js := make([]map[string]string, 0, len(rows))
 		for _, row := range rows {
-			js = append(js, map[string]string{
+			m := map[string]string{
 				"id": row.ID, "fp": row.FP, "state": row.State,
 				"readings": strconv.Itoa(row.Readings), "ok": strconv.Itoa(row.OK),
 				"reading_stale": strconv.Itoa(row.Stale), "not_rereadable": strconv.Itoa(row.NoRun),
 				"skipped": strconv.Itoa(row.Skip),
-			})
+			}
+			if judgeOpen {
+				// ★ 已修未销（缺口 GAP-20260929-12）：判过的条才给这一格（未判 ⇒ 整键略去）。
+				m["stale"] = boolWord(row.FixedNotClosed)
+			}
+			// ★ 落点腐检档（既存常给 `ok`）：`ok` / `落点件缺失` / `落点行号已腐`。
+			if row.UnitRot == "" {
+				m["unit_rot"] = "ok"
+			} else {
+				m["unit_rot"] = row.UnitRot
+			}
+			js = append(js, m)
 		}
 		return selectJSONList(stdout, stderr, inv, inv.path, inv.fields, js)
 	}
@@ -515,6 +669,8 @@ func cmdGapReread(inv *invocation, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "  读数     : 共 %d 条（判定面 %d）\n", nRead, nRead-nSkip)
 	fmt.Fprintf(stdout, "  结果     : ok %d · reading_stale %d · not_rereadable %d · skipped %d\n",
 		nOK, nStale, nNoRun, nSkip)
+	fmt.Fprintf(stdout, "  落点腐检 : 落点件缺失 %d · 落点行号已腐 %d（只读标注 · 不进退出码 · 以「件」为主锚 · ✗ 不判绝对行号）\n",
+		nUnitMissing, nUnitRotted)
 	if !gapRereadCompareOn {
 		fmt.Fprintf(stdout, "  ⚠ 对拍 **关**（负控档）⇒ 全部可解析读数记「%s」（不给结论）\n", gapRereadUnknown)
 	}
@@ -527,9 +683,12 @@ func cmdGapReread(inv *invocation, stdout, stderr io.Writer) int {
 		for _, l := range row.Lines {
 			fmt.Fprintf(stdout, "    %s\n", l)
 		}
+		if row.UnitRot != "" {
+			fmt.Fprintf(stdout, "    ★ %s：%s\n", row.UnitRot, row.UnitRotNote)
+		}
 	}
-	if includeOpen {
-		fmt.Fprintf(stdout, "  未闭判活（--include-open · 逐条跑未闭账的 verify_cmd · 只读报告档）\n")
+	if judgeOpen {
+		fmt.Fprintf(stdout, "  未闭判活（点名/--include-open · 逐条跑未闭账的 verify_cmd · 只读报告档）\n")
 		for _, r := range openRows {
 			fmt.Fprintf(stdout, "    条 %s（state=%s · verify_cmd=%s）: [%s] %s\n",
 				r.ID, r.State, r.Cmd, r.Status, r.Detail)
@@ -541,8 +700,20 @@ func cmdGapReread(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "  未闭守恒: 未闭总数 %d == 已跑 %d + 拒跑 %d + 截断 %d ⇒ %s\n",
 			openTotal, openRan, openRefused, openTrunc, verdict)
 		fmt.Fprintf(stdout, "             ★ 未闭条**无对拍基线** ⇒ 跑通即记 `%s`（✗ 不判 reading_stale）· 安全面一字不放宽\n", gapRereadOK)
+		// ★ 已修未销单列（缺口 `GAP-20260929-12`）：症状已不复现而 state 仍 未闭 ⇒ 待销案。
+		if openStale > 0 {
+			fmt.Fprintf(stdout, "  已修未销（单列 · 症状已不复现而 state 仍 %s —— 待销案）：%d 条\n", gapStOpen, openStale)
+			for _, r := range openRows {
+				if r.FixedNotClosed {
+					fmt.Fprintf(stdout, "    %s（state=%s · verify_cmd=%s）: [%s] %s\n",
+						r.ID, r.State, r.Cmd, r.Status, r.Detail)
+				}
+			}
+		}
 	}
-	fmt.Fprintf(stdout, "  表尾声称: **只报告** —— reading_stale / not_rereadable **均不进退出码**"+
+	fmt.Fprintf(stdout, "  覆盖边界: 只按「条」现读跑账内那一格判据**本身**（✗ 不拼 shell 串 · ✗ 不覆盖非确定性/"+
+		"环境依赖场景）；点名档逐条判未闭条、`--all` 只走 `solved_evidence`（未闭条判活走 `--include-open`）\n")
+	fmt.Fprintf(stdout, "  表尾声称: **只报告** —— reading_stale / not_rereadable / 已修未销 **均不进退出码**"+
 		"（免得存量陈旧读数把它变成恒红）· 本面一字节都不写真源、不写审计\n")
 	return exitOK
 }

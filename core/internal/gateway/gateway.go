@@ -50,11 +50,18 @@ import (
 type Gateway struct {
 	authToken string // 从 fleet.yaml auth.token 读取
 	config    *config.FleetConfig
-	client    *http.Client           // 转发用 HTTP 客户端
-	store     *store.Store           // fleet 快照（路由决策用：已加载模型/活跃请求/健康）
-	comp      *compressor.Compressor // LLMLingua-2 压缩器（V22，Go 一体化）
-	compMu    sync.RWMutex
-	gate      *control.Gate // M3 集中控制层（v2.4——工具调用拦截；nil=不启用）
+	// configReloadHook —— 缺口 GAP-20261010-24：本结构持有的是**启动快照**（构造时的 cfg），
+	//   而 `POST /api/config/reload` 只把主控 `api.Handlers.Config` 指向**新对象**
+	//   （handlers.go ReloadConfigHandler: `h.Config = newCfg`）⇒ 网关的路由表 / 别名 /
+	//   机队节点永远停在启动那一刻（`model add` + reload 报 ok，网关面照样 `model not found`）。
+	//   口径与孵卵面同源（GAP-20260925-42 的 `ControlHandlers.SetConfigSource`）：非 nil 时
+	//   每次**现读**当前配置（与主控同源）；nil 时退回构造时快照（向后兼容）。
+	configReloadHook func() *config.FleetConfig
+	client           *http.Client           // 转发用 HTTP 客户端
+	store            *store.Store           // fleet 快照（路由决策用：已加载模型/活跃请求/健康）
+	comp             *compressor.Compressor // LLMLingua-2 压缩器（V22，Go 一体化）
+	compMu           sync.RWMutex
+	gate             *control.Gate // M3 集中控制层（v2.4——工具调用拦截；nil=不启用）
 
 	// 会话粘性（T4，借鉴 vLLM consistent_hash / llama.cpp conv_model_tracker）
 	// sessionID → 绑定的机器。同一会话固定同一台机器，复用 KV cache。
@@ -345,6 +352,25 @@ func NewGateway(authToken string, cfg *config.FleetConfig, st *store.Store, adap
 	return g
 }
 
+// SetConfigSource 注入口（缺口 GAP-20261010-24）：让网关与主控的 `Handlers.Config`
+// 同源 —— 装配处传入 `func() *config.FleetConfig { return handlers.Config }`。此后
+// `config reload` 换掉 `Handlers.Config` 的**同一刻**，网关即看到新条目（此前持构造时快照）。
+// 口径逐字照孵卵面先例 `ControlHandlers.SetConfigSource`（GAP-20260925-42）——
+// 本方法把那只 `configReloadHook` 挂上，读面全走 `currentConfig()` 现读。
+func (g *Gateway) SetConfigSource(fn func() *config.FleetConfig) {
+	g.configReloadHook = fn
+}
+
+// currentConfig 现读当前配置：有注入口用注入口（reload 后同步），否则用构造时快照。
+func (g *Gateway) currentConfig() *config.FleetConfig {
+	if g.configReloadHook != nil {
+		if c := g.configReloadHook(); c != nil {
+			return c
+		}
+	}
+	return g.config
+}
+
 // SetCompressor 设置 LLMLingua-2 压缩器（V22，主控启动时调用，加载 ONNX 模型）。
 func (g *Gateway) SetCompressor(c *compressor.Compressor) {
 	g.compMu.Lock()
@@ -441,7 +467,7 @@ func (g *Gateway) handleContextQuery(w http.ResponseWriter, r *http.Request) {
 // handleModels 处理 GET /v1/models，返回路由表全部模型。
 func (g *Gateway) handleModels(w http.ResponseWriter, r *http.Request) {
 	var data []map[string]interface{}
-	for name, candidates := range g.config.Models {
+	for name, candidates := range g.currentConfig().Models {
 		for _, c := range candidates {
 			data = append(data, map[string]interface{}{
 				"id":       name,
@@ -480,7 +506,7 @@ func (g *Gateway) handleCompact(w http.ResponseWriter, r *http.Request) {
 
 	// 压缩模型：选 gemma（轻量快）或 example-35b-v2（更懂上下文）。有 gemma 用 gemma，否则 example-35b-v2。
 	compactModel := "gemma-4-12B"
-	if _, ok := g.config.Models[compactModel]; !ok {
+	if _, ok := g.currentConfig().Models[compactModel]; !ok {
 		compactModel = "example-35b"
 	}
 
@@ -698,7 +724,7 @@ func (g *Gateway) handleRequest(w http.ResponseWriter, r *http.Request) {
 
 	// 2.6 模型别名解析：客户端可能用别名请求（Hermes 发 zerg-example-35b-v2 等）。
 	// 不仅路由要用标准名，转发给后端的 body 里的 model 字段也要替换（否则 agent 找不到模型）。
-	if canonical, ok := g.config.Aliases[model]; ok {
+	if canonical, ok := g.currentConfig().Aliases[model]; ok {
 		log.Printf("🎭 model alias: %s → %s", model, canonical)
 		model = canonical
 		forwardBody = adapter.JsonSetField(forwardBody, "model", canonical)
@@ -1207,8 +1233,8 @@ func (g *Gateway) isTripped(host string) bool {
 // 空则不判定，行为与既往一致。
 func (g *Gateway) pickRoute(model string, sessionID string, prompt string, required ...string) (*RouteResult, error) {
 	// 别名解析：客户端可能用别名请求（Hermes 发 zerg-example-35b-v2 等），映射到标准模型名
-	if _, ok := g.config.Models[model]; !ok {
-		if canonical, ok2 := g.config.Aliases[model]; ok2 {
+	if _, ok := g.currentConfig().Models[model]; !ok {
+		if canonical, ok2 := g.currentConfig().Aliases[model]; ok2 {
 			log.Printf("🎭 model alias: %s → %s", model, canonical)
 			model = canonical
 		}
@@ -1253,7 +1279,7 @@ func (g *Gateway) pickRoute(model string, sessionID string, prompt string, requi
 	}
 
 	// 在 models 表中查找
-	models, ok := g.config.Models[model]
+	models, ok := g.currentConfig().Models[model]
 	if !ok {
 		return nil, fmt.Errorf("model %s not found in the routing table", model)
 	}
@@ -1581,10 +1607,10 @@ func (g *Gateway) snapshotFor(machine string) *store.FleetSnapshot {
 // 此时若照常过滤会把一切路由判死。故仅当"至少有一台活着"时才启用活性过滤。
 // 机器名清单来自配置（fleet.yaml 的 fleet 段），不依赖 store 的枚举接口。
 func (g *Gateway) anyMachineAlive() bool {
-	if g.config == nil {
+	if g.currentConfig() == nil {
 		return false
 	}
-	for host := range g.config.Fleet {
+	for host := range g.currentConfig().Fleet {
 		if g.snapshotFor(host) != nil {
 			return true
 		}
@@ -1600,8 +1626,8 @@ const defaultAgentPort = config.DefaultAgentPort
 // （与既有 pickRoute 内的同口径逻辑一致——批 3 把它提成方法，供让位路径复用，避免硬编码 IP）。
 func (g *Gateway) fleetNode(host string) (string, int) {
 	var fleet map[string]config.FleetNode
-	if g.config != nil {
-		fleet = g.config.Fleet
+	if g.currentConfig() != nil {
+		fleet = g.currentConfig().Fleet
 	}
 	return config.NodeAddr(fleet, host)
 }
@@ -1953,7 +1979,7 @@ func (g *Gateway) boundSession(sessionID, model string) string {
 // 是有意设计的功能（见 ds4RouteDecision 调用处），不是残留 ⇒ 所以是**改名 + 改指**：
 // 本机角色退役后"本机"= 名为 node-local 的普通子端，硬编码的 "local" 改为**传参**（部署选择，不是代码分支）。
 func (g *Gateway) pickRouteHost(model, host string) (*RouteResult, error) {
-	candidates, ok := g.config.Models[model]
+	candidates, ok := g.currentConfig().Models[model]
 	if !ok || len(candidates) == 0 {
 		return nil, fmt.Errorf("model %s is not configured", model)
 	}
@@ -2050,7 +2076,7 @@ func (g *Gateway) resetSessionTokens(sessionID string) {
 // 主压缩在对话侧（chat.MaybeCompact，阈值 max(min(ctx×0.5,8000),2000)）；
 // 网关侧只在 **85%** 兜底（仅当 history ≥ 4 条时生效，见调用点）。
 func (g *Gateway) compactThreshold(model string) int {
-	if candidates, ok := g.config.Models[model]; ok && len(candidates) > 0 {
+	if candidates, ok := g.currentConfig().Models[model]; ok && len(candidates) > 0 {
 		ctx := candidates[0].CtxWindow
 		if ctx > 0 {
 			perSlot := ctx            // 单槽执行（v2.5.5: node-a/本机都单槽——取消 4 槽假设）
@@ -2097,7 +2123,7 @@ func (g *Gateway) autoCompact(sessionID, model string, body []byte) {
 	// 压缩整次失败（实测 16:14:40 "only candidate node-b has no heartbeat"）、会话 token 不复位。
 	// 口径：首选不可用 ⇒ 回退用本次请求的原模型（它必然有可用候选，否则请求自己也走不通）。
 	compactModel := "gemma-4-12B"
-	if _, ok := g.config.Models[compactModel]; !ok {
+	if _, ok := g.currentConfig().Models[compactModel]; !ok {
 		compactModel = model
 	} else if _, rerr := g.pickRoute(compactModel, "", ""); rerr != nil {
 		log.Printf("♻️ compact model %s unroutable (%v) — falling back to %s", compactModel, rerr, model)

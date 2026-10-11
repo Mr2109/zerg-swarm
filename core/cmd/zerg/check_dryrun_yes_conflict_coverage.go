@@ -135,8 +135,16 @@ type dycRow struct {
 	Helper bool
 }
 
+// dycReadFails —— B 类读失败登记面（读不了的应产者件 ⇒ 逐件登记 + err 正文）。
+// ★ B 类真口子修（与 py **有意分叉** · 同族先例 `check_doc_cmds.go` 的 `dcmdReadFails`）：
+//
+//	读失败 ⇒ 登记 + 入口判红（stderr BLOCKED 头 + 逐件点名）⇒ rc=2（✗ 不再静默少判）。
+//	自清点：每次 `dycScan` 起手清空 ⇒ 不许跨调用残留。
+var dycReadFails []string
+
 // dycScan —— py `scan(root)`：返 (rows, errMsg)。errMsg != "" ⇒ 不给结论（rc=2）。
 func dycScan(root string) ([]dycRow, string) {
+	dycReadFails = nil // ★ 自清：包级登记面不许跨调用残留
 	d := dycPyJoin(root, dycScanRel)
 	st, err := os.Stat(d)
 	if err != nil || !st.IsDir() {
@@ -162,7 +170,8 @@ func dycScan(root string) ([]dycRow, string) {
 		}
 		b, err := os.ReadFile(dycPyJoin(d, fn))
 		if err != nil {
-			// py `except OSError: continue`（B 类读失败静默少判）—— 逐字照搬。
+			// ★ B 类真口子修（原 py `except OSError: continue` 静默 · ✗ 不再静默）：登记 + 判红 + rc=2。
+			dycReadFails = append(dycReadFails, fmt.Sprintf("%s（%v）", fn, err))
 			continue
 		}
 		txt := string(b)
@@ -442,6 +451,14 @@ func checkDryrunYesConflictCoverageGateMain(stdout, stderr io.Writer, argv []str
 		}
 	}
 	rows, errMsg := dycScan(root)
+	// ★ B 类真口子修：读失败 ⇒ 响亮 BLOCKED rc=2 + 逐件点名（✗ 不再静默少判）。
+	if len(dycReadFails) > 0 {
+		fmt.Fprintf(stderr, "BLOCKED —— 有 %d 件读不到（B 类读失败 ⇒ 登记 + 判红 · rc=2 · 不给结论）：\n", len(dycReadFails))
+		for _, u := range dycReadFails {
+			fmt.Fprintf(stderr, "  [读失败] %s\n", u)
+		}
+		return 2
+	}
 	if errMsg != "" {
 		fmt.Fprintf(stderr, "%s: %s ⇒ 不给结论（退码 2）\n", dycVersion, errMsg)
 		return 2

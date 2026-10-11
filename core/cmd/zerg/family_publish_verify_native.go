@@ -175,6 +175,46 @@ func ppvRunLog(logPath, name string, args ...string) int {
 	return ppvRC(cmd.Run())
 }
 
+// ppvToolRunTimeout —— 验-1「真跑两器」（旧压平发布器 / 逐提交镜像器 · 两句 `ppvRunLog`）的**单器**上限
+// （停止条件）。
+//
+// ★ 现读依据：仓外重编件长限时实测该步（两句 `ppvRunLog` 之合）**会完**、耗 ~5m44s（344s，非死锁）；
+// 收口编排件（`publish accept`）本应只读，却**无超时地真跑两器** ⇒ 某器一旦卡死，整件**无界挂起**
+// （前一单实测：`── 验-1 对拍零分歧 ──` 表头后 >240s 无返回）。取 ~1.7× 实测值为上限 ⇒ 正常完成不被误杀、
+// 卡死有停止条件。
+// ★ 超时 ⇒ 调用方**必须**判「判不了」（fail-closed），✗ 不许读成绿。
+const ppvToolRunTimeout = 10 * time.Minute
+
+// ppvRunLogTimeout —— 同 `ppvRunLog`，但给「长步」加停止条件：到点用家族既有的 `terminateChildTree`
+// 收**整棵**子树（TERM → 宽限 → KILL）。✗ 不用 `exec.CommandContext`：它只杀**直接子**，`bash <器>` 的
+// 孙进程（门步骤 / python）改嫁后照跑（先例注释 `check_fields_face_parity.go:690` · `ffpRunProbe`）。
+// 返回 (退码, 是否超时)；超时 ⇒ 退码取 `ppvRCNotFound`、第二值 true（调用方据此 fail-closed）。
+func ppvRunLogTimeout(limit time.Duration, logPath, name string, args ...string) (int, bool) {
+	f, err := os.Create(logPath)
+	if err != nil {
+		return ppvRCNotFound, false
+	}
+	defer f.Close()
+	cmd := armChildGroup(exec.Command(name, args...))
+	cmd.Stdout = f
+	cmd.Stderr = f
+	runningChild = cmd
+	defer func() { runningChild = nil }()
+	if err := cmd.Start(); err != nil {
+		return ppvRCNotFound, false
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	select {
+	case werr := <-done:
+		return ppvRC(werr), false
+	case <-time.After(limit):
+		terminateChildTree(cmd)
+		<-done
+		return ppvRCNotFound, true
+	}
+}
+
 // ppvRunTo — 起子进程，stdout/stderr 直通给定流（用于可见输出的裸命令，如 `cp -R`）。
 func ppvRunTo(stdout, stderr io.Writer, name string, args ...string) int {
 	cmd := armChildGroup(exec.Command(name, args...))
@@ -347,8 +387,13 @@ func publishVerifyRun(stdout, stderr io.Writer) int {
 	} else {
 		_ = os.RemoveAll(oldDir)
 		_ = os.RemoveAll(mirDir)
-		oldRC = ppvRunLog(oldLog, "bash", oldPub, "--out", oldDir)
-		mirRC = ppvRunLog(mirLog, "bash", mirror, "--out", mirDir, "--allow", allow)
+		var oldTO, mirTO bool
+		oldRC, oldTO = ppvRunLogTimeout(ppvToolRunTimeout, oldLog, "bash", oldPub, "--out", oldDir)
+		mirRC, mirTO = ppvRunLogTimeout(ppvToolRunTimeout, mirLog, "bash", mirror, "--out", mirDir, "--allow", allow)
+		if oldTO || mirTO {
+			fmt.Fprintf(stdout, "  ⛔ 跑两器超时（单器上限 %s）—— 不给结论（fail-closed · ✗ 不当作绿）\n", ppvToolRunTimeout)
+			return exitBlocked
+		}
 		fmt.Fprintf(stdout, "  旧器退出码 %d · 镜像器退出码 %d\n", oldRC, mirRC)
 	}
 	if oldRC == 0 {

@@ -360,3 +360,39 @@ func TestAuditGoLogsLexical(t *testing.T) {
 		}
 	})
 }
+
+// ── B 类（读失败静默 · 目录面）回归牙 ────────────────────────────────────────────
+// 扫描面子目录锁成 chmod 000（仓外夹具 · ✗ 不删仓内件）⇒ 目录读失败登记面（aglReadFails）必响：
+// rc=2 + stderr BLOCKED 头 + 逐件点名那个锁死目录。删回静默（原 py os.walk onerror=None）本用例必红。
+func TestAuditGoLogsReadFailTeeth(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root 绕过权限位 ⇒ chmod 000 不挡读，本用例无鉴别力")
+	}
+	root := t.TempDir()
+	aglW(t, root, filepath.Join("core", "app.go"), aglLogLine("启动", "监听端口"))
+	locked := filepath.Join(root, "core", "lockeddir")
+	if err := os.MkdirAll(locked, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	aglW(t, root, filepath.Join("core", "lockeddir", "x.go"), aglLogLine("启动", "在锁死目录里"))
+	if err := os.Chmod(locked, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(locked, 0o755)
+
+	rc, out, errs := aglT(t, "--root", root)
+	if rc != 2 {
+		t.Fatalf("目录读失败回归牙：应 rc=2，得 rc=%d out=%q stderr=%q", rc, out, errs)
+	}
+	if !strings.Contains(errs, "BLOCKED") || !strings.Contains(errs, "读不到") || !strings.Contains(errs, "lockeddir") {
+		t.Fatalf("目录读失败回归牙：stderr 须带 BLOCKED 头 + 点名 lockeddir，得 stderr=%q", errs)
+	}
+
+	// 成对反控（✗ 禁恒红）：可读同形 ⇒ rc=0 且 stderr 无 BLOCKED。
+	ok := t.TempDir()
+	aglW(t, ok, filepath.Join("core", "app.go"), aglLogLine("启动", "监听端口"))
+	rcOK, _, errOK := aglT(t, "--root", ok)
+	if rcOK != 0 || strings.Contains(errOK, "BLOCKED") {
+		t.Fatalf("成对反控失败：好件应 rc=0 且无 BLOCKED，得 rc=%d stderr=%q", rcOK, errOK)
+	}
+}

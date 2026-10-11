@@ -133,6 +133,11 @@ type EggObservation struct {
 	// Argv 本卵实际执行的引擎命令行（可执行 + 参数，逐字来自 buildEngineArgv · GAP-20260926-01）。
 	// 缺席（nil）＝ 本端从未为此卵记下 argv（未起成 / 未赋值）⇒ 如实缺席，**不编**一个空数组。
 	Argv []string
+	// Cmd 本卵的**声明启动命令**（注册表 `cmd:` 逐字 · GAP-20261006-02 远程机取数面）：
+	// 与 Argv（实际执行）不同 —— Cmd 是名册声明、可含 {file}/{port}/{dir} 占位符，
+	// 是「四方不一致命令面」（GAP-20260926-04）**远程 side** 要读的子端本地真源。
+	// 缺席（空）= 本端从未为此卵声明 cmd（走默认命令）⇒ 如实缺席，不编。
+	Cmd string
 }
 
 // enginePIDOf 取一枚托管卵的引擎进程 pid（只读）：
@@ -194,6 +199,8 @@ func (m *Manager) EggObservations() []EggObservation {
 		}
 		if sp.entry != nil {
 			o.SchemaVersion = sp.entry.SchemaVersion
+			// 声明 cmd:（注册表逐字 · 远程机取数面 GAP-20261006-02）——与 Argv（实际执行）分开。
+			o.Cmd = strings.TrimSpace(string(sp.entry.Cmd))
 		}
 		if pid := enginePIDOf(sp); pid > 0 {
 			o.PID = pid

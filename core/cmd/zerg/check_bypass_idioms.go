@@ -40,9 +40,12 @@
 // py 原件真口子（★ 不自行修 · 逐字保留 · **交回入账**）：
 //
 //	① **B 类读失败静默**（py `scan` 的 `except OSError: continue`）：件已 `files += 1` 计入扫描面、
-//	  但正文一行都不入判 ⇒ 「命中/不命中」都可能被这份静默掩盖（少判且无落点）。本件**逐字照搬**（保两态对齐）。
+//	  但正文一行都不入判 ⇒ 「命中/不命中」都可能被这份静默掩盖（少判且无落点）。
+//	  ★ **本件 Go 侧已修**（B 类真口子修 · 与 py **有意分叉** · 同族先例 `check_doc_cmds.go` 的
+//	  `dcmdReadFails`）：读不了的件 ⇒ 登记（相对路径 + err 正文）入 `cbiReadFails`；入口 `cbiRun` 补判红
+//	  （stderr BLOCKED 头 + 逐件点名）⇒ rc=2（不再静默少判）。✗ py 半仍静默（该格属两态对拍**有意差异面**）。
 //	② **B 类目录面**（`os.walk` 默认 `onerror=None`）：读不了的**目录**被静默跳过（与「读不了的件」不同面）。
-//	  本件照搬（`os.Open` 失败即 return）。
+//	  ★ **本件 Go 侧已修**：目录打不开 ⇒ 同一 `cbiReadFails` 登记面 ⇒ 入口 rc=2（✗ 不再「`os.Open` 失败即 return」）。
 //	③ **最外层无兜底**（C 类）：py `__main__` 是裸 `sys.exit(main())` ⇒ `--registry` 指向「存在但读不了 / 非
 //	  JSON 数组 / JSON 解析失败」会走已捕分支（rc=2）；但**登记册元素非 dict**（如字符串）会在 `e.get(...)` 抛
 //	  AttributeError ⇒ 未捕异常 ⇒ 回溯 + **rc=1**。本件对该**未覆盖面**改为 fail-closed rc=2 并声明（件头未覆盖面③）。
@@ -371,6 +374,13 @@ func cbiReadText(path string) (string, error) {
 	return cbiUniversalNewlines(strings.ToValidUTF8(string(b), "\uFFFD")), nil
 }
 
+// cbiReadFails —— B 类读失败登记面（读不了的件 / 目录 ⇒ 逐件登记 相对路径 + err 正文）。
+// ★ B 类真口子修（与 py **有意分叉** · 同族先例 `check_doc_cmds.go` 的 `dcmdReadFails`）：
+//
+//	读失败 ⇒ 登记 + 入口判红（stderr BLOCKED 头 + 逐件点名）⇒ rc=2（不再静默少判）。
+//	自清点：每次 `cbiScan` 起手清空 ⇒ 不许跨调用残留（残留会让下一次一进门就被 BLOCKED）。
+var cbiReadFails []string
+
 // cbiIsLinebreak —— py `str.splitlines()` 认的断行符（`_PyUnicode_IsLinebreak`）。
 func cbiIsLinebreak(r rune) bool {
 	switch r {
@@ -543,6 +553,7 @@ type cbiOcc struct {
 
 // cbiScan —— py `scan`（T1–T5）⇒ (occurrences, comments, files_scanned)。
 func cbiScan(roots []string, repoRoot string) ([]cbiOcc, int, int) {
+	cbiReadFails = nil // ★ 自清：包级登记面不许跨调用残留
 	var occ []cbiOcc
 	comments := 0
 	files := 0
@@ -560,7 +571,9 @@ func cbiScan(roots []string, repoRoot string) ([]cbiOcc, int, int) {
 func cbiWalkInto(occ *[]cbiOcc, comments, files *int, repoRoot, root, dir string) {
 	f, err := os.Open(dir)
 	if err != nil {
-		return // B 类目录面：os.walk onerror=None ⇒ 读不了的目录静默跳过
+		// ★ B 类真口子修（原 py `os.walk(onerror=None)` 静默 · ✗ 不再静默）：登记 + 判红 + rc=2。
+		cbiReadFails = append(cbiReadFails, fmt.Sprintf("%s（%v）", cbiRelOf(dir, repoRoot, root), err))
+		return
 	}
 	ents, err := f.ReadDir(-1) // ★ T1 readdir 原序（✗ 排序版 os.ReadDir / ✗ WalkDir）
 	_ = f.Close()
@@ -594,7 +607,9 @@ func cbiWalkInto(occ *[]cbiOcc, comments, files *int, repoRoot, root, dir string
 		*files++
 		text, rerr := cbiReadText(full)
 		if rerr != nil {
-			continue // B 类读失败静默（逐字照搬 · 交回入账）
+			// ★ B 类真口子修（原 py `except OSError: continue` 静默 · ✗ 不再静默）：登记 + 判红 + rc=2。
+			cbiReadFails = append(cbiReadFails, fmt.Sprintf("%s（%v）", rel, rerr))
+			continue
 		}
 		for i, line := range cbiSplitLines(text) {
 			if strings.HasPrefix(cbiPyLStrip(line), "#") {
@@ -1172,6 +1187,16 @@ func cbiRun(argv []string, repoRoot string, stdout, stderr io.Writer) int {
 		roots = []string{cbiPyJoin(repoRoot, "publish"), cbiPyJoin(repoRoot, "scripts")}
 	}
 	occ, comments, files := cbiScan(roots, repoRoot)
+
+	// ★ B 类真口子修：读失败 ⇒ 响亮 BLOCKED rc=2 + 逐件点名（✗ 不再静默少判）。
+	//   同族先例 check_doc_cmds.go 的 dcmdReadFails —— 读失败 ⇒ BLOCKED 头 + 逐件点名 + 不给结论。
+	if len(cbiReadFails) > 0 {
+		fmt.Fprintf(stderr, "BLOCKED —— 有 %d 件读不到（B 类读失败 ⇒ 登记 + 判红 · rc=2 · 不给结论）：\n", len(cbiReadFails))
+		for _, u := range cbiReadFails {
+			fmt.Fprintf(stderr, "  [读失败] %s\n", u)
+		}
+		return 2
+	}
 
 	if files == 0 {
 		fmt.Fprintf(stderr, "⛔ 空转：扫描面 **0 个** `.sh`/`.py`（根写错 or 树不对）：%s\n", strings.Join(roots, " · "))

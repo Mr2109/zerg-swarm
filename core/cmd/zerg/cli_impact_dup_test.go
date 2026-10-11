@@ -173,6 +173,11 @@ func TestImpactDup_PlacementWhitelist(t *testing.T) {
 		if sum := cnt["标准库"] + cnt["本仓 internal"] + cnt["本仓其它包"] + cnt["圈外"]; sum != len(rows) {
 			t.Errorf("判据④ 破：%s 三档计数之和 %d ≠ 总数 %d", dir, sum, len(rows))
 		}
+		// ★ ② 冻结下限 = 2（棘轮 · 只许降）：真目录 import 条数抽到 < 2 ⇒ 结构静默变小，本格判红。
+		dirN := len(rows)
+		if dirN < 2 {
+			t.Fatalf("判据④ 破：%s 只抽到 %d 条 import（冻结下限 2）—— 结构静默变小", dir, dirN)
+		}
 		t.Logf("%s：import %d 条 = 标准库 %d / 本仓 internal %d / 本仓其它包 %d / 圈外 %d",
 			dir, len(rows), cnt["标准库"], cnt["本仓 internal"], cnt["本仓其它包"], cnt["圈外"])
 	}

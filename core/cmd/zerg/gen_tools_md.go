@@ -314,7 +314,11 @@ func gtmMainRoot(stdout, stderr io.Writer, root string) int {
 //	`--help` / `-h` ⇒ 只印 __doc__（＋一个尾换行）⇒ rc=0；
 //	否则 ⇐ main()（rc 0 或 1）。
 func gtmRun(stdout, stderr io.Writer, argv []string) int {
-	known := map[string]bool{"--help": true, "-h": true}
+	// ★ `--timeout` / `--cancel-on-interrupt` 是**全局旗标**：由 `main.go` 全局面消费
+	//   （墙钟上界 / Ctrl-C 取消）；到不了本运行体也**不须本件另立语义** ⇒ 在此登记「吞下」
+	//   （同族先例：`gate run` 闭白名单 `gateRunValueFlags`/`gateRunBoolFlags` 已登记同两枚）。
+	known := map[string]bool{"--help": true, "-h": true,
+		"--timeout": true, "--cancel-on-interrupt": true, "--node": true}
 	var bad []string
 	for _, a := range argv {
 		if strings.HasPrefix(a, "-") && !known[a] {

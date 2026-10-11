@@ -177,6 +177,10 @@ func TestImpactContract_CatalogFourFieldsAndIDSetPaired(t *testing.T) {
 	if real.Status != "取值" {
 		t.Fatalf("真仓的契约登记表该「取值」，实得 %s（%s）", real.Status, real.Reason)
 	}
+	// ④ 抽空 fail-closed：在册条目抽到 0 条（空集）⇒ 不给结论（✗ 不许把「0 == 0」退回静默绿）。
+	if len(real.Rows) == 0 {
+		t.Fatalf("抽空：契约登记表在册条目 0 条 ⇒ 不给结论（fail-closed · 空集不许当绿）")
+	}
 	if len(real.Rows) < 7 {
 		t.Errorf("在册条目该 ≥7 条（任务单逐字「先只对 7 条」），实得 %d 条", len(real.Rows))
 	}

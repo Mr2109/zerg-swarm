@@ -64,7 +64,10 @@ func TestLoadFleetConfig(t *testing.T) {
 		if c.ToolSupport == nil || !*c.ToolSupport {
 			t.Errorf("example-35b tool_support 应为 true")
 		}
-		if !c.Verified {
+		// GAP-20261003-21（消费侧断言 · 设计稿步2）：verified 三态读取 —— 加性键 `verified_state`
+		// 优先，缺则回落旧 bool `Verified`（设计稿 §2.2「以 state 为准 + 旧读者回落」）。
+		// ★ 只读裸 bool 会把加性形态（`verified_state: true` / `reported`）**误读成「未核」**。
+		if verifiedEffectiveState(c) != "true" {
 			t.Errorf("example-35b verified 应为 true")
 		}
 		t.Logf("example-35b: desc=%s", c.Description)
@@ -112,6 +115,58 @@ func TestNodeAddr(t *testing.T) {
 			if ip, port := NodeAddr(cfg.Fleet, "node-a"); ip != node.Host || port != node.Port {
 				t.Errorf("node-a 与真源不符：NodeAddr=(%q,%d) fleet.yaml=(%q,%d)", ip, port, node.Host, node.Port)
 			}
+		}
+	}
+}
+
+// verifiedEffectiveState —— 消费侧读口径（GAP-20261003-21 · 设计稿 §2.2「以 state 为准」）：
+// 加性键 `verified_state` 非空 ⇒ 以它为准（三态 true/false/reported）；为空 ⇒ 回落旧 bool `Verified`。
+// 为什么必须有它：只读裸 bool 会把加性形态（`verified_state: true` / `reported`）误读成「未核」(false)
+// —— 这正是本条缺口的「消费者承载面」问题（设计稿 §1.1 消费面）。
+func verifiedEffectiveState(c ModelCandidate) string {
+	if c.VerifiedState != "" {
+		return c.VerifiedState
+	}
+	if c.Verified {
+		return "true"
+	}
+	return "false"
+}
+
+// TestVerifiedConsumerReadsAdditiveForm —— GAP-20261003-21 消费侧断言（设计稿步2）：读 `verified` 的
+// 消费口径遇「加性形态」也须判对 —— 两态：
+//
+//	旧态 `verified: true/false`（裸 bool）仍按 bool 读（零破坏）；
+//	加性态 `verified_state: true` / `reported`（+ `verified_where`）走新键，须被正确判读。
+//
+// ★ 负控：把 verifiedEffectiveState 哑化成「只读 c.Verified」⇒ 本用例 M-State-True 那一格即红。
+func TestVerifiedConsumerReadsAdditiveForm(t *testing.T) {
+	const doc = `
+models:
+  M-Old-True:
+    - { host: node-a, backend: ds4-server, file: /a.gguf, mem_gb: 1, verified: true }
+  M-Old-False:
+    - { host: node-a, backend: ds4-server, file: /b.gguf, mem_gb: 1, verified: false }
+  M-State-True:
+    - { host: node-a, backend: ds4-server, file: /c.gguf, mem_gb: 1, verified_state: true }
+  M-Reported:
+    - { host: node-b, backend: ds4-server, file: /d.gguf, mem_gb: 1, verified_state: reported, verified_where: edge-node }
+`
+	cfg, err := ParseFleetConfig([]byte(doc))
+	if err != nil {
+		t.Fatalf("解析失败（加性键不该让整份表红）: %v", err)
+	}
+	cases := []struct {
+		model, want string
+	}{
+		{"M-Old-True", "true"},     // 旧态：裸 bool
+		{"M-Old-False", "false"},   // 旧态：裸 bool
+		{"M-State-True", "true"},   // 加性态：只给 state ⇒ 单读 bool 会误判 false（负控点）
+		{"M-Reported", "reported"}, // 加性态：第三态
+	}
+	for _, tc := range cases {
+		if got := verifiedEffectiveState(cfg.Models[tc.model][0]); got != tc.want {
+			t.Errorf("消费侧读 %s: got %q, want %q", tc.model, got, tc.want)
 		}
 	}
 }

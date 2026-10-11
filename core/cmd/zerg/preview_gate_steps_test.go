@@ -422,3 +422,72 @@ func pgsTestCountTmpDirs(t *testing.T) int {
 	}
 	return n
 }
+
+// ── ⑩ GAP-20261005-30 残面：现状真源走**机读面**（`--list --json`），人面只作退化路 ──────────
+// 机读面单对象 `{"count":N,"steps":[{"scope":..,"mode":..,"name":..},…]}`（`precommit-gates.sh --list --json`）。
+const pgsTestListJSON = `{"count":3,"steps":[` +
+	`{"scope":"go","mode":"empty","name":"gofmt -l core"},` +
+	`{"scope":"gates","mode":"tri","name":"门① 覆盖（阻断）"},` +
+	`{"scope":"docs","mode":"tri-report","name":"docs: glossary 术语表 zh+en（只报告）"}]}`
+
+func TestPgsParseListJSONMachineFace(t *testing.T) {
+	// 正控：机读面单对象 ⇒ 解成（含「共 N 步」文案**一字未参与** —— 文案改不影响读数）
+	steps, total, isM, err := pgsParseListJSON(pgsTestListJSON)
+	if !isM || err != "" || total != 3 || len(steps) != 3 {
+		t.Fatalf("机读面解错：isM=%v err=%q total=%d n=%d", isM, err, total, len(steps))
+	}
+	if steps[1] != (pgsStep{Scope: "gates", Mode: "tri", Name: "门① 覆盖（阻断）"}) {
+		t.Fatalf("机读面三格解错：%+v", steps[1])
+	}
+	// 负控①：人面文本 ⇒ **无机读面**（应交人面退化路，不许假装读出）
+	if _, _, isM2, _ := pgsParseListJSON(pgsTestList); isM2 {
+		t.Fatalf("人面文本被误当机读面 ⇒ 退化路走不到")
+	}
+	// 负控②：别的 JSON 对象 ⇒ 不是步表机读面
+	if _, _, isM3, _ := pgsParseListJSON(`{"a": 1}` + "\n"); isM3 {
+		t.Fatalf("非步表 JSON 被误当机读面")
+	}
+	// 负控③：机读面在场但计数自证不过 ⇒ isMachine=true 且 err 非空（**响亮失败**，✗ 静默退回人面）
+	if _, _, isM4, e4 := pgsParseListJSON(`{"count":5,"steps":[{"scope":"go","mode":"empty","name":"a"}]}` + "\n"); !isM4 || e4 == "" {
+		t.Fatalf("机读面计数不符却未响亮失败：isM=%v err=%q", isM4, e4)
+	}
+	// 负控④：机读面在场但某条缺 `name` ⇒ 响亮失败
+	if _, _, isM5, e5 := pgsParseListJSON(`{"count":1,"steps":[{"scope":"go","mode":"empty"}]}` + "\n"); !isM5 || e5 == "" {
+		t.Fatalf("机读面缺 name 却未响亮失败：isM=%v err=%q", isM5, e5)
+	}
+	// 负控⑤：机读面文案变体不可能误伤 —— 同一条机读面，附一段**改了字**的人面，仍读机读面
+	mutated := "── 步骤清单（改了表头文案）──\n   go    empty  gofmt -l core\n共 9 步\n" + pgsTestListJSON + "\n"
+	s2, t2, isM6, e6 := pgsParseListJSON(mutated)
+	if !isM6 || e6 != "" || t2 != 3 || len(s2) != 3 {
+		t.Fatalf("人面文案改后机读面未优先：isM=%v err=%q total=%d n=%d", isM6, e6, t2, len(s2))
+	}
+}
+
+// pgsLoadCurrent 走机读面快照（`--list-cache` 存的是 `--list --json` 单对象）⇒ src 点明机读面；
+// 人面快照仍走人面退化路（成对负控：src 不含「机读面」）。
+func TestPgsLoadCurrentMachineFaceCache(t *testing.T) {
+	dir := t.TempDir()
+	mcache := pgsTestMkFile(t, dir, "list.json", pgsTestListJSON+"\n")
+	steps, src, err := pgsLoadCurrent(dir, &pgsArgs{listCache: mcache})
+	if err != "" || len(steps) != 3 {
+		t.Fatalf("机读面快照解错：err=%q n=%d", err, len(steps))
+	}
+	if !strings.Contains(src, "机读面") || !strings.Contains(src, "共 3 步") {
+		t.Fatalf("机读面真源串错：%q", src)
+	}
+	// 成对负控：人面快照仍走人面退化路
+	hc := pgsTestMkFile(t, dir, "list.txt", pgsTestList)
+	hsteps, hsrc, herr := pgsLoadCurrent(dir, &pgsArgs{listCache: hc})
+	if herr != "" || len(hsteps) != 3 || strings.Contains(hsrc, "机读面") {
+		t.Fatalf("人面快照真源串错（应走退化路）：err=%q n=%d src=%q", herr, len(hsteps), hsrc)
+	}
+}
+
+// 负控（真红牙）：机读面在场而形状坏 ⇒ `pgsLoadCurrent` **响亮失败**（err 非空），✗ 不许退回人面当绿。
+func TestPgsLoadCurrentMachineFaceLoudFail(t *testing.T) {
+	dir := t.TempDir()
+	bad := pgsTestMkFile(t, dir, "bad.json", `{"count":7,"steps":[{"scope":"go","mode":"empty","name":"a"}]}`+"\n")
+	if _, _, err := pgsLoadCurrent(dir, &pgsArgs{listCache: bad}); err == "" {
+		t.Fatalf("机读面计数不符却未响亮失败（静默当绿 ⇒ 负控失灵）")
+	}
+}

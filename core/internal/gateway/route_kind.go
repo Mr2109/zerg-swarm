@@ -42,10 +42,10 @@ func kindRank(k string) int {
 
 // machineKind 取某机器在机队配置里的种类（fleet.yaml `fleet:` 段 ⇒ FleetNode.Kind）。
 func (g *Gateway) machineKind(host string) string {
-	if g == nil || g.config == nil {
+	if g == nil || g.currentConfig() == nil {
 		return ""
 	}
-	if n, ok := g.config.Fleet[host]; ok {
+	if n, ok := g.currentConfig().Fleet[host]; ok {
 		return n.Kind
 	}
 	return ""

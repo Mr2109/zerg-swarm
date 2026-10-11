@@ -49,8 +49,9 @@ import (
 )
 
 const (
-	// slgLedgerRel —— 章账缺省落点（单一真源 · 与 `family_gate_seal_verify.go` 同源）。
-	slgLedgerRel = "scripts/gates/seal/ledger.jsonl"
+	// slgLedgerRel —— 章账缺省落点（**别名** · 单一真源 = `family_gate_seal_verify.go` 的 `sealLedgerDefaultRel`）。
+	// ★ 本处 ✗ 不再另写一份同值字面量（「同值异名常量并存」已并 · GAP-20261001-65）。
+	slgLedgerRel = sealLedgerDefaultRel
 	// slgGateScriptRel —— 门件（步表真源）。
 	slgGateScriptRel = "scripts/gates/precommit-gates.sh"
 	// slgBaselineName —— 档位链真源（仅打印其仓内相对路径）。
@@ -544,10 +545,40 @@ func slgStepCmds(root string) ([]string, map[string]string, bool) {
 	if !slgIsFile(script) {
 		return nil, nil, false
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
-	cmd := exec.CommandContext(ctx, "bash", script, "--list")
+	// ★ GAP-20261010-25（本片）：机读面优先（`--list --json`）—— 复用同族助手 `pgsParseListJSON`。
+	// 机读面在场而形状坏 ⇒ **判不了**（ok=false · 不给结论），✗ 不许静默退回人面。
+	{
+		mcmd := armChildGroup(exec.Command("bash", script, "--list", "--json"))
+		runningChild = mcmd
+		defer func() { runningChild = nil }()
+		mtimer := time.AfterFunc(180*time.Second, func() { terminateChildTree(mcmd) })
+		mout, merr := mcmd.Output()
+		mtimer.Stop()
+		if merr == nil {
+			if steps, _, isM, perr := pgsParseListJSON(string(mout)); isM {
+				if perr != "" {
+					return nil, nil, false
+				}
+				var mnames []string
+				for _, s := range steps {
+					if s.Name != "" {
+						mnames = append(mnames, s.Name)
+					}
+				}
+				if len(mnames) == 0 {
+					return nil, nil, false
+				}
+				return mnames, slgResolveCmds(root, mnames), true
+			}
+		}
+	}
+	// ② 退化路：机读面不在 ⇒ 人面 `--list`（与改前逐字相同）。
+	cmd := armChildGroup(exec.Command("bash", script, "--list"))
+	runningChild = cmd
+	defer func() { runningChild = nil }()
+	ctimer := time.AfterFunc(180*time.Second, func() { terminateChildTree(cmd) })
 	out, err := cmd.Output()
-	cancel()
+	ctimer.Stop()
 	if err != nil {
 		return nil, nil, false
 	}
@@ -574,6 +605,12 @@ func slgStepCmds(root string) ([]string, map[string]string, bool) {
 	if len(names) == 0 {
 		return nil, nil, false
 	}
+	return names, slgResolveCmds(root, names), true
+}
+
+// slgResolveCmds —— 逐名取命令串（`<root>/bin/zerg gate show <步名> --json cmd`）。
+// ★ GAP-20261010-25（本片）：自机读面/人面两条退化路**共用这一支**（✗ 不各写一份）。
+func slgResolveCmds(root string, names []string) map[string]string {
 	cmds := map[string]string{}
 	zerg := slgPyJoin(root, "bin", "zerg")
 	if slgIsFile(zerg) {
@@ -587,7 +624,7 @@ func slgStepCmds(root string) ([]string, map[string]string, bool) {
 			}
 		}
 	}
-	return names, cmds, true
+	return cmds
 }
 
 // ────────────────────────────────────────────────────────────────────────────

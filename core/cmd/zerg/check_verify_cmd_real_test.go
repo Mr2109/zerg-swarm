@@ -316,6 +316,10 @@ type cvrGoldenCase struct {
 	wantErr string
 }
 
+// cvrGoldenFloor —— ② 对拍格数的**冻结下限**（棘轮 · 只许增不许减；本值 = 当次现读）。
+// 十五格 argv 的冻结金标现读 15 格（见下 `cvrGoldenCases`）⇒ 结构静默变小（格数 < 15）即判红。
+const cvrGoldenFloor = 15
+
 var cvrGoldenCases = []cvrGoldenCase{
 	{name: "help", wantRC: 0, wantOut: "usage: check-verify-cmd-real.py [-h] [--root ROOT] [--ledger LEDGER]\n                                [--matrix MATRIX] [--json] [--self-test]\n                                [--no-self-test] [--baseline] [--list-rules]\n                                [--strict] [--max-examples MAX_EXAMPLES]\n\n判据须能真判门（GAP-20260926-55）\n\noptional arguments:\n  -h, --help            show this help message and exit\n  --root ROOT\n  --ledger LEDGER\n  --matrix MATRIX\n  --json\n  --self-test\n  --no-self-test\n  --baseline\n  --list-rules\n  --strict\n  --max-examples MAX_EXAMPLES\n", wantErr: ""},
 	{name: "unknown", wantRC: 2, wantOut: "", wantErr: "usage: check-verify-cmd-real.py [-h] [--root ROOT] [--ledger LEDGER]\n                                [--matrix MATRIX] [--json] [--self-test]\n                                [--no-self-test] [--baseline] [--list-rules]\n                                [--strict] [--max-examples MAX_EXAMPLES]\ncheck-verify-cmd-real.py: error: unrecognized arguments: --bogus\n"},
@@ -373,6 +377,10 @@ func TestCheckVerifyCmdRealGoldenInternalized(t *testing.T) {
 	}
 	if len(cvrGoldenCases) < 8 {
 		t.Fatalf("对拍格数 %d < 8", len(cvrGoldenCases))
+	}
+	// ② 冻结下限（棘轮 · 只许增）：对拍格数 < 当次现读数下限 15 ⇒ 判红（结构静默变小）。
+	if n := len(cvrGoldenCases); n < cvrGoldenFloor {
+		t.Fatalf("对拍格数 %d < 冻结下限 %d（棘轮只许增 · 结构静默变小）", n, cvrGoldenFloor)
 	}
 	for _, c := range cvrGoldenCases {
 		t.Run(c.name, func(t *testing.T) {

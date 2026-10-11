@@ -400,7 +400,11 @@ func pgsListCmdResolved(listCmd string) []string {
 
 // pgsRunList —— py L67 `run_list`（真起子进程 · 只读）。
 func pgsRunList(root, listCmd string) (string, string) {
-	cmd := pgsListCmdResolved(listCmd)
+	return pgsRunListArgv(root, pgsListCmdResolved(listCmd))
+}
+
+// pgsRunListArgv —— 同 `pgsRunList`，但收**已解析**的 argv（机读面现跑复用同一支 · 不另起第二套）。
+func pgsRunListArgv(root string, cmd []string) (string, string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 1800*time.Second)
 	defer cancel()
 	c := exec.CommandContext(ctx, cmd[0], cmd[1:]...)
@@ -523,6 +527,97 @@ func pgsParseList(text string) ([]pgsStep, int, bool, string) {
 	return steps, total, true, ""
 }
 
+// pgsRawJSONStr —— 从机读面一格（RawMessage）取字符串格；缺格/非串 ⇒ ("", false)。
+func pgsRawJSONStr(raw json.RawMessage) (string, bool) {
+	if len(raw) == 0 {
+		return "", false
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return "", false
+	}
+	return s, true
+}
+
+// pgsParseListJSON —— 读步骤表**机读面**（`precommit-gates.sh --list --json` 的单对象
+// `{"count":N,"steps":[{"scope":..,"mode":..,"name":..},…]}` · 缺口 GAP-20260926-119 落的口子）。
+//
+// ★ GAP-20261005-30 残面（本片）：改前 `parse_list` 只认人面 —— 抠「步骤清单」表头 + 「共 N 步」
+// 计数行；闸脚本**文案一字改**即不可机检（且人面是三个消费面的隐式契约）。此处与**同族正解**同形
+// （`gate_report.go` 的 `grtParseDanglingJSON` 读 `check-dangling-refs --json` 机读面 · `--json` 成
+// 单对象带 schema 标记）：**机读面优先，人面只作退化路**；机读面在场而形状坏/计数自证不过 ⇒ **响亮失败**
+// （✗ 不许静默退回人面把读数当绿）。
+//
+// 返回 (steps, total, isMachine, err)：
+//
+//	· isMachine=false          ⇒ 本输出里**没有**机读面（交 `parse_list` 人面退化路）；
+//	· isMachine=true, err==""  ⇒ 机读面读成（`total` = `count`，已自证 == len(steps)）；
+//	· isMachine=true, err!=""  ⇒ 机读面在场但自证不过 ⇒ 不许当绿（err 是判词）。
+func pgsParseListJSON(text string) ([]pgsStep, int, bool, string) {
+	for _, ln := range pgsPySplitLines(text) {
+		s := pgsPyStrip(ln)
+		if !strings.HasPrefix(s, "{") || !strings.HasSuffix(s, "}") {
+			continue
+		}
+		var doc map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(s), &doc); err != nil {
+			continue // 不是 JSON 对象行 ⇒ 不是机读面
+		}
+		rawCount, okC := doc["count"]
+		rawSteps, okS := doc["steps"]
+		if !okC || !okS {
+			continue // 有 JSON 对象但不是步表机读面（缺 `count`/`steps` 鉴别键）
+		}
+		// 到此即认定「机读面在场」—— 后面任何读不动都判**响亮失败**，✗ 不落回人面。
+		var count int
+		if err := json.Unmarshal(rawCount, &count); err != nil {
+			return []pgsStep{}, 0, true, "步表机读面（--list --json）的 `count` 读不出整数 ⇒ 不给结论"
+		}
+		var arr []map[string]json.RawMessage
+		if err := json.Unmarshal(rawSteps, &arr); err != nil {
+			return []pgsStep{}, 0, true, "步表机读面（--list --json）的 `steps` 读不出数组 ⇒ 不给结论"
+		}
+		steps := []pgsStep{}
+		for i, it := range arr {
+			nm, okN := pgsRawJSONStr(it["name"])
+			if !okN {
+				return []pgsStep{}, 0, true, fmt.Sprintf("步表机读面第 %d 条缺 `name` 格（或不是串）⇒ 不给结论", i+1)
+			}
+			sc, _ := pgsRawJSONStr(it["scope"])
+			md, _ := pgsRawJSONStr(it["mode"])
+			steps = append(steps, pgsStep{Scope: sc, Mode: md, Name: nm})
+		}
+		if count != len(steps) {
+			return steps, count, true, fmt.Sprintf("步表机读面计数自证不过：`count`=%d 但 `steps` 解出 %d 条 ⇒ 不许当绿", count, len(steps))
+		}
+		// ★ 缺口 `GAP-20261010-13`（本片）：机读面新增顶格 `gates_total` 的**自证** —— 与 `count`
+		//   同形（形状坏 ⇒ 响亮失败，✗ 不静默退回人面把读数当绿）。缺格 ⇒ 不判（向后兼容：旧机读面
+		//   /合成夹具没有这一格，行为与改前逐字相同）。
+		if rawGT, okGT := doc["gates_total"]; okGT {
+			var gt int
+			if err := json.Unmarshal(rawGT, &gt); err != nil {
+				return []pgsStep{}, 0, true, "步表机读面（--list --json）的 `gates_total` 读不出整数 ⇒ 不给结论"
+			}
+			if gt != len(steps) {
+				return steps, count, true, fmt.Sprintf("步表机读面自证不过：`gates_total`=%d 但 `steps` 解出 %d 条 ⇒ 不许当绿", gt, len(steps))
+			}
+		}
+		return steps, count, true, ""
+	}
+	return []pgsStep{}, 0, false, ""
+}
+
+// pgsListCmdMachineFace —— 现跑真源的**机读面 argv**：只在**默认真源**（`--list-cmd` 未覆盖）时，
+// 在末枚 `--list` 后接一枚 `--json` ⇒ `{"count":N,"steps":[…]}`（`precommit-gates.sh` 的 `--list` 机器面）。
+// ★ `--list-cmd` 被用户覆盖那条口子按**码点拆串**（py `list(<str>)` 的复刻 · 见件头声明②）⇒ 那不保证认
+// `--json`，故**不追加**（让现跑输出自然落回人面退化路 · 行为与改前逐字相同）。
+func pgsListCmdMachineFace(listCmd string) ([]string, bool) {
+	if listCmd != "" {
+		return pgsListCmdResolved(listCmd), false
+	}
+	return append(append([]string{}, pgsDefaultListCmd...), "--json"), true
+}
+
 func pgsTotalRepr(total int, hasTotal bool) string {
 	if !hasTotal {
 		return "None"
@@ -538,15 +633,35 @@ func pgsTotalOr0(total int, hasTotal bool) int {
 }
 
 // pgsLoadCurrent —— py L109 `load_current`。
+//
+// ★ GAP-20261005-30 残面（本片）：现状真源取数**先取机读面**（`--list --json` 的
+// `{"count":N,"steps":[…]}`），取不到才退化到人面 `parse_list`（抠「步骤清单」表头 + 「共 N 步」
+// 计数行）。机读面在场而形状坏/自证不过 ⇒ **响亮失败**（rc=2 文案），✗ 不许静默退回人面把读数当绿。
 func pgsLoadCurrent(root string, a *pgsArgs) ([]pgsStep, string, string) {
 	if a.listCache != "" {
 		data, err := os.ReadFile(a.listCache)
 		if err != nil {
 			return []pgsStep{}, "", "--list-cache 读不到：" + pgsOsError(err)
 		}
+		if steps, total, isM, perr := pgsParseListJSON(string(data)); isM {
+			if perr != "" {
+				return []pgsStep{}, "", perr
+			}
+			return steps, fmt.Sprintf("快照 `%s`（机读面：共 %d 步）", a.listCache, total), ""
+		}
 		steps, total, hasTotal, perr := pgsParseList(string(data))
 		src := fmt.Sprintf("快照 `%s`（共 %d 步）", a.listCache, pgsTotalOr0(total, hasTotal))
 		return steps, src, perr
+	}
+	if mcmd, ok := pgsListCmdMachineFace(a.listCmd); ok {
+		if mtext, mrerr := pgsRunListArgv(root, mcmd); mrerr == "" {
+			if steps, total, isM, perr := pgsParseListJSON(mtext); isM {
+				if perr != "" {
+					return []pgsStep{}, "", perr
+				}
+				return steps, fmt.Sprintf("现跑 `%s`（机读面：共 %d 步）", strings.Join(mcmd, " "), total), ""
+			}
+		}
 	}
 	text, rerr := pgsRunList(root, a.listCmd)
 	if rerr != "" {
@@ -1266,6 +1381,12 @@ func pgsSelfTest(stdout io.Writer) int {
 		got2 = steps[1]
 	}
 	want2 := pgsStep{Scope: "gates", Mode: "tri", Name: "门① 覆盖（阻断）"}
+	// ★ ② 冻结下限（棘轮 · 只许增/降）：`--list` 现读解出 4 步（取值＝当次现读基线）——
+	//   结构静默变小（解出的条数 < 此下限）⇒ 本格判红，✗ 不许静默绿。
+	const pgsListFloor = 4
+	if n := len(steps); n < pgsListFloor {
+		s.caseEq("① 三格逐条解对：步数 ≥ 冻结下限", false, strconv.Itoa(n), strconv.Itoa(pgsListFloor))
+	}
 	s.caseEq("① 三格逐条解对（含中文名里的空格）", len(steps) > 1 && got2 == want2,
 		pgsRStepDict(got2), pgsRStepDict(want2))
 	_, _, _, e3 := pgsParseList(strings.Replace(pgsFXList, "共 4 步", "共 5 步", 1))

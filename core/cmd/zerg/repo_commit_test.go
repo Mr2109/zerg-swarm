@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	zerg "github.com/Mr2109/zerg-swarm/core/cmd/zerg"
 )
@@ -52,6 +53,10 @@ func fakeGateRepo(t *testing.T, gateRC string) string {
 	// ★ 2026-09-29 随动：状态目录指到**仓外临时** —— `--allow-stale-gates` 的留痕（`commit_audit.jsonl`）
 	//   与任何审计不许落到真状态目录（真账/真审计一个字节不碰）。
 	t.Setenv("ZERG_STATE_DIR", t.TempDir())
+	// ★ 有界回收（缺口 GAP-20261001-58）：`repo commit` 的日志目录建在 `ZERG_TMP_ROOT`
+	//   （没设就是真 `os.TempDir()`）⇒ 夹具**必须**把它指到仓外临时根，否则本套用例会往真临时根落
+	//   `zerg-repo-commit-*`（且新加的清理面会在测试期间去扇真临时根）。同一旋钮也是 `osTempRoot()` 的注入缝。
+	t.Setenv("ZERG_TMP_ROOT", t.TempDir())
 	return root
 }
 
@@ -261,4 +266,50 @@ func mustGit(t *testing.T, root string, args ...string) string {
 		t.Fatalf("git %v：%v", args, err)
 	}
 	return string(out)
+}
+
+// TestRepoCommitPrunesStaleLogDirs — 缺口 `GAP-20261001-58`（提交面 · 有界回收）。
+//
+// `zerg-repo-commit-*` 日志目录是**输出契约的一部分**（`--json` 的 `log_dir` / `message_path`
+// 两格 + 失败面「复核 … --outdir <logDir>」）⇒ 本轮目录**不能**`defer os.RemoveAll`；改为**有界回收**：
+// 建新目录时清掉**过窗口**的旧目录。本用例：预置 ① 过窗口目录（48h 前）② 窗口内目录 ③ 前缀不符的目录
+// ⇒ 跑一次真提交 ⇒ **只有**①被清（②③一枚不动）。哑化关键分支（拿掉那行 prune 调用）⇒ 本用例必红。
+func TestRepoCommitPrunesStaleLogDirs(t *testing.T) {
+	tmp := t.TempDir()
+	root := fakeGateRepo(t, "0")
+	// 在 fakeGateRepo 之后钉：上一步也会给 `ZERG_TMP_ROOT` 一个临时根，这里覆盖成本用例指定的那一个。
+	t.Setenv("ZERG_TMP_ROOT", tmp)
+	if err := os.WriteFile(filepath.Join(root, "p.txt"), []byte("p\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mk := func(name string, age time.Duration) string {
+		p := filepath.Join(tmp, name)
+		if err := os.MkdirAll(p, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		ts := time.Now().Add(-age)
+		if err := os.Chtimes(p, ts, ts); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	stale := mk("zerg-repo-commit-20200101-000000.000000000-OLD", 48*time.Hour)
+	inWindow := mk("zerg-repo-commit-20990101-000000.000000000-FRESH", 0)
+	notOurs := mk("zerg-gate-bench-not-ours", 48*time.Hour)
+
+	var out, errb strings.Builder
+	rc := zerg.RunForTest([]string{"repo", "commit", "--message", "题", "--file", "p.txt",
+		"--allow-stale-gates", "合成仓夹具：本测试只管清理面，门新鲜度闸另件判", "--yes"}, &out, &errb)
+	if rc != 0 {
+		t.Fatalf("快速档 rc=0 ⇒ 提交应落地，实测 rc=%d · stderr=%s", rc, errb.String())
+	}
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Errorf("过窗口的 zerg-repo-commit-* 目录应被回收，实测仍在：%v", err)
+	}
+	if _, err := os.Stat(inWindow); err != nil {
+		t.Errorf("窗口内的目录不许被动：%v", err)
+	}
+	if _, err := os.Stat(notOurs); err != nil {
+		t.Errorf("前缀不符的目录不许被动（只动 zerg-repo-commit-*）：%v", err)
+	}
 }
