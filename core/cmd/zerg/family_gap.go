@@ -433,6 +433,13 @@ func gapJudgeUnknownFlag(fields []string) string {
 	if inv == nil {
 		return ""
 	}
+	// ★ 本批（批A · P1 丙）：unknown 闸**尊重透传豁免** —— 与正门 dispatch 同一条判据
+	//   （`main.go:445 && !cmd.passthrough`；`gate check` 节点 `main.go:939 passthrough:true`）。
+	//   原行为：透传命令的子件旗标（如 `--check` / `--baseline`）被误判「未知旗标」而拒收。
+	//   ✗ 不放宽其它面：仅当**命令树节点自称透传**时短路。
+	if cmd, _ := resolve(fields); cmd != nil && cmd.passthrough {
+		return ""
+	}
 	for _, u := range inv.unknown {
 		if strings.HasPrefix(u, "--") {
 			return u
@@ -516,6 +523,12 @@ func gapWriteFaceWhy(cmdStr string) string {
 	// （`new --title list`）不会被误放；未声明只读的动作（`new` / `revise` / `--retract` …）照旧拦
 	// （fail-closed 一字不松：判据拿不准 ⇒ 仍退 8）。
 	if len(rest) > 0 && gapDangerReadOnlyActions(cmd.danger.Effect)[rest[0]] {
+		return ""
+	}
+	// ★ 本批（批A · P1 乙）：`gate check <判据名>` 若命中**中央分类表**的只读档 ⇒ 判据本体零副作用
+	//   ⇒ 当「可跑」放行（✗ 不放宽写档：`cls=="read"` 才真）。共口见 `gateCheckReadJudgeEscape`
+	//   （`family_gate_check.go:554` 旁 · 读同一张表 `gate_inproc_table.go:221`）。
+	if gateCheckReadJudgeEscape(cmd.path, rest) {
 		return ""
 	}
 	return fmt.Sprintf("判据 %q 落在**写面**（危险档 %s · 它会动：%s）且没带 `--dry-run` —— "+

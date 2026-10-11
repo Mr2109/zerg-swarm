@@ -553,6 +553,24 @@ func gateCheckClassOf(name string) (cls, lvl string) {
 	return "read", ""
 }
 
+// gateCheckReadJudgeEscape —— 【批A · P1 丁】判据链的**公共小口**：`gate check <判据名>` 且该名在
+// 中央分类表里是**只读档** ⇒ 真「零副作用」（判据件本体只读）⇒ 三处判据链（`gapWriteFaceWhy` /
+// `criterionRunnable` / `gapRereadWhy`）都据此放行；✗ 不放宽写档、✗ 不认其它命令。
+// ★ 中央表只有 write 登项（`gate_inproc_table.go:221`）⇒ 未登的只读判据名返 `("read","")`，
+//
+//	故判据写作 `cls == "read"`（✗ 别写 `ok && Class=="read"` —— 那会恒假）。
+//
+// ★ 窄面：`path` 必须逐字是 `gate check`（两段）——负控 `dev_proposal_test.go:143-148` 钉着
+//
+//	「任何危险档当判据 ⇒ rc=2 且点名『危险档』」，放宽成「闸一律放行」它立刻红。
+func gateCheckReadJudgeEscape(path, rest []string) bool {
+	if strings.Join(path, " ") != "gate check" || len(rest) == 0 {
+		return false
+	}
+	cls, _ := gateCheckClassOf(rest[0])
+	return cls == "read"
+}
+
 // gateCheckRebuildDirRel —— 「构建/发布入口」目录（相对仓根 · **逐段**给）—— **重编类属性真源之一**。
 // ✗ 不是名字名单、✗ 不是点名豁免表：门80 明令壳件里不许出现按名名单 / 写死名件路径；这里判的是
 // **目录角色** —— 凡落在这个入口目录下的件，跑它就是在真跑重编/发布。逐段给（✗ 不写真值串）。
@@ -798,6 +816,21 @@ func gateCheckStripShellFlags(rest []string) []string {
 			continue
 		}
 		out = append(out, a)
+	}
+	return out
+}
+
+// gateCheckStripReadDryRun —— 【批A · P1 甲】只读档（read）的壳侧消费：把 `--dry-run` 从尾参剔出。
+//
+//	§口径（`core/internal/contract/dryrun-semantics.json:858` 逐字「`--yes`/`--dry-run` **壳级消费·✗ 不透传**」）
+//	—— 现行只读档把 `--dry-run` 原样透传给子件 ⇒ 子件自拒 rc=2「未知参数」= **违该口径**。
+//	✗ 只剔 `--dry-run`：`--yes` / `--confirm*` 不动（写档仍走既有 shield 闸）。
+func gateCheckStripReadDryRun(rest []string) []string {
+	out := make([]string, 0, len(rest))
+	for _, a := range rest {
+		if a != "--dry-run" {
+			out = append(out, a)
+		}
 	}
 	return out
 }
@@ -1168,6 +1201,13 @@ func gateCheck(inv *invocation, stdout, stderr io.Writer, root string) int {
 		}
 		// ⑥ 过闸：**壳级确认旗标不落给子件**（剔掉 --yes/--dry-run/--confirm*）。
 		rest = gateCheckStripShellFlags(rest)
+	}
+
+	// ★ 本批（批A · P1 甲）：**只读档**同样在壳侧消费 `--dry-run`（✗ 不透传给子件）。
+	//   现行为：read 档不剔 ⇒ 子件收 `--dry-run` 自拒 rc=2「未知参数」（违口径：
+	//   `dryrun-semantics.json:858`「壳级消费·✗ 不透传」）。写/重编/整套门档已在上方 shield 块消费。
+	if !shield {
+		rest = gateCheckStripReadDryRun(rest)
 	}
 
 	// M1-09 · 取件级锁 ＋ 槽池槽位（调现成的 judge-lock.py · 单件不拿全表锁）。
