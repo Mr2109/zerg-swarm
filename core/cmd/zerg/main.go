@@ -72,6 +72,7 @@ func main() {
 		} else {
 			fmt.Fprintf(os.Stderr, "%s: %s —— **只退订、不取消**（在跑的任务/脚本不受影响；要取消给 --cancel-on-interrupt）\n", progName, what)
 		}
+		removeActiveMaterialized()
 		os.Exit(exitInterrupted)
 	}()
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))

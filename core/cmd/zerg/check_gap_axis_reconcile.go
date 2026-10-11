@@ -142,6 +142,8 @@ var gapAxisRecExemptExistence = []gapAxisRecExemptPair{
 	{gid: "GAP-20261009-03", unit: "scripts/evals/compare-wall-argv.py"},
 	// 第二批收口·退役随动（2026-10-09 · 本单）：chat-harness.py 已登记退场（`retire_ledger` 在账 · Go 半 core/cmd/zerg/eval_chat_harness.go 在盘且入口已接线）⇒ 该仍缺行（GAP-20261009-04 · 命令面 eval run chat-harness）unit 失指，入存量豁免（本表只增不删）。py 在盘时本对不生效（`ls-files` 命中即 continue）。
 	{gid: "GAP-20261009-04", unit: "scripts/evals/chat-harness.py"},
+	// py 退场随动（2026-10-12 · 本单）：check-doc-name.py 已退役（Go 半 core/cmd/zerg/check_doc_name.go 在盘）⇒ 该仍缺行（GAP-20260927-63 · 经用户拍板由「已解」改回「仍缺」）unit 失指，入存量豁免（只打印 · 不进退码）。
+	{gid: "GAP-20260927-63", unit: "scripts/gates/check-doc-name.py"},
 }
 
 // gapAxisRecWUClosed —— 无件桶名闭集 = 裸 `无件` + `无件(<面>)`（面 ∈ 面闭集）

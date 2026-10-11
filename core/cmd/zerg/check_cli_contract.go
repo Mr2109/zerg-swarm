@@ -1078,18 +1078,22 @@ func clicLiveVerifyBin(root string, matrixPath *string, binPath string) (int, []
 		wantBytesV, _ := clicMapGet(c, "want_stdout_bytes")
 		wantRc, _ := clicPyInt(wantRcV)
 		wantBytes, _ := clicPyInt(wantBytesV)
-		if rc1 == rc2 && b1 == b2 && wantRcV != nil && wantBytesV != nil && rc1 == wantRc && b1 == wantBytes {
+		// ★ 2026-10-12（缺口 `GAP-20261012-05`）：与判定口（`cli_matrix_test.go` 的 `judgeCase`）**同规** ——
+		//   标了 `stdout_bytes_unpinned` 的格**只钉 rc、不钉字节**：时点变的 stdout 既冻不成常量，
+		//   同一 argv **两次现跑本就不同** ⇒ 字节两比（`b1==b2` 与 `b1==wantBytes`）**都要跳**（只留 rc）。
+		unpinned := clicTruthy(clicMapGetOr(c, "stdout_bytes_unpinned", nil))
+		if rc1 == rc2 && wantRcV != nil && rc1 == wantRc && (unpinned || (wantBytesV != nil && b1 == b2 && b1 == wantBytes)) {
 			matched++
 			continue
 		}
 		var how []string
-		if rc1 != rc2 || b1 != b2 {
+		if rc1 != rc2 || (!unpinned && b1 != b2) {
 			how = append(how, fmt.Sprintf("两次现跑不等（%d/%d 字节 vs %d/%d 字节）", rc1, b1, rc2, b2))
 		}
 		if rc1 != wantRc {
 			how = append(how, fmt.Sprintf("退码 %d ≠ 账上 %s", rc1, clicPyRepr(wantRcV)))
 		}
-		if b1 != wantBytes {
+		if !unpinned && b1 != wantBytes {
 			how = append(how, fmt.Sprintf("stdout %d 字节 ≠ 账上 %s 字节", b1, clicPyRepr(wantBytesV)))
 		}
 		badLines = append(badLines, fmt.Sprintf("R-6 幽灵格/多余格：%s ⇒ argv=%s · %s",

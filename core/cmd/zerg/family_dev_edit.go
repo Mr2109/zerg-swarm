@@ -600,7 +600,8 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 	//    ② 三行**只在受影响项 ≥1 时**打；④ 批准件判据逐字未变（下面那条闸与 ③-a 一字未动）。
 	if inv.dryRun || !(inv.confirmGiven && inv.yes) {
 		// `A4`：钩子分档（纯判据 + 只读取数 —— 不写任何东西）。判据与取数在 `family_impact_hook.go`。
-		hook := impactHookOf(root, fileRel, before, after)
+		// ★ `GAP-20261001-77`（丙案）：把提案的退点件（`--rollback`）喂进钩子 —— 找回路径多一条。
+		hook := impactHookOf(root, fileRel, before, after, prop.Rollback)
 		summary := impactDryRunSummaryOf(root, fileRel, beforeMissing)
 		if summary.Taken {
 			row["impact_digest"] = impactDigestOf(summary.Text)

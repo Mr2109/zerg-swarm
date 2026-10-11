@@ -266,3 +266,49 @@ func TestCwgDefaultRootIsRepoRoot(t *testing.T) {
 		}
 	}
 }
+
+// ⑨ --emit：现读生成写工具台账（只收 class==write）· 三态 ＋ 成对负控 ＋ `--dry-run` 零副作用。
+func TestCwgEmit(t *testing.T) {
+	fx := t.TempDir()
+	cwgTmpWrite(t, filepath.Join(fx, "scripts/gates/demo.sh"), "OLD\n")
+	cwgTmpWrite(t, filepath.Join(fx, "scripts/dev/w.sh"),
+		"#!/usr/bin/env bash\n#zerg-class: write D2\nbash scripts/dev/atomic-write.sh --target scripts/gates/demo.sh\n")
+	if rc, _, errs := cwgRun("--root", fx, "--emit"); rc != 0 {
+		t.Fatalf("--emit rc=%d want 0; stderr=%q", rc, errs)
+	}
+	lp := filepath.Join(fx, "scripts/gates/gate-check-write-tools.json")
+	raw, err := os.ReadFile(lp)
+	if err != nil {
+		t.Fatalf("--emit 未落台账：%v", err)
+	}
+	for _, want := range []string{
+		`"schema": "gate-check-write-tools/1"`,
+		`"generated_by": "zerg gate check check-writer-guard --emit"`,
+		`"count": 1`, `"file": "scripts/dev/w.sh"`, `"class": "write"`,
+	} {
+		if !strings.Contains(string(raw), want) {
+			t.Fatalf("台账缺 %q:\n%s", want, string(raw))
+		}
+	}
+	// 负控①：声明改 read ⇒ items 空（只收 class==write）。
+	fx2 := t.TempDir()
+	cwgTmpWrite(t, filepath.Join(fx2, "scripts/dev/r.sh"), "#!/usr/bin/env bash\n#zerg-class: read D0\necho hi\n")
+	cwgRun("--root", fx2, "--emit")
+	b2, _ := os.ReadFile(filepath.Join(fx2, "scripts/gates/gate-check-write-tools.json"))
+	if !strings.Contains(string(b2), `"count": 0`) || strings.Contains(string(b2), "r.sh") {
+		t.Fatalf("负控① 应 items 空:\n%s", string(b2))
+	}
+	// 负控②：`--emit --dry-run` ⇒ rc=0 只印不写（台账字节不变）。
+	before, _ := os.ReadFile(lp)
+	if rc, _, errs := cwgRun("--root", fx, "--emit", "--dry-run"); rc != 0 {
+		t.Fatalf("--dry-run rc=%d want 0; stderr=%q", rc, errs)
+	}
+	after, _ := os.ReadFile(lp)
+	if string(before) != string(after) {
+		t.Fatalf("--dry-run 改动了台账（不许写）")
+	}
+	// 负控③：`--dry-run` 单给（无 --emit）⇒ rc=2 用法错。
+	if rc, _, errs := cwgRun("--root", fx, "--dry-run"); rc != 2 || !strings.Contains(errs, "--dry-run` 只与 `--emit` 同用") {
+		t.Fatalf("负控③ rc=%d want 2; stderr=%q", rc, errs)
+	}
+}

@@ -1245,6 +1245,20 @@
    "语义": "dryrun.v1",
    "零副作用判据": "现读为：本件第 52 行路由清单里 `{Name:\"forget_machine\", Desc:\"…（干跑 dry_run=true 只报计划；真删需 confirm=true；不在册再删幂等）\", Method:\"POST\", Path:\"/api/fleet/forget\"}`——本件是**只读路由登记表**，只**复述**干跑口径，不实现干跑、不 exec、不写盘。",
    "备注": "登记依据 = 门⑩ `R1 未登记件`（现读命中即红）：`dry_run` 字样只出现在路由清单的 `Desc` 文本里，属既有 `dryrun.v1` 一套语义，**不是第五套语义**。"
+  },
+  {
+   "file": "core/cmd/zerg/check_writer_guard.go",
+   "类": "命令面判据门（Go 真搬 · py 同源）：本件 `--emit` 的干跑档 —— 只出计划件 · **不写**台账",
+   "语义": "dryrun.v1",
+   "零副作用判据": "`zerg gate check check-writer-guard --emit --dry-run` ⇒ 退码 0 · 只把计划件印到 stdout（一行「计划（--dry-run · 零副作用 · 未写任何文件）：将生成写工具台账 <落点> · items N 条」＋台账全文）· **不建目录、不写台账**（现跑对拍：跑前跑后 `<落点>`（缺省 `scripts/gates/gate-check-write-tools.json`）的 `sha256` 逐字不变）· 成对负控 = 不带 `--dry-run` 的 `--emit` 跑完该件 `sha256` 必变。",
+   "备注": "登记依据 = 门⑩ `R1 未登记件`（现读命中即红）：本件现读 6 处命中（usage 的 `[--dry-run]` · 说明行 · 计划件正文 · `case a == \"--dry-run\":` · 未知旗标串 · 同用校验）—— 属既有 `dryrun.v1` 一套语义的 `--emit` 干跑档，**不是第五套语义**。"
+  },
+  {
+   "file": "core/cmd/zerg/check_writer_guard_test.go",
+   "类": "面判据件（成对负控）：`TestCwgEmit` 的 `--emit --dry-run` 那一档（只印不写）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "本件 `TestCwgEmit` 成对负控：`cwgRun(\"--root\", fx, \"--emit\", \"--dry-run\")` ⇒ rc=0 且跑前跑后台账 `os.ReadFile(lp)` 字节逐字不变（sha 逐字同）；同档另验 `--dry-run` 单给（无 `--emit`）⇒ rc=2 用法错。",
+   "备注": "登记依据 = 门⑩ `R1 未登记件`（现读命中即红）：本件现读 7 处命中 —— 只出现在被断言的干跑档里，属既有 `dryrun.v1` 一套语义，**不是第五套语义**。"
   }
 
  ]

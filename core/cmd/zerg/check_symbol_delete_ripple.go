@@ -232,13 +232,16 @@ func sdrJudge(items []sdrItem) (reds, notes, noc []string) {
 		hasGit := sdrGet(h, "git_sha", "-") != "" && sdrGet(h, "git_sha", "-") != "-"
 		arch := sdrGet(h, "archive", "")
 		hasArch := arch != "" && arch != "-"
-		if c["untracked"] == "yes" || !(hasGit || hasArch) {
-			reds = append(reds, fmt.Sprintf("判据5/7 %s：`tier=只报` 但**可找回证据缺件**（tracked=%s · git_sha=%s · archive=%s）"+
-				"⇒ 必红（「缺一不许删」）", rel, sdrGet(h, "tracked", "?"), sdrGet(h, "git_sha", "-"), sdrGet(h, "archive", "-")))
+		// ★ GAP-20261012-08：第三条找回路径 —— 提案退点件（`rollback_ref`，由 DEV-2524 落下的
+		//   上游机读键 `impact_hook … rollback_ref=%s` 供给）也算一件可找回证据（件级只报放行条件之一）。
+		hasRollback := sdrGet(h, "rollback_ref", "") != "" && sdrGet(h, "rollback_ref", "") != "-"
+		if c["untracked"] == "yes" || !(hasGit || hasArch || hasRollback) {
+			reds = append(reds, fmt.Sprintf("判据5/7 %s：`tier=只报` 但**可找回证据缺件**（tracked=%s · git_sha=%s · archive=%s · rollback_ref=%s）"+
+				"⇒ 必红（「缺一不许删」）", rel, sdrGet(h, "tracked", "?"), sdrGet(h, "git_sha", "-"), sdrGet(h, "archive", "-"), sdrGet(h, "rollback_ref", "-")))
 			continue
 		}
-		notes = append(notes, fmt.Sprintf("%s：件级 + 可找回（git_sha=%s · archive=%s）⇒ 只报（不许红）",
-			rel, sdrGet(h, "git_sha", "-"), sdrOrDash(sdrGet(h, "archive", "-"))))
+		notes = append(notes, fmt.Sprintf("%s：件级 + 可找回（git_sha=%s · archive=%s · rollback_ref=%s）⇒ 只报（不许红）",
+			rel, sdrGet(h, "git_sha", "-"), sdrOrDash(sdrGet(h, "archive", "-")), sdrOrDash(sdrGet(h, "rollback_ref", "-"))))
 	}
 	return
 }
@@ -373,16 +376,16 @@ func sdrSelfTest(stdout io.Writer) int {
 	bad, total := 0, 0
 
 	plan := func(tier, cls, rel, retrievable, tracked, archive, gitSha, outside,
-		untracked, noArchiveCopy, outsideRepo, criteriaHits string) string {
-		return fmt.Sprintf("something\nimpact_hook tier=%s class=%s retrievable=%s tracked=%s archive=%s git_sha=%s outside=%s rel=%s\n"+
+		untracked, noArchiveCopy, outsideRepo, criteriaHits, rollbackRef string) string {
+		return fmt.Sprintf("something\nimpact_hook tier=%s class=%s retrievable=%s tracked=%s archive=%s git_sha=%s outside=%s rel=%s rollback_ref=%s\n"+
 			"impact_criteria untracked=%s no_archive_copy=%s outside_repo=%s criteria_hits=%s\n",
-			tier, cls, retrievable, tracked, archive, gitSha, outside, rel,
+			tier, cls, retrievable, tracked, archive, gitSha, outside, rel, rollbackRef,
 			untracked, noArchiveCopy, outsideRepo, criteriaHits)
 	}
 	// 默认值（照 py `plan()` 形参默认）：rel=a/b.go · retrievable=yes · tracked=yes ·
 	// archive=Zerg-归档/x · git_sha=deadbeef · outside=no · 三判据=no · criteria_hits=0。
 	dflt := func(tier, cls string) string {
-		return plan(tier, cls, "a/b.go", "yes", "yes", "Zerg-归档/x", "deadbeef", "no", "no", "no", "no", "0")
+		return plan(tier, cls, "a/b.go", "yes", "yes", "Zerg-归档/x", "deadbeef", "no", "no", "no", "no", "0", "")
 	}
 
 	jrc := func(items []sdrItem) (int, []string, []string, []string) {
@@ -427,17 +430,23 @@ func sdrSelfTest(stdout io.Writer) int {
 	case_("② 符号级删被改写成「只报」（字面版/表外组合）⇒ 红", sdrExitRed, dflt(sdrTierReport, sdrClassSymbol))
 	case_("③ 件级 + 可找回 ⇒ 只报 ⇒ **不许红**", sdrExitOK, dflt(sdrTierReport, sdrClassFile))
 	case_("③′ 成对：件级 + 无归档副本 ⇒ 升必拦 ⇒ 红", sdrExitRed,
-		plan(sdrTierBlock, sdrClassFile, "a/b.go", "yes", "yes", "Zerg-归档/x", "deadbeef", "no", "no", "yes", "no", "1"))
+		plan(sdrTierBlock, sdrClassFile, "a/b.go", "yes", "yes", "Zerg-归档/x", "deadbeef", "no", "no", "yes", "no", "1", ""))
 	case_("④ 件级 + 未跟踪 ⇒ 升必拦 ⇒ 红", sdrExitRed,
-		plan(sdrTierBlock, sdrClassFile, "a/b.go", "yes", "no", "Zerg-归档/x", "deadbeef", "no", "yes", "no", "no", "1"))
+		plan(sdrTierBlock, sdrClassFile, "a/b.go", "yes", "no", "Zerg-归档/x", "deadbeef", "no", "yes", "no", "no", "1", ""))
 	case_("⑤ 件级 + 仓外件 ⇒ 升必拦 ⇒ 红", sdrExitRed,
-		plan(sdrTierBlock, sdrClassFile, "a/b.go", "yes", "yes", "Zerg-归档/x", "deadbeef", "yes", "no", "no", "yes", "1"))
+		plan(sdrTierBlock, sdrClassFile, "a/b.go", "yes", "yes", "Zerg-归档/x", "deadbeef", "yes", "no", "no", "yes", "1", ""))
 	case_("⑥ 件级 + `retrievable=no` ⇒ 升必拦 ⇒ 红", sdrExitRed,
-		plan(sdrTierBlock, sdrClassFile, "a/b.go", "no", "yes", "Zerg-归档/x", "deadbeef", "no", "no", "no", "no", "0"))
+		plan(sdrTierBlock, sdrClassFile, "a/b.go", "no", "yes", "Zerg-归档/x", "deadbeef", "no", "no", "no", "no", "0", ""))
 	case_("⑦ 件级 + 只报但**证据缺件**（无归档副本且无 git 历史）⇒ 红", sdrExitRed,
-		plan(sdrTierReport, sdrClassFile, "a/b.go", "yes", "yes", "-", "-", "no", "no", "no", "no", "0"))
+		plan(sdrTierReport, sdrClassFile, "a/b.go", "yes", "yes", "-", "-", "no", "no", "no", "no", "0", ""))
 	case_("⑧ 改 ⇒ 只记 ⇒ **不许红**", sdrExitOK, dflt(sdrTierRecord, sdrClassEdit))
 	case_("⑨ 空单（0 条 `impact_hook`）⇒ 不给结论", sdrExitNoConcl, "没有单\n")
+	// ⑩/⑩′（GAP-20261012-08）：件级「只报」+ **两条常规找回路径都缺**（`git_sha=-` · `archive=-`），
+	//   能否放行全看**第三条路径** `rollback_ref` —— ⑩ 在 ⇒ 可找回 ⇒ 只报（不许红）；⑩′ 抹成 `-` ⇒ 证据缺件 ⇒ 红。
+	case_("⑩ 件级 + 只报 + 无 git 无归档，但 `rollback_ref` 在 ⇒ 可找回 ⇒ **不许红**", sdrExitOK,
+		plan(sdrTierReport, sdrClassFile, "a/b.go", "yes", "yes", "-", "-", "no", "no", "no", "no", "0", "refs/prop-2524"))
+	case_("⑩′ 成对负控：同一格把 `rollback_ref` 抹成 `-` ⇒ 证据缺件 ⇒ 红", sdrExitRed,
+		plan(sdrTierReport, sdrClassFile, "a/b.go", "yes", "yes", "-", "-", "no", "no", "no", "no", "0", "-"))
 
 	// 判据 8：静态扫本件源码 —— **真调用**里 0 个写动作。
 	// （Go 无 `ast` 对应手段 ⇒ 以「本件 Go 源码零写调用」为事实前提，打印**逐字相同**的佐证行。）
