@@ -585,7 +585,7 @@
    "file": "core/cmd/zerg/check_help_shape.go",
    "类": "判据面：字样引用（不是干跑语义站点 —— `--dry-run` 在本件只作被检文本里的旗标名字面出现：危险档行形状正则、夹具危险行、冻结表尾文本；本件没有 `--dry-run` 档）",
    "语义": "dryrun.v1",
-   "零副作用判据": "本件默认只读：取数只跑 `bin/zerg help --all`/`help`/`help dangerous`/`help config` 四个只读档 ＋ 只读矩阵件 `core/cmd/zerg/testdata/cli-matrix.json`；不写盘/不删/不推/不 exec 除四面 help 外的任何命令。`--self-test` 是纯内存合成夹具（23 格）；`--emit-baseline` 只 print 常量新值，不写盘。",
+   "零副作用判据": "本件默认只读：取数只跑 `bin/zerg help --all`/`help`/`help dangerous`/`help config` 四个只读档 ＋ 只读矩阵件 `core/cmd/zerg/testdata/cli-matrix.json`；不写盘/不删/不推/不 exec 除四面 help 外的任何命令。`--self-test` 是纯内存合成夹具（24 格）；`--emit-baseline` 只 print 常量新值，不写盘。",
    "备注": "登记依据 = 门⑩ R1 未登记件：命中处全是 `help dangerous` 文本里的旗标名字面，同一套语义的引用侧，不另立语义。"
   },
   {

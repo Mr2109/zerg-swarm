@@ -418,8 +418,34 @@ func gsaAnyCmd(s []rune) bool {
 func gsaAnyRC(s []rune) bool   { return gsaRC1(s) || gsaRC2(s) || gsaRC3(s) || gsaRC4(s) }
 func gsaAnyRead(s []rune) bool { return gsaRead1(s) || gsaRead2(s) || gsaRead3(s) }
 
+// gsaHasStructuredTwoState —— **结构化两态段**识别（缺口 `GAP-20261010-34` 的机检口径）。
+//
+//	形态 = 以 ` · ` 切出的 ≥3 格里同时有非空 `cmd=` 与 `rc=` 格，另有 `reading=`（或 `读数=`）格。
+//	★ 有结构化段 ⇒ R1 的「命令/退码/读数」三项一律视为齐（先升结构化字段、再判红）；
+//	✗ 不再对自由文本猜 token —— 那是 R1 假阳约 79% 的来处。
+func gsaHasStructuredTwoState(ev string) bool {
+	parts := strings.Split(ev, " · ")
+	if len(parts) < 3 {
+		return false
+	}
+	cellHas := func(pre string) bool {
+		for _, p := range parts {
+			p = pyStrip(p)
+			if strings.HasPrefix(p, pre) && strings.TrimSpace(p[len(pre):]) != "" {
+				return true
+			}
+		}
+		return false
+	}
+	return cellHas("cmd=") && cellHas("rc=") && (cellHas("reading=") || cellHas("读数="))
+}
+
 // gsaEvidenceMissing —— py `evidence_missing(ev)`：缺项名清单（命令/退码/读数）。
+// ★ 本版放宽（缺口 `GAP-20261012-04` · R1 假阳）：结构化两态段在 ⇒ 三项视为齐（其余档逐字不变）。
 func gsaEvidenceMissing(ev string) []string {
+	if gsaHasStructuredTwoState(ev) {
+		return []string{}
+	}
 	miss := []string{}
 	s := []rune(ev)
 	if !gsaAnyCmd(s) {
@@ -850,9 +876,14 @@ func gsaJudge(rows []map[string]any, repoRoot, cutoff string) (int, []gsaRed, []
 			vn := gsaVisibleNotes(r)
 			if len(vn) > 0 && strings.Contains(vn[len(vn)-1], "仍缺") {
 				tail := gsaLastRunes(vn[len(vn)-1], 120)
-				reds = append(reds, gsaRed{"R3",
-					fmt.Sprintf("%s【%s】可见 notes 末条含「仍缺」⇒ 同条自相矛盾", rid, st),
-					gsaObj{{"tail", tail}}})
+				// ★ 2026-10-12（缺口 `GAP-20261012-04`）：与 R1/R5 同规 —— **新增**判红、**存量**只报告。
+				//   （存量那批属「账内旧注未收尾」，治法在账侧补收尾 note / 改 state，✗ 不该由判据件恒红承接。）
+				msg := fmt.Sprintf("%s【%s】可见 notes 末条含「仍缺」⇒ 同条自相矛盾", rid, st)
+				if gsaRowIsNew(r, cutoff) {
+					reds = append(reds, gsaRed{"R3", msg, gsaObj{{"tail", tail}}})
+				} else {
+					reports = append(reports, gsaRed{"R3", msg + "（存量 ⇒ 只报告）", gsaObj{{"tail", tail}}})
+				}
 			}
 		}
 		// R5
@@ -1050,7 +1081,7 @@ func gsaListRules(stdout io.Writer, cutoff string) {
 	fmt.Fprintf(stdout, "  新增分界 : found_at >= %s ⇒ 新增（缺证据判红）\n", cutoff)
 	fmt.Fprintf(stdout, "  R1 三标记: 命令(CMD_PATS %d 条) · 退码(RC_PATS %d 条) · 读数(READ_PATS %d 条)\n", 5, 4, 3)
 	fmt.Fprintln(stdout, "  R2 只报告: 开态条 unit 是仓内路径形态 ⇒ 判「在盘 / 已挂门」并提醒，**不改 state**")
-	fmt.Fprintln(stdout, "  R3 判红  : 闭态条可见 notes 末条含「仍缺」⇒ rc=1")
+	fmt.Fprintln(stdout, "  R3 判红  : 闭态条可见 notes 末条含「仍缺」⇒ 新增判 rc=1 · 存量只报告（与 R1/R5 同规）")
 	fmt.Fprintln(stdout, "  R4 不给结论: 真源两次读指纹不一致 / --expect-* 不符 ⇒ rc=2")
 	fmt.Fprintln(stdout, "  R5 判红  : solved_evidence 点名的仓内相对路径必须现读在盘；不在盘且为「新增」⇒ rc=1")
 	fmt.Fprintln(stdout, "  R5 形态  : 含 `/` · 非 URL · 非绝对 · 无 `...` · 首段属仓根现有顶层条目（⇒ 属本仓）")
@@ -1091,9 +1122,9 @@ func gsaRunHuman(stdout io.Writer, rc int, fp1 string, ln1, nrows int, path, rep
 	}
 	fmt.Fprintf(stdout, "  R2  : 只报告 %d 条（点名件在盘/已挂门 · 不改 state）\n", gsaCountRule(reports, "R2"))
 	if n := gsaCountRule(reds, "R3"); n > 0 {
-		fmt.Fprintf(stdout, "  R3  : 判红 %d 条\n", n)
+		fmt.Fprintf(stdout, "  R3  : 判红 %d 条（新增）｜存量只报告 %d 条\n", n, gsaCountRule(reports, "R3"))
 	} else {
-		fmt.Fprintln(stdout, "  R3  : 过")
+		fmt.Fprintf(stdout, "  R3  : 过（存量只报告 %d 条）\n", gsaCountRule(reports, "R3"))
 	}
 	fmt.Fprintf(stdout, "  R4  : 过（两次读 %s/%d 一致）\n", fp1[:12], ln1)
 	r5r := gsaCountRule(reds, "R5")

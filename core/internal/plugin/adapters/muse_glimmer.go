@@ -161,19 +161,18 @@ func (a *MuseGlimmerAdapter) Execute(input plugin.PluginInput) (plugin.PluginOut
 	}
 	return plugin.PluginOutput{
 		Result: map[string]any{
-			"model":              museGlimmerName,
-			"max_tokens":         a.config.MaxTokens,
-			"ctx_window":         a.config.CtxWindow,
-			"temperature":        a.config.Temperature,
-			"top_p":              a.config.TopP,
-			"top_k":              a.config.TopK,
-			"min_p":              a.config.MinP,
-			"timeout_sec":        a.config.TimeoutSec,
-			"reasoning_effort":   a.config.ReasoningEffort,
-			"reasoning_fallback": true,                // content空时用reasoning_content兜底
-			"multimodal":         a.config.Multimodal, // 原生多模态（ViT-G/14）
-			"tool_support":       true,                // 结构化函数调用强
-			"judge_capable":      true,                // LLM-as-a-judge
+			"model":            museGlimmerName,
+			"max_tokens":       a.config.MaxTokens,
+			"ctx_window":       a.config.CtxWindow,
+			"temperature":      a.config.Temperature,
+			"top_p":            a.config.TopP,
+			"top_k":            a.config.TopK,
+			"min_p":            a.config.MinP,
+			"timeout_sec":      a.config.TimeoutSec,
+			"reasoning_effort": a.config.ReasoningEffort,
+			"multimodal":       a.config.Multimodal, // 原生多模态（ViT-G/14）
+			"tool_support":     true,                // 结构化函数调用强
+			"judge_capable":    true,                // LLM-as-a-judge
 		},
 	}, nil
 }

@@ -123,7 +123,8 @@ func TestCnfFaces_正控与负控成对(t *testing.T) {
 	t.Run("⑪负控_面⑩门69取数面判红", func(t *testing.T) {
 		d := t.TempDir()
 		cnfMiniRoot(d, true, true, false, "zerg nu", nil)
-		cnfWrite(cnfPyJoin(d, cnfHelpShapeRel), cnfSelfHelpShapeStub)
+		cnfWrite(cnfPyJoin(d, cnfHelpShapeRel), cnfSelfProbeBody)
+		cnfProbeEntry[cnfHelpShapeRel] = cnfSelfHelpShapeStub
 		rc, out, _ := cnfT(t, d)
 		if rc != 1 || !strings.Contains(out, "面⑩ 门69 help 面冻结常量（BASELINE 六格 · 现读对拍）：缺") {
 			t.Fatalf("期望 rc=1 且点名面⑩ 缺 实得 rc=%d\n%s", rc, out)
@@ -133,8 +134,10 @@ func TestCnfFaces_正控与负控成对(t *testing.T) {
 	t.Run("⑫正控半边_面⑩⑪取数面判绿", func(t *testing.T) {
 		d := t.TempDir()
 		cnfMiniRoot(d, true, true, false, "zerg nu", nil)
-		cnfWrite(cnfPyJoin(d, cnfHelpShapeRel), cnfSelfHelpShapeOK)
-		cnfWrite(cnfPyJoin(d, cnfCpfcRel), cnfSelfCpfcCountsOK)
+		cnfWrite(cnfPyJoin(d, cnfHelpShapeRel), cnfSelfProbeBody)
+		cnfWrite(cnfPyJoin(d, cnfCpfcRel), cnfSelfProbeBody)
+		cnfProbeEntry[cnfHelpShapeRel] = cnfSelfHelpShapeOK
+		cnfProbeEntry[cnfCpfcRel] = cnfSelfCpfcCountsOK
 		rc, out, _ := cnfT(t, d)
 		if rc != 0 || !strings.Contains(out, "面⑩ 门69 help 面冻结常量（BASELINE 六格 · 现读对拍）：齐") ||
 			!strings.Contains(out, "面⑪ 公开面命令 counts 键表（Cpfc · 现读对拍）：齐") {

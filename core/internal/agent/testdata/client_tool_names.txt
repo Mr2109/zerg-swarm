@@ -106,3 +106,5 @@ yb_query_group_members
 yb_search_sticker
 yb_send_dm
 yb_send_sticker
+setup_choose
+start_chat

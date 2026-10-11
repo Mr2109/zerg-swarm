@@ -121,17 +121,17 @@ const cafbConstName = "DEV_EDIT_SHA256"
 const cafbMarkField = "signed_not_in_person"
 const cafbEvent = "approve_signed"
 
-// cafbDevEditSHA256 —— B5 登记常量 `DEV_EDIT_SHA256` 的**内化真源**（G10 · 2026-10-07 · 退役批）。
+// cafbDevEditSHA256 —— B5 登记常量 `DEV_EDIT_SHA256` 的**内化真源**。
 //
-// ★ 为什么内化：原真源件 `scripts/gates/check-approve-backfill.py`（py 半）正被退役（M2 判据件 Go 化）。
+// ★ 2026-10-12（缺口 `GAP-20261012-02`）本件**升为唯一真源件**：py 半已退役（不在盘）⇒ 缺省
 //
-//	本件（Go 半）判 B5 时原先**现读**该 py 件取常量（`cafbGateRel` · `cafbReadRegisteredConst`）；
-//	该 py 件一退役即读不到 ⇒ 原先 fail-closed（rc=2）。⇒ 把该真源**内化进本件**：
-//	py 件在盘时仍现读（保持与 py 半同一真源 · 两态逐字同）；py 件**退役（不在盘）**时回落到本常量
-//	⇒ 删 py 不再 fail-closed（✗ 不因缺 py 判不出）。
-//	值 = 原 py 件 `DEV_EDIT_SHA256` 现读值（2026-09-28 Mr2109 重签 `approvals/dev_edit.json` 后）。
-//	★ 人签重签后该常量须跟新：py 件在盘时走 `--refresh-constant` 刷 py 件；py 件退役后改刷本行。
-const cafbDevEditSHA256 = "6131d5af3baa8583d623b3be264a451a2546f0ecbb3662e93a19ca1c1180ad03"
+//	`gatePath` 与 `cafbGateRel` 一并改指本件（`core/cmd/zerg/check_approve_backfill.go`），//	`cafbConstRE` 扩到认 `^const cafbDevEditSHA256 = "<64hex>"$` 形态 ⇒ `--emit-constant` /
+//	`--refresh-constant` / 判 B5 三路同源，✗ 不再有「target 指已退役 py 件 ⇒ 未取数」那一路。
+//	本常量仍是**件不在盘 / 常量行解不出**时的最后回落（现读恒走现读行，回落只在坏件档触发）。
+//	值 = `~/.zerg/state/approvals/dev_edit.json` 的**整件文件 sha256**（含末尾换行）。
+//	2026-10-12 现读 = 2ba6bcaa61094020bb3796e3b15fe214ad951c45d96c0c36f6fc3c8ae0a4c89a。
+//	★ 人签重签（`zerg approve new`）后该值必变 ⇒ 正门刷：`zerg gate check check-approve-backfill --refresh-constant`（先干跑 · 加 `--yes` 才落）。
+const cafbDevEditSHA256 = "2ba6bcaa61094020bb3796e3b15fe214ad951c45d96c0c36f6fc3c8ae0a4c89a"
 
 // cafbVersion 等件级常量见下；★ B5 的登记常量**不再冻在件里**（缺口 `GAP-20261004-09`）：
 //
@@ -153,14 +153,17 @@ var (
 	cafbTicketGoRel   = cafbPyJoin("core", "cmd", "zerg", "family_approve.go")
 	cafbTicketRel     = cafbPyJoin("approvals", "dev_edit.json")
 	cafbAuditFileName = "edit_audit.jsonl"
-	// cafbGateRel —— B5 登记常量的**单一真源件**：与 `--refresh-constant` 的取数口/写入点同处
-	// （`scripts/gates/check-approve-backfill.py`）。py 半的 B5 读的就是这一份件内常量 ⇒ 两入口不脱钩。
-	cafbGateRel = cafbPyJoin("scripts", "gates", "check-approve-backfill.py")
+	// cafbGateRel —— B5 登记常量的**单一真源件**：与 `--refresh-constant` 的取数口/写入点同处。
+	// ★ 2026-10-12（缺口 `GAP-20261012-02`）：改指**本件的 Go 真源行**（第 134 行的 const）——
+	// 原指已退役 py 件 ⇒ 取数口解不出常量行（门⑰ B5 只能吃内化常量、门112 面⑤ 件列是幽灵）。
+	cafbGateRel = cafbPyJoin("core", "cmd", "zerg", "check_approve_backfill.go")
 )
 
 var (
-	// py `re.compile(r'(?m)^(DEV_EDIT_SHA256 = ")([0-9a-f]{64})(")$')` —— 逐字对齐（无 `\d`/`\s`/后顾）。
-	cafbConstRE = regexp.MustCompile(`(?m)^(DEV_EDIT_SHA256 = ")([0-9a-f]{64})(")$`)
+	// py `re.compile(r'(?m)^(DEV_EDIT_SHA256 = ")([0-9a-f]{64})(")$')` ＋ **Go 真源形态**
+	// `^const cafbDevEditSHA256 = "<64hex>"$`（缺口 `GAP-20261012-02`：target 改指 Go 件后必须认这一形态）。
+	// ★ 仍是**恰 3 组**（前缀｜64hex｜收尾引号）⇒ `cafbFindConstant` 的 `m[4]:m[5]` 组序不变。
+	cafbConstRE = regexp.MustCompile(`(?m)^(const cafbDevEditSHA256 = "|DEV_EDIT_SHA256 = ")([0-9a-f]{64})(")$`)
 	// py `re.search(r"type approvalTicketFile struct \{(.*?)\n\}", src, re.S)`
 	cafbTicketStructRE = regexp.MustCompile(`(?s)type approvalTicketFile struct \{(.*?)\n\}`)
 	// py `re.search(r"type approvalAuditLine struct \{(.*?)\n\}", src, re.S)`
@@ -1254,8 +1257,9 @@ func checkApproveBackfillGateMain(stdout, stderr io.Writer, argv []string) int {
 	} else if env := os.Getenv("ZERG_BACKFILL_GATE"); env != "" {
 		gatePath = cafbAbs(env)
 	} else {
-		// 缺省：root 推出的同族路径（root==仓根时与 py `abspath(__file__)` 同值）—— 声明行 (a)。
-		gatePath = cafbPyJoin(repo, "scripts", "gates", "check-approve-backfill.py")
+		// 缺省：root 推出的**Go 真源件**路径（缺口 `GAP-20261012-02`：原缺省指已退役 py 件 ⇒
+		// `--emit-constant` 报「未取数：件读不到」却能印值、B5 只吃内化常量）。
+		gatePath = cafbPyJoin(repo, "core", "cmd", "zerg", "check_approve_backfill.go")
 	}
 	ticket := cafbPyJoin(state, cafbTicketRel)
 	var devSHA *string

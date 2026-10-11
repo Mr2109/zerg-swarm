@@ -1443,6 +1443,9 @@ func gapShowRow(r gapRecord) map[string]string {
 		// ★ 本枚（缺口账 `GAP-20260929-38` ①）：补 `unit`/`module`（与 `gapPlanFields` 同名同源）。
 		"unit":   r.Unit,
 		"module": r.Module,
+		// ★ 缺口 `GAP-20261010-26`：`hints` —— 该条的「正门落点提示」一行（与 `gap hints` 同一取值口
+		//   `gapHintsText` · 走**可选字段层** `optFields` ⇒ 不进冻结帮助/文档导出面字段表）。
+		"hints": gapHintsText(r),
 	}
 }
 
@@ -1763,6 +1766,98 @@ func cmdGapShow(inv *invocation, stdout, stderr io.Writer) int {
 }
 
 // gapClosureOf —— 按字段名取它的闭集（判词要能把闭集逐字列出来）。
+// ── `gap hints` —— **正门提示面**（只读 · 2026-10-10 · 缺口 `GAP-20261010-26`）─────────────────
+//
+// 病（缺口 `GAP-20261010-26` 逐字）：父 `GAP-20260929-09` 的第二形态「正门 gap/contract 子命令出口」未落
+// （本波只做了**测试件侧** `ZERG_WRITE_HINTS` 写回面）⇒ 全仓没有一条正门命令能把「这条缺口今天怎么核 /
+// 怎么复现 / 下一步敲哪条」一次取出来（只能人读 `gap show` 的长正文）。
+//
+// 口径（只读面 · 一字不写真源、不写审计；取值口**一角**）：
+//
+//	① 真源 = **账内既有** `verify_cmd` / `repro_cmd`（✗ 不新增真源键 · ✗ 不碰 `unresolved-entries.json`）；
+//	② 逐条给一行「落点提示」（`gapHintsText`）：判据 / 复现 / 下一步（下一步按 `state` 分档措辞）；
+//	③ 单条面同源：`gap show <id> --json hints` 走**可选字段层**（`optFields` · 与 `gap ls` 的
+//	   `truncated` 同一体例）⇒ 冻结帮助 / 文档导出面字段表**不动**；
+//	④ 只报告：不给位置参数（范围 = 整账 · 要收窄走 `gap ls`）；读不到真源 ⇒ 8（与同族同口径）。
+//
+// 退码（一律引现有表 · 本族不取新号）：0 读真源成功并给出提示 · 2 用法错（`--json` 不给字段）· 8 真源读不到。
+
+// gapHintsFields —— `zerg gap hints` 的 `--json` 可取字段（与命令树登记面同一份口径）。
+var gapHintsFields = []string{"id", "prio", "state", "want", "repro_cmd", "verify_cmd", "hint"}
+
+// gapHintsText —— 一条缺口的「正门落点提示」（一行 · 只读 · 取值口 = 账内既有两键）。
+// ★ 与 `gap show --json hints` **同一取值口**（单条面与整账面同尺）。
+func gapHintsText(r gapRecord) string {
+	step := "现跑判据看还在不在"
+	if r.State == gapStSolved {
+		step = "已解 · 现跑判据复核是否回归"
+	}
+	return "判据：" + gapHintsOr(r.VerifyCmd) + " · 复现：" + gapHintsOr(r.ReproCmd) + " · 下一步：" + step
+}
+
+// gapHintsOr —— 空白占位（本族口径：空格印「（未给）」—— ✗ 不套 `orDash` 的跨族文案）。
+func gapHintsOr(s string) string {
+	if strings.TrimSpace(s) == "" {
+		return "（未给）"
+	}
+	return s
+}
+
+// gapHintsRow —— 一条 → `--json` 字段面（取值口与 `gapShowRow` 同源，只留提示这一维）。
+func gapHintsRow(r gapRecord) map[string]string {
+	return map[string]string{
+		"id":         r.ID,
+		"prio":       r.Prio,
+		"state":      r.State,
+		"want":       gapWantText(r),
+		"repro_cmd":  r.ReproCmd,
+		"verify_cmd": r.VerifyCmd,
+		"hint":       gapHintsText(r),
+	}
+}
+
+func cmdGapHints(inv *invocation, stdout, stderr io.Writer) int {
+	// ① 用法面（在任何盘面动作之前）—— 与 `ls` / `show` 逐字同一条收法
+	if inv.jsonGiven && len(inv.fields) == 0 {
+		inv.setErr("usage", "json_fields_required", "--json 不给字段")
+		fmt.Fprintf(stderr, "%s: `--json` 要给逗号分隔的字段（本族口径 = 用法错 2 · 设计稿 §二.1）\n", progName)
+		fmt.Fprintf(stderr, "可选字段: %s\n", strings.Join(gapHintsFields, ","))
+		return exitUsage
+	}
+	// ② 读真源（读不到 ⇒ 8 · **不许当绿**）—— 与 `gap show` 逐字同口径
+	led, err := readGapLedger()
+	if err != nil {
+		gapLedgerErr(inv, gapReasonPrecondition, err.Error(), gapLedgerPath())
+		gapLedgerErrFirstLine(stderr, gapReasonPrecondition)
+		fmt.Fprintf(stderr, "%s: %v\n", progName, err)
+		fmt.Fprintf(stderr, "真源 = %s；「读不到」不许当「没有」（退码 8）\n", gapLedgerPath())
+		gapLedgerUnreadableHint(stderr, gapLedgerPath())
+		return exitBlocked
+	}
+	if !led.Exists {
+		gapLedgerErr(inv, gapReasonLedgerAbsent, "真源不在盘上", led.Path)
+		gapLedgerErrFirstLine(stderr, gapReasonLedgerAbsent)
+		fmt.Fprintf(stderr, "%s: 真源不在盘上：%s（退码 8 —— 「读不到」不许当绿）\n", progName, led.Path)
+		gapLedgerAbsentHint(stderr, led.Path)
+		return exitBlocked
+	}
+	inv.changed = boolPtr(false)
+	// ③ 机器面：逐条一行（恒数组 · `I3`）
+	if inv.jsonGiven {
+		rows := make([]map[string]string, 0, len(led.Recs))
+		for _, r := range led.Recs {
+			rows = append(rows, gapHintsRow(r))
+		}
+		return selectJSONList(stdout, stderr, inv, inv.path, inv.fields, rows)
+	}
+	// ④ 人面：逐条一行提示（不截断 · 本面存在理由 = 「一眼看清怎么核」）
+	fmt.Fprintf(stdout, "缺口正门落点提示（只读面 · 共 %d 条 · 真源 = %s）\n", len(led.Recs), led.Path)
+	for _, r := range led.Recs {
+		fmt.Fprintf(stdout, "  %s\t%s\t%s\n", r.ID, r.State, gapHintsText(r))
+	}
+	return exitOK
+}
+
 func gapClosureOf(field string) []string {
 	switch field {
 	case "state":

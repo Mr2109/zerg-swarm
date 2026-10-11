@@ -38,12 +38,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Mr2109/zerg-swarm/core/internal/config"
 	"github.com/Mr2109/zerg-swarm/core/internal/gateway"
@@ -185,6 +187,67 @@ func mvReadLocalRegistry(model string) (string, string, string) {
 	return mvPresentSt, cmdText, path
 }
 
+// mvEggsTimeout —— `model verify` 打子端 `/eggs` 的超时（与 `agent engines` 的 `/eggs` 取数同尺）。
+const mvEggsTimeout = 15 * time.Second
+
+// mvChildAddrOf —— 远程取数路的地址现读（**静默**）：machine 在 `fleet:` 名册里 ⇒ (addr, true)。
+// ✗ 不为此打印：本函数只**判机**（不在名册 ⇒ 走本机语义，与既有行为一致）。
+func mvChildAddrOf(machine string) (agentAddr, bool) {
+	addrs, _, rc := agentFleetAddrs(io.Discard)
+	if rc != exitOK {
+		return agentAddr{}, false
+	}
+	a, ok := addrs[machine]
+	return a, ok
+}
+
+// mvIsLocalMachine —— **本机/远程判据**：`fleet:` 名册里该机的地址是否回环
+// （`node-local` ⇒ `127.0.0.1`）—— 回环 ⇒ 本机（读本机注册表件）；否则 ⇒ 远程（走子端 `/eggs`）。
+// ✗ 不拿 `os.Hostname()` 比：名册里的机器名不是 OS 主机名，两套口径必漂。
+// 取不到该机地址（不在名册）⇒ 判**本机**（保守：退回既有行为）。
+func mvIsLocalMachine(machine string) bool {
+	a, ok := mvChildAddrOf(machine)
+	if !ok {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(a.Host)) {
+	case "127.0.0.1", "localhost", "::1":
+		return true
+	}
+	return false
+}
+
+// mvReadChildEggs —— ②面的**远程取数路**：读目标机的子端 `/eggs`（`GET /eggs` · 只读 · `agentChildDo`），
+// 取该模型那一条的**声明命令**（载荷 `cmd` 格 —— 子端注册表 `cmd:` 逐字 · GAP-20261006-02 的载荷面）。
+// 三态与 `mvReadLocalRegistry` 同尺（缺席 ≠ 读不到）：打不到 / 非 200 / 非法 JSON ⇒ unreadable（退 8）；
+// 回据里没有这一枚、或有条目而无 `cmd` ⇒ absent（缺席 · ≠ 不一致）。
+// 返回 (state, cmdText, source)；source = `GET <addr>/eggs`（行面 source 格如实标远程面）。
+func mvReadChildEggs(a agentAddr, model string) (string, string, string) {
+	src := "GET " + agentChildBase(a) + "/eggs"
+	status, body, err := agentChildDo(a, http.MethodGet, "/eggs", "", mvEggsTimeout)
+	if err != nil || status != http.StatusOK {
+		return mvUnreadableSt, "", src
+	}
+	var doc jsonObj
+	if err := json.Unmarshal([]byte(body), &doc); err != nil {
+		return mvUnreadableSt, "", src
+	}
+	for _, it := range asList(doc["eggs"]) {
+		o := asObj(it)
+		if o == nil {
+			continue
+		}
+		if cell(o["model"]) != model && cell(o["egg_id"]) != model {
+			continue
+		}
+		if c := cell(o["cmd"]); c != "" {
+			return mvPresentSt, c, src
+		}
+		return mvAbsentSt, "", src
+	}
+	return mvAbsentSt, "", src
+}
+
 // mvReadEggProfile 读模型档案（事实）：返回 (state, valueText, path)。
 // 三态分家：目录读不到 = unreadable（退 8）；无该模型档案 = absent（缺席 · ≠ 不一致）。
 func mvReadEggProfile(model string) (string, string, string) {
@@ -295,8 +358,16 @@ func cmdModelVerify(inv *invocation, stdout, stderr io.Writer) int {
 		b, _ := json.Marshal(map[string]string{"model": model})
 		controlValue = string(b)
 	}
-	// ② 子端本地
+	// ② 子端本地：**本机**读 `<HOME>/agent/agent_models.yaml`；**远程机**走子端 `/eggs` 远程取数路
+	// （`GET /eggs` 只读 · agentChildDo · 载荷承载声明命令 `cmd` 格 —— GAP-20261006-02 载荷面）。
+	// 「缺 cmd 是缺席还是读不到」口径：打不到 / 非 200 / 非法 JSON ⇒ unreadable（退 8）；
+	// 回据里没有这一枚、或有条目而无 `cmd` ⇒ absent（缺席 · ≠ 不一致）。
 	localState, localCmd, localPath := mvReadLocalRegistry(model)
+	if !mvIsLocalMachine(machine) {
+		if a, ok := mvChildAddrOf(machine); ok {
+			localState, localCmd, localPath = mvReadChildEggs(a, model)
+		}
+	}
 	localCtx, localHasCtx := mvCtxOfCmd(localCmd)
 	// ③ 意图
 	intentCtx, intentHasCtx, intentValue := 0, false, ""

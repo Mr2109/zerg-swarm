@@ -119,10 +119,12 @@ var cvrGenericHeads = []string{"help", "doctor"}
 var cvrGenericVerbTail = []string{"ls", "status"}
 
 // 棘轮基线（首日现读数 · 只许下调、永不上调）。
-var cvrBaseline = map[string]int{"verify": 675, "repro": 526}
+var cvrBaseline = map[string]int{"verify": 635, "repro": 526}
 
 const cvrBaselineNote = "2026-10-05 首测（本门新建当天）：账 1180 行 · 命令树 188 条 ⇒ " +
 	"verify 面不可判 = 675（其中 通用命令 675 · 不解析命令树 0）· repro 面样板 = 526。" +
+	"★ 2026-10-12 棘轮收紧（缺口 `GAP-20261010-34`）：账 1295 行 ⇒ verify 通用命令 = 635 · " +
+	"不解析命令树 = 0（现读即顶格）· repro 面样板 = 526（未变）。" +
 	"★ 只认 `BASELINE` 那两格；本段历史值仅供追溯。"
 
 // ─────────────────────────── py 词法/字符串原语 ───────────────────────────

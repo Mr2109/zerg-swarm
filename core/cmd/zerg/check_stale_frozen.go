@@ -424,9 +424,9 @@ func csfProbeHelpShape(root string, stderr io.Writer) *csfFace {
 	return f
 }
 
-// ── ⑤ check-approve-backfill.py DEV_EDIT_SHA256（sibling 常量走 python 桥）──
+// ── ⑤ core/cmd/zerg/check_approve_backfill.go DEV_EDIT_SHA256（Go 真源 · 缺口 `GAP-20261012-02`）──
 func csfProbeApproveBackfill(root string, stderr io.Writer) *csfFace {
-	rel := "scripts/gates/check-approve-backfill.py"
+	rel := "core/cmd/zerg/check_approve_backfill.go"
 	f := csfNewFace(rel, "常量 DEV_EDIT_SHA256 = 在册批准件 approvals/dev_edit.json 整件 sha256", csfRefresh["approve-backfill"])
 	res, errStr := csfBridge(root, "approve_backfill", stderr)
 	if errStr != "" {

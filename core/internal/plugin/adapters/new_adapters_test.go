@@ -49,9 +49,6 @@ func TestGlm47AdapterDefault(t *testing.T) {
 	if res["model"] != "GLM-4.7-Flash" {
 		t.Fatalf("model = %v", res["model"])
 	}
-	if res["reasoning_fallback"] != true {
-		t.Fatal("思考模型必须 reasoning_fallback")
-	}
 }
 
 func TestQwen36AdapterDefault(t *testing.T) {

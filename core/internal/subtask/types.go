@@ -210,6 +210,19 @@ func dangerousCmd(cmd string) string {
 		{"drop database", "删库"},
 		{"git push --force", "强推覆盖远端"},
 		{"> /dev/sda", "直写磁盘"},
+		// ★ 凭据类命令（GAP-20261010-17 · 照 chat_gate.go 的 credentialCmdRules 体例）
+		{".env", "凭据文件 .env 族"},
+		{".netrc", "凭据文件 .netrc"},
+		{".pgpass", "凭据文件 .pgpass"},
+		{"id_rsa", "SSH 私钥 id_rsa"},
+		{"id_ed25519", "SSH 私钥 id_ed25519"},
+		{"id_ecdsa", "SSH 私钥 id_ecdsa"},
+		{"id_dsa", "SSH 私钥 id_dsa"},
+		{"auth.json", "凭据文件 auth.json"},
+		{"credentials.json", "凭据文件 credentials.json"},
+		{".zerg/token", "凭据文件 .zerg/token"},
+		{".aws/credentials", "凭据文件 .aws/credentials"},
+		{"private key", "内联私钥块"},
 	}
 	for _, r := range rules {
 		if strings.Contains(m, r.pattern) {

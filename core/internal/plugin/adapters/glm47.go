@@ -160,18 +160,17 @@ func (a *Glm47Adapter) Execute(input plugin.PluginInput) (plugin.PluginOutput, e
 	}
 	return plugin.PluginOutput{
 		Result: map[string]any{
-			"model":              glm47Name,
-			"max_tokens":         a.config.MaxTokens,
-			"ctx_window":         a.config.CtxWindow,
-			"temperature":        a.config.Temperature,
-			"top_p":              a.config.TopP,
-			"top_k":              a.config.TopK,
-			"min_p":              a.config.MinP,
-			"timeout_sec":        a.config.TimeoutSec,
-			"reasoning_effort":   a.config.ReasoningEffort,
-			"thinking":           a.config.Thinking,
-			"reasoning_fallback": true, // content空时用reasoning_content兜底
-			"tool_support":       true,
+			"model":            glm47Name,
+			"max_tokens":       a.config.MaxTokens,
+			"ctx_window":       a.config.CtxWindow,
+			"temperature":      a.config.Temperature,
+			"top_p":            a.config.TopP,
+			"top_k":            a.config.TopK,
+			"min_p":            a.config.MinP,
+			"timeout_sec":      a.config.TimeoutSec,
+			"reasoning_effort": a.config.ReasoningEffort,
+			"thinking":         a.config.Thinking,
+			"tool_support":     true,
 		},
 	}, nil
 }

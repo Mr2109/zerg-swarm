@@ -144,6 +144,19 @@ var dangerousBashPatterns = []struct {
 	// 管道到 sh/bash——下载执行未知代码（危险）；curl -o 下载保存不拦
 	{"| sh", "管道执行脚本（未知来源）", false},
 	{"| bash", "管道执行脚本（未知来源）", false},
+	// ★ 凭据类命令（GAP-20261010-17 · 照 chat_gate.go 的 credentialCmdRules 体例）——拦真危险，其余放行
+	{".env", "凭据文件 .env 族", false},
+	{".netrc", "凭据文件 .netrc", false},
+	{".pgpass", "凭据文件 .pgpass", false},
+	{"id_rsa", "SSH 私钥 id_rsa", false},
+	{"id_ed25519", "SSH 私钥 id_ed25519", false},
+	{"id_ecdsa", "SSH 私钥 id_ecdsa", false},
+	{"id_dsa", "SSH 私钥 id_dsa", false},
+	{"auth.json", "凭据文件 auth.json", false},
+	{"credentials.json", "凭据文件 credentials.json", false},
+	{".zerg/token", "凭据文件 .zerg/token", false},
+	{".aws/credentials", "凭据文件 .aws/credentials", false},
+	{"PRIVATE KEY", "内联私钥块", false},
 }
 
 // checkDangerousCommand — 检查命令是否含危险模式（防误删/系统级破坏）
