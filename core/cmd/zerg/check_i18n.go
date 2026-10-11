@@ -243,6 +243,36 @@ func ci18FindStaticKeys(line string) []string {
 
 // ── 读面 ─────────────────────────────────────────────────────────────────────
 
+// ci18ReadFails —— B 类读失败登记面（目录遍历 / 件读 失败 ⇒ 逐处登记「件/目录 + 原因」）。
+// ★ B 类真口子修（与 py **有意分叉** · 同族先例 check_error_kinds.go 的 cekReadFails · check_doc_cmds.go 的 dcmdReadFails）：
+//
+//	原 py 语义 = `os.walk(onerror=None)` / 逐件 `open` 失败**静默跳过** ⇒ 判据面被抽空也不出声。
+//	本件收紧：读失败 ⇒ 登记 + 入口判红（stderr BLOCKED 头 + 逐件点名）⇒ rc=2（✗ 不再静默少判）。
+//	自清点：每次 ci18Run 起手清空 ⇒ 不许跨调用残留。目录面自成一句（标「读不了目录」）。
+var ci18ReadFails []string
+
+// ci18NoteReadFail —— 登记一处读失败（同一件只登一次 ⇒ ✗ 不重复点名）。
+func ci18NoteReadFail(what string) {
+	for _, u := range ci18ReadFails {
+		if u == what {
+			return
+		}
+	}
+	ci18ReadFails = append(ci18ReadFails, what)
+}
+
+// ci18BlockedIfReadFails —— 有登记 ⇒ 打 BLOCKED 头 + 逐件点名 ⇒ rc=2；无 ⇒ 返回 -1（照常走）。
+func ci18BlockedIfReadFails(stderr io.Writer) int {
+	if len(ci18ReadFails) == 0 {
+		return -1
+	}
+	fmt.Fprintf(stderr, "BLOCKED —— 有 %d 件读不到（B 类读失败 ⇒ 登记 + 判红 · rc=2 · 不给结论）：\n", len(ci18ReadFails))
+	for _, u := range ci18ReadFails {
+		fmt.Fprintf(stderr, "  [读失败] %s\n", u)
+	}
+	return 2
+}
+
 // ci18RepoRoot —— py `dirname×3(__file__)` 的 Go 代理：从 cwd 上溯找同时含 ui/ 与 core/ 的目录（缺则 cwd）。
 func ci18RepoRoot() string {
 	wd, err := os.Getwd()
@@ -280,11 +310,19 @@ func ci18RustFiles(root string) []string {
 	walk = func(dir string) {
 		f, err := os.Open(dir)
 		if err != nil {
-			return // py os.walk onerror=None ⇒ 读不了的目录静默跳过
+			// ★ B 类真口子修（原 py os.walk onerror=None ⇒ 读不了的目录静默跳过 · ✗ 不再静默）。
+			// ★ 只有「在盘却读不了」才是真读失败（✗ 不把「目录本就缺席」记成读失败 · 与 py 语义及同族先例 cek 一致）。
+			if fi, serr := os.Stat(dir); serr == nil && fi.IsDir() {
+				ci18NoteReadFail(ci18PyRelpath(dir, root) + "（读不了目录：" + err.Error() + "）")
+			}
+			return
 		}
 		entries, err := f.ReadDir(-1) // 保 readdir 原序
 		f.Close()
 		if err != nil {
+			if fi, serr := os.Stat(dir); serr == nil && fi.IsDir() {
+				ci18NoteReadFail(ci18PyRelpath(dir, root) + "（读不了目录：" + err.Error() + "）")
+			}
 			return
 		}
 		var files, dirs []string
@@ -688,6 +726,8 @@ func ci18GoCodes(root string) []string {
 	}
 	entries, err := os.ReadDir(apiDir)
 	if err != nil {
+		// ★ B 类真口子修（原读不了目录即静默 return nil · ✗ 不再静默）：登记 + 入口判红 + rc=2。
+		ci18NoteReadFail(ci18PyRelpath(apiDir, root) + "（读不了目录：" + err.Error() + "）")
 		return nil
 	}
 	var names []string
@@ -702,6 +742,8 @@ func ci18GoCodes(root string) []string {
 		}
 		b, rerr := os.ReadFile(ci18PyJoin(apiDir, fn))
 		if rerr != nil {
+			// ★ B 类真口子修（原读不了件即静默 continue · ✗ 不再静默）：登记 + 入口判红 + rc=2。
+			ci18NoteReadFail(ci18PyRelpath(ci18PyJoin(apiDir, fn), root) + "（" + rerr.Error() + "）")
 			continue
 		}
 		for _, m := range ci18WriteErr.FindAllStringSubmatch(string(b), -1) {
@@ -740,6 +782,7 @@ func checkI18nGateMain(stdout, stderr io.Writer, argv []string) int {
 
 // ci18Run —— 与 py main() 逐字对齐的实现体（root 显式传入 ⇒ 单测可注入夹具根）。
 func ci18Run(root string, stdout, stderr io.Writer, argv []string) int {
+	ci18ReadFails = nil // ★ 自清：包级登记面不许跨调用残留（否则上一 Test 残留一进门就 BLOCKED）
 	listOnly := ci18HasArg(argv, "--list")
 
 	zh, ok := ci18ParseYML(ci18PyJoin(root, "ui", "locales", "zh-CN.yml"))
@@ -856,6 +899,9 @@ func ci18Run(root string, stdout, stderr io.Writer, argv []string) int {
 	}
 
 	if listOnly {
+		if rc := ci18BlockedIfReadFails(stderr); rc >= 0 {
+			return rc
+		}
 		fmt.Fprintf(stdout, "剩余中文字面量 %d 行（基线允许 %d 行）：\n", len(rows), len(allowed))
 		for _, r := range rows {
 			mark := "★新增"
@@ -868,6 +914,9 @@ func ci18Run(root string, stdout, stderr io.Writer, argv []string) int {
 	}
 
 	if ci18HasArg(argv, "--tsv") {
+		if rc := ci18BlockedIfReadFails(stderr); rc >= 0 {
+			return rc
+		}
 		tsvDir := ci18PyStrip(os.Getenv("ZERG_I18N_AUDIT_OUT"))
 		if tsvDir == "" {
 			base, missingMsg := ci18DocsOutRoot(root)
@@ -943,6 +992,10 @@ func ci18Run(root string, stdout, stderr io.Writer, argv []string) int {
 
 	// G5 错误码 ↔ UI 键
 	goCodes := ci18GoCodes(root)
+	// ★ B 类真口子修：所有读面（目录遍历 / 件读）跑完 ⇒ 有登记即 BLOCKED rc=2（✗ 不给结论）。
+	if rc := ci18BlockedIfReadFails(stderr); rc >= 0 {
+		return rc
+	}
 	uiCodes := map[string]bool{}
 	for k := range zh {
 		if strings.HasPrefix(k, "apierr.") {

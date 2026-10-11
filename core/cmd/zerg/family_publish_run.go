@@ -210,6 +210,7 @@ func cmdPublishRun(inv *invocation, stdout, stderr io.Writer) int {
 	if !inv.confirmGiven {
 		msg := "`publish run` 会写产物目录 ⇒ 按 D3 档：**缺确认 ⇒ 不执行**"
 		inv.setErr("usage", "confirm_required", msg)
+		guardMarkDecision(inv, guardDecisionApproval)
 		fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
 		fmt.Fprintf(stderr, "要执行得给：--confirm=%s --yes\n", host)
 		fmt.Fprintf(stderr, "先看计划件：%s publish run --dry-run\n", progName)
@@ -218,6 +219,7 @@ func cmdPublishRun(inv *invocation, stdout, stderr io.Writer) int {
 	if !devEditHostAccept(inv.confirm) {
 		msg := fmt.Sprintf("确认值不匹配目标（--confirm 给的是 %q，本机主机名是 %q）⇒ 不执行", inv.confirm, host)
 		inv.setErr("usage", "confirm_mismatch", msg)
+		guardMarkDecision(inv, guardDecisionBlock)
 		fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
 		fmt.Fprintf(stderr, "`--confirm` 的值必须与目标**逐字相同** —— 给错值一律拒绝，不许「当没给」\n")
 		return exitUsage
@@ -225,6 +227,7 @@ func cmdPublishRun(inv *invocation, stdout, stderr io.Writer) int {
 	if !inv.yes {
 		msg := "`publish run` 是 D3 档 —— **缺 --yes ⇒ 不执行**"
 		inv.setErr("usage", "yes_required", msg)
+		guardMarkDecision(inv, guardDecisionApproval)
 		fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
 		return exitUsage
 	}

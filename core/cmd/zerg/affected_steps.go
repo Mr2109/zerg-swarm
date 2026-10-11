@@ -240,6 +240,25 @@ func asParseList(path string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	// ★ GAP-20261010-25（本片）：机读面优先（步表件的机读形 —— `--list --json` 的单对象
+	// `{"count":N,"steps":[…]}`）—— 复用同族助手 `pgsParseListJSON`（✗ 不另造第二套解析）。
+	// 机读面在场而形状坏/自证不过 ⇒ **响亮失败**（err ⇒ 调用方 rc=2），✗ 不许静默退回人面。
+	if steps, _, isM, perr := pgsParseListJSON(string(b)); isM {
+		if perr != "" {
+			return nil, fmt.Errorf("步表件机读面（`--list --json`）形状坏：%s", perr)
+		}
+		names := []string{}
+		for _, s := range steps {
+			if s.Scope == "self" || !asScopeOK(s.Scope) {
+				continue
+			}
+			if s.Name != "" {
+				names = append(names, s.Name)
+			}
+		}
+		return names, nil
+	}
+	// ② 退化路：机读面不在 ⇒ 人面（与改前逐字相同）。
 	names := []string{}
 	for _, line := range strings.SplitAfter(string(b), "\n") {
 		if line == "" {

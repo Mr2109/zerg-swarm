@@ -96,6 +96,8 @@ const cenkWS = `\x{0009}-\x{000D}\x{001C}-\x{001F}\x{0020}\x{0085}\x{00A0}` +
 //	py 原表只收 `scripts/gates/**` 7 枚 shell/py 宿主件，**漏了 CLI 侧仓根旋钮 `ZERG_REPO` 的真读者**
 //	（`core/cmd/zerg/root.go` 的 `ZERG_REPO` 读取）⇒ 该旋钮在消费面查无、登记即判「陈旧」。
 //	⇒ 补 `core/cmd/zerg/root.go`（本件同仓 · 静态只读 · 只产出 `ZERG_REPO` 一枚）当第 8 枚宿主件。
+//	★ 2026-10-11：补 `publish/mirror-public.sh` 当**第 9 枚**宿主件（发布器审计落点旋钮三枚 ＋ 同件
+//	  既有镜像/互斥/远端旋钮 ⇒ 本表随动补登，见下 cenkKnobTable）。
 //	显式点名 · 固定次序 · miss 按此次序产出。
 var cenkKnobHosts = []string{
 	"scripts/gates/precommit-gates.sh",
@@ -106,6 +108,7 @@ var cenkKnobHosts = []string{
 	"scripts/gates/judge-targets.sh",
 	"scripts/gates/mutation-smoke.sh",
 	"core/cmd/zerg/root.go",
+	"publish/mirror-public.sh",
 }
 
 // cenkKnob —— 登记项三格：谁读 / 换什么真源 / 毒化后表现。
@@ -162,6 +165,28 @@ func cenkKnobTable() map[string]cenkKnob {
 		"ZERG_REAL_GATES_JOBS": {Readers: "real-gates.sh", Swap: "并发度", Poison: "超订/串行 ⇒ 读数与墙钟漂"},
 		cenkKwRealUnit: {Readers: "real-gates.sh", Swap: "real-gates 走自检夹具路",
 			Poison: "走夹具 ≠ 真跑（关自检型）"},
+		"ZERG_PUBLISH_AUDIT": {Readers: "mirror-public.sh（发布器审计主落点）", Swap: "发布审计台账主落点（默认真落点 scripts/gates/publish-audit.jsonl）",
+			Poison: "改指别处且无理由 ⇒ 该次 publish 行落别处、真台账静默漏记（本单加闸：缺 ZERG_PUBLISH_AUDIT_REASON ⇒ 推送前拒执 rc=2）"},
+		"ZERG_PUBLISH_AUDIT_FALLBACK": {Readers: "mirror-public.sh", Swap: "发布审计补偿落点（主落点写不进时）",
+			Poison: "改指别处 ⇒ 补偿行落别处（真台账少一重兜底）"},
+		"ZERG_PUBLISH_AUDIT_BY": {Readers: "mirror-public.sh", Swap: "审计行 by 字段（署名人）",
+			Poison: "仅署名失真（落点不变 ⇒ 不漏记）"},
+		"ZERG_PUBLISH_AUDIT_REASON": {Readers: "mirror-public.sh", Swap: "审计落点改指的理由申报",
+			Poison: "空理由也放行 ⇒ 落点改指不留痕（本单拒执硬线所依）"},
+		"ZERG_PUBLISH_LOCK_DIR": {Readers: "mirror-public.sh", Swap: "发布互斥锁目录",
+			Poison: "两趟各锁各的 ⇒ 同机发布互斥闸失能"},
+		"ZERG_MIRROR_LOCK_HELD": {Readers: "mirror-public.sh", Swap: "发布互斥锁（自报已持锁）",
+			Poison: "伪造/串味标记 ⇒ 靠锁文件 pid ＋ 本趟祖链判定兜底（本件已收紧）"},
+		"ZERG_MIRROR_NO_LOCK": {Readers: "mirror-public.sh", Swap: "发布互斥闸（显式关锁）",
+			Poison: "显式关锁 ⇒ 同机发布并发跑"},
+		"ZERG_MIRROR_NO_LOCK_REASON": {Readers: "mirror-public.sh", Swap: "关锁的理由申报",
+			Poison: "空理由也放行 ⇒ 关锁不留痕"},
+		"ZERG_MIRROR_ALLOW_PUSH": {Readers: "mirror-public.sh", Swap: "推送第二重保险（--push 之外）",
+			Poison: "置 1 ⇒ 单靠 --push 即推（少一重保险）"},
+		"ZERG_MIRROR_ALLOW_REPLACE_HISTORY": {Readers: "mirror-public.sh", Swap: "换史三重的环境双保险",
+			Poison: "置 1 ⇒ 单靠 --replace-history 即换史推（少一重）"},
+		"ZERG_PUBLIC_REMOTE": {Readers: "mirror-public.sh", Swap: "公开仓远端 URL（--remote 缺省）",
+			Poison: "换远端 ⇒ 推到别的仓"},
 	}
 }
 

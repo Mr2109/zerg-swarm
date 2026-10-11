@@ -15,6 +15,11 @@
 //	    且 overlay 自身含 `.git` 时**拒在仓内改件**（退 2）。
 //	⇒ 与 py 真跑档逐字对齐的档**未搬**（见件尾未覆盖面第 ① 条）。
 //
+// ★ 受治理（缺口 GAP-20261001-64 · Mr2109 2026-10-10 拍板「另立受治理的仓外写档」）：本件的**仓外写面**
+//
+//	（`--overlay <仓外树>`）已登**中央分类登记** `gateCheckClassEntry`（`gate_inproc_table.go` · 判据名 ⇒
+//	write D2）⇒ 壳侧 `gate check` 缺 `--yes` 一律拒执；缺省档仍**只读退 2**、✗ 永不放开**仓内**真写。
+//
 // 外部交互点（逐行现读 py · 全件只有这些）：
 //
 //	· `subprocess`（50 行 import）两处：① `run_gate()`（:124-125）跑 `[sys.executable, ROOT/TARGET,
@@ -1085,12 +1090,15 @@ func tsmDriverPath() string {
 // （18 格全 rc=2 的真因）。故 argv 首段带上 `gate check <键>`（照已落件先例 `check_approve_closedset.go`
 // 的 `cacsSpawnSelf` 注入点 ＋ 路由写法）。夹具树须有仓根判据件与门禁最小入口（见 `tsmMkFixture`）。
 // ★ 另多传 `--overlay <fix>`（旋钮面与 py 不可合同 ⇒ 单列点名），其余输出逐字对齐。
+// ★ 且多传 `--yes`：本判据已登中央分类表（write D2）⇒ 壳侧缺 `--yes` 拒执 ⇒ 内部重入须自带确认盾
+//
+//	（壳侧 `gateCheckStripShellFlags` 会把它剔掉 · ✗ 不落给判据体本身）。
 func tsmRunFixtureDriver(fix string, mute string, extra ...string) (int, string) {
 	if fix == "" {
 		// 夹具搭不起来 ⇒ **fail-closed 停手**：✗ 不许拿相对路径在真仓里跑（见 tsmFixtureTarget 注释）。
 		return tsmExitHard, ""
 	}
-	argv := append([]string{"gate", "check", "two-states-gate-mutate", "--overlay", fix}, extra...)
+	argv := append([]string{"gate", "check", "two-states-gate-mutate", "--yes", "--overlay", fix}, extra...)
 	cmd := exec.Command(filepath.Join(fix, tsmMutDriverRel), argv...)
 	cmd.Dir = fix
 	if mute != "" {

@@ -45,6 +45,15 @@ type ModelCandidate struct {
 	Added       string   `yaml:"added,omitempty"`        // 接入日期
 	Verified    bool     `yaml:"verified,omitempty"`     // 验证状态
 
+	// ═══ GAP-20261003-21：verified 三态与内容锚 —— 消费者侧【加性】承载 ═══
+	// 旧 `Verified bool` 只能表达两态；判据 G 要的第三态 `reported`（仅声明）＋ `verified_where`
+	// （自报机名）在消费者侧**存不下**（写成 `verified: reported` 会让整份 fleet.yaml 解析失败 ⇒
+	// 既有已 verified 的全翻红）。按设计稿 §三乙案加性新增两枚字符串字段：旧 `verified: true/false`
+	// 一字不改、照旧按 bool 读（零破坏）；新态走新键 ⇒ **新增面不翻红既有已 verified 的**。
+	// ★ 本结构体只承载、不判 —— 判据 G 真身在 check_nodes_roster.go（读 raw YAML 文本，不受此影响）。
+	VerifiedState string `yaml:"verified_state,omitempty"` // 三态：true|false|reported（空=旧读者按 Verified 回落）
+	VerifiedWhere string `yaml:"verified_where,omitempty"` // 自报机名（reported 时必填 · ∈ 名册）
+
 	// ═══ P1：虫卵的「引擎实现/变体」（设计-子端沙箱化-20260914 §1.2 / §4.7 / 附录 C·C1）═══
 	// 承载字段就是上面的 Cmd（哪个二进制 / build / fork，**含包装脚本与 env 处理**）——
 	// 「引擎实现/变体」是卵的**必需字段**，不能只给引擎名（§1.2）。

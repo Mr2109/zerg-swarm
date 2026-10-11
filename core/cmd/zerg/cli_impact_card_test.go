@@ -131,6 +131,11 @@ func TestImpactCard_RealRunFitsCapsAndFourFields(t *testing.T) {
 	}
 	more := good
 	more.Items = append(append([]map[string]string{}, good.Items...), impactCardRow("文件级:zz.go:1", "词法", "h", ""))
+	// ★ ② 冻结下限 = 2（棘轮 · 只许降）：负控夹具 `more` 至少 2 条（抽到 < 2 ⇒ 这一格判不了，夹具太薄）。
+	moreN := len(more.Items)
+	if moreN < 2 {
+		t.Fatalf("负控夹具只抽到 %d 条（冻结下限 2）—— 这一格判不了，夹具太薄", moreN)
+	}
 	if err := zerg.ImpactCardJudgeForTest(more); err == nil {
 		t.Errorf("负控失败：%d 条（上限 %d）竟判过", len(more.Items), itemsMax)
 	}
@@ -157,6 +162,10 @@ func TestImpactCard_NoWhyAndClosedSetFilter(t *testing.T) {
 		impactCardRow("件级:z", "义近", "h", "S-g"),     // 义近带 red ⇒ 清空（§3.5 铁律）
 	}
 	c := zerg.ImpactCardOfForTest(rows, "", "t")
+	// ④ 抽空 fail-closed：进卡 0 条 ⇒ 不给结论（空集/抽空不算通过，✗ 不许静默绿）。
+	if len(c.Items) == 0 {
+		t.Fatalf("抽空：进卡 0 条 ⇒ fail-closed（空集/抽空不算通过）· items=%+v", c.Items)
+	}
 	if c.NoWhy != 1 {
 		t.Errorf("无 why 未进卡的计数 = %d（要 1）", c.NoWhy)
 	}

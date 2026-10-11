@@ -386,6 +386,13 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 
 	// ── 构建身份落盘（打包 / 升级器读它 —— 不靠二进制自报，因为交叉编译的 linux 件跑不起来）──
+	// ★ 本件是**派生件 · 非身份真源**（设计 §5 `O-12` 取（乙）· 2026-09-24 待拍清单终版 条 4/5）：
+	//	- 全量档的**聚合**生成物（`version` ＋ provenance：`commit` / `build_time` / `builder_host`），
+	//	  供打包 / 升级器读「这批制品是谁产的」—— 它是**记录**，✗ 不是身份。
+	//	- **只有全量档写它**：`--only-cli` / `--only-core` / `--only-compat` / `--only-agentd` 各档
+	//	  在本行之前 `return`（逐字「其余制品与 build-info.json 一个字节未动」）⇒ 那四档不碰它。
+	//	- ✗ **勿手改**（下次全量档会被覆写）；✗ **勿当身份真源** —— 身份真源 = **制品自身嵌入段**
+	//	  （`-tags commit=…,build_time=…`；读法 `zerg version --build-info`）。
 	if err := writeBuildInfo(coreOut("build-info.json"), version, sha, buildTime); err != nil {
 		fmt.Fprintf(stderr, "❌ 写 build-info.json 失败：%v\n", err)
 		return 1

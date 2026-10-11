@@ -134,3 +134,71 @@ func TestAgentWorkersAndSchedulerSetFourStates(t *testing.T) {
 		t.Errorf("(b)③ 落地值回读没报出刚写的值：stdout=%q", out)
 	}
 }
+
+// TestAgentWorkersShowReadFace —— 缺口 `GAP-20261010-23`：只读动作 `zerg agent workers show` 的**只读读面**真跑。
+//
+// 两态（本单自证）：
+//
+//	改前（仓上旧制品 `bin/zerg`）`agent workers show` ⇒ rc=2「是族名/中间节点…不是可执行动作」；
+//	改后（本件现编 `zergBinaryFromSource`）⇒ rc=0 · 出 devices 逐机读数（人面 / `--json` 同源）。
+//
+// 成对负控：未知旗标 ⇒ 2 · 多余位置参数 ⇒ 2（arity: none）· 合成仓根里 workers.yaml 缺失 ⇒ 8（不给结论）。
+func TestAgentWorkersShowReadFace(t *testing.T) {
+	bin := zergBinaryFromSource(t)
+	root := awTempRepoRoot(t) // 复用同件夹具：core/internal/version/version.go + config/workers.yaml（edge-node / max_workers: 3）
+
+	run := func(root string, argv ...string) (int, string, string) {
+		cmd := exec.Command(bin, argv...)
+		cmd.Env = append(os.Environ(), "ZERG_REPO="+root)
+		cmd.Stdin = strings.NewReader("")
+		var out, errb strings.Builder
+		cmd.Stdout, cmd.Stderr = &out, &errb
+		rc := 0
+		if err := cmd.Run(); err != nil {
+			var ee *exec.ExitError
+			if !errors.As(err, &ee) {
+				t.Fatalf("起不了现编二进制：%v", err)
+			}
+			rc = ee.ExitCode()
+		}
+		return rc, out.String(), errb.String()
+	}
+
+	// ---- 正控：读面真出（devices 逐机读数） ----
+	rc, out, errb := run(root, "agent", "workers", "show")
+	if rc != 0 {
+		t.Fatalf("正控：rc=%d（要 0）· stderr=%s", rc, errb)
+	}
+	if !strings.Contains(out, "edge-node") || !strings.Contains(out, "3") {
+		t.Errorf("正控：人面没列出 devices 条目（edge-node / max_workers 3）：stdout=%q", out)
+	}
+
+	// ---- 机器面：`--json` 与字段面同源（四格都点得出来） ----
+	rc, out, errb = run(root, "agent", "workers", "show", "--json", "hostname,max_workers,state,local")
+	if rc != 0 {
+		t.Fatalf("机器面：rc=%d（要 0）· stderr=%s", rc, errb)
+	}
+	if !strings.Contains(out, "\"hostname\"") || !strings.Contains(out, "\"edge-node\"") {
+		t.Errorf("机器面：JSON 里没出 hostname/edge-node：stdout=%q", out)
+	}
+
+	// ---- 负控①：未知旗标 ⇒ 2（执行前判 · stdout 0 字节） ----
+	if rc, out, _ := run(root, "agent", "workers", "show", "--nosuchflag-zz"); rc != 2 || out != "" {
+		t.Errorf("负控①：未知旗标 rc=%d（要 2）· stdout=%q（要空）", rc, out)
+	}
+	// ---- 负控②：多余位置参数 ⇒ 2（arity: none） ----
+	if rc, out, _ := run(root, "agent", "workers", "show", "extra"); rc != 2 || out != "" {
+		t.Errorf("负控②：多余位置参数 rc=%d（要 2）· stdout=%q（要空）", rc, out)
+	}
+	// ---- 负控③：合成仓根里 workers.yaml 缺失 ⇒ 8（不给结论 · 不静默空结论） ----
+	emptyRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(emptyRoot, "core", "internal", "version"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(emptyRoot, "core", "internal", "version", "version.go"), []byte("package version\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if rc, out, _ := run(emptyRoot, "agent", "workers", "show"); rc != 8 || out != "" {
+		t.Errorf("负控③：workers.yaml 缺失 rc=%d（要 8 不给结论）· stdout=%q（要空）", rc, out)
+	}
+}

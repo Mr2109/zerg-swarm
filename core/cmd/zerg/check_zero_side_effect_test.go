@@ -225,3 +225,37 @@ func TestCheckZeroSideEffect_NoTempdirLeak(t *testing.T) {
 		t.Errorf("tempdir 泄漏：before=%d after=%d（口径差③止血失效）", before, after)
 	}
 }
+
+// TestCheckZeroSideEffect_WalkReadFailTeeth —— B 类读失败不再静默的回归牙：归档区里一个子目录锁成
+// chmod 000 ⇒ czseWalkMirror 的登记面（czseReadFails）必响：rc=2 + BLOCKED 头 + 逐件点名。
+// 删回静默（原 os.ReadDir 失败即 return）本用例必红。
+func TestCheckZeroSideEffect_WalkReadFailTeeth(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root 无视权限位（chmod 000 仍可读）⇒ 跳过")
+	}
+	tmp := t.TempDir()
+	arch := czsePyJoin(tmp, "Zerg-归档")
+	if err := os.MkdirAll(czsePyJoin(arch, "locked"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	x := czsePyJoin(arch, "x.md")
+	if err := os.WriteFile(x, []byte("只读件\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(x, 0o444); err != nil {
+		t.Fatal(err)
+	}
+	locked := czsePyJoin(arch, "locked")
+	if err := os.Chmod(locked, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chmod(locked, 0o755) }()
+	root := czsePyJoin(tmp, "root")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rc, out, _ := czseT(t, "--archive", arch, "--root", root)
+	if rc != czseRCnoconc || !strings.Contains(out, "BLOCKED") || !strings.Contains(out, "locked") {
+		t.Fatalf("读不到目录应 rc=2 + BLOCKED 点名 locked，得 rc=%d out=%q", rc, out)
+	}
+}

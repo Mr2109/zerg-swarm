@@ -95,7 +95,7 @@ import (
 // ─────────────────────────── py 出处的常量串（生成器注入 · 逐字节取自 py 原件）───────────────────────────
 
 // cnrDoc —— py 模块 `__doc__`（`--list-rules` 的首段输出）。
-const cnrDoc = "check-nodes-roster.py — 机器名册的**唯一真源核对**（契约 §九 M13 `Z2` / `P-069`）\n\n为什么存在\n----------\n「名册有三处并存、一个真源都没有」（`调研-M13` §4.1 实测）：`gateway/fleet.yaml` 的 `fleet:`\n（子端寻址）· 同文件的 `updates.nodes`（换件 ssh 目标）· 子端的机器名旗标（子端自报）。\n三处各自更新 ⇒ 任何「按名找到一台机器」的行为都建立在一张会漂的表上。\n\n定案（契约 §九 `Z2`）**名册真源唯一** = `~/.zerg/contexts/<档>.yaml` 的 `nodes:`；\n`fleet:` 与 `updates.nodes` 降为**投影源** —— 处置只给了两条路：① **由名册生成**，或\n② **被门禁逐项核对**。本门走 ②（①要动主控的配置加载面，属写面，不在本批）。\n\n⇒ **建而不收 = 又多一处**：只新建名册文件、不把三处旧来源绑到它，名册就只是第 4 份拷贝。\n本门就是那条「绑」——它同时判两件事：\n  ① 两段投影**有没有声明自己在投影**（段内必须写明真源路径）——没有声明 ⇒ rc=1（这才是「收」）；\n  ② 声明了之后**值面是否逐字相同**（host/port/os/ssh/root/prefix/api/components 逐字段）。\n\n判据（A–G；A–F 与 G 的「闭集 / reported」支逐条能独立变红，G 的「true 须带 64hex 锚」支**降级为只报告**）\n--------------------------\n  A. 名册可读且 `nodes:` 非空（否则 rc=2 不给结论 —— 真源不在，判不了）\n  B. `gateway/fleet.yaml` 的 `fleet:` 段与 `updates:` 段**各自**带投影源声明（段内出现\n     `~/.zerg/contexts/`）——「建而不收」的直接判据\n  C. `fleet:` 键集 == 名册键集（**两向**）；每台 host/port/os 与名册逐字相同\n  D. `updates.nodes[]`：name ∈ 名册；ssh/root/prefix/api/components 与名册逐字相同\n  E. `models:` 段里每个 host ∈ 名册键（模型驻留在哪台 —— 第 4 处，顺带核）\n  F. **本机**子端机器名旗标 ∈ 名册键：**本机盘上 plist**（`deploy/com.zerg.agent-Mr2109.plist`）\n     与**本机在跑的 `zerg-agentd`**（`ps` 读，只读）两处都核；没有在跑的进程 ⇒ 打印跳过（不是红）。\n     ★ 读面 = 本机（local）—— 远端子端本机读不到，见「结论范围」。\n  G. `models:` 段里每条的 `verified` 是**闭集值**，「实测级」带**可核的内容锚**为**报告项**：\n       · `verified: true`（实测级）—— **必须**带 `sha256:`/`digest:`/`sha:` 之一，且值 = 64 位\n         十六进制；缺锚 / 锚格式不对 ⇒ **降级为只报告**（逐条列名，**不进 rc**）——\n         GAP-20261003-21：`verified` 的消费者 schema 是 bool ⇒ 该锚恒缺、原「rc=1 点名」恒红且修不了。\n         给了 `--verify-sha` 且该条 host 是本机、`file:` 在盘上 ⇒ 现算 sha256 逐字比对\n         （内容寻址真核）；本机读不到（远端 host / 件不在 / 未开开关）⇒ 该锚记为**声明级**。\n       · `verified: reported`（声明级）—— 必须带 `verified_where:`（∈ 名册键），表示「由哪台自报」。\n       · `verified: false` ⇒ 放过（就是「没实测」）；闭集外的取值 ⇒ rc=1 点名。\n       · 没写 `verified` 字段的条目 ⇒ 本判据不管（E 已核它的 host 在册）。\n  H. **拨号地址（`--controller`）由名册可推导**（`GAP-20260927-03`）：仓内每个子端 plist 的\n     `--controller` 值（`${VAR:-默认}` 变量形态取**默认值**）必须**能由名册推出来** ——\n       host 必须 ∈ 可推导集 = { 回环 `127.0.0.1`/`::1`/`localhost` } ∪ { `nodes:` 每台的 host }；\n       端口必须 == 名册顶层 `core:` 的端口。\n     host 落在名册**没有的网段**（如 `192.168.110.x`）或端口不符 ⇒ **rc=1**，**逐字点名 plist 路径与该值**\n     （换网/改 IP 时 plist 与名册各说各话的那种漂移）。plist 不在 / 无 `--controller` ⇒ 打印跳过（不是红）。\n\n结论范围（read_layer × verdict_scope —— 本门**只用本机读数**，故判词必须带层限）\n------------------------------------------------------------------------------\n  本门的全部读取面都是**本机**：本机盘上的 `gateway/fleet.yaml`、本机 `~/.zerg/contexts/`\n  名册、本机 `deploy/…plist`、本机 `ps -Ao command=`（`read_layer=local`）。⇒ 判词一律\n  `verdict_scope=本机`，并**逐台列出本门读不到、因而不给结论的远端节点**；★ 严禁把本机\n  读数冒称「机群级/全对」。远端节点的一致性须由**各机自己**跑本门回答（或该机自报 +\n  `verified: reported` + `verified_where`）。\n\n退码（与仓内既有门一致的三档）\n------------------------------\n  0 = **本机层**全对（PASS · verdict_scope=本机）—— ★ 不表示远端节点也对（见「结论范围」）\n  1 = 有漂移（FAIL）—— 逐条给「哪一处 · 哪个字段 · 现值 vs 名册值」\n  2 = **不给结论**（缺件 / 解析不出 `nodes:` / `fleet.yaml` 不在 / 自检不过 / 空转假覆盖）\n\n★ 本机物件：名册住在 `~/.zerg/`（**不入任何仓**）⇒ 在没建名册的机器上本门**必然** rc=2\n  （「名册不在、判不了」是事实，不是「绿」）。所以它**不进提交闸的快速档**（`FAST_STEPS`）：\n  否则每台没建名册的机器**每次提交**都会被拦一格 —— 那不叫严格，是把闸废掉（同 `check-wired-scripts`\n  升档时的先例）。它挂在**默认（全量）档** 的 `gates` scope 里。\n\n用法\n----\n    python3 scripts/gates/check-nodes-roster.py                 # 核真目标（仓内 fleet.yaml + 本机名册）\n    python3 scripts/gates/check-nodes-roster.py --roster P      # 换名册路径（默认 ~/.zerg/contexts/default.yaml）\n    python3 scripts/gates/check-nodes-roster.py --list-rules    # 打判据 / 路径来源 / 退码\n    python3 scripts/gates/check-nodes-roster.py --self-test     # 只跑自检（合成夹具，不碰真目标）\n    python3 scripts/gates/check-nodes-roster.py --verify-sha    # 另对「本机可读的 verified: true」现算 sha256 真核\npython3 scripts/gates/check-nodes-roster.py --ctrl-plist P  # 换判据 H「拨号地址对账」要核的 plist（可重复）\n"
+const cnrDoc = "check-nodes-roster.py — 机器名册的**唯一真源核对**（契约 §九 M13 `Z2` / `P-069`）\n\n为什么存在\n----------\n「名册有三处并存、一个真源都没有」（`调研-M13` §4.1 实测）：`gateway/fleet.yaml` 的 `fleet:`\n（子端寻址）· 同文件的 `updates.nodes`（换件 ssh 目标）· 子端的机器名旗标（子端自报）。\n三处各自更新 ⇒ 任何「按名找到一台机器」的行为都建立在一张会漂的表上。\n\n定案（契约 §九 `Z2`）**名册真源唯一** = `~/.zerg/contexts/<档>.yaml` 的 `nodes:`；\n`fleet:` 与 `updates.nodes` 降为**投影源** —— 处置只给了两条路：① **由名册生成**，或\n② **被门禁逐项核对**。本门走 ②（①要动主控的配置加载面，属写面，不在本批）。\n\n⇒ **建而不收 = 又多一处**：只新建名册文件、不把三处旧来源绑到它，名册就只是第 4 份拷贝。\n本门就是那条「绑」——它同时判两件事：\n  ① 两段投影**有没有声明自己在投影**（段内必须写明真源路径）——没有声明 ⇒ rc=1（这才是「收」）；\n  ② 声明了之后**值面是否逐字相同**（host/port/os/ssh/root/prefix/api/components 逐字段）。\n\n判据（A–G；A–F 与 G 的「闭集 / reported」支逐条能独立变红，G 的「true 须带 64hex 锚」支**降级为只报告**）\n--------------------------\n  A. 名册可读且 `nodes:` 非空（否则 rc=2 不给结论 —— 真源不在，判不了）\n  B. `gateway/fleet.yaml` 的 `fleet:` 段与 `updates:` 段**各自**带投影源声明（段内出现\n     `~/.zerg/contexts/`）——「建而不收」的直接判据\n  C. `fleet:` 键集 == 名册键集（**两向**）；每台 host/port/os 与名册逐字相同\n  D. `updates.nodes[]` 与名册**两向**（name ∈ 名册；名册 ⊆ updates.nodes）；ssh/root/prefix/api/components 与名册逐字相同\n  E. `models:` 段里每个 host ∈ 名册键（模型驻留在哪台 —— 第 4 处，顺带核）\n  F. **本机**子端机器名旗标 ∈ 名册键：**本机盘上 plist**（`deploy/com.zerg.agent-Mr2109.plist`）\n     与**本机在跑的 `zerg-agentd`**（`ps` 读，只读）两处都核；没有在跑的进程 ⇒ 打印跳过（不是红）。\n     ★ 读面 = 本机（local）—— 远端子端本机读不到，见「结论范围」。\n  G. `models:` 段里每条的 `verified` 是**闭集值**，「实测级」带**可核的内容锚**为**报告项**：\n       · `verified: true`（实测级）—— **必须**带 `sha256:`/`digest:`/`sha:` 之一，且值 = 64 位\n         十六进制；缺锚 / 锚格式不对 ⇒ **降级为只报告**（逐条列名，**不进 rc**）——\n         GAP-20261003-21：`verified` 的消费者 schema 是 bool ⇒ 该锚恒缺、原「rc=1 点名」恒红且修不了。\n         给了 `--verify-sha` 且该条 host 是本机、`file:` 在盘上 ⇒ 现算 sha256 逐字比对\n         （内容寻址真核）；本机读不到（远端 host / 件不在 / 未开开关）⇒ 该锚记为**声明级**。\n       · `verified: reported`（声明级）—— 必须带 `verified_where:`（∈ 名册键），表示「由哪台自报」。\n       · `verified: false` ⇒ 放过（就是「没实测」）；闭集外的取值 ⇒ rc=1 点名。\n       · 没写 `verified` 字段的条目 ⇒ 本判据不管（E 已核它的 host 在册）。\n  H. **拨号地址（`--controller`）由名册可推导**（`GAP-20260927-03`）：仓内每个子端 plist 的\n     `--controller` 值（`${VAR:-默认}` 变量形态取**默认值**）必须**能由名册推出来** ——\n       host 必须 ∈ 可推导集 = { 回环 `127.0.0.1`/`::1`/`localhost` } ∪ { `nodes:` 每台的 host }；\n       端口必须 == 名册顶层 `core:` 的端口。\n     host 落在名册**没有的网段**（如 `192.168.110.x`）或端口不符 ⇒ **rc=1**，**逐字点名 plist 路径与该值**\n     （换网/改 IP 时 plist 与名册各说各话的那种漂移）。plist 不在 / 无 `--controller` ⇒ 打印跳过（不是红）。\n\n结论范围（read_layer × verdict_scope —— 本门**只用本机读数**，故判词必须带层限）\n------------------------------------------------------------------------------\n  本门的全部读取面都是**本机**：本机盘上的 `gateway/fleet.yaml`、本机 `~/.zerg/contexts/`\n  名册、本机 `deploy/…plist`、本机 `ps -Ao command=`（`read_layer=local`）。⇒ 判词一律\n  `verdict_scope=本机`，并**逐台列出本门读不到、因而不给结论的远端节点**；★ 严禁把本机\n  读数冒称「机群级/全对」。远端节点的一致性须由**各机自己**跑本门回答（或该机自报 +\n  `verified: reported` + `verified_where`）。\n\n退码（与仓内既有门一致的三档）\n------------------------------\n  0 = **本机层**全对（PASS · verdict_scope=本机）—— ★ 不表示远端节点也对（见「结论范围」）\n  1 = 有漂移（FAIL）—— 逐条给「哪一处 · 哪个字段 · 现值 vs 名册值」\n  2 = **不给结论**（缺件 / 解析不出 `nodes:` / `fleet.yaml` 不在 / 自检不过 / 空转假覆盖）\n\n★ 本机物件：名册住在 `~/.zerg/`（**不入任何仓**）⇒ 在没建名册的机器上本门**必然** rc=2\n  （「名册不在、判不了」是事实，不是「绿」）。所以它**不进提交闸的快速档**（`FAST_STEPS`）：\n  否则每台没建名册的机器**每次提交**都会被拦一格 —— 那不叫严格，是把闸废掉（同 `check-wired-scripts`\n  升档时的先例）。它挂在**默认（全量）档** 的 `gates` scope 里。\n\n用法\n----\n    python3 scripts/gates/check-nodes-roster.py                 # 核真目标（仓内 fleet.yaml + 本机名册）\n    python3 scripts/gates/check-nodes-roster.py --roster P      # 换名册路径（默认 ~/.zerg/contexts/default.yaml）\n    python3 scripts/gates/check-nodes-roster.py --list-rules    # 打判据 / 路径来源 / 退码\n    python3 scripts/gates/check-nodes-roster.py --self-test     # 只跑自检（合成夹具，不碰真目标）\n    python3 scripts/gates/check-nodes-roster.py --verify-sha    # 另对「本机可读的 verified: true」现算 sha256 真核\npython3 scripts/gates/check-nodes-roster.py --ctrl-plist P  # 换判据 H「拨号地址对账」要核的 plist（可重复）\n"
 
 // cnrHelpText —— py argparse `-h/--help` 的 stdout **逐字**（Python 3.9 用 `optional arguments:`）。
 const cnrHelpText = "usage: check-nodes-roster.py [-h] [--roster ROSTER] [--fleet FLEET]\n                             [--plist PLIST] [--self-test] [--list-rules]\n                             [--verify-sha] [--ctrl-plist P]\n\noptional arguments:\n  -h, --help       show this help message and exit\n  --roster ROSTER\n  --fleet FLEET\n  --plist PLIST\n  --self-test\n  --list-rules\n  --verify-sha     对本机可读的 verified: true 条目现算 sha256 真核（默认只查锚在不在/格式）\n  --ctrl-plist P   判据 H 要核的 plist（可重复；默认 仓内 deploy/ 与 gateway/deploy/ 两件）\n"
@@ -106,7 +106,7 @@ const cnrUsageLine = "usage: check-nodes-roster.py [-h] [--roster ROSTER] [--fle
 // cnrRosterFix / cnrFleetFix / cnrPlistFix —— py 自检夹具（逐字节取自 py 原件）。
 const cnrRosterFix = "# 夹具名册\ncontext: default\ncore: http://127.0.0.1:8580\nnodes:\n  x" + "3:\n    host: <worker-ip>\n    port: 8100\n    os: ubuntu\n    ssh: g01@<worker-ip>\n    root: /home/" + "g01/zerg\n    prefix: /home/" + "g01/zerg/bin\n    api: \"http://127.0.0.1:8580\"\n    components: \"core,agentd\"\n  Mr2109:\n    host: 127.0.0.1\n    port: 8100\n    os: macos\n"
 
-const cnrFleetFix = "# 夹具 fleet.yaml\nupdates:\n  # 投影源：真源 = ~/.zerg/contexts/default.yaml 的 nodes:\n  check: true\n  nodes:\n    - { name: x" + "3, ssh: g01@<worker-ip>, root: /home/" + "g01/zerg, prefix: /home/" + "g01/zerg/bin, api: \"http://127.0.0.1:8580\", components: \"core,agentd\" }\nmodels:\n  m1: { host: x" + "3, backend: llama-server }\nfleet:\n  # 投影源：真源 = ~/.zerg/contexts/default.yaml 的 nodes:\n  x" + "3: { host: <worker-ip>, port: 8100, os: ubuntu }\n  Mr2109: { host: 127.0.0.1, port: 8100, os: macos }\n"
+const cnrFleetFix = "# 夹具 fleet.yaml\nupdates:\n  # 投影源：真源 = ~/.zerg/contexts/default.yaml 的 nodes:\n  check: true\n  nodes:\n    - { name: x" + "3, ssh: g01@<worker-ip>, root: /home/" + "g01/zerg, prefix: /home/" + "g01/zerg/bin, api: \"http://127.0.0.1:8580\", components: \"core,agentd\" }\n    - { name: Mr2109 }\nmodels:\n  m1: { host: x" + "3, backend: llama-server }\nfleet:\n  # 投影源：真源 = ~/.zerg/contexts/default.yaml 的 nodes:\n  x" + "3: { host: <worker-ip>, port: 8100, os: ubuntu }\n  Mr2109: { host: 127.0.0.1, port: 8100, os: macos }\n"
 
 const cnrPlistFix = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\"><dict>\n  <key>Label</key><string>com.zerg.agent-Mr2109</string>\n  <key>ProgramArguments</key><array>\n    <string>/tmp/zerg-agentd</string>\n    <string>--machine</string><string>Mr2109</string>\n  </array>\n</dict></plist>\n"
 
@@ -142,7 +142,7 @@ var cnrCtrlVarRe = regexp.MustCompile(`(?s)^\$\{([A-Za-z_][A-Za-z0-9_]*):-(.*)\}
 var cnrCtrlURLRe = regexp.MustCompile(`^(https?)://([^/:]+)(?::(\d+))?(/.*)?$`)
 
 // cnrFleetVerifiedFix —— py 自检夹具 `FLEET_VERIFIED_FIX`（逐字节取自 py 原件）。
-const cnrFleetVerifiedFix = "# 夹具 fleet.yaml（判据 G）\nupdates:\n  # 投影源：真源 = ~/.zerg/contexts/default.yaml 的 nodes:\n  check: true\n  nodes:\n    - { name: x" + "3, ssh: g01@<worker-ip>, root: /home/" + "g01/zerg, prefix: /home/" + "g01/zerg/bin, api: \"http://127.0.0.1:8580\", components: \"core,agentd\" }\nmodels:\n  mG:\n    - { host: __HOST__, backend: llama-server, file: __FILE__, __VERIFIED__ }\nfleet:\n  # 投影源：真源 = ~/.zerg/contexts/default.yaml 的 nodes:\n  x" + "3: { host: <worker-ip>, port: 8100, os: ubuntu }\n  Mr2109: { host: 127.0.0.1, port: 8100, os: macos }\n"
+const cnrFleetVerifiedFix = "# 夹具 fleet.yaml（判据 G）\nupdates:\n  # 投影源：真源 = ~/.zerg/contexts/default.yaml 的 nodes:\n  check: true\n  nodes:\n    - { name: x" + "3, ssh: g01@<worker-ip>, root: /home/" + "g01/zerg, prefix: /home/" + "g01/zerg/bin, api: \"http://127.0.0.1:8580\", components: \"core,agentd\" }\n    - { name: Mr2109 }\nmodels:\n  mG:\n    - { host: __HOST__, backend: llama-server, file: __FILE__, __VERIFIED__ }\nfleet:\n  # 投影源：真源 = ~/.zerg/contexts/default.yaml 的 nodes:\n  x" + "3: { host: <worker-ip>, port: 8100, os: ubuntu }\n  Mr2109: { host: 127.0.0.1, port: 8100, os: macos }\n"
 
 // cnrValue —— py 无类型值的近似（string | map[string]cnrValue | []cnrValue）。
 type cnrValue = interface{}
@@ -860,7 +860,14 @@ func cnrCheckModelsVerified(lines []string, nodes map[string]cnrValue, localName
 	nNoAnchor := 0 // ★ 降级（GAP-20261003-21）：无有效锚的 true —— **只报告 · 不进 rc**
 	for _, me := range ents {
 		e := me.ent
-		raw := cnrLower(cnrStripQuotes(cnrPyStrip(cnrToString(e["verified"]))))
+		// ★ 加性键（设计《设计-verified三态与锚-v0.1-20261010》§三乙案 · §2.2「以 state 为准」）：
+		//   加性键 `verified_state`（三态 true|false|reported）非空 ⇒ 以它为准；缺席 ⇒ 回落旧裸
+		//   `verified`（bool）⇒ 向后兼容（旧 YAML `verified: true/false` 一字不改，仍按原判）。
+		//   ★ 只读裸 `verified` 会把加性形态（`verified_state: reported`）当「无此键」静默跳过 ⇒ 失明。
+		raw := cnrLower(cnrStripQuotes(cnrPyStrip(cnrToString(e["verified_state"]))))
+		if raw == "" {
+			raw = cnrLower(cnrStripQuotes(cnrPyStrip(cnrToString(e["verified"]))))
+		}
 		if raw == "" {
 			continue
 		}
@@ -871,7 +878,7 @@ func cnrCheckModelsVerified(lines []string, nodes map[string]cnrValue, localName
 		}
 		tag := fmt.Sprintf("%s（host=%s）", me.name, hostDisp)
 		if !cnrInStrings(raw, cnrVerifiedValues) {
-			fails = append(fails, fmt.Sprintf("G `%s` 的 verified 取值 `%s` 不在闭集 %s",
+			fails = append(fails, fmt.Sprintf("G `%s` 的 verified/verified_state 取值 `%s` 不在闭集 %s",
 				tag, raw, cnrJoinStr(cnrVerifiedValues, "/")))
 			continue
 		}
@@ -926,7 +933,7 @@ func cnrCheckModelsVerified(lines []string, nodes map[string]cnrValue, localName
 			nRep++
 			where := cnrStripQuotes(cnrPyStrip(cnrToString(e["verified_where"])))
 			if where == "" {
-				fails = append(fails, fmt.Sprintf("G `%s` 写 verified: reported（声明级）却缺 verified_where（哪台自报）", tag))
+				fails = append(fails, fmt.Sprintf("G `%s` 写 verified/verified_state: reported（声明级）却缺 verified_where（哪台自报）", tag))
 			} else if _, ok := nodes[where]; !ok {
 				fails = append(fails, fmt.Sprintf("G `%s` 的 verified_where `%s` 不在名册", tag, where))
 			} else {
@@ -1011,7 +1018,7 @@ func cnrCheckFleet(fleetPath string, nodes map[string]cnrValue, localNames map[s
 		}
 	}
 
-	// D. updates.nodes 逐字段。
+	// D. updates.nodes 逐字段（**两向**）。★ 补反向的理由（一行）：本段不是展示面 —— `zerg-upgrade.sh` 的 `fleet_roster()` 与 `fleet-relay.sh` 都读它定「谁被 `--fleet` 换件 / 谁进镜像中继」；原单向（只防「投影多写」）⇒「名册有、投影没有」的机器被静默丢出该路径而本门照绿（与 C 的「名册↔`fleet:`」两向同形，补齐）。
 	if s, e, ok := cnrSectionRange(lines, "updates"); ok {
 		ups := cnrParseBlock(lines[s:e])
 		var items []cnrValue
@@ -1021,6 +1028,7 @@ func cnrCheckFleet(fleetPath string, nodes map[string]cnrValue, localNames map[s
 			}
 		}
 		checks = append(checks, fmt.Sprintf("D updates.nodes 条目 %d 个", len(items)))
+		updNames := map[string]cnrValue{}
 		for _, itv := range items {
 			it, ok := itv.(map[string]cnrValue)
 			if !ok {
@@ -1031,6 +1039,7 @@ func cnrCheckFleet(fleetPath string, nodes map[string]cnrValue, localNames map[s
 				fails = append(fails, "D updates.nodes 有一项没有 name")
 				continue
 			}
+			updNames[name] = it
 			if _, ok := nodes[name]; !ok {
 				fails = append(fails, fmt.Sprintf("D updates.nodes 里的 `%s` 不在名册", name))
 				continue
@@ -1044,6 +1053,10 @@ func cnrCheckFleet(fleetPath string, nodes map[string]cnrValue, localNames map[s
 						name, f, cnrRepr(got), cnrRepr(want)))
 				}
 			}
+		}
+		// ★ D 反向（**与 C 同形**）：名册里有、updates.nodes 里没有 ⇒ rc=1。缺席条目无从比字段 ⇒ 只报「不在」，✗ 不报字段差异。
+		for _, k := range cnrSortedDiff(nodes, updNames) {
+			fails = append(fails, fmt.Sprintf("D 名册里的 `%s` 不在 updates.nodes（名册有、投影没有）", k))
 		}
 	}
 

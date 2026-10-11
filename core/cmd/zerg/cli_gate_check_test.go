@@ -315,6 +315,10 @@ func TestGateCheckLockContentionIsBlocked(t *testing.T) {
 // ★ 2026-10-10（GAP-20260927-220 want① · 本单）：建键 check-lineref-census
 //
 //	（checkLinerefCensusGateMain · Go 半无 py 半 · 件行引用语义普查「锚点符号 ⟷ 被引行」只报告判据 · tri-report 只报告）⇒ 183→184。
+//
+// ★ 2026-10-10（GAP-20260927-191 残面 · 本单）：建键 check-structured-count-assert
+//
+//	（checkStructuredCountAssertGateMain · Go 半无 py 半 · 「抽结构再数数」判据点四属性普查只报告 · tri-report）⇒ 184→185。
 func TestGateCheckGoEntryTableComplete(t *testing.T) {
 	root := filepath.Join("..", "..", "..")
 	byName, dupes, err := gateCheckRoster(root)
@@ -324,8 +328,8 @@ func TestGateCheckGoEntryTableComplete(t *testing.T) {
 	if len(dupes) != 0 {
 		t.Fatalf("真实名录有同名多件 ⇒ 前置不成立：%v", dupes)
 	}
-	if got := len(gateCheckGoEntry); got != 184 {
-		t.Fatalf("进程内 Go 表项数要 == 184，得到 %d", got)
+	if got := len(gateCheckGoEntry); got != 185 {
+		t.Fatalf("进程内 Go 表项数要 == 185，得到 %d", got)
 	}
 	// ★ 放宽（2026-10-07 退役批）：旧不变量「表键必在名录」⇒「表键 ⇒ 名录 **或** inproc 键 二者其一」。
 	//   退役件（py 已 `git rm`）只余 inproc 那一路（family_gate_check.go 的 inproc 兜底 ⇒ rc=0）；

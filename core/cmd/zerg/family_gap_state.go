@@ -62,6 +62,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -82,7 +83,11 @@ var gapStateSettable = []string{gapStOpen, gapStSolved, gapStWontDo}
 // ★ `部分`（方案乙）：**本条的已治面已销、残面另记** —— 它**仍是** `state=已解`：读者面的未闭/已闭
 // 分档（`gapOpenStates` / `glvOpenStates` / `gsaOpenStates` · 门75 分子分母 · 门101）**一字不动**；
 // 未治的残面一句话走 `set-state --remainder` 另落一格（`gapRecord.Remainder`）。
-var gapSolvedKindClosed = []string{"实现", "销案", "前提不成立", gapSolvedKindPartial}
+// gapSolvedKindPremiseInvalid —— "**前提不成立**"那一档（本枚 · 语义防护的靶）：它是**例外通道**
+// （不受「未落提交面禁销」硬线约束）⇒ 填它时证据须点名一个**可现读的物**（见 `gapPremiseAnchorWhy`）。
+const gapSolvedKindPremiseInvalid = "前提不成立"
+
+var gapSolvedKindClosed = []string{"实现", "销案", gapSolvedKindPremiseInvalid, gapSolvedKindPartial}
 
 // gapSolvedKindPartial —— 「**有残面的已解条**」那一档（缺口 `GAP-20260927-244` 方案乙）：本条的已治面
 // 已销、残面另记（残面文字走 `set-state --remainder`）。★ 它与 `实现`/`销案`/`前提不成立` 平级在
@@ -355,6 +360,60 @@ func gapLedgerUnlock(f *os.File) {
 	_ = f.Close()
 }
 
+// ── 账写**通用**收口（本笔 · 缺口 `GAP-20261010-12`）────────────────────────────────────
+//
+// gapApplyFail —— `gapLedgerApply` 的 `build` 回调用来**提前拒写**并指名 `(detail, rc, msg)` 的小载体
+// （与 `gapRewriteOne` 的返回形态同源 —— 保住各写面原有的「kind / detail / 退码」语义，✗ 不塌陷成单一码）。
+type gapApplyFail struct {
+	Detail string
+	RC     int
+	Msg    string
+}
+
+// gapLedgerApply —— 真源写面**通用唯一收口**：把「取账写排他锁 → 锁内现读 → 在新基线上构建整件新行 →
+// 临时件原子替换 → 写后读回对拍」**整段**串行化。
+//
+// 病（本笔靶 · 缺口 `GAP-20261010-12`）：本族仍有写路（`add` / `verify` / `backfill-unit`）**不走**
+// `gapRewriteOne`，只靠乐观闸 `gapConcurGate`（写前对一次身份 = check-then-act）—— 闸与「审计先落盘
+// （fsync）」+「整件重写」之间**无锁**，两个写者可先后过闸、后写覆盖先写 ⇒ **静默丢更新**。
+//
+// 治（照本族已成体系的先例 `gapRewriteOne` / `gapPoolApply` —— **同一套协议** · ✗ 不新造）：本函数
+// **复用**现成助手 —— `gapLedgerLock`（内核 flock 排他 · 阻塞取锁）· `readGapLedger`（锁内现读）·
+// `gapWriteLedger`（临时件 + `os.Rename` 原子替换）—— 它只做**编排**，✗ 不复制任何锁 / 写实现。
+//
+// `build` 收**锁内现读**的真源；返回整件新行（未动的行逐字节取新基线原文）。返回 `(detail, rc, msg)`
+// 与 `gapRewriteOne` 同形：`rc==0` ⇒ 真写成功（`detail` 空）。取锁失败 ⇒ 退 2（`ledger_locked`，与
+// `gapRewriteOne` 同码）；锁内读不到 / 写不进 / 回读对不上 ⇒ 退 8（不给结论）。
+func gapLedgerApply(build func(fresh gapLedger) ([]string, *gapApplyFail)) (string, int, string) {
+	lk, lerr := gapLedgerLock(gapLedgerPath())
+	if lerr != nil {
+		return "ledger_locked", exitUsage,
+			fmt.Sprintf("账写排他锁取不到（%v） ⇒ 拿不到独占写权，本次拒写", lerr)
+	}
+	defer gapLedgerUnlock(lk)
+
+	fresh, ferr := readGapLedger()
+	if ferr != nil {
+		return "ledger_unreadable", exitBlocked, ferr.Error()
+	}
+	lines, fail := build(fresh)
+	if fail != nil {
+		return fail.Detail, fail.RC, fail.Msg
+	}
+	if werr := gapWriteLedger(fresh.Path, lines); werr != nil {
+		return "ledger_unwritable", exitBlocked, werr.Error()
+	}
+	want := ""
+	if len(lines) > 0 {
+		want = strings.Join(lines, "\n") + "\n"
+	}
+	back, rerr := os.ReadFile(fresh.Path)
+	if rerr != nil || string(back) != want {
+		return "ledger_readback_mismatch", exitBlocked, "写回读对不上"
+	}
+	return "", exitOK, ""
+}
+
 // gapRecJSONEqual —— 两条账记录按**规范 JSON** 逐字节相等？（判「同一 id 在两次读之间被别人改过」）。
 // `gapRecord` 带切片字段（`Notes`/`Voids`）⇒ 不能用 `==`，故比序列化字节。
 func gapRecJSONEqual(a, b gapRecord) bool {
@@ -550,7 +609,12 @@ func gapTargetOne(inv *invocation, led gapLedger, stderr io.Writer, cmdName stri
 // ★ 批4 第五片（施工清单 `4-5`「销案证据形态钉死：命令 + rc + 关键读数 · 证据缺 rc 或读数 ⇒ 拒收」）
 // —— **不再只查空串**，四格逐格**真判**（缺一即拒 · 一律点名到格）：
 //
-//	① `cmd` 首词必须是 `zerg`（销案证据只能由本族正门跑出）；
+//	① `cmd` 须能承载真修的两态读数：首词必须是 `zerg`（本族正门）；**或**「测试件面」命令 —— 真修
+//	   只由测试件（`go test …` / `python3 <件>.py …`）承载、CLI 行为一字不变时，`cmd=` 允许是测试命令，
+//	   但 `reading=` **必须**注明这是等价读数（须含 `gapTwoStateTestFaceMark`）；**或**「仓外夹具命令」
+//	   —— 真实差异只有仓外夹具才暴露（真仓无该形态 ⇒ 正门命令两态读数必然相同）时，`cmd=` 允许是仓外
+//	   夹具脚本/命令，但 `reading=` **必须**注明这是夹具读数（须含 `gapTwoStateFixtureMark`）
+//	   ⇒ ✗ 不许拿测试/夹具命令冒充正门读数；
 //	② `rc` 必须是**十进制整数**（空 / 带壳引号 / 非数字 ⇒ 拒收）；
 //	③ `reading` 非空、**不得含换行**（读数是一行）；
 //	④ 三格之外**多一格键** ⇒ 拒收（点名多出来那一格）。
@@ -601,11 +665,92 @@ func gapTwoStateNewLedger(id string) bool {
 // gapTwoStateKeysTxt —— 三格形态的逐字吐法（点名里共用一处，免得四处手写漂掉）。
 const gapTwoStateKeysTxt = "cmd=<命令> · rc=<真退码> · reading=<关键读数一行>"
 
+// gapTwoStateTestFaceMark —— 「测试件面」读数在 `reading=` 里**必须**自带的等价读数标注（销案两态放宽 · 拍板口径）。
+//
+// 病（修前）：`cmd=` 首词必须是裸 `zerg` ⇒ 凡真修**只由测试件（Go 测试件 / py 脚本）承载、CLI 行为一字
+// 不变**的账条，一律产不出合法两态 ⇒ **销案永久卡死**。治：`cmd=` 允许是「测试件面」命令，但读数行
+// 必须注明它是**等价读数**（`reading=` 须含本串）⇒ 拿测试命令冒充正门读数的照样拒。
+const gapTwoStateTestFaceMark = "等价读数"
+
+// gapTwoStateTestFaceIs —— 该 `cmd=` 是不是**测试件面**命令（真修只由测试件承载 · CLI 行为零变化）。
+//
+// 闭集（逐字钉死 · ✗ 不比子串、✗ 不收 shell 展开 ⇒ 与既有「首词裸 `zerg`」同一种逐 token 口径）：
+//
+//	· `go test …`                              （Go 测试件：`go test -run <名> ./cmd/zerg/`）
+//	· `python3 <件>.py …` / `python <件>.py …`  （py 脚本件）
+//
+// 其余一律不是 ⇒ 仍按「首词必须是 `zerg`」拒收（✗ 不放宽到任意非 `zerg` 命令）。
+func gapTwoStateTestFaceIs(fields []string) bool {
+	if len(fields) == 0 {
+		return false
+	}
+	switch fields[0] {
+	case "go":
+		return len(fields) >= 2 && fields[1] == "test"
+	case "python3", "python":
+		for _, f := range fields[1:] {
+			if strings.HasSuffix(f, ".py") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// gapTwoStateFixtureMark —— 「仓外夹具命令」读数在 `reading=` 里**必须**自带的夹具读数标注（销案两态放宽 · 拍板口径）。
+//
+// 病（修前）：`cmd=` 只认本族正门（裸 `zerg`）与「测试件面」（`go test …` / `python3 <件>.py …`）⇒ 凡真修
+// 的**真实差异只有仓外夹具才暴露**（排序面 / 路径面一类；真仓无该形态 ⇒ 正门命令两态读数必然相同）的
+// 账条，一律产不出合法两态 ⇒ 销案卡死，助手被迫把夹具真读数挤进 `--evidence` 散文。治：`cmd=` 允许是
+// 「仓外夹具命令」（仓外临时目录里的夹具脚本/命令），但读数行必须注明这是**夹具读数**（须含本串）
+// ⇒ 拿夹具命令冒充正门读数的照样拒。
+const gapTwoStateFixtureMark = "夹具"
+
+// gapTwoStateFixtureIs —— 该 `cmd=` 是不是**仓外夹具命令**（真实差异证据只由仓外夹具暴露）。
+//
+// 闭集（逐字钉死 · ✗ 不比子串、✗ 不收 shell 展开 ⇒ 与「测试件面」同一逐 token 口径）：
+//
+//	· `<路径形夹具脚本>` …            （首 token 是路径形 ⇒ 直接跑盘上那枚夹具脚本件）
+//	· `bash|sh|zsh <路径形夹具脚本>` …（经解释器跑仓外夹具脚本）
+//
+// 「路径形夹具脚本」= token 以 `/`（绝对）· `./` · `../`（相对）· `~/`（家目录）起头，**且 basename 带
+// 脚本后缀**（`.sh` / `.bash` / `.zsh`）—— 指向盘上一枚夹具脚本件（脚本后缀先认 `.py`/`go test` 归
+// 「测试件面」，故本档只收 shell 脚本 ⇒ ✗ 不与测试件面重复）。
+// 裸命令名（`ls` / `go` / `go build`）一律不算 ⇒ 仍按「首词必须是 `zerg`」拒收（✗ 不放宽到任意非 `zerg` 命令）。
+func gapTwoStateFixtureIs(fields []string) bool {
+	if len(fields) == 0 {
+		return false
+	}
+	if gapTwoStateFixtureScript(fields[0]) {
+		return true
+	}
+	switch fields[0] {
+	case "bash", "sh", "zsh":
+		return len(fields) >= 2 && gapTwoStateFixtureScript(fields[1])
+	}
+	return false
+}
+
+// gapTwoStateFixtureScript —— 该 token 是不是**路径形夹具脚本**（路径形 + 脚本后缀）。
+func gapTwoStateFixtureScript(tok string) bool {
+	if !(strings.HasPrefix(tok, "/") || strings.HasPrefix(tok, "./") ||
+		strings.HasPrefix(tok, "../") || strings.HasPrefix(tok, "~/")) {
+		return false
+	}
+	switch {
+	case strings.HasSuffix(tok, ".sh"), strings.HasSuffix(tok, ".bash"), strings.HasSuffix(tok, ".zsh"):
+		return true
+	}
+	return false
+}
+
 // gapTwoStateParse —— 一条两态读数**逐格读回 + 逐格真判**（批4 第五片 · 施工清单 `4-5`）。
 //
 // 四格判据（缺一即拒 · 一律**点名**到格）：
 //
-//	① `cmd`：首词必须是 `zerg`；
+//	① `cmd`：首词必须是 `zerg`；**或**「测试件面」命令（`go test …` / `python3 <件>.py …`）且
+//	   `reading=` 含等价读数标注（`gapTwoStateTestFaceMark`）；**或**「仓外夹具命令」（仓外夹具脚本/命令）
+//	   且 `reading=` 含夹具读数标注（`gapTwoStateFixtureMark`）；
 //	② `rc` ：必须是**十进制整数**（空 / 带壳引号 / 非数字 ⇒ 拒收）；
 //	③ `reading`：非空、**不得含换行**；
 //	④ 三格之外**多一格键** ⇒ 拒收（点名多出来那一格）。
@@ -673,9 +818,27 @@ func gapTwoStateParse(s string) (cmd, rc, reading, why string, ok bool) {
 	if strings.ContainsAny(reading, "\n\r") {
 		return "", "", "", "`reading=` 含换行（读数必须是**一行**）", false
 	}
-	// ① 命令：首词必须是 `zerg`
-	if fields := strings.Fields(cmd); len(fields) == 0 || fields[0] != "zerg" {
-		return "", "", "", "`cmd=` 首词不是 `zerg`（得到 `" + cmd + "` · 销案证据只认本族正门跑出的命令）", false
+	// ① 命令：首词必须是 `zerg`（本族正门）；**或**「测试件面」命令 —— 真修只由测试件承载、CLI 行为
+	//    一字不变时（销案两态放宽 · 拍板），`cmd=` 允许是测试命令（`go test …` / `python3 <件>.py …`），
+	//    但 `reading=` **必须**注明这是等价读数（须含 `gapTwoStateTestFaceMark`）；**或**「仓外夹具命令」
+	//    —— 真实差异只有仓外夹具才暴露时，`cmd=` 允许是仓外夹具脚本/命令，但 `reading=` **必须**注明
+	//    这是夹具读数（须含 `gapTwoStateFixtureMark`）⇒ ✗ 不许拿测试/夹具命令冒充正门读数、
+	//    ✗ 也不放宽到任意非 `zerg` 命令。
+	if fields := strings.Fields(cmd); len(fields) == 0 {
+		return "", "", "", "`cmd=` 是空的（销案证据必须带命令）", false
+	} else if fields[0] != "zerg" {
+		switch {
+		case gapTwoStateTestFaceIs(fields):
+			if !strings.Contains(reading, gapTwoStateTestFaceMark) {
+				return "", "", "", "`cmd=` 是「测试件面」命令（`" + cmd + "`），但 `reading=` 没注明这是等价读数 —— 须含 `" + gapTwoStateTestFaceMark + "`（如 `reading=" + gapTwoStateTestFaceMark + " 改前 FAIL 改后 PASS`）", false
+			}
+		case gapTwoStateFixtureIs(fields):
+			if !strings.Contains(reading, gapTwoStateFixtureMark) {
+				return "", "", "", "`cmd=` 是「仓外夹具命令」（`" + cmd + "`），但 `reading=` 没注明这是夹具读数 —— 须含 `" + gapTwoStateFixtureMark + "`（如 `reading=" + gapTwoStateFixtureMark + "读数 改前全红 改后全绿`）", false
+			}
+		default:
+			return "", "", "", "`cmd=` 首词不是 `zerg`，也不是「测试件面」/「仓外夹具」命令（得到 `" + cmd + "` · 销案证据只认本族正门命令，或承载真修的测试件命令 `go test …` / `python3 <件>.py …`，或仓外夹具脚本/命令）", false
+		}
 	}
 	// ② 退码：十进制整数
 	if !gapTwoStateDecimal(rc) {
@@ -734,12 +897,7 @@ func gapTwoStateAutoReading(cmdStr string) (string, bool) {
 	if cell.Empty || cell.RC == 126 || cell.RC == 127 {
 		return "", false
 	}
-	reading := gapTwoStateFirstLine(string(cell.Out))
-	if reading == "" {
-		reading = fmt.Sprintf("(无 stdout 输出 · rc=%d)", cell.RC)
-	}
-	reading = strings.ReplaceAll(reading, gapTwoStateSep, " / ")
-	return "cmd=" + cmdStr + gapTwoStateSep + "rc=" + strconv.Itoa(cell.RC) + gapTwoStateSep + "reading=" + reading, true
+	return gapJudgeCellReading(cmdStr, cell), true
 }
 
 // gapTwoStateFirstLine —— 一段输出的**首个非空行**（去首尾空白 · 去行尾 `\r`）。
@@ -929,6 +1087,195 @@ func gapTwoStateExemptLine(w io.Writer) {
 
 // ── ⒜ `zerg gap set-state <GAP id> --state <仍缺|已解> --evidence <一句话>` ──────────────────────
 
+// ── 「前提不成立」销案的**可现读锚**闸（本枚）────────────────────────────────────────────────
+//
+// 病（本单靶心 · 上一单负控实测）：`--state 已解 --solved-kind 前提不成立` 是**不受「未落提交面禁销」
+// 硬线约束的例外通道** —— 而这个值**谁都能填**：存量账零门槛（无两态闸），新账也只机械卡「两态读数」
+// ⇒ 一条**本该真做**的账条，只要填个 `前提不成立` 就能销掉，硬线被这条旁路架空（正门对「误销」零防护）。
+//
+// 治：销案要**语义可核** —— 填 `前提不成立` 时，证据必须点名**一个可现读的物**（✗ 不收纯自然语言）：
+//
+//	① **两态读数段**（证据里含 `cmd=` ⇒ `gap reread` 能复跑，读数可核）；
+//	② **`件:行` 引用**（`<件>:<行>` 且该件**现读可得**：绝对 / cwd 相对 / 仓根相对 / 仓内跟踪件的 basename）；
+//	③ **命令串**（`zerg …` 且能在命令树里解析到 —— 复用 `gapJudgeArgv`，✗ 不新造解析面）。
+//
+// ★ 只**加严这一档**：其它 `--solved-kind` 值 / 非 `已解` 态 / 两态闸 / 幂等 / 写路**一字不动**
+//   （不动的判据 = 正控用例：`--solved-kind 销案` + 散文 ⇒ 仍 rc=0）。
+// ★ 排在**用法面**（读真源之前、`--dry-run` 与 `--yes` 都要过）⇒ 拒收时真源一个字节未改、审计一行
+//   未落，且 `--dry-run` 那一态**也**拒（病正是 `--dry-run` 就放行）。
+// ★ 取值面 = `--evidence` ∪ `--before-read` ∪ `--after-read` ∪ `--before-cmd` ∪ `--after-cmd`
+//   （五者**同批**构成落库的 `solved_evidence` ⇒ 锚在其中任一处即算点名了物）。
+
+// gapPremiseAnchorBlob —— 「前提不成立」销案证据的**取值面**（五枚旗标的并集）。
+func gapPremiseAnchorBlob(inv *invocation) string {
+	return strings.Join([]string{
+		inv.flagVal("--evidence"),
+		inv.flagVal("--before-read"), inv.flagVal("--after-read"),
+		inv.flagVal("--before-cmd"), inv.flagVal("--after-cmd"),
+	}, " ")
+}
+
+// gapPremiseAnchorWhy —— `前提不成立` 销案的**可现读锚**闸：空串 = 有锚（放行）；否则 = 拒收理由（逐条点名缺什么）。
+func gapPremiseAnchorWhy(inv *invocation) string {
+	blob := strings.TrimSpace(gapPremiseAnchorBlob(inv))
+	if blob == "" {
+		return "证据是空的（「前提不成立」销案必须点名一个**可现读的物**）"
+	}
+	// ① 两态读数段：含 `cmd=` ⇒ 读数可被 `gap reread` 复跑、可核。
+	if strings.Contains(blob, "cmd=") {
+		return ""
+	}
+	// ② `件:行` 引用（该件现读可得）
+	root := repoRoot()
+	var tracked map[string]bool
+	trackedDone := false
+	for _, tok := range gapPremiseTokens(blob) {
+		f, ok := gapPremiseFileLine(tok)
+		if !ok {
+			continue
+		}
+		if gapPremiseFilePathExists(f) {
+			return ""
+		}
+		if !strings.Contains(f, "/") && root != "" {
+			if !trackedDone {
+				tracked = gapPremiseTrackedBasenames(root)
+				trackedDone = true
+			}
+			if tracked[f] {
+				return ""
+			}
+		}
+	}
+	// ③ 命令串：`zerg …` 且能在命令树里解析到
+	if gapPremiseHasResolvableCmd(blob) {
+		return ""
+	}
+	return "「前提不成立」销案必须点名一个**可现读的物**（① 两态读数段 `cmd=…`；② `件:行` 且该件现读可得；" +
+		"③ 命令树里解析得到的 `zerg …` 命令）—— 只写「前提不成立」一类自然语言**不收**（该值是例外通道，会架空「未落提交面禁销」硬线）"
+}
+
+// gapPremiseTokens —— 证据串分词（空白 + 常见中英标点；**留** `:` / `/` / `.` / `-` / `_` ⇒ `件:行` 不被切断）。
+func gapPremiseTokens(s string) []string {
+	return strings.FieldsFunc(s, func(r rune) bool {
+		switch r {
+		case ' ', '\t', '\n', '\r', ',', ';', '(', ')', '[', ']', '{', '}', '"', '\'', '`', '·', '<', '>', '|', '\\',
+			'，', '。', '；', '、', '：', '（', '）', '【', '】', '《', '》', '「', '」', '『', '』',
+			'“', '”', '‘', '’', '…', '！', '？':
+			return true
+		}
+		return false
+	})
+}
+
+// gapPremiseFileLine —— `<件>:<行>` 形态（行号起首为数字）⇒ 返回件名面；否则 ok=false。
+func gapPremiseFileLine(tok string) (string, bool) {
+	i := strings.Index(tok, ":")
+	if i <= 0 || i == len(tok)-1 {
+		return "", false
+	}
+	f, rest := tok[:i], tok[i+1:]
+	if rest[0] < '0' || rest[0] > '9' {
+		return "", false
+	}
+	// 件名面至少要有一个像「后缀」的点、或含路径分隔（挡 `rc:1` 一类误判）。
+	if !strings.Contains(f, ".") && !strings.Contains(f, "/") {
+		return "", false
+	}
+	return f, true
+}
+
+// gapPremiseFilePathExists —— 该件名面**路径形**现读可得（绝对 / cwd 相对 / 仓根相对）。
+func gapPremiseFilePathExists(f string) bool {
+	if f == "" {
+		return false
+	}
+	cands := []string{}
+	if filepath.IsAbs(f) {
+		cands = append(cands, f)
+	} else {
+		if wd, err := os.Getwd(); err == nil {
+			cands = append(cands, filepath.Join(wd, f))
+		}
+		if root := repoRoot(); root != "" {
+			cands = append(cands, filepath.Join(root, f))
+		}
+	}
+	for _, c := range cands {
+		if st, err := os.Stat(c); err == nil && !st.IsDir() {
+			return true
+		}
+	}
+	return false
+}
+
+// gapPremiseTrackedBasenames —— 仓内**跟踪件**的 basename 集（一次 `git ls-files`；取不到 ⇒ nil ⇒ 该档不认）。
+func gapPremiseTrackedBasenames(root string) map[string]bool {
+	out, err := exec.Command("git", "-C", root, "-c", "core.quotepath=false", "ls-files").Output()
+	if err != nil {
+		return nil
+	}
+	m := map[string]bool{}
+	for _, ln := range strings.Split(string(out), "\n") {
+		if ln = strings.TrimSpace(ln); ln != "" {
+			m[filepath.Base(ln)] = true
+		}
+	}
+	return m
+}
+
+// gapPremiseHasResolvableCmd —— 证据里有没有一条能在**命令树**里解析到的 `zerg …` 命令（复用 `gapJudgeArgv`）。
+func gapPremiseHasResolvableCmd(blob string) bool {
+	toks := strings.Fields(blob)
+	for i, t := range toks {
+		if t != "zerg" {
+			continue
+		}
+		if _, why := gapJudgeArgv(strings.Join(toks[i:], " ")); why == "" {
+			return true
+		}
+	}
+	return false
+}
+
+// gapJudgeCellReading —— 由**已跑出的**一格 `cell` 拼三格读数串（`cmd=… · rc=… · reading=…`）。
+// 形态与 `gapTwoStateAutoReading` 逐字同源（stdout 首个非空行 · 段内 ` · ` 换 ` / `）；抽出来是为让
+// `--judge-cmd` 真跑那一路**复用同一条拼法**（✗ 不另写第二个读数格式器，免两处各拼一套）。
+func gapJudgeCellReading(cmdStr string, cell gateFourStatesCell) string {
+	reading := gapTwoStateFirstLine(string(cell.Out))
+	if reading == "" {
+		reading = fmt.Sprintf("(无 stdout 输出 · rc=%d)", cell.RC)
+	}
+	reading = strings.ReplaceAll(reading, gapTwoStateSep, " / ")
+	return "cmd=" + cmdStr + gapTwoStateSep + "rc=" + strconv.Itoa(cell.RC) + gapTwoStateSep + "reading=" + reading
+}
+
+// gapPremiseJudgeRun —— 真跑 `--judge-cmd` 一次（本枚 · main.go 开窗第 4 条 · 「前提不成立」销案的
+// **更强一路**）：返回 (拒收理由, 三格读数) —— 理由空 = **判据通过**（读数是非空的三格串，供落 `solved_evidence`）。
+//
+// 形态**照拄**同族既有 runner `gateFourStatesRun`（切词 · **无 shell** · 60s 上限 · 收 rc/stdout）
+// —— ✗ 不另造第二套执行器：
+//
+//	· `rc=0`           ⇒ **判据成立**（`why=""` · 读数三格 = `cmd=… · rc=0 · reading=…`）；
+//	· `rc≠0`           ⇒ **判据未通过**（销案拒收 · 逐字报 rc 与读数）；
+//	· `Empty`/126/127  ⇒ **跑不起来**（命令不存在 / 不可执行 ⇒ 判不了 · 拒收 · ✗ 不当通过用）。
+//
+// ★ 命令串的**危险形态**照本仓既有口径处理（`--before-cmd`/`--after-cmd` 同款）：`strings.Fields` 切词 ＋ `exec.CommandContext`（**无 shell 展开**）⇒ `;` / `|` / `&&` 只当字面 argv token（✗ 不新造策略）。
+func gapPremiseJudgeRun(cmdStr string) (why, reading string) {
+	cell := gateFourStatesRun(cmdStr, nil)
+	if cell.Empty {
+		return "`--judge-cmd` 的命令**跑不起来**（命令不存在 / 不可执行 ⇒ 现读拿不到读数）—— 判据取证不成立（✗ 不当通过用）", ""
+	}
+	if cell.RC == 126 || cell.RC == 127 {
+		return fmt.Sprintf("`--judge-cmd` 的命令**跑不起来**（rc=%d = 命令不可执行 / 不存在）—— 判据取证不成立（✗ 不当通过用）", cell.RC), ""
+	}
+	reading = gapJudgeCellReading(cmdStr, cell)
+	if cell.RC != 0 {
+		return fmt.Sprintf("`--judge-cmd` 判据**未通过**（rc=%d ≠ 0）—— 前提状态未被读数证明（%s）", cell.RC, reading), ""
+	}
+	return "", reading
+}
+
 func cmdGapSetState(inv *invocation, stdout, stderr io.Writer) int {
 	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
 		return rc
@@ -940,6 +1287,9 @@ func cmdGapSetState(inv *invocation, stdout, stderr io.Writer) int {
 	// ★ 缺口 `GAP-20260927-244` 方案乙：`--remainder <残面描述>` —— `部分` 档的**残面另记**
 	//   （本条 `state=已解` 且 `solved_kind=部分` 时，把**未治的残面**一句话落 `gapRecord.Remainder`）。
 	remainder := strings.TrimSpace(inv.flagVal("--remainder"))
+	// ★ 本枚（main.go 开窗第 4 条）：`--judge-cmd <命令串>` —— 「前提不成立」销案的**可跑判据**。
+	//   给了 ⇒ 由正门**真跑**它、用 rc/读数当证据（比 DEV-2443「只查提到了某个物」更强的**那一路**）。
+	judgeCmd := strings.TrimSpace(inv.flagVal("--judge-cmd"))
 
 	// ① 用法面（在任何盘面动作之前 —— 与 `add` / `verify` 同一条位置）
 	if inv.jsonGiven && len(inv.fields) == 0 {
@@ -958,7 +1308,7 @@ func cmdGapSetState(inv *invocation, stdout, stderr io.Writer) int {
 	if stateWant == "" {
 		inv.setErr("usage", "missing_required", "缺 --state")
 		fmt.Fprintf(stderr, "%s: `gap set-state` 缺必填旗标：--state\n", progName)
-		fmt.Fprintf(stderr, "用法：zerg gap set-state <GAP id> --state <%s> --evidence <一句话> [--solved-kind <实现|销案|前提不成立|部分>] [--remainder <残面描述>] [--before-cmd <命令串>] [--after-cmd <命令串>] [--before-read <cmd=… · rc=… · reading=…>] [--after-read <cmd=… · rc=… · reading=…>] [--by <谁>] [--dry-run | --yes]\n",
+		fmt.Fprintf(stderr, "用法：zerg gap set-state <GAP id> --state <%s> --evidence <一句话> [--solved-kind <实现|销案|前提不成立|部分>] [--remainder <残面描述>] [--before-cmd <命令串>] [--after-cmd <命令串>] [--judge-cmd <命令串>] [--before-read <cmd=… · rc=… · reading=…>] [--after-read <cmd=… · rc=… · reading=…>] [--by <谁>] [--dry-run | --yes]\n",
 			strings.Join(gapStateSettable, "|"))
 		return exitUsage
 	}
@@ -1004,6 +1354,44 @@ func cmdGapSetState(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s: `--remainder` 只对 `--state %s` 有效（本发 --state %s）—— 改别的态不带它\n",
 			progName, gapStSolved, stateWant)
 		return exitUsage
+	}
+	// ★ 本枚（main.go 开窗第 4 条）：`--judge-cmd` 两道用法闸（裸给 / 只对「前提不成立」销案）—— 与
+	//   `--remainder` 同款；防**静默吞**（本旗标只这一档有语义，别的档给它是用法错、不许当无事发生）。
+	if inv.hasFlag("--judge-cmd") && judgeCmd == "" {
+		inv.setErr("usage", "judge_cmd_missing_value", "--judge-cmd 没给值")
+		fmt.Fprintf(stderr, "%s: `--judge-cmd` 要给一条**可跑命令串**（裸给不降级 —— 用法错 2）\n", progName)
+		return exitUsage
+	}
+	if judgeCmd != "" && (stateWant != gapStSolved || solvedKind != gapSolvedKindPremiseInvalid) {
+		inv.setErr("usage", "judge_cmd_only_for_premise", "--judge-cmd 只对 --state 已解 --solved-kind 前提不成立 有效")
+		fmt.Fprintf(stderr, "%s: `--judge-cmd` 只对 `--state %s --solved-kind %s` 有效（本发 --state %s --solved-kind %s）—— 其它档不带它\n",
+			progName, gapStSolved, gapSolvedKindPremiseInvalid, stateWant, orDash(solvedKind))
+		return exitUsage
+	}
+
+	// ★ 本枚：「**前提不成立**」销案的**语义防护** —— 该值是**例外通道**（不受「未落提交面禁销」硬线约束）；
+	//   此前谁都能填 ⇒ 本该真做的账条填它就能销掉。这里在**用法面**加一道：证据必须点名一个**可现读的物**
+	//   （两态读数段 / `件:行`（件现读可得）/ 命令树里解析得到的 `zerg …` 命令）⇒ `--dry-run` 与真写**都**拒
+	//   （病正是 `--dry-run` 就放行）；其它 kind / 非已解态**一字不动**。
+	// ★ 本枚（main.go 开窗第 4 条 · **更强的一路**）：给了 `--judge-cmd` ⇒ 由正门**真跑它**、用 rc/读数当
+	//   证据（`rc=0` = 判据成立 · rc≠0 / 跑不起来 ⇒ 拒收并逐字报 rc 与读数）；没给 ⇒ **维持**上面的
+	//   DEV-2443 现判（向后兼容 · ✗ 不把已有的合法「前提不成立」销案判红）。
+	judgeReading := ""
+	if solvedKind == gapSolvedKindPremiseInvalid {
+		var why string
+		if judgeCmd != "" {
+			why, judgeReading = gapPremiseJudgeRun(judgeCmd)
+		} else {
+			why = gapPremiseAnchorWhy(inv)
+		}
+		if why != "" {
+			inv.setErr("usage", "premise_evidence_missing", why)
+			fmt.Fprintf(stderr, "%s: `--solved-kind %s` 销案**拒收** —— %s\n", progName, gapSolvedKindPremiseInvalid, why)
+			fmt.Fprintf(stderr, "  取值面   : --evidence ∪ --before-read ∪ --after-read ∪ --before-cmd ∪ --after-cmd ∪ --judge-cmd（同批构成落库的 solved_evidence）\n")
+			fmt.Fprintf(stderr, "  为何     : `%s` 是**例外通道**（不受「未落提交面禁销」硬线约束）⇒ 销案要语义可核、✗ 不收纯自然语言\n", gapSolvedKindPremiseInvalid)
+			fmt.Fprintf(stderr, "  真源     : %s（**本发一个字节未改**、审计一行未落 —— 闸在「审计先落盘」之前）\n", gapLedgerPath())
+			return exitUsage
+		}
 	}
 
 	// ② 缺 `--yes`（且非 `--dry-run`）：fail-closed **rc=2**，计划件走 stderr（同族 ④）。
@@ -1088,6 +1476,11 @@ func cmdGapSetState(inv *invocation, stdout, stderr io.Writer) int {
 	if twoStatePair == "齐" {
 		landed = gapTwoStateLanded(evidence, twoStateRes.Before, twoStateRes.After)
 	}
+	// ★ 本枚：给了 `--judge-cmd` 且判据**通过** ⇒ 把**真跑出的三格读数**落进 `solved_evidence`
+	//   （「用读数证明前提状态」· ✗ 不再是「写一段话」；判据未通过者在上面的闸就拒收了、到不了这里）。
+	if judgeReading != "" {
+		landed += gapTwoStateSep + "判据{" + judgeReading + "}"
+	}
 
 	// ⑤ 幂等：状态**与**证据（改到 `已解` 时另加 `solved_kind` / `remainder`）都逐字已在位 ⇒ 「无变化」（0）。
 	if r.State == stateWant && r.Evidence == landed &&
@@ -1116,6 +1509,9 @@ func cmdGapSetState(inv *invocation, stdout, stderr io.Writer) int {
 		if stateWant == gapStSolved {
 			plan2 += fmt.Sprintf("\n    solved_kind  : %s → %s", gapSolvedKindOf(r), kindWant)
 			plan2 += fmt.Sprintf("\n    remainder    : %s → %s", gapShowText(r.Remainder), gapShowText(remainderWant))
+		}
+		if judgeReading != "" {
+			plan2 += "\n    judge        : " + judgeReading
 		}
 		gapStatePlanBlock(stdout, "--dry-run", "set-state", led.Path, len(led.Lines),
 			r.ID, r.FP, r.State, stateWant,

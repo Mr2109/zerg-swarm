@@ -47,8 +47,9 @@
 //	① argparse 帮助 / 用法错正文（含 -h / 未知旗标）：实现按「-h⇒打帮助 rc=0 / 未知⇒rc=2」，正文随解释器版本
 //	   （py≤3.9 `optional arguments:` ⟷ ≥3.10 `options:`）与 COLUMNS 而变 ⇒ 不属逐字承诺。
 //	② 默认根定位（声明 (a)）。③ 非 UTF-8 角落：py errors=replace 按非法序列替换 U+FFFD、Go ToValidUTF8 按非法字节
-//	   ⇒ 真仓合法 UTF-8 不触发。④ `\s/\w/\b/\S` 的 Unicode/ASCII 角落。⑤ B 类读失败静默（py `except OSError`
-//	   返回空集）：本件逐字照搬（os.ReadFile 出错 ⇒ 返回空集），交回入账。
+//	   ⇒ 真仓合法 UTF-8 不触发。④ `\s/\w/\b/\S` 的 Unicode/ASCII 角落。⑤ B 类读失败静默 —— **本件 Go 侧已修**
+//	   （py `except OSError` 返回空集 / `os.walk(onerror=None)` 目录静默 ⇒ 有意分叉）：读不了的件 / 目录 ⇒
+//	   `cetcReadFails` 登记 + 入口判红（stderr BLOCKED 头 + 逐件点名）⇒ rc=2（不再静默少判 · 同族先例 dcmdReadFails）。
 package main
 
 import (
@@ -101,6 +102,11 @@ var (
 	cetcHeredocRe = regexp.MustCompile(`<<-?[` + cetcWS + `]*['"]?([A-Za-z_][A-Za-z0-9_]*)['"]?`)
 	// 顶部白名单（py `CALLSITE_ALLOW`，本件恒空）。
 	cetcCallsiteAllow []cetcAllow
+	// cetcReadFails —— B 类读失败登记面（读不了的件 / 目录 ⇒ 逐条登记 err 正文）。
+	// ★ B 类真口子修（与 py **有意分叉** · 同族先例 `check_doc_cmds.go` 的 `dcmdReadFails`）：
+	//	读失败 ⇒ 登记 + 入口判红（stderr BLOCKED 头 + 逐件点名）⇒ rc=2（不再静默少判）。
+	//	自清点：每次 `cetcRun` / `cetcSelfTest` 起手清空 ⇒ 不许跨调用残留。
+	cetcReadFails []string
 )
 
 type cetcRx struct {
@@ -292,6 +298,8 @@ func cetcStartswithAny(s string, prefixes []string) bool {
 func cetcWalk(dir string, emit func(string)) {
 	f, err := os.Open(dir)
 	if err != nil {
+		// ★ B 类真口子修（原 py `os.walk(onerror=None)` 静默 · ✗ 不再静默）：登记 + 判红 + rc=2。
+		cetcReadFails = append(cetcReadFails, dir+"（"+err.Error()+"）")
 		return
 	}
 	entries, err := f.ReadDir(-1) // ★ 保原序读法
@@ -414,6 +422,8 @@ func cetcScanFile(path string) (map[string]bool, map[string]bool, map[string]boo
 	outside := false
 	b, err := os.ReadFile(path)
 	if err != nil {
+		// ★ B 类真口子修（原 py `except OSError` 静默「返回空集」· ✗ 不再静默）：登记 + 判红 + rc=2。
+		cetcReadFails = append(cetcReadFails, path+"（"+err.Error()+"）")
 		return judge, report, register, outside
 	}
 	text := strings.ToValidUTF8(string(b), "\uFFFD")
@@ -538,6 +548,7 @@ func cetcBuildJSON(rc, seen int, judge, report, register []cetcHit) string {
 
 // cetcRun —— py `run(root, allow, as_json)`。
 func cetcRun(stdout, stderr io.Writer, root string, allow []string, asJSON bool) int {
+	cetcReadFails = nil // ★ 自清：包级登记面不许跨调用残留
 	if !cetcIsDir(root) {
 		fmt.Fprint(stderr, "BLOCKED —— 扫面根不存在 ⇒ rc=2\n")
 		return 2
@@ -580,6 +591,15 @@ func cetcRun(stdout, stderr io.Writer, root string, allow []string, asJSON bool)
 			registerHits = append(registerHits, cetcHit{rel, sid})
 		}
 	})
+	// ★ B 类真口子修：读失败 ⇒ 响亮 BLOCKED rc=2 + 逐件点名（✗ 不再静默少判）。
+	//   同族先例 check_doc_cmds.go 的 dcmdReadFails —— 读失败 ⇒ BLOCKED 头 + 逐件点名 + 不给结论。
+	if len(cetcReadFails) > 0 {
+		fmt.Fprintf(stderr, "BLOCKED —— 有 %d 件读不到（B 类读失败 ⇒ 登记 + 判红 · rc=2 · 不给结论）：\n", len(cetcReadFails))
+		for _, u := range cetcReadFails {
+			fmt.Fprintf(stderr, "  [读失败] %s\n", u)
+		}
+		return 2
+	}
 	if seen == 0 {
 		fmt.Fprint(stderr, "BLOCKED —— 扫面 0 件（空域）⇒ rc=2 不给结论\n")
 		return 2
@@ -631,6 +651,7 @@ func cetcStrSliceEq(a, b []string) bool {
 
 // cetcSelfTest —— py `self_test()`（正控 0 · 负控 1 · 缺件 2 · 三条补形态分档 + 四类护栏 + 成对负控）。
 func cetcSelfTest(stdout, stderr io.Writer) int {
+	cetcReadFails = nil // ★ 自清：包级登记面不许跨调用残留
 	ok := true
 	td, err := os.MkdirTemp("", "cetc-selftest-")
 	if err != nil {

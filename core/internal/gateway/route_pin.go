@@ -165,14 +165,14 @@ func (g *Gateway) pickRouteForRequest(model, headerMachine, sessionID, prompt st
 //	⑤ 熔断/心跳两枚信号**只记不判**（命中即用的代价，写在日志里让它看得见）。
 func (g *Gateway) routeToPinned(model, machine, source string, required []string) (*RouteResult, error) {
 	canon := model
-	if g.config != nil {
-		if _, ok := g.config.Models[canon]; !ok {
-			if c, ok2 := g.config.Aliases[canon]; ok2 {
+	if g.currentConfig() != nil {
+		if _, ok := g.currentConfig().Models[canon]; !ok {
+			if c, ok2 := g.currentConfig().Aliases[canon]; ok2 {
 				canon = c
 			}
 		}
 	}
-	candidates, ok := g.config.Models[canon]
+	candidates, ok := g.currentConfig().Models[canon]
 	if !ok {
 		return nil, fmt.Errorf("显式指定机器（%s）：模型 %s 不在路由表里 ⇒ 不给结论也不换机器", source, model)
 	}

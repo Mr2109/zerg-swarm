@@ -28,6 +28,30 @@ func crneRun(t *testing.T, argv ...string) (int, string, string) {
 	return rc, out.String(), errb.String()
 }
 
+// TestCrneReadFailBlocked ★ 负控：扫描面里一件不可读（chmod 000）⇒ rc=2 BLOCKED + 逐件点名（✗ 不静默少判）。
+func TestCrneReadFailBlocked(t *testing.T) {
+	root := t.TempDir()
+	crneWrite(t, root, "scripts/ok.tsv", "件\tsha256\n")
+	secret := filepath.Join(root, "scripts", "secret.py")
+	if err := os.WriteFile(secret, []byte("# secret\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(secret, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(secret, 0o644) })
+	rc, _, errb := crneRun(t, "--root", root, "--scan-dir", "scripts")
+	if rc != 2 {
+		t.Fatalf("读失败应 rc=2，得 %d（err=%s）", rc, errb)
+	}
+	if !strings.Contains(errb, "BLOCKED") || !strings.Contains(errb, "[读失败]") {
+		t.Fatalf("未响亮 BLOCKED（读失败被静默）：%s", errb)
+	}
+	if !strings.Contains(errb, "secret.py") {
+		t.Fatalf("未逐件点名：%s", errb)
+	}
+}
+
 // TestCrneSelfTest 自检档：合成夹具成对负控 ⇒ rc=0 且四条断言全过。
 func TestCrneSelfTest(t *testing.T) {
 	rc, out, _ := crneRun(t, "--self-test")

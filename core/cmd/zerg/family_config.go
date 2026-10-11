@@ -556,17 +556,20 @@ func cmdModelAdd(inv *invocation, stdout, stderr io.Writer) int {
 	// 改后：缺 `--confirm` ⇒ 2（不执行）；值不逐字相同 ⇒ 2（给错值 = 拒绝，不是「当没给」）。
 	if !inv.confirmGiven {
 		inv.setErr("usage", "confirm_required", "写名册件要 `--confirm=<模型名>`（点名要加的是哪一枚）—— 缺确认 ⇒ 不执行（fail-closed）")
+		guardMarkDecision(inv, guardDecisionApproval)
 		fmt.Fprintf(stderr, "%s: `model add` 会写名册件 ⇒ 缺 `--confirm=%s` ⇒ 不执行（fail-closed）\n", progName, name)
 		fmt.Fprintf(stderr, "        （`--confirm` 的值要与 `--model` 逐字相同 —— 危险档 ↔ 确认档一一映射 · §九 M3 C1）\n")
 		return exitUsage
 	}
 	if inv.confirm != name {
 		inv.setErr("usage", "confirm_mismatch", "`--confirm` 的值要与 `--model` 逐字相同（点名要加的是哪一枚）")
+		guardMarkDecision(inv, guardDecisionBlock)
 		fmt.Fprintf(stderr, "%s: `--confirm=%s` 与 `--model %s` 不一致 ⇒ 不执行（给错值 = 拒绝，不是「当没给」）\n", progName, inv.confirm, name)
 		return exitUsage
 	}
 	if !inv.yes {
 		inv.setErr("usage", "yes_required", "D2 档缺 --yes ⇒ 不执行")
+		guardMarkDecision(inv, guardDecisionApproval)
 		fmt.Fprintf(stderr, "%s: 写名册是 D2 档 —— 缺 --yes ⇒ 不执行（先看计划件：加 `--dry-run`）\n", progName)
 		return exitUsage
 	}
@@ -781,6 +784,7 @@ func cmdConfigReload(inv *invocation, stdout, stderr io.Writer) int {
 	}
 	if !inv.yes {
 		inv.setErr("usage", "yes_required", "D2 档缺 --yes ⇒ 不执行")
+		guardMarkDecision(inv, guardDecisionApproval)
 		fmt.Fprintf(stderr, "%s: 热加载是 D2 档（生效面即时）—— 缺 --yes ⇒ 不执行（先看计划件：加 `--dry-run`）\n", progName)
 		return exitUsage
 	}
@@ -1037,13 +1041,17 @@ func modelSetKind(key string) string {
 	switch key {
 	case "verified", "ssd", "thinking", "tool_support", "engine_impl_required":
 		return "bool"
+	case "verified_state":
+		// GAP-20261003-21（设计稿 §三乙案）：verified 三态闭集 true|false|reported ——
+		// 旧 bool 键 `verified` 不动（零破坏）；第三态 `reported` 走这枚**加性**键。
+		return "state"
 	case "size_bytes":
 		// 字节数锚（正整数）—— 名册自带、由 check-model-size-anchor 只 stat 对拍。
 		return "int"
 	case "mem_gb", "ctx_window", "max_tokens":
 		return "num"
 	case "name", "family", "host", "backend", "file", "arch", "architecture",
-		"mmproj", "moe", "template", "modality", "description", "added":
+		"mmproj", "moe", "template", "modality", "description", "added", "verified_where":
 		return "str"
 	case "cmd", "env":
 		return "list" // 列表值 ⇒ 本命令不收（要改它请整行手改 · 不猜）
@@ -1056,6 +1064,12 @@ func modelSetValueText(key, v string) (string, bool) {
 	switch modelSetKind(key) {
 	case "bool":
 		if v != "true" && v != "false" {
+			return "", false
+		}
+		return v, true
+	case "state":
+		// GAP-20261003-21：三态闭集 —— true | false | reported（其它一律拒 · 值域不合即退 2）。
+		if v != "true" && v != "false" && v != "reported" {
 			return "", false
 		}
 		return v, true
@@ -1190,16 +1204,19 @@ func cmdModelRm(inv *invocation, stdout, stderr io.Writer) int {
 	}
 	if !inv.confirmGiven {
 		inv.setErr("usage", "confirm_required", "删名册条要 `--confirm=<模型名>` —— 缺确认 ⇒ 不执行（fail-closed）")
+		guardMarkDecision(inv, guardDecisionApproval)
 		fmt.Fprintf(stderr, "%s: `model rm` 会改名册件 ⇒ 缺 `--confirm=%s` ⇒ 不执行（fail-closed）\n", progName, name)
 		return exitUsage
 	}
 	if inv.confirm != name {
 		inv.setErr("usage", "confirm_mismatch", "`--confirm` 的值要与 `--model` 逐字相同")
+		guardMarkDecision(inv, guardDecisionBlock)
 		fmt.Fprintf(stderr, "%s: `--confirm=%s` 与 `--model %s` 不一致 ⇒ 不执行（给错值 = 拒绝，不是「当没给」）\n", progName, inv.confirm, name)
 		return exitUsage
 	}
 	if !inv.yes {
 		inv.setErr("usage", "yes_required", "D2 档缺 --yes ⇒ 不执行")
+		guardMarkDecision(inv, guardDecisionApproval)
 		fmt.Fprintf(stderr, "%s: 改名册是 D2 档 —— 缺 --yes ⇒ 不执行（先看计划件：加 `--dry-run`）\n", progName)
 		return exitUsage
 	}
@@ -1238,7 +1255,7 @@ func cmdModelSet(inv *invocation, stdout, stderr io.Writer) int {
 		inv.setErr("usage", detail, msg)
 		fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
 		fmt.Fprintf(stderr, "  用法：zerg model set --model <模型名> --host <主机> [--file <GGUF 路径>] --set k=v [--set k=v …] --confirm <模型名> [--dry-run | --yes]\n")
-		fmt.Fprintf(stderr, "        （只改点准的那一条 · 其余字段逐字保留；可改字段：host backend file mem_gb size_bytes ctx_window max_tokens architecture arch template modality verified thinking tool_support ssd mmproj moe description added name family）\n")
+		fmt.Fprintf(stderr, "        （只改点准的那一条 · 其余字段逐字保留；可改字段：host backend file mem_gb size_bytes ctx_window max_tokens architecture arch template modality verified verified_state verified_where thinking tool_support ssd mmproj moe description added name family）\n")
 		return exitUsage
 	}
 	if name == "" || host == "" {
@@ -1275,6 +1292,8 @@ func cmdModelSet(inv *invocation, stdout, stderr io.Writer) int {
 				return bad("bad_field", fmt.Sprintf("`--set %s=` 是**列表值**（`cmd` / `env`）—— 本命令不收，请整行手改（不猜）", k))
 			case "bool":
 				return bad("bad_value", fmt.Sprintf("`--set %s=` 要 true / false（给的是 %q）", k, v))
+			case "state":
+				return bad("bad_value", fmt.Sprintf("`--set %s=` 要 true / false / reported（给的是 %q）", k, v))
 			case "int":
 				return bad("bad_value", fmt.Sprintf("`--set %s=` 要正整数（字节数 · 给的是 %q）", k, v))
 			default:
@@ -1367,16 +1386,19 @@ func cmdModelSet(inv *invocation, stdout, stderr io.Writer) int {
 	}
 	if !inv.confirmGiven {
 		inv.setErr("usage", "confirm_required", "改名册条要 `--confirm=<模型名>` —— 缺确认 ⇒ 不执行（fail-closed）")
+		guardMarkDecision(inv, guardDecisionApproval)
 		fmt.Fprintf(stderr, "%s: `model set` 会改名册件 ⇒ 缺 `--confirm=%s` ⇒ 不执行（fail-closed）\n", progName, name)
 		return exitUsage
 	}
 	if inv.confirm != name {
 		inv.setErr("usage", "confirm_mismatch", "`--confirm` 的值要与 `--model` 逐字相同")
+		guardMarkDecision(inv, guardDecisionBlock)
 		fmt.Fprintf(stderr, "%s: `--confirm=%s` 与 `--model %s` 不一致 ⇒ 不执行（给错值 = 拒绝，不是「当没给」）\n", progName, inv.confirm, name)
 		return exitUsage
 	}
 	if !inv.yes {
 		inv.setErr("usage", "yes_required", "D2 档缺 --yes ⇒ 不执行")
+		guardMarkDecision(inv, guardDecisionApproval)
 		fmt.Fprintf(stderr, "%s: 改名册是 D2 档 —— 缺 --yes ⇒ 不执行（先看计划件：加 `--dry-run`）\n", progName)
 		return exitUsage
 	}
@@ -1583,16 +1605,19 @@ func cmdContextSetPort(inv *invocation, stdout, stderr io.Writer) int {
 	}
 	if !inv.confirmGiven {
 		inv.setErr("usage", "confirm_required", "改机器名册要 `--confirm=<机器名>` —— 缺确认 ⇒ 不执行（fail-closed）")
+		guardMarkDecision(inv, guardDecisionApproval)
 		fmt.Fprintf(stderr, "%s: `context set-port` 会改档位件 ⇒ 缺 `--confirm=%s` ⇒ 不执行（fail-closed）\n", progName, node)
 		return exitUsage
 	}
 	if inv.confirm != node {
 		inv.setErr("usage", "confirm_mismatch", "`--confirm` 的值要与 `--node` 逐字相同")
+		guardMarkDecision(inv, guardDecisionBlock)
 		fmt.Fprintf(stderr, "%s: `--confirm=%s` 与 `--node %s` 不一致 ⇒ 不执行（给错值 = 拒绝，不是「当没给」）\n", progName, inv.confirm, node)
 		return exitUsage
 	}
 	if !inv.yes {
 		inv.setErr("usage", "yes_required", "D2 档缺 --yes ⇒ 不执行")
+		guardMarkDecision(inv, guardDecisionApproval)
 		fmt.Fprintf(stderr, "%s: 改机器名册是 D2 档 —— 缺 --yes ⇒ 不执行（先看计划件：加 `--dry-run`）\n", progName)
 		return exitUsage
 	}

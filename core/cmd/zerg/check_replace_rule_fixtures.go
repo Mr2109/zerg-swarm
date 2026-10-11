@@ -121,9 +121,40 @@ const crrfIsoPrefix = "!夹具"
 const crrfExemptMark = "【历史兜底·有意保留】"
 const crrfFixtureSuffix = "_test.go"
 
+// ── 反向存量基线（棘轮 · 只判增量）────────────────────────────────────────
+// 形状照仓内先例 `check_dangling_refs.go` 的 `cdrBaseline`（同形，✗ 不另起第二套）：
+// 基线 = 「首日现读数」常量（map 按**面/类**分格）＋ 一个「超额则红」的棘轮格。
+// 本门**反向档两类各一条**：反向命中的「规则条数」与「件数」。
+//
+// 口径：现读数 − 基线 > 0 ⇒ 判**新增**（响红并点名）；≤ 0 ⇒ 存量段绿（不再对存量恒红）。
+// ★ 基线只登记**存量**（首测现读 41/145），✗ 不是「豁免一切」—— 新命中仍必红（棘轮超额）。
+var crrfReverseBaseline = map[string]int{"rules": 41, "files": 145}
+
+const crrfReverseBaselineNote = "2026-10-11 首测（本门补存量基线档当天 · 本仓现读）：" +
+	"反向命中 = 41 条规则 / 145 个件（其中 5 条只命中「规则形态复刻件」· 20 条真存货）。" +
+	"★ 只认上面那两格；基线只许**下调**（改成现测值），✗ 永不上调（抬基线充绿即违规）。"
+
+// crrfReverseExtra —— 棘轮格（= 先例 `cdrRatchetExtra` 的比较面）：现测 − 基线 ⇒
+// (extraRules, extraFiles, over)。over ⟺ 任一为正（即「超出基线 = 有新增」）。nil ⇒ 用默认基线。
+func crrfReverseExtra(nRules, nFiles int, base map[string]int) (int, int, bool) {
+	if base == nil {
+		base = crrfReverseBaseline
+	}
+	r, f := nRules-base["rules"], nFiles-base["files"]
+	return r, f, r > 0 || f > 0
+}
+
+// crrfReverseMax0 —— max(n, 0)（超额为正，不超额取 0）。
+func crrfReverseMax0(n int) int {
+	if n > 0 {
+		return n
+	}
+	return 0
+}
+
 // crrfJSONFields —— 「机器面字段表」**唯一真源**（装包封与「不认的名 ⇒ rc=2」两处同读）。
-var crrfJSONFields = []string{"rules", "hits", "files", "fixtures", "files_dedup", "files_sum", "per_rule", "tier",
-	"targets", "gaps"}
+var crrfJSONFields = []string{"rules", "hits", "files", "fixtures", "files_dedup", "files_sum", "fixture_files",
+	"per_rule", "tier", "targets", "gaps"}
 
 // crrfExcludeDirs —— 通用排除表（目录**名**成员判定；读表不打序）。
 var crrfExcludeDirs = map[string]bool{
@@ -968,8 +999,10 @@ func crrfJSONStrList(xs []string) string {
 }
 
 // crrfJSONPayload —— py `json_payload`：键**固定序**（rules, fixtures, hits, files, files_dedup,
-// files_sum, per_rule, tier, targets, gaps）按 `want` 逐键决定在场；老四格一字不改（`files` 仍是去重集）。
-func crrfJSONPayload(want []string, nRules, nFixtures int, hits []crrfHit, iso *crrfISO, targets int, gaps []crrfRule) string {
+// files_sum, fixture_files, per_rule, tier, targets, gaps）按 `want` 逐键决定在场；老四格一字不改（`files` 仍是去重集）。
+// `fixture_files`（**件面清单格** · 缺口 GAP-20260926-145）：全部入判 `*_test.go` 的**去重件名**
+// （排序 · 不只是命中件）—— 分批收敛的机读面。
+func crrfJSONPayload(want []string, nRules, nFixtures int, hits []crrfHit, fixtureFiles []string, iso *crrfISO, targets int, gaps []crrfRule) string {
 	seen := map[string]bool{}
 	dedup := []string{}
 	for _, h := range hits {
@@ -1007,6 +1040,10 @@ func crrfJSONPayload(want []string, nRules, nFixtures int, hits []crrfHit, iso *
 			sum += len(h.files)
 		}
 		parts = append(parts, crrfJSONStr("files_sum")+": "+strconv.Itoa(sum))
+	}
+	// 缺口 GAP-20260926-145（rrf-json-no-fixture-files）：件面清单格
+	if w["fixture_files"] {
+		parts = append(parts, crrfJSONStr("fixture_files")+": "+crrfJSONStrList(fixtureFiles))
 	}
 	if w["per_rule"] {
 		var prs []string
@@ -1118,7 +1155,7 @@ const crrfHelp = crrfUsage + "\n" +
 	"  --max-examples MAX_EXAMPLES\n" +
 	"                        每条规则最多列几件（默认 5）\n" +
 	"  --json JSON           机器面字段（逗号分隔：rules,hits,files,fixtures,files_dedup,files\n" +
-	"                        _sum,per_rule,tier,targets,gaps；**不认的名 ⇒ 用法错 rc=2**）\n" +
+	"                        _sum,fixture_files,per_rule,tier,targets,gaps；**不认的名 ⇒ 用法错 rc=2**）\n" +
 	"  --list-rules          打判据 / 扫描面 / 档位\n" +
 	"  --self-test           成对负控（合成夹具 · 不碰真目标）\n"
 
@@ -1262,11 +1299,14 @@ func crrfListRules() string {
 	p(fmt.Sprintf("  件面  ：%s 里**会进公开面**的路径前缀下的 `*_test.go`（反向 · 不该动的）", crrfWhitelistRel))
 	p("  正向面：**同一批前缀**下的非测试件（自指排除规则表自身 ⇒ 否则判据永真）；规则在此面上零命中 ⇒ 红")
 	p("  判据  ：**真树双侧** —— 反向：任一条规则命中 `*_test.go` ⇒ 红（逐条点名规则/件/行号/片段 · **不给豁免表**）；")
+	p(fmt.Sprintf("          ★ **反向是棘轮档**：存量 ≤ 基线（%d 条规则 / %d 个件）⇒ 存量段绿（只判增量）；超出基线（新命中）⇒ 红。",
+		crrfReverseBaseline["rules"], crrfReverseBaseline["files"]))
 	p("          正向：任一条规则在「该替换的」真树面上**零命中** ⇒ 红（逐条点名规则 · 该替换的都不在）")
-	p("退码：0 双侧全绿 · 1 有缺口（反向命中 / 正向缺侧）· 2 不给结论（规则表/白名单缺件 · 空转 · 自检不过 · **`--json` 字段名不认**）")
+	p("退码：0 双侧全绿（或反向存量 ≤ 基线）· 1 有缺口（反向**棘轮超额** / 正向缺侧）· 2 不给结论（规则表/白名单缺件 · 空转 · 自检不过 · **`--json` 字段名不认**）")
 	p("机器面：`--json <字段,逗号分隔>` —— 老四格 `rules,fixtures,hits,files`（`files` = **去重集**）" +
 		"+ 新三格 `files_dedup`（同值别名）/ `files_sum`（**未去重和**）/ `per_rule[]`（逐规则" +
 		"`{rule, files, hits, lines}` · `lines` = 逐条 `{件,行,原文}`）" +
+		"+ `fixture_files`（**件面清单** = 全部入判 `*_test.go` 去重集 · 缺口 GAP-20260926-145）" +
 		"+ `tier`（夹具隔离分档 `{isolated, per_glob, dead, eaten}` · 缺口 GAP-20260926-146）" +
 		"+ `targets`（正向面件数）/ `gaps`（正向缺侧规则表 · 缺口 GAP-20260925-16）" +
 		" —— 只加字段，判据与退码不动；" +
@@ -1428,7 +1468,7 @@ func crrfSelfTest(stdout io.Writer) int {
 		P(fmt.Sprintf("   ✗ per_rule：%v", hitsM))
 	}
 	// 缺口 GAP-20260926-146：tier 分档格的成对负控
-	tierPayload := crrfJSONPayload([]string{"tier"}, 0, 0, nil, &crrfISO{
+	tierPayload := crrfJSONPayload([]string{"tier"}, 0, 0, nil, nil, &crrfISO{
 		isolated: []string{"core/x/iso_test.go"},
 		perGlob:  []crrfIsoCount{{pat: "core/x/*_test.go", n: 1}, {pat: "nope/*_test.go", n: 0}},
 		dead:     []string{"nope/*_test.go"},
@@ -1507,6 +1547,27 @@ func crrfSelfTest(stdout io.Writer) int {
 	} else {
 		bad = append(bad, "正向豁免")
 		P(fmt.Sprintf("   ✗ 正向豁免：标记侧缺侧 %d · 未标侧缺侧 %d", len(gOn), len(gOff)))
+	}
+	// ── 反向存量基线（棘轮 · 只判增量 · 形状照先例 cdrBaseline）的成对负控 ──────────────
+	//   ① 超额判红（规则条数 / 件数各一条）② 存量内判绿 ③ 基线放大 ⇒ 新命中被吞（证基线不能乱放大）。
+	_, _, overR := crrfReverseExtra(42, 145, map[string]int{"rules": 41, "files": 145})
+	_, _, overF := crrfReverseExtra(41, 146, map[string]int{"rules": 41, "files": 145})
+	_, _, overIn := crrfReverseExtra(41, 145, map[string]int{"rules": 41, "files": 145})
+	if overR && overF && !overIn {
+		ok++
+		P("   ✓ 反向棘轮（只判增量）：现测 > 基线（规则/件任一项）⇒ 超额判红 · 存量 ≤ 基线 ⇒ 存量段绿")
+	} else {
+		bad = append(bad, "反向棘轮")
+		P(fmt.Sprintf("   ✗ 反向棘轮：overR=%s overF=%s overIn=%s",
+			crrfPyBool(overR), crrfPyBool(overF), crrfPyBool(overIn)))
+	}
+	_, _, overBig := crrfReverseExtra(42, 145, map[string]int{"rules": 999, "files": 999})
+	if !overBig {
+		ok++
+		P("   ✓ 反向棘轮：基线放大到 999 ⇒ 同一新命中**被吞**（判别力归零）—— 基线只许下调、✗ 不许放大充绿")
+	} else {
+		bad = append(bad, "棘轮基线放大")
+		P("   ✗ 反向棘轮：基线放大后新命中竟仍判红（棘轮面坏了）")
 	}
 	concl := "全过"
 	if len(bad) > 0 {
@@ -1718,6 +1779,11 @@ func checkReplaceRuleFixturesGateMain(stdout, stderr io.Writer, argv []string) i
 	for _, f := range fixtures {
 		distinct[f.rel] = true
 	}
+	fixtureFiles := make([]string, 0, len(distinct))
+	for rel := range distinct {
+		fixtureFiles = append(fixtureFiles, rel)
+	}
+	sort.Strings(fixtureFiles) // 件面清单格（缺口 GAP-20260926-145）固定序
 	fmt.Fprintf(stdout, "   件面：白名单 %d 条前缀下的测试夹具 ⇒ **%d 个** `*_test.go`（%d 行）\n",
 		len(prefixes), len(distinct), len(fixtures))
 	if len(fixtures) == 0 {
@@ -1753,7 +1819,7 @@ func checkReplaceRuleFixturesGateMain(stdout, stderr io.Writer, argv []string) i
 
 	if len(want) > 0 {
 		iso := &crrfISO{isolated: isoFiles, perGlob: perIso, dead: deadIso, eaten: eatenIso}
-		fmt.Fprintln(stdout, crrfJSONPayload(want, len(rules), len(fixtures), hits, iso, nTargets, gaps))
+		fmt.Fprintln(stdout, crrfJSONPayload(want, len(rules), len(fixtures), hits, fixtureFiles, iso, nTargets, gaps))
 	}
 
 	if len(hits) == 0 && len(gaps) == 0 {
@@ -1765,6 +1831,15 @@ func checkReplaceRuleFixturesGateMain(stdout, stderr io.Writer, argv []string) i
 		return 0
 	}
 
+	// ── 反向棘轮（存量 ≤ 基线 ⇒ 绿 · 超出 ⇒ 红并点名新增）────────────────────────
+	revFiles := map[string]bool{}
+	for _, h := range hits {
+		for _, f := range h.files {
+			revFiles[f] = true
+		}
+	}
+	revExtraRules, revExtraFiles, revOver := crrfReverseExtra(len(hits), len(revFiles), nil)
+
 	if len(hits) > 0 {
 		hdistinct := map[string]bool{}
 		for _, h := range hits {
@@ -1772,7 +1847,17 @@ func checkReplaceRuleFixturesGateMain(stdout, stderr io.Writer, argv []string) i
 				hdistinct[f] = true
 			}
 		}
-		fmt.Fprintf(stdout, "   ✗ 反向命中：**%d 条**规则打到了测试夹具（共 %d 个件）\n", len(hits), len(hdistinct))
+		if revOver {
+			fmt.Fprintf(stdout, "   ✗ 反向棘轮超额：现测 **%d 条**规则 / %d 个件 > 基线（%d 条 / %d 个件）"+
+				"⇒ 相对基线**新增 %d 条规则 / %d 个件**\n",
+				len(hits), len(hdistinct), crrfReverseBaseline["rules"], crrfReverseBaseline["files"],
+				crrfReverseMax0(revExtraRules), crrfReverseMax0(revExtraFiles))
+			fmt.Fprintf(stdout, "   ✗ 反向命中：**%d 条**规则打到了测试夹具（共 %d 个件）\n", len(hits), len(hdistinct))
+		} else {
+			fmt.Fprintf(stdout, "   ✓ 反向（不该动的）存量段绿：**%d 条**规则 / %d 个件 ≤ 基线（%d 条 / %d 个件）"+
+				"—— 存量登记显示 · 只判增量（新命中才红）\n",
+				len(hits), len(hdistinct), crrfReverseBaseline["rules"], crrfReverseBaseline["files"])
+		}
 		for _, h := range hits {
 			fmt.Fprintf(stdout, "   ── 规则：%s\n", crrfRuneCut(crrfPyStrip(h.raw), 140))
 			exFiles := map[string]bool{}
@@ -1784,6 +1869,7 @@ func checkReplaceRuleFixturesGateMain(stdout, stderr io.Writer, argv []string) i
 				fmt.Fprintf(stdout, "      %s:%d: %s\n", e.rel, e.ln, e.txt)
 			}
 		}
+		fmt.Fprintf(stdout, "   反向基线注：%s\n", crrfReverseBaselineNote)
 	} else {
 		fmt.Fprintf(stdout, "   ✓ 反向（不该动的）全绿：%d 条规则一条都没命中测试夹具\n", len(rules))
 	}
@@ -1800,6 +1886,11 @@ func checkReplaceRuleFixturesGateMain(stdout, stderr io.Writer, argv []string) i
 		fmt.Fprint(stdout, "   · 正向（该替换的）**未判**：正向面 0 件（该侧无目标可判 ⇒ 不报红也不报绿）\n")
 	}
 
+	if !revOver && len(gaps) == 0 {
+		fmt.Fprint(stdout, "⇒ 存量基线内（rc=0）：**反向无增量**（现测 ≤ 基线 · 存量已登记、不再恒红）"+
+			"；新命中才红（棘轮超额）\n")
+		return 0
+	}
 	fmt.Fprint(stdout, "⇒ 有缺口（rc=1）：**规则必须在真树上双侧成立** —— 该替换的都要有目标、"+
 		"不该动的都不许被误替换\n")
 	return 1

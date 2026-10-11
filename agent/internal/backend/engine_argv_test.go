@@ -66,3 +66,35 @@ func argvHasFlagValue(argv []string, flag, val string) bool {
 	}
 	return false
 }
+
+// TestEngineCmd_DeclaredPassthrough 正控：卵声明的 `cmd:`（注册表逐字）经观测面（EggObservations）
+// **透出** —— 这是远程机取数面的子端出口（GAP-20261006-02）：
+// 「四方不一致命令面」（GAP-20260926-04）的**远程 side** 经 `/eggs` 读的正是这一格。
+// 与 argv（实际执行）不同：cmd 是名册声明、可含 {file}/{port} 占位符。
+func TestEngineCmd_DeclaredPassthrough(t *testing.T) {
+	want := `["/w/run-cmd.sh", "-m", "{file}", "-c", "65536"]`
+	entry := newNPTestEntry(want)
+	m := &Manager{procs: map[string]*subproc{}}
+	m.procs["gemma-4-26B"] = &subproc{model: "gemma-4-26B", entry: entry, state: StateReady, port: 9400}
+	obs := m.EggObservations()
+	if len(obs) != 1 {
+		t.Fatalf("应 1 枚观测，实得 %d", len(obs))
+	}
+	if obs[0].Cmd != want {
+		t.Fatalf("观测面 cmd 应逐字等于卵声明（%q），实得 %q", want, obs[0].Cmd)
+	}
+}
+
+// TestEngineCmd_AbsentStaysEmpty 负控：本端从未声明 cmd:（走默认命令）⇒ 观测面**如实缺席**（空串），
+// ✗ 不许把它当成「有、是空的字符串」而编出内容。
+func TestEngineCmd_AbsentStaysEmpty(t *testing.T) {
+	m := &Manager{procs: map[string]*subproc{}}
+	m.procs["ghost"] = &subproc{model: "ghost", state: StateReady, port: 9400}
+	obs := m.EggObservations()
+	if len(obs) != 1 {
+		t.Fatalf("应 1 枚观测，实得 %d", len(obs))
+	}
+	if obs[0].Cmd != "" {
+		t.Fatalf("未声明 cmd: 应缺席（空串），实得 %#v", obs[0].Cmd)
+	}
+}

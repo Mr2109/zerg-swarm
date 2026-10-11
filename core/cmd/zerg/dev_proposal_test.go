@@ -47,7 +47,11 @@ var devFamilyClosure = []string{"dev proposal", "dev release", "dev rollback", "
 	"dev build", "dev test", "dev verify", "dev edit",
 	// ★ GAP-20260927-377（P0 · 本枚随动）：`dev check --syntax`（类型面只读正门）落地 ⇒ 闭集**同批**长大
 	//   （棘轮：闭集本身随 §17.4 的条目/SD 同批刷新 —— 这里手工补，不许悄悄漏）。
-	"dev check"}
+	"dev check",
+	// ★ GAP-20261010-30（本枚随动）：`dev reclaim`（直写补正门 · D3 **写面**：调既有 `dev edit` 净零重落
+	//   只补审计链 · 盘上内容逐字节不变）落地 ⇒ 闭集**同批**长大。它是**写命令**，不是「读事实」的新读命令
+	//   ⇒ 判据①「读环**一条都不新增**」仍成立；棘轮：闭集随新命令同批刷新，不许悄悄漏。
+	"dev reclaim"}
 
 // snapshotDir 给一棵目录树拍逐文件 sha256 快照（相对路径排序 ⇒ 可比对「逐字节不变」）。
 func snapshotDir(t *testing.T, root string) string {
@@ -291,6 +295,121 @@ func TestDevProposalTargetMustReferenceExistingID(t *testing.T) {
 	}
 	if strings.TrimSpace(out) == "" {
 		t.Errorf("成功时 stdout 要给提案 id（拿到空）· stderr=%s", errb)
+	}
+}
+
+// TestDevProposalRollbackRepeatedIsUsageError —— 重复给 `--rollback` ⇒ 拒执并点名（缺口 Q-154 同族 ·
+// 同名旗标只许给一次；照 `ci green --run` 先例）。改前 `--rollback A --rollback B` 静默收成末值 ⇒ rc=0。
+func TestDevProposalRollbackRepeatedIsUsageError(t *testing.T) {
+	proposalEvidenceDir(t)
+	ids, err := contract.DevTargets()
+	if err != nil || len(ids) == 0 {
+		t.Fatalf("回指清单读不出来：%v", err)
+	}
+	t.Setenv("ZERG_PROPOSAL_DIR", t.TempDir())
+	base := []string{"--title", "t", "--target", "待办:" + ids[0], "--goal", "g",
+		"--evidence", proposalEvidenceInLedger, "--criterion", testCriterion}
+
+	rc, _, errb := runProposalNew(t, append(append([]string{}, base...), "--rollback", "r", "--rollback", "r2")...)
+	if rc != 2 {
+		t.Errorf("`--rollback` 给两次 ⇒ 退码 %d（要 2 · 同名旗标重复 = 用法错）", rc)
+	}
+	if !strings.Contains(errb, "只许给一次") || !strings.Contains(errb, "--rollback") {
+		t.Errorf("拒执要点名 `--rollback` 与「只许给一次」：%q", errb)
+	}
+	rc2, _, errb2 := runProposalNew(t, append(append([]string{}, base...), "--rollback", "r")...)
+	if strings.Contains(errb2, "只许给一次") {
+		t.Errorf("只给一次 `--rollback` 不该触发重复拒执（rc=%d）：%q", rc2, errb2)
+	}
+}
+
+// TestDevProposalSingleValFlagsRepeatedIsUsageError —— 重复给**单值语义**旗标 ⇒ 同型拒执并点名
+// （照 `--rollback` 那一处已落的形态 · 缺口 Q-154 同族）。逐旗标两态：
+//
+//	① 重复给 ⇒ rc=2 · stderr 点名该旗标与「只许给一次」；
+//	② 只给一次 ⇒ 不触发该重复拒执。
+//
+// ★ **多值语义**旗标（`--evidence` / `--file`）**不在本闸** —— 见下一个用例。
+func TestDevProposalSingleValFlagsRepeatedIsUsageError(t *testing.T) {
+	proposalEvidenceDir(t)
+	ids, err := contract.DevTargets()
+	if err != nil || len(ids) == 0 {
+		t.Fatalf("回指清单读不出来：%v", err)
+	}
+	t.Setenv("ZERG_PROPOSAL_DIR", t.TempDir())
+	base := []string{"--title", "t", "--target", "待办:" + ids[0], "--goal", "g",
+		"--evidence", proposalEvidenceInLedger, "--rollback", "r", "--criterion", testCriterion}
+
+	// base 里已有一枚的（title/target/goal/criterion）只补一枚即成「两次」；其余补两枚。
+	singleValInBase := map[string]bool{"--title": true, "--target": true, "--goal": true, "--criterion": true}
+	cases := []struct {
+		flag  string
+		extra []string
+	}{
+		{"--title", []string{"--title", "t2"}},
+		{"--target", []string{"--target", "待办:" + ids[0]}},
+		{"--goal", []string{"--goal", "g2"}},
+		{"--criterion", []string{"--criterion", testCriterion}},
+		{"--criterion-new", []string{"--criterion-new", "zerg future cmd"}},
+		{"--by", []string{"--by", "ai"}},
+		{"--subject", []string{"--subject", "s"}},
+		{"--subject-kind", []string{"--subject-kind", "ai"}},
+		{"--egg-id", []string{"--egg-id", "EGG-1"}},
+		{"--approver", []string{"--approver", "Mr2109"}},
+		{"--approver-kind", []string{"--approver-kind", "human"}},
+	}
+	for _, c := range cases {
+		// ① 重复给 ⇒ rc=2 · 点名该旗标与「只许给一次」
+		rep := append(append([]string{}, base...), c.extra...)
+		if !singleValInBase[c.flag] {
+			rep = append(rep, c.extra...) // 不在 base 里的：补两枚
+		}
+		rc, _, errb := runProposalNew(t, rep...)
+		if rc != 2 {
+			t.Errorf("%s 给两次 ⇒ rc=%d（要 2 · 单值旗标重复 = 用法错 2）· stderr=%s", c.flag, rc, errb)
+		}
+		if !strings.Contains(errb, "只许给一次") || !strings.Contains(errb, c.flag) {
+			t.Errorf("%s 重复拒执要点名该旗标与「只许给一次」：%q", c.flag, errb)
+		}
+		// ② 只给一次 ⇒ 不触发该重复拒执
+		var once []string
+		if singleValInBase[c.flag] {
+			once = base
+		} else {
+			once = append(append([]string{}, base...), c.extra...)
+		}
+		rc1, _, errb1 := runProposalNew(t, once...)
+		if strings.Contains(errb1, "只许给一次") {
+			t.Errorf("%s 只给一次不该触发重复拒执（rc=%d）：%q", c.flag, rc1, errb1)
+		}
+	}
+	// `--batch` 也是单值语义：重复给同型拒执（位置在最前 · 任何盘面动作之前）
+	rcB, _, errB := runProposalNew(t, "--batch", "a.json", "--batch", "b.json")
+	if rcB != 2 || !strings.Contains(errB, "只许给一次") || !strings.Contains(errB, "--batch") {
+		t.Errorf("`--batch` 给两次 ⇒ rc=%d（要 2 · 点名 `--batch` 与「只许给一次」）：%q", rcB, errB)
+	}
+}
+
+// TestDevProposalMultiValFlagsMayRepeat —— ★ **多值语义**旗标（`--evidence` / `--file`）**不在重复拒执闸**内
+// （它们本就该能重复给 · 逐枚 append）；重复给不触发「只许给一次」且照旧可提。
+func TestDevProposalMultiValFlagsMayRepeat(t *testing.T) {
+	proposalEvidenceDir(t)
+	ids, err := contract.DevTargets()
+	if err != nil || len(ids) == 0 {
+		t.Fatalf("回指清单读不出来：%v", err)
+	}
+	t.Setenv("ZERG_PROPOSAL_DIR", t.TempDir())
+	base := []string{"--title", "t", "--target", "待办:" + ids[0], "--goal", "g",
+		"--evidence", proposalEvidenceInLedger, "--criterion", testCriterion, "--rollback", "r"}
+	rc, _, errb := runProposalNew(t, append(append([]string{}, base...),
+		"--evidence", proposalEvidenceInLedger,
+		"--file", "core/cmd/zerg/family_dev.go",
+		"--file", "core/cmd/zerg/main.go")...)
+	if strings.Contains(errb, "只许给一次") {
+		t.Errorf("多值旗标（--evidence/--file）重复给不该触发单值重复拒执（rc=%d）：%q", rc, errb)
+	}
+	if rc != 0 {
+		t.Errorf("多值旗标重复给应照旧可提（rc=%d 要 0）· stderr=%s", rc, errb)
 	}
 }
 

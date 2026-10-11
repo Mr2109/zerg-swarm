@@ -47,6 +47,7 @@ var gitForbiddenStaging = []string{"-A", "--all", "-a", ".", "./", ":/", "*"}
 func cmdRepoCommit(inv *invocation, stdout, stderr io.Writer) int {
 	files := trimAll(inv.flagVals("--file"))
 	only := trimAll(inv.flagVals("--only"))
+	removed := trimAll(inv.flagVals("--removed"))
 	message := strings.TrimSpace(inv.flagVal("--message"))
 
 	// ① 用法面（在任何盘面动作之前）
@@ -59,6 +60,13 @@ func cmdRepoCommit(inv *invocation, stdout, stderr io.Writer) int {
 		inv.setErr("usage", "mode_conflict", "`--file` 与 `--only` 是两种模式，不许同时给")
 		fmt.Fprintf(stderr, "%s: `--file`（逐件暂存，索引面必须为空）与 `--only`（点名单路径，索引面非空是常态）是**两种模式** ⇒ 同时给退 2\n", progName)
 		fmt.Fprintf(stderr, "选一条：`--file <件>…`（默认模式）或 `--only <路径>…`（Q-104 点名单路径模式）\n")
+		return exitUsage
+	}
+	// ★ 缺口 `GAP-20261009-17`（「只撤跟踪」第三模式）：`--removed <路径…>` 与另两种模式互斥。
+	if len(removed) > 0 && (len(files) > 0 || len(only) > 0) {
+		inv.setErr("usage", "mode_conflict", "`--removed` 与 `--file`/`--only` 是三种模式，不许同时给")
+		fmt.Fprintf(stderr, "%s: `--removed`（只撤跟踪：临时索引 = HEAD ＋ 点名件的删除态）与 `--file`/`--only` 是**三种模式** ⇒ 同时给退 2\n", progName)
+		fmt.Fprintf(stderr, "选一条：`--file <件>…` / `--only <路径>…` / `--removed <路径>…`\n")
 		return exitUsage
 	}
 	// `--waive <步名>` —— **带审计的显式例外旗标**（`Q-104` 已拍：开）。缺 `--reason` ⇒ 拒（不许「无痕放行」）。
@@ -74,6 +82,10 @@ func cmdRepoCommit(inv *invocation, stdout, stderr io.Writer) int {
 	if len(only) > 0 {
 		// `--only` 模式：**不新增对外面**（命令树 +0）—— 就长在 `repo commit` 这一条上（`Q-104` 甲案）。
 		return repoCommitOnly(inv, stdout, stderr, only, message, waive, reason)
+	}
+	if len(removed) > 0 {
+		// `--removed` 模式（缺口 `GAP-20261009-17`）：**只撤跟踪** —— 临时索引 = HEAD ＋ 点名件的删除态。
+		return repoCommitRemoved(inv, stdout, stderr, removed, message)
 	}
 	if len(files) == 0 {
 		inv.setErr("usage", "missing_file", "缺件名清单")
@@ -233,6 +245,7 @@ func cmdRepoCommit(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s: 建不了门禁日志目录 %s：%v\n", progName, filepath.Join(os.TempDir(), prefix), mkErr)
 		return exitFail
 	}
+	pruneRepoCommitLogDirs(osTempRoot(), logDir) // ★ 有界回收（缺口 `GAP-20261001-58`：清掉过窗口的旧日志目录；本轮目录 keep 不动 · 见件内 helper）
 	matRoot, mErr := materializeIndex(root)
 	if mErr != nil {
 		inv.setErr("blocked", "index_materialize_failed", mErr.Error())
@@ -331,6 +344,47 @@ func osTempRoot() string {
 		return d
 	}
 	return os.TempDir()
+}
+
+// ── 日志目录的**有界回收**（缺口 `GAP-20261001-58` · 提交面）──────────────────────────────
+//
+// 病灶：本命令每次真跑都 `os.MkdirTemp` 建一枚 `zerg-repo-commit-*` 日志目录（`/private/var/tmp`
+// 泄漏的主源之一 —— 该缺口记 2797 枚），从来没人删。
+//
+// 为什么**不能**照同族「建完就 `defer os.RemoveAll`」（`family_gate_bench.go` / `family_gate_run_step.go`
+// 那一形态）：本目录是**输出契约的一部分** —— `--json` 的 `log_dir` / `message_path` 两格逐字指向它，
+// 失败面那句「复核：… --outdir <logDir>」也要人在**函数返回之后**照它复跑 ⇒ 当场删＝契约报废
+// （`gate run --step` / `gate bench` 的自建目录不进任何契约，故它们能当场删；本命令不能）。
+// 故改为**有界保留**：每建一枚新目录，顺手清掉**过窗口**的旧目录（best-effort：删不掉只忽略，
+// 绝不影响本轮判决，也绝不碰 `keep`＝本轮新目录）。窗口取值照回仓内同类先例
+// （`family_gap.go` 的 `gapPoolTTLDays` 体例：TTL 常量 + `time.Now().Add(-TTL)` 截止）。
+const repoCommitLogTTL = 24 * time.Hour
+
+// pruneRepoCommitLogDirs —— 回收**过窗口**的 `zerg-repo-commit-*` 日志目录。
+//
+// 只动四处能确定的东西：① `root` 下、② 名字前缀 `zerg-repo-commit-`、③ `mtime` 早于截止、
+// ④ 且**不是** `keep`（本轮新目录）；**符号链接天然跳过**（`DirEntry.IsDir()` 是 lstat 语义）。
+// 任一步读不到/删不掉一律忽略 —— 本函数**不改判决、不改退码、不改任何输出**。
+func pruneRepoCommitLogDirs(root, keep string) {
+	ents, err := os.ReadDir(root)
+	if err != nil {
+		return
+	}
+	cut := time.Now().Add(-repoCommitLogTTL)
+	for _, e := range ents {
+		if !e.IsDir() || !strings.HasPrefix(e.Name(), "zerg-repo-commit-") {
+			continue
+		}
+		p := filepath.Join(root, e.Name())
+		if p == keep {
+			continue
+		}
+		fi, err := e.Info()
+		if err != nil || fi.ModTime().After(cut) {
+			continue
+		}
+		_ = os.RemoveAll(p)
+	}
 }
 
 // ═══════════ 提交闸取「索引面」：物化索引（缺口 `GAP-20260927-79` · 2026-10-08）═══════════
@@ -898,6 +952,7 @@ func repoCommitOnly(inv *invocation, stdout, stderr io.Writer, paths []string, m
 		fmt.Fprintf(stderr, "%s: 建不了门禁日志目录 %s：%v\n", progName, filepath.Join(os.TempDir(), prefix), mkErr)
 		return exitFail
 	}
+	pruneRepoCommitLogDirs(osTempRoot(), logDir) // ★ 有界回收（缺口 `GAP-20261001-58`：清掉过窗口的旧日志目录；本轮目录 keep 不动 · 见件内 helper）
 	matRoot, mErr := materializeIndex(root)
 	if mErr != nil {
 		inv.setErr("blocked", "index_materialize_failed", mErr.Error())
@@ -1119,6 +1174,332 @@ func repoCommitOnly(inv *invocation, stdout, stderr io.Writer, paths []string, m
 	return exitOK
 }
 
+// ══════════════════════════ `GAP-20261009-17`：「只撤跟踪」模式（`repo commit --removed`）══════════════════════════
+//
+// 病根：`repo commit` 落不下**纯删除面**（把某件从跟踪面摘掉、**件留盘**）—— 两模式各有一处堵死：
+//
+//	· `--file` 模式要求索引面**先空**（删除面挂索引即拒执 rc=2）；
+//	· `--only` 模式走 `git commit --only`，它取**工作树内容** ⇒ 结构上表达不了「索引删、工作树留」，
+//	  反而把已撤索引的件**加回**。
+//
+// 修法（Mr2109 代拍 · 窄口径 · 缺口 `GAP-20261009-17`）：临时索引 = HEAD 全量 ＋ 点名件的**删除态**
+// ⇒ 用该临时索引 commit ⇒ **真索引一字不动** ⇒ 别人的暂存**天然原样保留**（不靠「先记后还原」两趟）。
+// ★ 全程**只动索引/临时索引**，✗ 绝不碰工作树件（「件留盘」是本模式的定义）。
+func repoCommitRemoved(inv *invocation, stdout, stderr io.Writer, paths []string, message string) int {
+	// ⓪ 多余位置参数 ⇒ 拒执（照 `--only` 同一口径：多件要逐件 `--removed`）。
+	if len(inv.args) > 0 {
+		inv.setErr("usage", "removed_extra_positional", "`--removed` 一次只吃一枚值：多件要逐件 `--removed`")
+		fmt.Fprintf(stderr, "%s: `--removed` **一次只吃一枚值** —— 多件要逐件写（`--removed <件1> --removed <件2> …`）\n", progName)
+		fmt.Fprintf(stderr, "多余的 %d 个位置参数：%s\n", len(inv.args), strings.Join(inv.args, " · "))
+		return exitUsage
+	}
+	// ① 禁词 / 通配：**照默认模式那张表逐字**（`--removed` 不是批量暂存的后门）。
+	for _, f := range paths {
+		for _, bad := range gitForbiddenStaging {
+			if f == bad {
+				inv.setErr("usage", "bulk_staging_forbidden", "禁批量暂存")
+				fmt.Fprintf(stderr, "%s: `--removed %s` 是**批量暂存**写法 ⇒ 拒执（退码 2）\n", progName, f)
+				return exitUsage
+			}
+		}
+		if strings.ContainsAny(f, "*?[") || strings.HasPrefix(f, ":") {
+			inv.setErr("usage", "glob_staging_forbidden", "禁通配")
+			fmt.Fprintf(stderr, "%s: `--removed %s` 含通配/路径规格 ⇒ 拒执（退码 2 · 一次只点名一件件）\n", progName, f)
+			return exitUsage
+		}
+	}
+	root := repoRoot()
+	if root == "" {
+		inv.setErr("blocked", "repo_root_absent", "解析不到仓根")
+		fmt.Fprintf(stderr, "%s: 解析不到仓根 ⇒ 不给结论（退码 8）\n", progName)
+		return exitBlocked
+	}
+	if _, err := os.Stat(filepath.Join(root, ".git")); err != nil {
+		inv.setErr("blocked", "not_a_git_repo", "仓根下没有 .git")
+		fmt.Fprintf(stderr, "%s: %s 下没有 .git ⇒ 不是 git 工作树（退码 8）\n", progName, root)
+		return exitBlocked
+	}
+	// ② 点名件逐条必须是**当前索引里的删除态**（照 want 的复现：先 `git rm --cached <件>`）——
+	//    否则本模式的语义不成立（「只撤跟踪」的前提正是它已被撤出索引）。
+	for _, p := range paths {
+		if !removedIsDeletion(root, p) {
+			inv.setErr("usage", "removed_not_staged_deletion", "点名件不在挂索引的删除面上")
+			fmt.Fprintf(stderr, "%s: `--removed %s` 不在**挂索引的删除面**上 ⇒ 拒执（退码 2）\n", progName, p)
+			fmt.Fprintf(stderr, "本模式只认「已 `git rm --cached <件>`（撤索引 · 件留盘）」那一态；先撤索引再来\n")
+			return exitUsage
+		}
+	}
+	// ③ 撞车：别人正在写这个仓
+	if _, err := os.Stat(filepath.Join(root, ".git", "index.lock")); err == nil {
+		inv.setErr("conflict", "repo_busy", "另一个 git 进程正在写这个仓")
+		fmt.Fprintf(stderr, "%s: `.git/index.lock` 在 ⇒ **被占**（另有 git 进程在写这个仓）—— 退码 14（可等可重来）\n", progName)
+		return exitConflict
+	}
+	// ④ 提交前读数：真索引面（= HEAD ＋ 删除态 ＋ 别人的暂存）—— 别人的暂存本模式**天然不动**。
+	preEntries, err := gitpaths.List(root, gitpaths.FaceDiffCached)
+	if err != nil {
+		inv.setErr("blocked", "git_failed", err.Error())
+		fmt.Fprintf(stderr, "%s: 读不了暂存面：%v ⇒ 不给结论（退码 8）\n", progName, err)
+		return exitBlocked
+	}
+	preStaged := entryNames(preEntries)
+	excluded := setMinus(preStaged, paths)
+	by := strings.TrimSpace(inv.flagVal("--by"))
+	if by == "" {
+		by = "（未声明）"
+	}
+	proposalID := strings.TrimSpace(inv.flagVal("--proposal"))
+	trace := strings.TrimSpace(inv.flagVal("--trace"))
+	criterion := strings.TrimSpace(inv.flagVal("--criterion"))
+	msg := commitMessageTemplate(message, proposalID, by, trace, criterion, paths)
+	logDirPattern := filepath.Join(os.TempDir(), "zerg-repo-commit-<YYYYMMDD-HHMMSS>")
+	auditPath := commitAuditPath()
+	removedRow := map[string]string{
+		"head": "", "files": strings.Join(paths, ","), "staged": strings.Join(preStaged, ","),
+		"gate_rc": "", "commit": "", "message_path": "", "log_dir": logDirPattern,
+	}
+	// ⑤ 三态：`--dry-run` ⇒ 计划件 rc=0；缺 `--yes` ⇒ 计划件 + rc=2；确认档齐 ⇒ 真跑。
+	if inv.dryRun || !inv.yes {
+		fmt.Fprintln(stdout, "计划件（--dry-run · 零副作用 —— 未暂存、未提交、未跑门禁）")
+		fmt.Fprintf(stdout, "  动作     : %s repo commit **--removed**（只撤跟踪；临时索引 = HEAD ＋ 点名件的删除态）\n", progName)
+		fmt.Fprintf(stdout, "  仓       : %s\n", root)
+		fmt.Fprintf(stdout, "  撤跟踪件 : %d 件 —— %s（件**留盘**，只从跟踪面摘掉）\n", len(paths), strings.Join(paths, " · "))
+		fmt.Fprintf(stdout, "  进提交的路: 临时索引 = HEAD ＋ 点名件删除态 ⇒ git commit -F <临时件>（**不动真索引** ⇒ 别人的暂存原样保留）\n")
+		fmt.Fprintf(stdout, "  别人的暂存: %s\n", commitExcludedNote(excluded))
+		fmt.Fprintf(stdout, "  门禁     : bash scripts/gates/precommit-gates.sh --fast --outdir %s（**退码直通**）\n", logDirPattern)
+		fmt.Fprintf(stdout, "  提交信息 :\n")
+		for _, ln := range strings.Split(strings.TrimRight(msg, "\n"), "\n") {
+			fmt.Fprintf(stdout, "    | %s\n", ln)
+		}
+		fmt.Fprintf(stdout, "  出口     : git commit -F <临时件>（**不加 `--no-verify`** —— 命令面一律不接受它）\n")
+		if !inv.yes {
+			fmt.Fprintf(stdout, "  未执行   : 缺 `--yes` ⇒ 不执行（fail-closed：从不提问）\n")
+		}
+		if inv.jsonGiven {
+			if rc := requireFields(inv, stderr); rc != exitOK {
+				return rc
+			}
+			_ = selectJSON(stdout, stderr, inv, inv.path, repoCommitFields, removedRow)
+		}
+		fmt.Fprintln(stderr, "（--dry-run：只出计划件 · 零副作用 —— 未跑门禁、未暂存、未提交）")
+		if !inv.yes && !inv.dryRun {
+			fmt.Fprintf(stderr, "%s: `repo commit --removed` 要 `--yes`（D2 档：提交可逆 —— `git reset --soft HEAD~1`）⇒ 缺它不执行\n", progName)
+			return exitUsage
+		}
+		return exitOK
+	}
+
+	// ⑤′ **门新鲜度闸**（缺口 `GAP-20260928-194`）：同另两模式同一处 —— 本闸只管「提交」这一个落地动作。
+	if rc := gateFreshnessGate(root, "removed", inv, stderr); rc != exitOK {
+		return rc
+	}
+
+	// ⑥ **造临时索引 = HEAD ＋ 点名件的删除态**（★ 只动临时索引 · 真索引一字不动）
+	logDir, mkErr := os.MkdirTemp(osTempRoot(), "zerg-repo-commit-"+time.Now().Format("20060102-150405.000000000")+"-*")
+	if mkErr != nil {
+		inv.setErr("failed", "logdir_failed", mkErr.Error())
+		fmt.Fprintf(stderr, "%s: 建不了门禁日志目录：%v\n", progName, mkErr)
+		return exitFail
+	}
+	pruneRepoCommitLogDirs(osTempRoot(), logDir) // ★ 有界回收（缺口 `GAP-20261001-58`）
+	tmpIndex := filepath.Join(root, ".git", fmt.Sprintf("zerg-removed-index-%d", os.Getpid()))
+	defer os.Remove(tmpIndex)
+	if _, err := gitRunIndex(root, tmpIndex, "read-tree", "HEAD"); err != nil {
+		inv.setErr("failed", "tmp_index_failed", err.Error())
+		fmt.Fprintf(stderr, "%s: 造不了临时索引（read-tree HEAD）：%v ⇒ 不提交\n", progName, err)
+		return exitFail
+	}
+	if _, err := gitRunIndex(root, tmpIndex, append([]string{"update-index", "--force-remove", "--"}, paths...)...); err != nil {
+		inv.setErr("failed", "tmp_index_failed", err.Error())
+		fmt.Fprintf(stderr, "%s: 临时索引置删除态失败：%v ⇒ 不提交\n", progName, err)
+		return exitFail
+	}
+	// ⑦ 物化**临时索引** + 跑快速档（闸取**本次要落的内容面** = 临时索引；与缺省/`--only` 两模式同源）
+	matRoot, mErr := materializeTempIndex(root, tmpIndex)
+	if mErr != nil {
+		inv.setErr("blocked", "index_materialize_failed", mErr.Error())
+		fmt.Fprintf(stderr, "%s: **物化临时索引失败：%v ⇒ 不给结论（退码 8 · 绝不静默回落到工作树面）**\n", progName, mErr)
+		return exitBlocked
+	}
+	gtRC, err := runFastGate(root, matRoot, logDir, stderr)
+	removeMaterialized(matRoot)
+	if err != nil {
+		inv.setErr("failed", "gate_run_failed", err.Error())
+		fmt.Fprintf(stderr, "%s: 跑不动门禁脚本：%v\n", progName, err)
+		return exitFail
+	}
+	if gtRC != exitOK {
+		// ★ 本模式**从未动过真索引**（删除面挂在临时索引上）⇒ 被拦下时索引面与工作树**天然逐字未动**。
+		if gtRC == exitFail {
+			inv.setErr("failed", "gate_failed", "快速档有失败项")
+		} else {
+			inv.setErr("usage", "gate_blocked", "快速档不给结论")
+		}
+		line := commitAuditLine{At: time.Now().Format(time.RFC3339), Event: "gate_blocked", By: by,
+			Mode: "removed", Only: paths, Excluded: excluded, GateRC: gtRC, AuditPath: auditPath}
+		if aerr := appendCommitAudit(auditPath, line); aerr != nil {
+			fmt.Fprintf(stderr, "%s: ⚠ 撞红那一行审计落不下：%v\n", progName, aerr)
+		}
+		fmt.Fprintf(stderr, "%s: **快速档没过（rc=%d）⇒ 不提交**（真索引与工作树逐字未动 · 日志 %s）\n", progName, gtRC, logDir)
+		return gtRC
+	}
+	fmt.Fprintf(stderr, "%s: 快速档 rc=0 ✓（临时索引面 · 日志 %s）⇒ 放行本次提交\n", progName, logDir)
+
+	// ⑧ 提交：用**临时索引** commit（★ 真索引一字不动 ⇒ 别人的暂存原样保留）
+	msgPath := filepath.Join(logDir, "commit-message.txt")
+	if err := os.WriteFile(msgPath, []byte(msg), 0o600); err != nil {
+		inv.setErr("failed", "message_write_failed", err.Error())
+		fmt.Fprintf(stderr, "%s: 提交信息临时件写不了：%v\n", progName, err)
+		return exitFail
+	}
+	preHead, _ := gitRun(root, "rev-parse", "--short", "HEAD")
+	preHead = strings.TrimSpace(preHead)
+	rc := runGitCommitIndex(root, tmpIndex, msgPath, stdout, stderr)
+	head := preHead
+	if rc == exitOK {
+		if h, err := gitRun(root, "rev-parse", "--short", "HEAD"); err == nil {
+			head = strings.TrimSpace(h)
+		}
+	}
+	// ⑨ 三格对拍：① 落库的件集 == 点名件 ② 别人的暂存一枚没少 ③ 工作树件仍在（本模式不碰工作树）
+	committed := []string{}
+	if rc == exitOK {
+		if s, err := gitRun(root, "-c", "core.quotepath=false", "show", "--name-only", "--pretty=format:", "HEAD"); err == nil {
+			committed = splitLines(s)
+		}
+	}
+	postEntries, perr := gitpaths.List(root, gitpaths.FaceDiffCached)
+	postStaged := []string{}
+	if perr == nil {
+		postStaged = entryNames(postEntries)
+	}
+	same, extra, missingF := compareFileSets(paths, committed)
+	line := commitAuditLine{At: time.Now().Format(time.RFC3339), Event: "commit", By: by, Mode: "removed",
+		Only: paths, Excluded: excluded, GateRC: gtRC, Head: head, Commit: head, AuditPath: auditPath}
+	if rc != exitOK {
+		line.Event, line.Note = "commit_rejected", "提交被拦（rc="+fmt.Sprintf("%d", rc)+"）"
+	}
+	if aerr := appendCommitAudit(auditPath, line); aerr != nil {
+		fmt.Fprintf(stderr, "%s: ⚠ 审计落不下（%s）：%v —— 判决照旧（本行只记账）\n", progName, auditPath, aerr)
+	}
+	if rc == exitOK {
+		writeCommitReceipt(message, head, "removed", paths, by, stderr) // 「轮 = 一笔提交」：缺口 `GAP-20261005-16`
+	}
+	fmt.Fprintf(stderr, "%s: %s\n", progName, commitExcludedNote(excluded))
+	for _, e := range excluded {
+		fmt.Fprintf(stderr, "  · %s\n", e)
+	}
+	if rc != exitOK {
+		fmt.Fprintf(stderr, "%s: **提交未落地（rc=%d）** ⇒ 真索引与工作树均未动（本模式只动临时索引）\n", progName, rc)
+		return rc
+	}
+	if !same {
+		inv.setErr("usage", "committed_mismatch", "落库的件集与点名清单不一致")
+		fmt.Fprintf(stderr, "%s: **落库的件集与点名清单不一致 ⇒ 判红**（退码 2）\n", progName)
+		if len(extra) > 0 {
+			fmt.Fprintf(stderr, "  多出来的：%s\n", strings.Join(extra, " · "))
+		}
+		if len(missingF) > 0 {
+			fmt.Fprintf(stderr, "  少了的  ：%s\n", strings.Join(missingF, " · "))
+		}
+		fmt.Fprintf(stderr, "  回滚：`git reset --soft HEAD~1`（D2 可逆 · 提交内容面）\n")
+		return exitUsage
+	}
+	short := []string{}
+	for _, k := range excluded {
+		if !containsLine(postStaged, k) {
+			short = append(short, k)
+		}
+	}
+	if len(short) > 0 {
+		inv.setErr("failed", "others_staged_lost", "别人的暂存件少了")
+		fmt.Fprintf(stderr, "%s: **别人的暂存件少了一枚**（本该只许多不许少）⇒ 判红：%s\n", progName, strings.Join(short, " · "))
+		return exitFail
+	}
+	fmt.Fprintf(stderr, "%s: 对拍 ✓ ① 撤跟踪的 %d 件与点名清单逐件相同 ② 别人的暂存 %d 件一件没少 ③ 头 %s · 门禁 rc=%d\n",
+		progName, len(committed), len(excluded), head, gtRC)
+	for _, f := range committed {
+		fmt.Fprintln(stdout, f)
+	}
+	if inv.jsonGiven {
+		if rc := requireFields(inv, stderr); rc != exitOK {
+			return rc
+		}
+		removedRow["head"], removedRow["staged"] = head, strings.Join(postStaged, ",")
+		removedRow["gate_rc"], removedRow["commit"] = fmt.Sprintf("%d", gtRC), head
+		removedRow["message_path"], removedRow["log_dir"] = msgPath, logDir
+		return selectJSON(stdout, stderr, inv, inv.path, repoCommitFields, removedRow)
+	}
+	return exitOK
+}
+
+// removedIsDeletion —— path 在当前**真索引**里是不是「删除态」（`git diff --cached` 报 D）。
+func removedIsDeletion(root, path string) bool {
+	out, err := gitRun(root, "-c", "core.quotepath=false", "diff", "--cached", "--name-status", "--", path)
+	if err != nil {
+		return false
+	}
+	for _, ln := range splitLines(out) {
+		f := strings.SplitN(ln, "\t", 2)
+		if len(f) == 2 && strings.HasPrefix(f[0], "D") && f[1] == path {
+			return true
+		}
+	}
+	return false
+}
+
+// gitRunIndex —— 跑一条 git 命令，但**索引面指到 indexFile**（`GIT_INDEX_FILE`）⇒ 只动临时索引、不碰真索引。
+func gitRunIndex(root, indexFile string, args ...string) (string, error) {
+	cmd := exec.Command("git", append([]string{"-C", root, "-c", "core.quotepath=false"}, args...)...)
+	cmd.Env = append(stripGitIndexFace(os.Environ()), "GIT_INDEX_FILE="+indexFile)
+	var out, errb strings.Builder
+	cmd.Stdout, cmd.Stderr = &out, &errb
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("git %s：%v（%s）", strings.Join(args, " "), err, strings.TrimSpace(errb.String()))
+	}
+	return out.String(), nil
+}
+
+// materializeTempIndex —— 物化**临时索引**（`git checkout-index` 走 `GIT_INDEX_FILE`）⇒ 闸取本次要落的内容面。
+// 与 `materializeIndex` 同形（补 `.git`/`bin` 两枚链接的理由逐字同上），差别只在索引面指到临时索引。
+func materializeTempIndex(root, indexFile string) (string, error) {
+	dir, err := os.MkdirTemp(filepath.Dir(root), ".zerg-gate-idx-*")
+	if err != nil {
+		return "", err
+	}
+	prefix := dir + string(os.PathSeparator)
+	if _, err := gitRunIndex(root, indexFile, "checkout-index", "-a", "-f", "--prefix="+prefix); err != nil {
+		_ = os.RemoveAll(dir)
+		return "", err
+	}
+	if err := os.Symlink(filepath.Join(root, ".git"), filepath.Join(dir, ".git")); err != nil {
+		_ = os.RemoveAll(dir)
+		return "", err
+	}
+	if st, err := os.Stat(filepath.Join(root, "bin")); err == nil && st.IsDir() {
+		if err := os.Symlink(filepath.Join(root, "bin"), filepath.Join(dir, "bin")); err != nil {
+			_ = os.RemoveAll(dir)
+			return "", err
+		}
+	}
+	return dir, nil
+}
+
+// runGitCommitIndex —— 用**临时索引**提交（`GIT_INDEX_FILE`）⇒ 真索引一字不动（**不加 `--no-verify`**）。
+func runGitCommitIndex(root, indexFile, msgPath string, stdout, stderr io.Writer) int {
+	cmd := exec.Command("git", "-C", root, "-c", "core.quotepath=false", "commit", "-F", msgPath)
+	cmd.Env = append(stripGitIndexFace(os.Environ()), "GIT_INDEX_FILE="+indexFile)
+	cmd.Stdout, cmd.Stderr = stdout, stderr
+	if err := cmd.Run(); err != nil {
+		if ee, ok := err.(*exec.ExitError); ok {
+			return ee.ExitCode()
+		}
+		fmt.Fprintf(stderr, "%s: `git commit`（临时索引）起不来：%v\n", progName, err)
+		return exitFail
+	}
+	return exitOK
+}
+
 // commitExcludedNote 被排除件那一片的**口径行**（`N=0` 必写面内未见，不许静默）。
 func commitExcludedNote(excluded []string) string {
 	if len(excluded) == 0 {
@@ -1225,8 +1606,11 @@ func writeCommitReceipt(title, head, mode string, files []string, by string, std
 		t = "（无题）"
 	}
 	flag := "--file"
-	if mode == "only" {
+	switch mode {
+	case "only":
 		flag = "--only"
+	case "removed":
+		flag = "--removed"
 	}
 	rec := receiptRecord{
 		RoundID:   rid,

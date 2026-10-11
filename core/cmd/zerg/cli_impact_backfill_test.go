@@ -198,8 +198,10 @@ func TestImpactBackfill_TenKeysRefuseAndAppend(t *testing.T) {
 	if err != nil {
 		t.Fatalf("十键读不到（契约件 `%s`）：%v", "core/internal/contract/impact-backfill.json", err)
 	}
+	// ★ ② 冻结下限 = 8（棘轮 · 只许增不许减）：契约件 `required_keys` 现读 10 键（§5.5 十条逐字），
+	//   「至少八键」即此判据的下限 —— 结构静默变小（抽到的键 < 8）⇒ 本格判红，✗ 不许静默绿。
 	if len(keys) < 8 {
-		t.Fatalf("§5.5 判据④ 要求**至少八键**，契约件只给了 %d 条：%v", len(keys), keys)
+		t.Fatalf("§5.5 判据④ 要求**至少八键**（冻结下限 8），契约件只给了 %d 条：%v", len(keys), keys)
 	}
 	for _, want := range []string{"head_sha", "target", "predict_red", "actual_fail", "actual_blocked",
 		"hit", "miss", "false_alarm", "gate_run_id", "at"} {

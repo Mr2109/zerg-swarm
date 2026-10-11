@@ -303,9 +303,12 @@ func TestTsmOnlyTypoIsNotGreen(t *testing.T) {
 	}
 }
 
-// ★ 重入形态的回归牙：夹具驱动必须以**真子命令形态**起（`gate check <键>` 前置 ＋ `--overlay <fix>`）。
+// ★ 重入形态的回归牙：夹具驱动必须以**真子命令形态**起（`gate check <键> --yes` 前置 ＋ `--overlay <fix>`）。
 // 去掉 `gate check <键>` 前缀 ⇒ 复制出的 `zerg` 二进制按 `args[0]` 派发、直跑 `--overlay …` 落
 // 「未知旗标」rc=2 ⇒ 本用例（探针回显 argv）FAIL 带行号。
+// ★ 带 `--yes`：本判据登中央表 write D2（受治理 · GAP-20261001-64）⇒ 缺 `--yes` 壳侧拒执 ⇒
+//
+//	内部重入须自带确认盾（哑化 ⇒ 本用例 FAIL）。
 func TestTsmFixtureDriverUsesSubcommandShape(t *testing.T) {
 	fix := t.TempDir()
 	dir := filepath.Join(fix, "scripts", "gates")
@@ -321,7 +324,7 @@ func TestTsmFixtureDriverUsesSubcommandShape(t *testing.T) {
 		t.Fatalf("探针应 rc=0，实 rc=%d out=%q", rc, out)
 	}
 	got := strings.Split(strings.TrimRight(out, "\n"), "\n")
-	want := []string{"gate", "check", "two-states-gate-mutate", "--overlay", fix, "--only", "G1"}
+	want := []string{"gate", "check", "two-states-gate-mutate", "--yes", "--overlay", fix, "--only", "G1"}
 	if len(got) != len(want) {
 		t.Fatalf("argv 段数不对：\n got=%q\nwant=%q", got, want)
 	}
@@ -365,5 +368,24 @@ func TestTsmDriverSourcedNotFromJudgePy(t *testing.T) {
 	got, _ := tsmReadText(filepath.Join(fix, tsmMutDriverRel))
 	if got != "#drv-probe\n" {
 		t.Fatalf("夹具驱动应逐字等于**给定源**（不是仓内该 py）：%q", got)
+	}
+}
+
+// ★ 受治理的仓外写档（缺口 GAP-20261001-64 · Mr2109 2026-10-10 拍板「另立受治理的仓外写档」）：本判据名登
+// **中央分类表** write D2 ⇒ 壳侧 `gate check` 缺 `--yes` 一律拒执（整面受治）；且夹具驱动重入自带 `--yes`
+// （壳侧盾剔掉后才落给判据体 ⇒ 内部重入不被盾挡成 rc=2）。
+// 哑化任一处（拿掉中央表登记 / 拿掉 argv 里的 `--yes`）⇒ 本用例 FAIL —— 「新增写工具同批登记」这一格的牙。
+func TestTsmGovernedOutOfTreeWriteFace(t *testing.T) {
+	cls, lvl := gateCheckClassOf("two-states-gate-mutate")
+	if cls != "write" || lvl != dangerD2 {
+		t.Fatalf("本判据名未登中央分类表 write D2 ⇒ 仓外写档未受治理：cls=%q lvl=%q", cls, lvl)
+	}
+	spec, hit := gateCheckClassEntry["two-states-gate-mutate"]
+	if !hit || spec.Class != "write" || spec.Level != dangerD2 {
+		t.Fatalf("中央表无 write D2 登记：hit=%v spec=%+v", hit, spec)
+	}
+	// 成对向：未登记者一律 read（默认不受盾）—— 免得「谁都 write」这种永真形。
+	if c, l := gateCheckClassOf("no-such-judge-zzz"); c != "read" || l != "" {
+		t.Fatalf("成对向：未登记者应为 read：cls=%q lvl=%q", c, l)
 	}
 }

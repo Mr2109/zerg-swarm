@@ -143,6 +143,7 @@ var gateCheckGoEntry = map[string]func(stdout, stderr io.Writer, argv []string) 
 	"check-stale-frozen":                    csfGateMain,
 	"check-step-switch":                     stepSwitchGateMain,
 	"check-stepcount-drift":                 stepcountDriftGateMain,
+	"check-structured-count-assert":         checkStructuredCountAssertGateMain,
 	"check-swap-agent-discipline":           checkSwapAgentDisciplineGateMain,
 	"check-symbol-delete-ripple":            symbolDeleteRippleGateMain,
 	"check-token-argv":                      checkTokenArgvGateMain,
@@ -236,4 +237,8 @@ var gateCheckClassEntry = map[string]gateCheckClassSpec{
 	"zerg-swap-core":    {"write", dangerD2}, // scripts/build/zerg-swap-core.sh（真写 repo bin/zerg-core + 委派 build-all；2026-10-09 已登记退场 DEV-2055 · 名仍在表 ⇒ 盾随登记存续）
 	"zerg-upgrade":      {"write", dangerD2}, // scripts/build/zerg-upgrade.sh（真写 repo bin/ 换装）
 	"build-wall-mutate": {"write", dangerD2}, // scripts/build/build-wall-mutate.py（真改仓内源件再还原）
+	// ★ 另立受治理的仓外写档（缺口 GAP-20261001-64 · Mr2109 2026-10-10 拍板「按推荐」）：Go 真搬件 `two-states-gate-mutate`
+	//   有写面（`--overlay <仓外树>` 真改坏再逐字节还原 · 缺省只读退 2 · 该树含 `.git` 拒写）⇒ 同批登本表
+	//   （表头铁律「新增写工具 ⇒ 同批在此登记」）。受治面 = 壳侧 `gate check` 缺 `--yes` 一律拒执 —— ✗ 永不放开**仓内**真写。
+	"two-states-gate-mutate": {"write", dangerD2}, // Go 真搬 core/cmd/zerg/two_states_gate_mutate.go（--overlay 仓外写档 · 真改坏再还原）
 }

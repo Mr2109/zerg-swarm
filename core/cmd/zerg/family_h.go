@@ -338,6 +338,7 @@ func cmdHazardWrite(inv *invocation, stdout, stderr io.Writer) int {
 	}
 	if !inv.yes {
 		inv.setErr("usage", "yes_required", "D2 档缺 --yes ⇒ 不执行")
+		guardMarkDecision(inv, guardDecisionApproval)
 		fmt.Fprintf(stderr, "%s: `%s` 是 D2 档 —— **缺 --yes ⇒ 不执行**（§九 M3 C2 fail-closed）\n", progName, name)
 		fmt.Fprintf(stderr, "先看计划件：%s %s --dry-run\n", progName, name)
 		return exitUsage

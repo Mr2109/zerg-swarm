@@ -29,6 +29,36 @@ const (
 	dangerD3 = "D3" // 不可逆：`--confirm=<目标>` 与 `--yes` **同时到**才执行
 )
 
+// ── 写面闸拒执的「控制层判决」格 ───────────────────────────────────────────────
+//
+// 病：写面闸（`cmdGuarded` / `writeGuardYes` / `guardedControlConfirmGate` /
+// `dryRunYesConflict` 及各写面命令的确认档）拒执分**两档** —— `block`（硬拦：`--confirm` 值对不上 /
+// `--dry-run` 与 `--yes` 同给）与 `require_approval`（等一次显式许可：缺 `--confirm` / 缺 `--yes`），
+// 而两档**退码同为 2**、既有 `error.detail` 各是**原因码**（`confirm_mismatch` / `dry_run_yes_conflict`
+// vs `confirm_required` / `yes_required`）不直说是哪一档 ⇒ 光看退码 / 原因码分不出「硬拦」还是
+// 「需人签放行」。
+//
+// 治法：**只加一格** `decision`（值逐字取 `core/internal/contract/authority-map.json` 的
+// `控制层闭集`：`block` / `require_approval`），落在拒执包封的 `meta.decision`（与既有
+// `meta.reason` 同一条「按需子键」口径）。✗ 不改退码 / ✗ 不改既有 kind·detail 语义 / ✗ 不放宽任何闸 /
+// ✗ 不碰 `error` 块的固定形状。
+const (
+	guardDecisionBlock    = "block"            // 硬拦：值对不上 / 两道确认档自相矛盾
+	guardDecisionApproval = "require_approval" // 等一次显式许可：缺 --confirm（D3）/ 缺 --yes
+)
+
+// guardMarkDecision 给**本次拒执**的错误补一格 `meta.decision`（谁先报谁为准 —— 只补在已落的那枚错上）。
+// 调用点紧跟在 `inv.setErr(...)` 之后 ⇒ `verdict_at`（`setErr` 调用点）**一字未动**。
+func guardMarkDecision(inv *invocation, decision string) {
+	if inv.err == nil {
+		return
+	}
+	if inv.err.Meta == nil {
+		inv.err.Meta = map[string]string{}
+	}
+	inv.err.Meta["decision"] = decision
+}
+
 type dangerSpec struct {
 	Level  string // D2 / D3
 	Target string // `--confirm=<目标>` 里的「目标」是什么（任务 id / 机器名 / 主机名 / 候选 id）
@@ -75,6 +105,7 @@ func cmdGuarded(inv *invocation, stdout, stderr io.Writer) int {
 	if spec.Level == dangerD3 && !inv.confirmGiven {
 		msg := fmt.Sprintf("`%s` 是 %s 档（不可逆）——**缺确认 ⇒ 不执行**", path, spec.Level)
 		inv.setErr("usage", "confirm_required", msg)
+		guardMarkDecision(inv, guardDecisionApproval)
 		fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
 		fmt.Fprintf(stderr, "要执行得给：--confirm=<%s> --yes\n", spec.Target)
 		fmt.Fprintf(stderr, "先看计划件：%s %s --dry-run\n", progName, path)
@@ -84,6 +115,7 @@ func cmdGuarded(inv *invocation, stdout, stderr io.Writer) int {
 	if inv.confirmGiven && (target == "" || inv.confirm != target) {
 		msg := fmt.Sprintf("确认值不匹配目标（--confirm 给的是 %q，目标是 %q）⇒ 不执行", inv.confirm, target)
 		inv.setErr("usage", "confirm_mismatch", msg)
+		guardMarkDecision(inv, guardDecisionBlock)
 		fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
 		fmt.Fprintf(stderr, "`--confirm` 的值必须与目标**逐字相同**（§4.1 K7）—— 给错值一律拒绝，不许「当没给」\n")
 		return exitUsage
@@ -91,6 +123,7 @@ func cmdGuarded(inv *invocation, stdout, stderr io.Writer) int {
 	if !inv.yes {
 		msg := fmt.Sprintf("`%s` 是 %s 档 —— **缺 --yes ⇒ 不执行**", path, spec.Level)
 		inv.setErr("usage", "yes_required", msg)
+		guardMarkDecision(inv, guardDecisionApproval)
 		fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
 		fmt.Fprintf(stderr, "先看计划件：%s %s --dry-run\n", progName, path)
 		return exitUsage
@@ -152,6 +185,7 @@ func writeGuardYes(inv *invocation, stderr io.Writer) int {
 	}
 	msg := fmt.Sprintf("`%s` 是 %s 档 —— **缺 --yes ⇒ 不执行**", path, lvl)
 	inv.setErr("usage", "yes_required", msg)
+	guardMarkDecision(inv, guardDecisionApproval)
 	fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
 	fmt.Fprintf(stderr, "先看计划件：%s %s --dry-run\n", progName, path)
 	fmt.Fprintf(stderr, "error.kind=usage · detail=yes_required · retryable=false · remedy=fix_usage\n")
@@ -358,6 +392,7 @@ func dryRunYesConflict(inv *invocation, stderr io.Writer) int {
 		return exitOK
 	}
 	inv.setErr("usage", "dry_run_yes_conflict", "--dry-run 与 --yes 不许同给")
+	guardMarkDecision(inv, guardDecisionBlock)
 	fmt.Fprintf(stderr, "%s: `--dry-run`（只出计划件）与 `--yes`（真写）**不许同给** ⇒ 用法错 2（两道确认档自相矛盾 ⇒ 不给结论）\n", progName)
 	// ★ 机器面读法（补的就是这一行）：默认档（不给 `--json`）下 stdout 恒 0 字节、stderr 这条判词
 	//   又与别的「前置检查退 2」看着一样 ⇒ 机器分不出这一发是不是本判定给的。上句人面**一字不动**，
@@ -390,6 +425,7 @@ func guardedControlConfirmGate(inv *invocation, stderr io.Writer, target string)
 	if lvl == dangerD3 && !inv.confirmGiven {
 		msg := fmt.Sprintf("`%s` 是 %s 档（不可逆）——**缺确认 ⇒ 不执行**", path, lvl)
 		inv.setErr("usage", "confirm_required", msg)
+		guardMarkDecision(inv, guardDecisionApproval)
 		fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
 		fmt.Fprintf(stderr, "要执行得给：--confirm=<%s> --yes\n", target)
 		fmt.Fprintf(stderr, "先看计划件：%s %s --dry-run\n", progName, path)
@@ -399,6 +435,7 @@ func guardedControlConfirmGate(inv *invocation, stderr io.Writer, target string)
 	if inv.confirmGiven && (target == "" || inv.confirm != target) {
 		msg := fmt.Sprintf("确认值不匹配目标（--confirm 给的是 %q，目标是 %q）⇒ 不执行", inv.confirm, target)
 		inv.setErr("usage", "confirm_mismatch", msg)
+		guardMarkDecision(inv, guardDecisionBlock)
 		fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
 		fmt.Fprintf(stderr, "`--confirm` 的值必须与目标**逐字相同**（§4.1 K7）—— 给错值一律拒绝，不许「当没给」\n")
 		return exitUsage
@@ -406,6 +443,7 @@ func guardedControlConfirmGate(inv *invocation, stderr io.Writer, target string)
 	if !inv.yes {
 		msg := fmt.Sprintf("`%s` 是 %s 档 —— **缺 --yes ⇒ 不执行**", path, lvl)
 		inv.setErr("usage", "yes_required", msg)
+		guardMarkDecision(inv, guardDecisionApproval)
 		fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
 		fmt.Fprintf(stderr, "先看计划件：%s %s --dry-run\n", progName, path)
 		fmt.Fprintf(stderr, "error.kind=usage · detail=yes_required · retryable=false · remedy=fix_usage\n")
@@ -555,6 +593,7 @@ func cmdCoreReloadGuarded(inv *invocation, stdout, stderr io.Writer) int {
 	}
 	if !inv.yes {
 		inv.setErr("usage", "yes_required", "D2 档缺 --yes ⇒ 不执行")
+		guardMarkDecision(inv, guardDecisionApproval)
 		fmt.Fprintf(stderr, "%s: `core reload` 是 D2 档（生效面即时）—— **缺 --yes ⇒ 不执行**（先看计划件：加 `--dry-run`）\n", progName)
 		fmt.Fprintf(stderr, "error.kind=usage · detail=yes_required · retryable=false · remedy=fix_usage\n")
 		return exitUsage

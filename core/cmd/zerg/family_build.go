@@ -230,11 +230,15 @@ func cmdBuildPassthrough(inv *invocation, stdout, stderr io.Writer) int {
 		effect = "只写 `bin/zerg` 一件（命令面自举档）—— 其余制品与 `build-info.json` 一个字节不动"
 	}
 	// ★ 2026-09-24（待拍清单终版 条 8）：`agentd` 收进闭集后，**执行面同批随动** —— 计划件给**逐字脚本档**
-	//   `--only-agentd`（子端换件专用档 · 批六①），档说明也按该档写；但**真跑仍未开放**（见下 `openForExec`）：
-	//   `agentd` 覆盖的是**在跑**的子端制品 ⇒ 与 `core` / `compat` 同一档口径（换件档 ⇒ 要真跑请 Mr2109 拍）。
-	//   本单只落到「**命令面读得到 + 计划件两态正确**」为止，不自行开放一条新的不可逆执行路径。
+	//   `--only-agentd`（子端换件专用档 · 批六①），档说明也按该档写。
+	// ★ 2026-10-10（Mr2109 拍板「开子端换件档」）：**真跑本版开放**（见下 `openForExec`）。
+	//   为什么开：`--only-agentd` 只覆盖 `bin/zerg-agentd` **一件**、其余制品与 `build-info.json`
+	//   一个字节不动（爆炸半径 = 在跑的子端一件，属「换件直换」授权面）—— 与 `core`/`compat`
+	//   （覆盖主控件、连带在跑制品）**不同档**，那两档仍一律拒执。
+	//   ✗ 只开 `agentd` 这一条：`build all`（默认全套）/`--only core`/`--only compat` 仍一律拒执。
 	if action == "all" && only == "agentd" {
 		scriptArgs = []string{"--only-agentd"}
+		openForExec = true
 		effect = "只写 `bin/zerg-agentd` 一件（**子端换件专用档** · 批六①）—— 其余制品与 `build-info.json` 一个字节不动"
 	}
 	// ★ 缺口 `Q-226`（2026-09-26 · ★★/P1 · 决策单第 7 条「**单开一档**」）：`build release --manifest-only`
@@ -292,6 +296,8 @@ func cmdBuildPassthrough(inv *invocation, stdout, stderr io.Writer) int {
 		if openForExec && action == "release" {
 			fmt.Fprintf(stdout, "  本版状态 : **已开放**（Mr2109 2026-10-10 拍板「开 build release 换件档」—— 发布链唯一出口）\n")
 			fmt.Fprintf(stdout, "  下一步   : %s publish preflight dist/<版本>/release（只读复核 · 闸④/⑥ 应转绿）\n", progName)
+		} else if openForExec && only == "agentd" {
+			fmt.Fprintf(stdout, "  本版状态 : **已开放**（Mr2109 2026-10-10 拍板「开子端换件档」—— 只覆盖 `bin/zerg-agentd` 一件 · 其余制品不动）\n")
 		} else if openForExec {
 			fmt.Fprintf(stdout, "  本版状态 : **已开放**（自举档 —— 只写 bin/zerg，不是换件）\n")
 		} else {
@@ -325,6 +331,11 @@ func cmdBuildPassthrough(inv *invocation, stdout, stderr io.Writer) int {
 		gateLevel = "D3"
 		gateSubject = "`build release` 换件档会**全量构建并覆盖 `bin/` 里的在跑制品**，再打包 `dist/<版本>/release/`"
 		gateHint = fmt.Sprintf("%s build release --dry-run", progName)
+	}
+	if action == "all" && only == "agentd" {
+		gateLevel = "D3"
+		gateSubject = "`build all --only agentd` 子端换件档会**只覆盖 `bin/zerg-agentd` 一件**（其余制品与 `build-info.json` 不动）"
+		gateHint = fmt.Sprintf("%s build all --only agentd --dry-run", progName)
 	}
 	if !inv.confirmGiven {
 		msg := fmt.Sprintf("%s ⇒ 按 %s 档：**缺确认 ⇒ 不执行**", gateSubject, gateLevel)
@@ -454,4 +465,84 @@ func buildExecPrereq(root, script string) error {
 		return fmt.Errorf("构建器真身不在（scripts/build/cmd/zerg-build-all/main.go）")
 	}
 	return nil
+}
+
+// ---------------------------------------------------------------------------
+// 缺口 `GAP-20261003-12`：`zerg build doctor` —— 构建签名**身份体检**（只读面）。
+//
+// 病征：构建脚本的签名身份解析（`build-all.sh:173-205` 的 `resolve_sign_identity`；现真源 =
+// `scripts/build/internal/sign/sign.go` 的 `Resolve`）此前**没有任何 CLI 出口** —— `build` 族
+// 只有 `all/ls/release/show/wall`，判据打不着它（门 B7b 只验「件有没有签名」，不跑身份解析），
+// 只能抽源件到仓外手搓探针，与「任何判据都必须从 CLI 打得着」相悖。
+//
+// 治法（照该族既有只读面形态 · ✗ 不改构建脚本 `scripts/build/build-all.sh`、✗ 不造第二份
+// 「施加签名」实现）：只读地**复现身份解析**，出三格 —— 解析身份 · 两态标记 · 最终 SIGN_MODE。
+//
+// 只读边界（与构建脚本的差别**明写**，别当逐字对齐）：
+//
+//	① 两态判定用**钥匙串真源** `security find-identity`（正是 `sign.Resolve` 的第一支）⇒
+//	   stable（身份在钥匙串）/ adhoc（找不到 ⇒ 回落 ad-hoc）；
+//	② **不造探针件、不调 `codesign -s` 签名** ⇒ 零写、纯只读（构建脚本的探针兜底支
+//	   `sign.Resolve` 第二支不在本面复现 —— 见件尾遗留）。
+func cmdBuildDoctor(inv *invocation, stdout, stderr io.Writer) int {
+	identity, marker, mode := resolveSignIdentityOverview()
+	fmt.Fprintf(stderr, "%s: 只读复现构建脚本的签名身份解析（真源 = scripts/build/internal/sign/sign.go 的 Resolve · 本面只读钥匙串 `security find-identity` 判两态 · 零写）\n", progName)
+	fmt.Fprintf(stderr, "%s: 遗留：构建脚本的探针兜底支（可签但未列入 `find-identity` 的身份）不在本面复现 —— 本命令不造探针件、不签名\n", progName)
+	rows := []map[string]string{{
+		"identity":  identity,
+		"marker":    marker,
+		"sign_mode": mode,
+	}}
+	if inv.jsonGiven {
+		if rc := requireFields(inv, stderr); rc != exitOK {
+			return rc
+		}
+		return selectJSONList(stdout, stderr, inv, inv.path, inv.fields, rows)
+	}
+	// 人面：逐格一行（格名 ⟷ 值）—— 三格：解析身份 · 两态标记 · 最终 SIGN_MODE。
+	cells := []struct{ key, label string }{
+		{"identity", "解析身份"},
+		{"marker", "两态标记"},
+		{"sign_mode", "最终 SIGN_MODE"},
+	}
+	for _, c := range cells {
+		fmt.Fprintf(stdout, "  %s : %s\n", c.label, rows[0][c.key])
+	}
+	fmt.Fprintln(stderr, "口径（构建脚本 `resolve_sign_identity` · 现真源 sign.Resolve）：身份取 `ZERG_SIGN_ID`，缺省 `Zerg Local Signing`；两态 = stable（身份在钥匙串）/ adhoc（回落 ad-hoc —— 本机 TCC 授权会随重编静默失效）")
+	return exitOK
+}
+
+// resolveSignIdentityOverview —— 只读复现构建脚本的身份解析，返回三格：解析身份 · 两态标记 · SIGN_MODE。
+//
+// 与 `scripts/build/internal/sign/sign.go:Resolve` 同判的**前置档**：无 `codesign` 或 `SIGN=0`
+// ⇒ 本档不签名（那一支 `Resolved{Enabled:false}`，三格如实示「不适用」）。
+func resolveSignIdentityOverview() (identity, marker, mode string) {
+	if _, err := exec.LookPath("codesign"); err != nil {
+		return "（本机没有 codesign）", "（不适用：本档不签名）", "disabled"
+	}
+	if os.Getenv("SIGN") == "0" {
+		return "（SIGN=0 ⇒ 本档不签名）", "（不适用：本档不签名）", "disabled"
+	}
+	id := os.Getenv("ZERG_SIGN_ID")
+	if id == "" {
+		id = "Zerg Local Signing"
+	}
+	// 钥匙串真源（`sign.Resolve` 第一支：`security find-identity | grep -q`）。
+	out, _ := exec.Command("security", "find-identity").CombinedOutput()
+	found, notTrusted := false, false
+	for _, ln := range strings.Split(string(out), "\n") {
+		if strings.Contains(ln, id) {
+			found = true
+			if strings.Contains(ln, "CSSMERR_TP_NOT_TRUSTED") {
+				notTrusted = true
+			}
+		}
+	}
+	if !found {
+		return "-", "⚠️ 未找到签名身份 ⇒ 回落 ad-hoc（本机 TCC 授权会随重编失效）", "adhoc"
+	}
+	if notTrusted {
+		return id, "🔏 稳定身份（在钥匙串但不受信任 —— 不影响签名）", "stable:" + id
+	}
+	return id, "🔏 稳定身份（在钥匙串）", "stable:" + id
 }

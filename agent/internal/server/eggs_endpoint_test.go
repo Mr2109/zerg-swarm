@@ -266,3 +266,35 @@ func TestEggEntries_UnitPassthrough(t *testing.T) {
 		t.Fatalf("unit 必须透出装配器，实得 %q（整条=%+v）", got[0].Unit, got[0])
 	}
 }
+
+// 远程机取数面（GAP-20261006-02）：装配器必须把 backend 快照里的**声明 cmd:** 透到载荷 ——
+// 「四方不一致命令面」（GAP-20260926-04）的**远程 side** 经 `/eggs` 读子端本地注册表的 `cmd:`；
+// 不承载 ⇒ 远程 side 恒「读不到」。与 argv（实际执行）分开：cmd 是名册声明、可含占位符。
+func TestEggEntries_CmdPassthrough(t *testing.T) {
+	declared := `["/opt/run.sh", "-m", "{file}", "-c", "65536"]`
+	obs := []backend.EggObservation{
+		{EggID: "example-35b-v2", Model: "example-35b-v2", State: "ready", Cmd: declared},
+		{EggID: "bare"}, // 从未声明 cmd（走默认命令）⇒ 缺席
+	}
+	got := eggEntries(obs, nil, nil)
+	if len(got) != 2 {
+		t.Fatalf("应装配 2 条，实得 %d", len(got))
+	}
+	if got[0].Cmd != declared {
+		t.Fatalf("cmd 必须逐字透出装配器，实得 %q（整条=%+v）", got[0].Cmd, got[0])
+	}
+	b, err := json.Marshal(got[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"cmd":`) {
+		t.Errorf("载荷应带 cmd 键（逐字声明），实得 %s", b)
+	}
+	b1, err := json.Marshal(got[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b1), `"cmd":`) {
+		t.Errorf("从未声明 cmd 的卵不得编造 cmd 键（缺席）—— 反面就是真机 /eggs 恒读不到的根因，实得 %s", b1)
+	}
+}

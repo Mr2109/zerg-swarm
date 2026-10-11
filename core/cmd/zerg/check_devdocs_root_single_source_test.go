@@ -4,6 +4,8 @@ package main
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -58,5 +60,24 @@ func TestCdrssSelfTestGreen(t *testing.T) {
 	var out, errb bytes.Buffer
 	if rc := checkDevdocsRootSingleSourceGateMain(&out, &errb, []string{"--self-test"}); rc != 0 {
 		t.Fatalf("--self-test 期望 rc=0，实得 rc=%d out=%q err=%q", rc, out.String(), errb.String())
+	}
+}
+
+// TestCdrssReadFailTeeth —— B 类读失败不再静默的回归牙：扫描面里一件 .go 锁成 chmod 000 ⇒
+// 登记面（cdrssReadFails）必响：rc=2 + stderr BLOCKED 头 + 逐件点名。删回静默本用例必红。
+func TestCdrssReadFailTeeth(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root 无视权限位（chmod 000 仍可读）⇒ 跳过")
+	}
+	root := cdrssTree(t, true, "v9.9.9") // 相符 ⇒ 无读失败时 rc=0
+	cdrssWriteFile(root, cdrssScanDirRel+"/check_y.go", "package main\n\nfunc y() string { return join(sib, \"项目文档\", \"v9.9.9\") }\n")
+	bad := filepath.Join(root, "core", "cmd", "zerg", "check_x.go")
+	if err := os.Chmod(bad, 0o000); err != nil {
+		t.Fatalf("chmod 000 失败：%v", err)
+	}
+	defer func() { _ = os.Chmod(bad, 0o644) }()
+	rc, out := cdrssInvoke(t, root)
+	if rc != cdrssRCblock || !strings.Contains(out, "BLOCKED") || !strings.Contains(out, "check_x.go") {
+		t.Fatalf("读不到件应 rc=2 + BLOCKED 点名 check_x.go，得 rc=%d out=%q", rc, out)
 	}
 }

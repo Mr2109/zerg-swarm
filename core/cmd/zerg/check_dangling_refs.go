@@ -142,6 +142,48 @@ import (
 
 const cdrVersion = "check-dangling-refs.py v1.3.0"
 
+// ── 棘轮基线（存量 ≤ 基线 ⇒ 绿 · 超出 ⇒ 响亮红 · **只许下调 · 永不上调**）──────────────
+// 形状**照仓内先例** `core/cmd/zerg/check_verify_cmd_real.go` 的 `cvrBaseline`（同批同形，
+// ✗ 不另起第二套）：基线 = 「首日现读数」常量（map 按**面/类**分格）＋ 一个「超额则红」的棘轮格。
+// 本门**两类各一条**基线（与先例按 verify/repro 两面分格同构）：
+//
+//	· docs —— docs 路径类的**未登记命中**（live ＋ ledger；`已登记` 不计命中，故不入基线）
+//	· gap  —— GAP 号引用类的**未登记命中**（live；例外面不计命中，故不入基线）
+//
+// 口径：现读数 − 基线 > 0 ⇒ 判**新增**（响红并点名）；≤ 0 ⇒ 存量段绿（不再对存量恒红）。
+var cdrBaseline = map[string]int{"docs": 775, "gap": 0}
+
+const cdrBaselineNote = "2026-10-10 首测（本门加棘轮当天 · 制品 zerg 2.5.14 76872c12 · 本仓现读）：" +
+	"docs 路径类未登记命中 = 775（live 288 · ledger 487；已登记 170 处不计命中）；" +
+	"GAP 号引用类未登记命中 = 0（该类候选 2946 · 例外面 37）。" +
+	"★ 只认上面那两格；基线只许**下调**（改成现测值），✗ 永不上调（抬基线充绿即违规）。"
+
+// cdrRatchetExtra —— 棘轮格（= 先例 `cvrVerdict` 的比较面）：现测 − 基线 ⇒ (extraDocs, extraGap, over)。
+// over ⟺ 任一为正（即「超出基线 = 有新增」）。base=nil ⇒ 用默认 cdrBaseline。
+func cdrRatchetExtra(nPath, nGap int, base map[string]int) (int, int, bool) {
+	if base == nil {
+		base = cdrBaseline
+	}
+	d, g := nPath-base["docs"], nGap-base["gap"]
+	return d, g, d > 0 || g > 0
+}
+
+// cdrDelta —— 现测相对基线的差（带符号；0 就写 0）。
+func cdrDelta(n int) string {
+	if n > 0 {
+		return "+" + strconv.Itoa(n)
+	}
+	return strconv.Itoa(n)
+}
+
+// cdrMax0 —— max(n, 0)（超额为正，不超额取 0）。
+func cdrMax0(n int) int {
+	if n > 0 {
+		return n
+	}
+	return 0
+}
+
 // ── 扫描面（逐字复刻 py）────────────────────────────────────────────────────────────
 var cdrSkipDirs = []string{"vendor", "bin", "dist", "node_modules", "target", ".git", ".venv", "venv",
 	"__pycache__", ".obsidian", ".history", "htmlcov", ".cargo"}
@@ -1569,16 +1611,25 @@ func cdrSelftest(stdout, stderr io.Writer) bool {
 	fmt.Fprintf(stdout, "  %s [GAP账缺夹具] 命中 %d · 未判 %d · judged=%s（期望 0 / ≥1 / False）\n",
 		cdrMark(good), len(st.gap.hits), len(st.gap.unjudged), cdrPyBool(st.gap.judged))
 
-	if cases != 15 {
-		fmt.Fprintf(stdout, "  自检用例数必须为 15，实际 %d（少跑即失效）\n", cases)
+	// ⑯ 棘轮格（成对负控）：超基线 ⇒ 超额（红）· 存量 ≤ 基线 ⇒ 不超额（绿）。
+	_, _, ovOver := cdrRatchetExtra(1, 0, map[string]int{"docs": 0, "gap": 0})
+	_, _, ovIn := cdrRatchetExtra(1, 0, map[string]int{"docs": 9, "gap": 9})
+	cases++
+	good = ovOver && !ovIn
+	ok = ok && good
+	fmt.Fprintf(stdout, "  %s [棘轮夹具] 超基线⇒超额 %s · 存量≤基线⇒不超额 %s（期望 True / True —— 成对负控）\n",
+		cdrMark(good), cdrPyBool(ovOver), cdrPyBool(!ovIn))
+
+	if cases != 16 {
+		fmt.Fprintf(stdout, "  自检用例数必须为 16，实际 %d（少跑即失效）\n", cases)
 		ok = false
 	}
 	verdict := "**失败** ✗"
 	if ok {
 		verdict = "通过 ✓"
 	}
-	fmt.Fprintf(stdout, "  自检：%s（15 格：必红×2 · 豁免×1 · 拼接×1 · 前缀×1 · 无输入×1 · 登记表×1 · 整件豁免×1 ·"+
-		" 前缀越界×1 · 缺语料×1 · 跨仓×1 · GAP悬空×1 · GAP全在账×1 · GAP负控×1 · GAP账缺×1）\n", verdict)
+	fmt.Fprintf(stdout, "  自检：%s（16 格：必红×2 · 豁免×1 · 拼接×1 · 前缀×1 · 无输入×1 · 登记表×1 · 整件豁免×1 ·"+
+		" 前缀越界×1 · 缺语料×1 · 跨仓×1 · GAP悬空×1 · GAP全在账×1 · GAP负控×1 · GAP账缺×1 · 棘轮×1）\n", verdict)
 	return ok
 }
 
@@ -1713,8 +1764,10 @@ var cdrRules = []string{
 	"                                    机读件(.json/.tsv/.csv/.txt) / 引号紧包的数据字串 / Markdown 表格行 /",
 	"                                    登记表命中（`ref`=号 或 `ref_prefix`）",
 	"  判定复用本门**同一个** `classify()`：只有 `live` 类算命中，`ledger`/`已登记` = 例外面",
-	"\n【退码】0 无命中（或全登记/全例外面）· 1 有未登记悬空（docs 路径类 ＋ GAP 号引用类）·",
+	"\n【退码】0 无命中（或全登记/全例外面）• **或存量 ≤ 棘轮基线** · 1 **相对基线新增**未登记悬空（docs 路径类 ＋ GAP 号引用类）·",
 	"        2 不给结论（不在仓根/0 件/登记表不合格/同级语料树 Zerg-内部文档 取不到根/自检不过）",
+	"\n【棘轮（存量 ≤ 基线 ⇒ 绿 · 超出 ⇒ 响亮红并点名新增 · 只许下调）】形状照先例 `check_verify_cmd_real.go` 的 `cvrBaseline`：",
+	fmt.Sprintf("  基线：两类各一条 —— docs 路径类 %d 处 · GAP 号引用类 %d 处（只许下调，永不上调）", cdrBaseline["docs"], cdrBaseline["gap"]),
 }
 
 func cdrPrintRules(stdout io.Writer) {
@@ -1932,8 +1985,19 @@ func checkDanglingRefsGateMain(stdout, stderr io.Writer, argv []string) int {
 			gap.candidates)
 	}
 
+	// ── 棘轮格（存量 ≤ 基线 ⇒ 绿 · 超出 ⇒ 响亮红并点名新增处）────────────────────────
+	// 形状照先例 `check_verify_cmd_real.go` 的 `cvrBaseline` + 棘轮格（同形，✗ 不另起第二套）。
+	nPath := nLive + nLed
+	extraPath, extraGap, ratchetOver := cdrRatchetExtra(nPath, nGap, nil)
+	fmt.Fprintf(stdout, "\n【棘轮】基线（只许下调 · 照先例 `cvrBaseline` 形态）：docs 路径类 %d 处 · GAP 号引用类 %d 处\n",
+		cdrBaseline["docs"], cdrBaseline["gap"])
+	fmt.Fprintf(stdout, "       现测：docs 路径类 %d 处（较基线 %s）· GAP 号引用类 %d 处（较基线 %s）\n",
+		nPath, cdrDelta(extraPath), nGap, cdrDelta(extraGap))
+	fmt.Fprintf(stdout, "       基线注：%s\n", cdrBaselineNote)
+
 	cap := 30
-	if showAll {
+	if showAll || ratchetOver {
+		// 超额 ⇒ **全打**（首行即「响亮红」；下面每一处现行命中都逐条点名，供对基线复核新增）
 		cap = 1 << 30
 	}
 
@@ -2062,6 +2126,11 @@ func checkDanglingRefsGateMain(stdout, stderr io.Writer, argv []string) int {
 		o.set("ledger", nLed)
 		o.set("registered", nReg)
 		o.set("hit", nLive+nLed)
+		o.set("baseline_docs", cdrBaseline["docs"])
+		o.set("baseline_gap", cdrBaseline["gap"])
+		o.set("ratchet_over", ratchetOver)
+		o.set("ratchet_extra_docs", cdrMax0(extraPath))
+		o.set("ratchet_extra_gap", cdrMax0(extraGap))
 		o.set("registry", registryPath)
 		o.set("gap_judged", gap.judged)
 		o.set("gap_candidates", gap.candidates)
@@ -2094,19 +2163,30 @@ func checkDanglingRefsGateMain(stdout, stderr io.Writer, argv []string) int {
 		}
 		return 2
 	}
-	nPath := nLive + nLed
 	if nPath == 0 && nGap == 0 {
 		fmt.Fprint(stdout, "\n结论：无命中（或全在登记表 / 例外面里）⇒ rc=0\n")
 		return 0
 	}
-	if nPath > 0 {
-		fmt.Fprintf(stdout, "\n结论：有 %d 处**未登记**的悬空引用（docs 路径类）⇒ rc=1（本步起步档 `tri-report` = 只报告、不阻断）\n",
-			nPath)
+	if !ratchetOver {
+		// 存量段：现测 ≤ 基线 ⇒ 绿 —— 存量与新增已分开，不再是「对存量恒红」。
+		fmt.Fprintf(stdout, "\n结论：**存量段 rc=0**（docs 路径类 %d ≤ 基线 %d · GAP 号引用类 %d ≤ 基线 %d）—— "+
+			"存量在基线内、不再恒红；新增一条悬空引用即越基线翻红\n",
+			nPath, cdrBaseline["docs"], nGap, cdrBaseline["gap"])
+		return 0
 	}
-	if nGap > 0 {
-		fmt.Fprintf(stdout, "\n结论：有 %d 处**未登记**的悬空引用（GAP 号引用类）⇒ rc=1（本步起步档 `tri-report` = 只报告、不阻断）\n",
-			nGap)
+	// 超出基线 ⇒ 响亮红（存量与新增必须分开 · 点名超额处）。
+	fmt.Fprint(stderr, "⛔ 棘轮超额（rc=1 · 存量与新增必须分开）：\n")
+	if extraPath > 0 {
+		fmt.Fprintf(stderr, "   · docs 路径类：现测 %d 处 > 基线 %d 处 ⇒ **新增 %d 处**（上面已全打逐条点名：件:行 · 引文）\n",
+			nPath, cdrBaseline["docs"], extraPath)
 	}
+	if extraGap > 0 {
+		fmt.Fprintf(stderr, "   · GAP 号引用类：现测 %d 处 > 基线 %d 处 ⇒ **新增 %d 处**（上面已全打逐条点名：件:行 · 引的号）\n",
+			nGap, cdrBaseline["gap"], extraGap)
+	}
+	fmt.Fprint(stderr, "   存量 = 基线那一档；✗ 不许抬基线充绿 —— 要么治掉新增引用，要么按纪律**下调**基线。\n")
+	fmt.Fprintf(stdout, "\n结论：棘轮超额 ⇒ rc=1（docs 路径类新增 %d 处 · GAP 号引用类新增 %d 处 —— 见 stderr 头与上方全打清单）\n",
+		cdrMax0(extraPath), cdrMax0(extraGap))
 	return 1
 }
 

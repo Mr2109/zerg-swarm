@@ -29,6 +29,16 @@ import (
 // exportSchemaRel —— 相对本包目录（`go test` 的 cwd 就是包目录 `core/cmd/zerg`）。
 const exportSchemaRel = "../../internal/contract/export.schema.json"
 
+// ★ 门128 属性 ② 的**冻结下限**（棘轮 · 只许增）：本判据点拿「逐条清单行数」「两节表行数」与
+// 「命令树条数」「--json 抬头计数」**逐数相等**对拍 —— 若结构被静默删小、对拍两侧同步变小，
+// 则"相等"照样成立 ⇒ 判据失牙。⇒ 钉死下界（只许增不许降），低于即判红。
+// 取值 = 2026-10-11 门128 现跑当次读数（`len(catalog())` = 237 · 命令清单 = 132 · 危险动作 = 105）。
+const (
+	exportSchemaCatalogFloor = 237
+	exportSchemaOpenFloor    = 132
+	exportSchemaDangerFloor  = 105
+)
+
 type exportJSONSchema struct {
 	Schema               string                     `json:"$schema"`
 	ID                   string                     `json:"$id"`
@@ -124,6 +134,14 @@ func TestExportSchemaAgreesWithHelpExport(t *testing.T) {
 		DryRun:      true,
 	}
 	rows := helpExportRows(facts)
+	// ④ 抽空 fail-closed：逐条清单抽到 0 行（空集）⇒ 不给结论（✗ 不许把「抽空」当「相等」静默绿）。
+	if len(rows) == 0 {
+		t.Fatal("ⓕ 逐条清单抽到 0 行 ⇒ 不给结论（fail-closed · 空集不许当绿）")
+	}
+	// ② 冻结下限（棘轮 · 只许增）：命令树条数 < 当次现读数下限 237 ⇒ 判红（结构静默变小）。
+	if n := len(catalog()); n < exportSchemaCatalogFloor {
+		t.Fatalf("命令树条数 %d < 冻结下限 %d（棘轮只许增 · 结构静默变小）", n, exportSchemaCatalogFloor)
+	}
 	if len(rows) != len(catalog()) {
 		t.Fatalf("逐条清单行数 %d ≠ 命令树条数 %d（清单与命令树不同源）", len(rows), len(catalog()))
 	}
@@ -155,8 +173,14 @@ func TestExportSchemaAgreesWithHelpExport(t *testing.T) {
 	if len(openRows) == 0 || len(dangerRows) == 0 {
 		t.Fatalf("导出物节标题没找到（渲染函数改了标题？）· 命令 %d 行 · 危险 %d 行", len(openRows), len(dangerRows))
 	}
+	// ④ 抽空 fail-closed（承上）：两节表任一抽到 0 行（空集）⇒ 上一守卫即「不给结论」——
+	//   ✗ 不许把「0 行」当「跟 --json 相等」退回静默绿。
 	if got := strconv.Itoa(len(openRows)); got != row["commands"] {
 		t.Fatalf("ⓒ 命令清单表行数 %d ≠ --json 的 commands=%s", len(openRows), row["commands"])
+	}
+	// ② 冻结下限（棘轮 · 只许增）：危险动作表行数 < 当次现读数下限 105 ⇒ 判红（结构静默变小）。
+	if n := len(dangerRows); n < exportSchemaDangerFloor {
+		t.Fatalf("危险动作表行数 %d < 冻结下限 %d（棘轮只许增 · 结构静默变小）", n, exportSchemaDangerFloor)
 	}
 	if got := strconv.Itoa(len(dangerRows)); got != row["dangerous"] {
 		t.Fatalf("ⓒ 危险动作表行数 %d ≠ --json 的 dangerous=%s", len(dangerRows), row["dangerous"])

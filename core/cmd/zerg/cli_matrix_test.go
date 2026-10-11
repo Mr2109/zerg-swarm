@@ -441,6 +441,12 @@ func TestCLIContractExitCodeTableUnique(t *testing.T) {
 		t.Errorf("退码表内**同数字两义** %d 处：%s（§十二 P-013 占号纪律：禁止同数字两义）",
 			len(dups), strings.Join(dups, " · "))
 	}
+	// ★ ② 冻结下限 = 11（棘轮 · 只许增不许减）：退码表现读 11 格
+	//   —— 结构静默变小（抽到的格数 < 11）⇒ 本格判红，✗ 不许静默绿。
+	cmN := len(rows)
+	if cmN < 11 {
+		t.Fatalf("② 冻结下限 11 被破：退码表只抽到 %d 格（棘轮 · 只许增不许减）", cmN)
+	}
 	t.Logf("退码表：%d 格 · 数字唯一 ✓（%v）", len(rows), sortedCodes(rows))
 }
 

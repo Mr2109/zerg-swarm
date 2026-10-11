@@ -18,7 +18,7 @@
 //
 // 默认作用域（§十二 `P-066`）：**群级只读 = 名册全集；其余 = `exit 2`**。
 // 撞车规则（`P-067`）：位置参数机器名与 `--node` **同机 ⇒ 去重放行；异机 ⇒ `exit 2`**。
-// 执行面（`P-068`）：**HTTP 经主控为唯一对外路径**（ssh 只留三条显式命令，见 §十五.4 `F-1`–`F-3`）。
+// 执行面（`P-068`）：**HTTP 经主控为唯一对外路径**（ssh 只留四条显式命令，见 §十五.4 `F-1`–`F-3` · `F-5`）。
 package main
 
 import (
@@ -248,8 +248,8 @@ func helpRemote() string {
 	b.WriteString("  `gateway/fleet.yaml` 的 `fleet:` / `updates.nodes` 只是**投影源**（门④ 在核它们逐字一致）。\n")
 	b.WriteString("  未知名 ⇒ `exit 2` + 列名册 + 最相似名（`Z3`）；子端**自报名只作核对**、不许自动入册（`Z4`）。\n")
 	b.WriteString("  机器名**不许改**（`Z5`：没有别名表）；`context ls` 离线也出表（`Z6`）。\n\n")
-	b.WriteString("执行面（§十二 `P-068`）：**HTTP 经主控是唯一对外路径**；`ssh` 只留三条显式命令\n")
-	b.WriteString("（§十五.4 的例外清单 `F-1` 子端引导 · `F-2` 探活诊断 · `F-3` 主控自身换件/自更新）。\n")
+	b.WriteString("执行面（§十二 `P-068`）：**HTTP 经主控是唯一对外路径**；`ssh` 只留四条显式命令\n")
+	b.WriteString("（§十五.4 的例外清单 `F-1` 子端引导 · `F-2` 探活诊断 · `F-3` 主控自身换件/自更新 · `F-5` 远端子端重启：只做重启、✗ 不提权/不喂口令）。\n")
 	b.WriteString("  直连若开，一律显式 `--direct` 且输出回显 `via`（不许偷偷直连 —— §九 M20 `O2`）。\n")
 	if r, ok := loadRoster(defaultContextName); ok {
 		b.WriteString("\n本机现读名册（" + r.Path + "）：\n")

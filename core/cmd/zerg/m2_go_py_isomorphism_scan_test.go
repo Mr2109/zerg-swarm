@@ -177,3 +177,27 @@ func TestM2GoPyIsoScanPrefixAbbrev(t *testing.T) {
 		t.Fatalf("prefix json schema 不符: %q", out)
 	}
 }
+
+// TestM2GoPyIsoScanReadFailBlocks —— B 类真口子已治（原 py `except OSError: continue` 静默）：
+// 扫描面内 `.go` 件读不了（chmod 000）⇒ 登记 + stderr BLOCKED 逐件点名 + rc=2（✗ 不再静默当绿）。
+func TestM2GoPyIsoScanReadFailBlocks(t *testing.T) {
+	root := m2sBuildFx(t, true, false)
+	p := filepath.Join(root, "core", "cmd", "zerg", "secret.go")
+	if err := os.WriteFile(p, []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(p, 0o000); err != nil {
+		t.Skipf("chmod 不支持：%v", err)
+	}
+	t.Cleanup(func() { os.Chmod(p, 0o644) })
+	if _, err := os.ReadFile(p); err == nil {
+		t.Skip("当前用户可读（多为 root）⇒ 无法钉住 B 类")
+	}
+	rc, out, errb := m2sRun(t, "--root", root)
+	if rc != 2 {
+		t.Fatalf("rc=%d，期望 2（B 类读失败 ⇒ 不给结论）out=%q err=%q", rc, out, errb)
+	}
+	if !strings.Contains(errb, "BLOCKED") || !strings.Contains(errb, "secret.go") {
+		t.Fatalf("stderr 未逐件点名读不了的件：%q", errb)
+	}
+}

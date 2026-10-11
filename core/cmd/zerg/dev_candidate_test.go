@@ -22,6 +22,10 @@ import (
 	zerg "github.com/Mr2109/zerg-swarm/core/cmd/zerg"
 )
 
+// devEvidenceSheetFloor —— ★ 门128 属性 ② 的**冻结下限**（棘轮 · 只许增）：证据单条目数
+// （`len(sheet.Entries)`）的冻结下界。取值 = 2026-10-11 门128 现跑当次读数（本用例 `good` 4 行）。
+const devEvidenceSheetFloor = 4
+
 // devTmpRoot 造一个临时候选根并把 `ZERG_CANDIDATE_ROOT` 指过去（用完由 t.TempDir 清掉）。
 func devTmpRoot(t *testing.T) string {
 	t.Helper()
@@ -213,6 +217,10 @@ func TestDevVerifySynthesizesEvidenceSheet(t *testing.T) {
 	sheet, err := zerg.ReadEvidenceSheetForTest(sheetPath)
 	if err != nil {
 		t.Fatalf("证据单读不回来（%s）：%v", sheetPath, err)
+	}
+	// ② 冻结下限（棘轮 · 只许增）：证据单条目数 < 当次现读数下限 4 ⇒ 判红（结构静默变小）。
+	if n := len(sheet.Entries); n < devEvidenceSheetFloor {
+		t.Fatalf("证据单条目数 %d < 冻结下限 %d（棘轮只许增 · 结构静默变小）", n, devEvidenceSheetFloor)
 	}
 	if len(sheet.Entries) != len(good) {
 		t.Errorf("证据单条目数 = %d（要 %d）", len(sheet.Entries), len(good))

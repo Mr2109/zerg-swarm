@@ -509,6 +509,7 @@ func cmdCoreRestart(inv *invocation, stdout, stderr io.Writer) int {
 	if !inv.confirmGiven {
 		msg := fmt.Sprintf("`core restart` 是 D3 档（不可逆：停 + 起主控）——**缺确认 ⇒ 不执行**")
 		inv.setErr("usage", "confirm_required", msg)
+		guardMarkDecision(inv, guardDecisionApproval)
 		fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
 		fmt.Fprintf(stderr, "要执行得给：--confirm=%s --yes\n", host)
 		fmt.Fprintf(stderr, "先看计划件：%s core restart --dry-run\n", progName)
@@ -518,6 +519,7 @@ func cmdCoreRestart(inv *invocation, stdout, stderr io.Writer) int {
 	if !devEditHostAccept(inv.confirm) {
 		msg := fmt.Sprintf("确认值不匹配目标（--confirm 给的是 %q，本机主机名是 %q）⇒ 不执行", inv.confirm, host)
 		inv.setErr("usage", "confirm_mismatch", msg)
+		guardMarkDecision(inv, guardDecisionBlock)
 		fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
 		fmt.Fprintf(stderr, "`--confirm` 的值必须与目标**逐字相同**（§4.1 K7）—— 给错值一律拒绝，不许「当没给」\n")
 		return exitUsage
@@ -527,6 +529,7 @@ func cmdCoreRestart(inv *invocation, stdout, stderr io.Writer) int {
 		coreRestartPlan(inv, stdout)
 		msg := fmt.Sprintf("`core restart` 是 D3 档 —— **缺 --yes ⇒ 不执行**")
 		inv.setErr("usage", "yes_required", msg)
+		guardMarkDecision(inv, guardDecisionApproval)
 		fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
 		fmt.Fprintf(stderr, "确认档齐了才真跑：%s core restart --confirm=%s --yes\n", progName, host)
 		fmt.Fprintf(stderr, "error.kind=usage · detail=yes_required · retryable=false · remedy=fix_usage\n")

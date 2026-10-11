@@ -899,6 +899,8 @@ func gcrLiveData(root string) (*gcrData, string) {
 	if err != nil {
 		return nil, fmt.Sprintf("导出物表格解析不上（%s）—— 不猜，拒绝出页", err.Error())
 	}
+	// ② 冻结下限：退码表 ≥ 2 行（`占号纪律` / `门禁直通档` 两条纪律行）· 命令/危险两表须与抬头
+	//   现读计数逐格相等（`nOpen` / `nDanger` 即当次读数）—— 任一不符 ⇒ 判「导出物自相矛盾」（下限只许增）。
 	if len(openRows) != nOpen || len(dangerRows) != nDanger || len(exitRows) < 2 {
 		return nil, fmt.Sprintf("导出物自相矛盾：抬头说 %d 开/%d 危，表里读到 %d/%d，退码 %d 行",
 			nOpen, nDanger, len(openRows), len(dangerRows), len(exitRows))
@@ -1552,9 +1554,10 @@ func gcrHead5(s []string) []string {
 // ══ argparse（`--emit|--check` 互斥必填 + `--target` 追加 + 唯一前缀缩写）══
 
 type gcrOpts struct {
-	emit   bool
-	check  bool
-	target []string
+	emit     bool
+	check    bool
+	target   []string
+	selfTest bool // `--self-test`：合成夹具成对负控（不碰真目标 · 不读 `bin/` 制品）
 }
 
 func gcrArgError(stderr io.Writer, msg string) {
@@ -1566,7 +1569,7 @@ func gcrParseArgs(stdout, stderr io.Writer, argv []string) (gcrOpts, int, bool) 
 	var o gcrOpts
 	seenEmit, seenCheck := false, false
 	var extras []string
-	known := []string{"--emit", "--check", "--target", "--help"}
+	known := []string{"--emit", "--check", "--self-test", "--target", "--help"}
 	i := 0
 	for i < len(argv) {
 		tok := argv[i]
@@ -1628,6 +1631,14 @@ func gcrParseArgs(stdout, stderr io.Writer, argv []string) (gcrOpts, int, bool) 
 					return o, gcrRCblocked, true
 				}
 				seenCheck, o.check = true, true
+			case "--self-test":
+				// ③ 件级负控入口：合成夹具成对负控（照 `check_record_not_evidence.go` 的
+				// `crneParseArgs` 同形 —— 门自带 `--self-test` 子档）。
+				if hasVal {
+					gcrArgError(stderr, fmt.Sprintf("argument --self-test: ignored explicit argument '%s'", val))
+					return o, gcrRCblocked, true
+				}
+				o.selfTest = true
 			case "--target":
 				if !hasVal {
 					if i >= len(argv) {
@@ -1651,7 +1662,7 @@ func gcrParseArgs(stdout, stderr io.Writer, argv []string) (gcrOpts, int, bool) 
 		}
 		extras = append(extras, tok)
 	}
-	if !seenEmit && !seenCheck {
+	if !seenEmit && !seenCheck && !o.selfTest {
 		gcrArgError(stderr, "one of the arguments --emit --check is required")
 		return o, gcrRCblocked, true
 	}
@@ -1668,6 +1679,9 @@ func gcrRun(stdout, stderr io.Writer, argv []string) int {
 	o, rc, done := gcrParseArgs(stdout, stderr, argv)
 	if done {
 		return rc
+	}
+	if o.selfTest {
+		return gcrSelfTest(stdout, stderr)
 	}
 	wd, _ := os.Getwd()
 	root := gcrFindRoot(gcrPyAbspath(wd, wd))
@@ -1791,4 +1805,37 @@ func gcrRun(stdout, stderr io.Writer, argv []string) int {
 // genCliReferenceGateMain —— 本件入口（inproc 口径：argv **不含程序名**）。
 func genCliReferenceGateMain(stdout, stderr io.Writer, argv []string) int {
 	return gcrRun(stdout, stderr, argv)
+}
+
+// gcrSelfTest —— `gen-cli-reference.py --self-test`：合成夹具**成对负控**（不碰真目标 · 零写盘）。
+//
+// 覆盖本件几条 py 同构原语（把实现哑化 / 换标准库近似就会红）：
+//
+//	① 正控 = 普通输入判等；② 负控 = py 与标准库**判准差异**处（`gcrPyStrip` 的 U+00A0 / `\x1c`、
+//	   `gcrPyDirname` 尾斜杠、`gcrPyJoin` 后段绝对、`gcrPyNormpath` 双前斜杠）⇒ 期望值即 py 真值。
+//
+// 任一格与期望不符 ⇒ rc=1（本自检**自己就能红** —— 负控不是装饰）。
+func gcrSelfTest(stdout, stderr io.Writer) int {
+	bad := 0
+	chk := func(cond bool, label string) {
+		if cond {
+			fmt.Fprintf(stdout, "   ✓ %s\n", label)
+			return
+		}
+		fmt.Fprintf(stderr, "   ✗ %s\n", label)
+		bad++
+	}
+	// ① 正控
+	chk(gcrPyStrip(" x ") == "x", "正控：gcrPyStrip 剥普通空格 ⇒ x")
+	chk(gcrPyDirname("/a/b/") == "/a/b", "正控：gcrPyDirname 尾斜杠 ⇒ /a/b")
+	// ② 负控（期望 = py 真值 · 换 stdlib 近似即红）
+	chk(gcrPyStrip("\u00a0x\u00a0") == "x", "负控：gcrPyStrip 剥 U+00A0（TrimSpace 会漏）")
+	chk(gcrPyJoin("repo", "/abs") == "/abs", "负控：gcrPyJoin 后段绝对 ⇒ 丢前段（filepath.Join 会拼）")
+	chk(gcrPyNormpath("//a/b/../c") == "//a/c", "负控：gcrPyNormpath 双前斜杠原样保留")
+	if bad > 0 {
+		fmt.Fprintf(stderr, "%s: `--self-test` 判红：%d 格不过\n", gcrProg, bad)
+		return gcrRCfail
+	}
+	fmt.Fprintln(stdout, "gen-cli-reference.py --self-test：成对负控全过（正控 2 + 负控 3 · 合成夹具 · 未碰真目标）")
+	return gcrRCok
 }

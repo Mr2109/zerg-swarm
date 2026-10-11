@@ -172,3 +172,25 @@ func TestCheckMultirepoSummaryGatePort(t *testing.T) {
 		t.Fatalf("子用例条数 %d ≠ 期望 %d", cases, mrsTWantCases)
 	}
 }
+
+// TestCheckMultirepoSummaryReadFailTeeth —— B 类读失败不再静默的回归牙：主仓 .git/refs 下一个子目录
+// 锁成 chmod 000 ⇒ mrsRepoFingerprint 的 refs 遍历登记面（mrsReadFails）必响：rc=2 + BLOCKED 头 + 点名。
+// 删回静默（原 os.ReadDir 失败即 return）本用例必红。
+func TestCheckMultirepoSummaryReadFailTeeth(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root 无视权限位（chmod 000 仍可读）⇒ 跳过")
+	}
+	m, d := mrsTFix(t)
+	locked := mrsPyJoin(m, ".git", "refs", "locked")
+	if err := os.MkdirAll(locked, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(locked, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chmod(locked, 0o755) }()
+	rc, out, _ := mrsTEnv("--root", m, "--docs-root", d, "--source", "git", "--prove-readonly")
+	if rc != 2 || !strings.Contains(out, "BLOCKED") || !strings.Contains(out, "refs/locked") {
+		t.Fatalf("读不到 refs 子目录应 rc=2 + BLOCKED 点名 refs/locked，得 rc=%d out=%q", rc, out)
+	}
+}

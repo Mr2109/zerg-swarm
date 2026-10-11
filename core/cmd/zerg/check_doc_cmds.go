@@ -759,6 +759,7 @@ func dcmdCheck(root string, scopes []string) (int, []string) {
 	blocked := []string{}
 	detailAll := []string{}
 	devdocsHits, formalHits := 0, 0
+	devdocsSeen := false // ★ GAP-20260927-198 ②：devdocs 语料是否真判过（决定「余量读数」出不出现）
 	stats := map[string]int{}
 	for _, scope := range scopes {
 		if scope == "formal" {
@@ -811,18 +812,23 @@ func dcmdCheck(root string, scopes []string) (int, []string) {
 				blocked = append(blocked, "⛔ 不给结论：devdocs 扫到 0 篇（空转 = 假绿）—— 判据不可判")
 				continue
 			}
+			devdocsSeen = true
 			_, r, details, nUnread := dcmdJudge(files, tree, false, stats)
 			if nUnread > 0 {
 				// ● GAP-20261001-32③ 修（照 py 候件逐处同步）：读不了 ≠ 零命中 ⇒ 归 blocked（rc=2）。
 				blocked = append(blocked, fmt.Sprintf("⛔ 不给结论：devdocs 语料有 %d 篇读不了（读不了 ≠ 零命中）—— 判据不可判", nUnread))
 			}
 			devdocsHits += r
-			lines = append(lines, fmt.Sprintf("devdocs（只报告档 · §6.3 S6 起步）：命中 %d 处（baseline %d）", r, baseline))
+			lines = append(lines, fmt.Sprintf("devdocs（只报告档 · §6.3 S6 起步）：命中 %d 处（baseline %d · 余量 %d）", r, baseline, baseline-r))
 			detailAll = append(detailAll, dcmdHead(details, 20)...)
 		}
 	}
 	if devdocsHits > baseline {
 		errs = append(errs, fmt.Sprintf("T-51 棘轮：devdocs 命中 %d > baseline %d（只许**下调**）", devdocsHits, baseline))
+	} else if devdocsSeen && baseline-devdocsHits <= 2 {
+		// ★ GAP-20260927-198 ②：余量做成**显式读数**（余量 ≤ 2 就出声），✗ 不要等撞红。
+		//   只报告、**不驱动 rc**（上面那行已印「余量 N」；这里只把「快顶红」一事喊出来）。
+		lines = append(lines, fmt.Sprintf("⚠ 门⑫ 余量仅 %d（baseline %d − 命中 %d ≤ 2）：再写一条解析不到命令树的 `zerg …` 示例即顶红（GAP-20260927-198 ②）", baseline-devdocsHits, baseline, devdocsHits))
 	}
 	lines = append(lines, fmt.Sprintf("命令树 %d 条（L1+L2）· formal 命中 %d（阻断档）· devdocs 命中 %d（只报告档）",
 		len(tree), formalHits, devdocsHits))
@@ -1115,6 +1121,32 @@ func dcmdSelfTest(stdout io.Writer) int {
 	rc, _ = dcmdCheck(tmp, []string{"devdocs"})
 	os.Unsetenv("ZERG_DEVDOCS_ROOT")
 	caseFn("⑥ devdocs 命中 ≤ baseline ⇒ 0（棘轮回绿）", 0, rc)
+
+	// ⑦b/⑦c 门⑫ 余量显式读数（★ GAP-20260927-198 ② · 成对：同一件只改 baseline）
+	//   ⑦b：baseline=1 · 命中 1 ⇒ 余量 0（≤ 2）⇒ **必出声**（「余量仅」）且 rc 不因此翻红；
+	//   ⑦c：baseline=99 · 命中 1 ⇒ 余量 98（> 2）⇒ **不出声**，但要**显式印**「余量 98」。
+	//   哑化「余量读数 / ≤2 出声」这一段 ⇒ ⑦b（该出声不出）或 ⑦c（不该出声乱出）必红。
+	writeFile(dcmdJoin(devdocs, "bad.md"), "```sh\nzerg dev propozal list\n```\n")
+	writeFile(dcmdJoin(tmp, dcmdBaselineRel), "{\"devdocs_report_hits\": 1, \"note\": \"selftest\"}\n")
+	os.Setenv("ZERG_DEVDOCS_ROOT", devdocs)
+	rc, lines = dcmdCheck(tmp, []string{"devdocs"})
+	caseFn("⑦b 余量 ≤ 2 ⇒ 出声（只报告 · rc 不变）", 0, rc)
+	if !has(lines, "余量仅") {
+		bad = append(bad, "⑦b：余量 0 应喊「余量仅」但没喊（读数/≤2 出声被哑化）")
+	}
+	if !has(lines, "余量 0") {
+		bad = append(bad, "⑦b：应显式印「余量 0」")
+	}
+	writeFile(dcmdJoin(tmp, dcmdBaselineRel), "{\"devdocs_report_hits\": 99, \"note\": \"selftest\"}\n")
+	rc, lines = dcmdCheck(tmp, []string{"devdocs"})
+	caseFn("⑦c 余量 > 2 ⇒ 不喊（余量 98 显式印）", 0, rc)
+	if has(lines, "余量仅") {
+		bad = append(bad, "⑦c：余量 98 不该喊「余量仅」（≤2 判据被放宽）")
+	}
+	if !has(lines, "余量 98") {
+		bad = append(bad, "⑦c：应显式印「余量 98」")
+	}
+	os.Unsetenv("ZERG_DEVDOCS_ROOT")
 
 	// ⑦ 正控（修前的假红）：真命令带旗标与旗标取值 ⇒ 必须绿
 	os.Remove(dcmdJoin(docs, "bad.md"))

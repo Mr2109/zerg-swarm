@@ -488,13 +488,23 @@ func edgHasDomainGuard(text string) bool {
 
 // edgScanFiles —— py `scan_files`：`os.walk(root)`（followlinks=False）+ 剔 `.git`/`node_modules`/`__pycache__`
 // + 只收 `.py` + 末尾 `sorted(files)`（**输出行序决定者**）。
+// edgReadFails —— B 类读失败登记面（读不了的目录/件 ⇒ 逐件登记 相对路径 + err 正文）。
+// ★ B 类真口子修（与 py 有意分叉 · 同族先例 check_doc_cmds.go 的 dcmdReadFails）：
+//
+//	读失败 ⇒ 登记 + 入口判红（stderr BLOCKED 头 + 逐件点名）⇒ rc=2（✗ 不再静默少判）。
+//	自清点：每次 edgScanFiles 起手清空 ⇒ 不许跨调用残留。
+var edgReadFails []string
+
 func edgScanFiles(root string) []string {
+	edgReadFails = nil // ★ 自清：包级登记面不许跨调用残留
 	files := []string{}
 	var walk func(dp string)
 	walk = func(dp string) {
 		ents, err := os.ReadDir(dp)
 		if err != nil {
-			return // py `os.walk(onerror=None)` ⇒ 读不了的目录静默跳过
+			// ★ B 类真口子修（原 py `os.walk(onerror=None)` 静默 · ✗ 不再静默）：登记 + 判红 + rc=2。
+			edgReadFails = append(edgReadFails, fmt.Sprintf("%s（读不了目录）", edgPyRelpath(dp, root)))
+			return
 		}
 		var dns, fns []string
 		for _, e := range ents {
@@ -550,7 +560,9 @@ func edgStructuralScan(root string) (int, []string, int, bool) {
 		}
 		data, err := os.ReadFile(p)
 		if err != nil {
-			continue // py `except OSError: continue`
+			// ★ B 类真口子修（原 py `except OSError: continue` 静默 · ✗ 不再静默）：登记 + 判红 + rc=2。
+			edgReadFails = append(edgReadFails, fmt.Sprintf("%s（%v）", edgPyRelpath(p, root), err))
+			continue
 		}
 		text := strings.ToValidUTF8(string(data), "\uFFFD") // py `errors="replace"`
 		scanned++
@@ -720,6 +732,14 @@ func edgRun(stdout, stderr io.Writer, root string, baseline int, asJSON, emitBas
 		return 2
 	}
 	if edgRequireDomain(stderr, scanned, fmt.Sprintf("扫面根 %s 下的 .py 件", root), 1) != 0 {
+		return 2
+	}
+	// ★ B 类真口子修：读失败 ⇒ 响亮 BLOCKED rc=2 + 逐件点名（✗ 不再静默少判）。
+	if len(edgReadFails) > 0 {
+		fmt.Fprintf(stderr, "BLOCKED —— 有 %d 件读不到（B 类读失败 ⇒ 登记 + 判红 · rc=2 · 不给结论）：\n", len(edgReadFails))
+		for _, u := range edgReadFails {
+			fmt.Fprintf(stderr, "  [读失败] %s\n", u)
+		}
 		return 2
 	}
 	live := len(unguarded)

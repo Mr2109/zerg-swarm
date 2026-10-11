@@ -369,3 +369,38 @@ func TestCpfcS13_格1漂移免疫_新例外不带红自检(t *testing.T) {
 		t.Fatalf("格 1 应为合成页形态\n%s", out)
 	}
 }
+
+// ── B 类（读失败静默 · 目录面）回归牙 ─────────────────────────────────────────
+// 公开面内一个子目录锁成 chmod 000（**仓外夹具 · ✗ 不碰仓内件**）⇒ 读失败登记面（cpfcReadFails）必响：
+// rc=2 + stderr BLOCKED 头 + 逐处点名那个锁死目录。把登记/判红删回静默（原 py `os.walk(onerror=None)`），
+// 本用例必红（改前该目录静默不入判 ⇒ rc=0）。成对先例：`check_bypass_idioms_test.go` 的
+// `TestCheckBypassIdiomsReadFailTeeth` · `check_selftest_knobs_test.go` 的 `TestCskReadFailTeeth`。
+func TestCpfcS14ReadFailTeethDir(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root 绕过权限位 ⇒ chmod 000 不挡读，本用例无鉴别力")
+	}
+	z := cpfcT_zergArg(t)
+	fx := cpfcT_fixture(t, func(root string) {
+		locked := cpfcPyJoin(root, cpfcFaceDir, "zlocked")
+		if err := os.MkdirAll(locked, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(locked, 0); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+	})
+	rc, out, errb := cpfcT_run([]string{"--root", fx, "--zerg", z, "--no-self-test"})
+	if rc != 2 {
+		t.Fatalf("读失败回归牙：锁死目录 ⇒ 应 rc=2（登记 + 判红），得 rc=%d out=%q err=%q", rc, out, errb)
+	}
+	if !strings.Contains(errb, "BLOCKED") || !strings.Contains(errb, "zlocked") {
+		t.Fatalf("读失败回归牙：stderr 须带 BLOCKED 头 + 点名 zlocked，得 err=%q", errb)
+	}
+	// 成对反控（✗ 禁恒红）：同构夹具但目录可读 ⇒ rc in {0,1} 且 stderr 无 BLOCKED。
+	ok := cpfcT_fixture(t, nil)
+	rcOK, _, errOK := cpfcT_run([]string{"--root", ok, "--zerg", z, "--no-self-test"})
+	if rcOK == 2 || strings.Contains(errOK, "BLOCKED") {
+		t.Fatalf("成对反控失败：可读夹具应 rc in {0,1} 且无 BLOCKED，得 rc=%d err=%q", rcOK, errOK)
+	}
+}

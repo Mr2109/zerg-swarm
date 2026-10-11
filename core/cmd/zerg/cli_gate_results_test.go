@@ -124,6 +124,12 @@ func TestGateResultsJSONItemsArePerStep(t *testing.T) {
 	for _, it := range items {
 		logs[it["log"]] = true
 	}
+	// ★ ② 冻结下限 = 5（棘轮 · 只许增不许减）：夹具五步 ⇒ items 现读 5（上面已钉 == 5）
+	//   —— 结构静默变小（抽到的条目 < 5）⇒ 本格判红，✗ 不许静默绿。
+	grN := len(items)
+	if grN < 5 {
+		t.Fatalf("② 冻结下限 5 被破：`items` 只抽到 %d 条（棘轮 · 只许增不许减）", grN)
+	}
 	if len(logs) != len(items) {
 		t.Errorf("items 的日志路径要逐条不同（%d 条 / %d 个），得到 %v", len(items), len(logs), logs)
 	}

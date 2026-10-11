@@ -274,6 +274,24 @@ func taskSubmitBody(inv *invocation) (string, error) {
 // 三态：`--dry-run` 出计划件（零副作用 · rc=0）· 缺 `--yes` ⇒ 2（fail-closed）· 齐了才 POST。
 // 失败面：主控的 **400 码逐字透传**（`taskSubmitCodes`），命令面不替换、不吞（§4.1 K7 的口径）。
 // rc 只从契约退码表取：`400` 这类「你给的东西不合法」= 用法错 `2`。
+// taskSubmitEggMaxWarn —— `--timeout` 在**任务面**的效力**明说**（响亮警告 · ✗ 不静默空转）。
+//
+// 病灶（缺口 `GAP-20261010-09` · 现读到底）：`taskSubmitBody` 把 `--timeout` 下发成体字段
+// `egg_max_s`，主控 `core/internal/api/handlers.go` 收进 `Task.EggMaxS`（`core/internal/api/master_scheduler.go`）
+// —— **此后再无读点**（`runTask`/executor 全不读）⇒ 死字段：用户以为设了「任务/单卵时限」，实际一字不生效。
+//
+// 档位：**响亮警告**（与 `family_gap_env.go` 的「非默认根来源点名」同档）—— 只点名一行 stderr、
+// **不动退码、不动任何判定**。为什么不是拒执 2：`--timeout` 是**全局**旗标（`main.go` 咽喉点的墙钟上界
+// `wallclockGuard` 真读它 ⇒ 在本趟命令上的墙钟语义**有效**）⇒ 一刀拒执会把这条**合法的**既有用法一并打断。
+func taskSubmitEggMaxWarn(inv *invocation, stderr io.Writer) {
+	if strings.TrimSpace(inv.flagVal(wallclockFlag)) == "" {
+		return
+	}
+	fmt.Fprintf(stderr, "%s: ⚠ `%s` 在**任务面**收得下、**不生效**：下发的 `egg_max_s` 主控**无处消费**"+
+		"（`handlers.go` 存进 `Task.EggMaxS`、`runTask`/executor 不读 ⇒ 死字段）⇒ 该旗标**只**是命令侧墙钟闸"+
+		"（本趟 `wallclockGuard`），**任务/单卵时限**本版不生效（缺口 `GAP-20261010-09`）\n", progName, wallclockFlag)
+}
+
 func cmdTaskSubmit(inv *invocation, stdout, stderr io.Writer) int {
 	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
 		return rc
@@ -284,6 +302,8 @@ func cmdTaskSubmit(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s: %v\n", progName, err)
 		return exitUsage
 	}
+	// ★ 单卵时限在任务面的效力**明说**（`--timeout` 死字段 · 响亮警告 · ✗ 不静默空转 · 缺口 `GAP-20261010-09`）。
+	taskSubmitEggMaxWarn(inv, stderr)
 	if inv.desc == "" {
 		inv.setErr("usage", "missing_desc", "缺 --desc（任务描述是自包含的，必须有）")
 		fmt.Fprintf(stderr, "%s: `task submit` 缺 `--desc <任务描述>`（§4.1 K7：位置参数不够，要显式旗标）\n", progName)

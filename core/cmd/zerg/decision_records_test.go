@@ -31,6 +31,11 @@ import (
 // drDirRel —— 决策记录的落点（相对 Zerg-内部文档 仓根）。
 const drDirRel = "01-设计/决策记录"
 
+// drFilesFloor —— ★ 门128 属性 ② 的**冻结下限**（棘轮 · 只许增）：决策记录件数（`len(files)`）的
+// 冻结下界。判决口的空集已 fail-closed（「空转 = 假覆盖」），此处钉死下界防「结构静默变小」。
+// 取值 = 2026-10-11 门128 现跑当次读数（`Zerg-内部文档/01-设计/决策记录/` 下 3 份件：0001/0002/0003）。
+const drFilesFloor = 3
+
 // drBlockRe 抓正文里的 ```decision-record 围栏块（字段表那一块）。
 var drBlockRe = regexp.MustCompile("(?s)```decision-record\\n(.*?)```")
 
@@ -237,6 +242,10 @@ func TestDecisionRecordsLandTheShape(t *testing.T) {
 		t.Error(e)
 	}
 	t.Logf("判据③ 经验落点闭集 %d 类：%s", len(spec.ExperienceDirs), strings.Join(spec.ExperienceDirs, " / "))
+	// ② 冻结下限（棘轮 · 只许增）：决策记录件数 < 当次现读数下限 3 ⇒ 判红（结构静默变小）。
+	if n := len(files); n < drFilesFloor {
+		t.Fatalf("决策记录件数 %d < 冻结下限 %d（棘轮只许增 · 结构静默变小）", n, drFilesFloor)
+	}
 	t.Logf("判据④ INDEX ↔ 件集：%d 份件 · %d 份件都被索引点到", len(files), len(files))
 	for _, f := range files {
 		t.Logf("   %s · %s 拍 · %s · status=%s", f.Fields["id"], f.Fields["who_decided"], f.Fields["when_decided"], f.Fields["status"])

@@ -227,3 +227,24 @@ func TestCheckI18nDeclaredGtAllowedWarns(t *testing.T) {
 		t.Errorf("提示行不符:\n%s", out)
 	}
 }
+
+// TestCheckI18nReadFailTeeth —— B 类读失败不再静默的回归牙：core/internal/api/ 下一件 .go 锁成
+// chmod 000 ⇒ 登记面（ci18ReadFails）必响：rc=2 + stderr BLOCKED 头 + 逐件点名。
+// 删回静默（原 os.ReadFile 失败即 continue）本用例必红。
+func TestCheckI18nReadFailTeeth(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root 无视权限位（chmod 000 仍可读）⇒ 跳过")
+	}
+	f := ci18green()
+	f["core/internal/api/locked.go"] = "func z(w http.ResponseWriter) {\n\twriteErrorCode(w, r, \"NOT_FOUND\")\n}\n"
+	root := ci18fx(t, f)
+	locked := filepath.Join(root, "core", "internal", "api", "locked.go")
+	if err := os.Chmod(locked, 0o000); err != nil {
+		t.Fatalf("chmod 000 失败：%v", err)
+	}
+	defer func() { _ = os.Chmod(locked, 0o644) }()
+	rc, _, errb := ci18run(t, root, nil)
+	if rc != 2 || !strings.Contains(errb, "BLOCKED") || !strings.Contains(errb, "core/internal/api/locked.go") {
+		t.Fatalf("读不到件应 rc=2 + BLOCKED 点名 locked.go，得 rc=%d err=%q", rc, errb)
+	}
+}

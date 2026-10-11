@@ -132,27 +132,55 @@ func TestCtwScanReadersFindsLiteral(t *testing.T) {
 	}
 }
 
-// ⑥b 读不了的件 ⇒ 静默跳过（真口子 · 逐字照搬：既不进可判也不进判不了）
+// ⑥b 读不了的件 ⇒ **不再静默**（原 py `except: continue` 口子 · 本单改正）：
+//
+//	登记 `twReaderReadFails` ⇒ 入口 `twScan` 汇总 rc=2 + BLOCKED 头（stderr）+ 逐件点名那一件。
 func TestCtwScanReadersUnreadableSkipped(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root 下 chmod 000 仍可读 ⇒ 该格无鉴别力")
 	}
-	root := t.TempDir()
-	lit := strings.ReplaceAll(twAuditCopyRel(), string(os.PathSeparator), "/")
-	rel := "core/cmd/zerg/blocked.go"
-	if err := os.MkdirAll(filepath.Join(root, "core", "cmd", "zerg"), 0o755); err != nil {
+	repo := t.TempDir()
+	if o, err := exec.Command("git", "init", "-q", repo).CombinedOutput(); err != nil {
+		t.Fatalf("git init 夹具失败：%v %s", err, o)
+	}
+	state := t.TempDir()
+	appr := filepath.Join(state, "approvals")
+	if err := os.MkdirAll(appr, 0o755); err != nil {
 		t.Fatalf("建夹具失败：%v", err)
 	}
-	p := filepath.Join(root, rel)
+	if err := os.WriteFile(filepath.Join(appr, "operator.pub"), []byte("{}\n"), 0o644); err != nil {
+		t.Fatalf("写运行真源失败：%v", err)
+	}
+	lit := strings.ReplaceAll(twAuditCopyRel(), string(os.PathSeparator), "/")
+	rel := "core/cmd/zerg/blocked.go"
+	if err := os.MkdirAll(filepath.Join(repo, "core", "cmd", "zerg"), 0o755); err != nil {
+		t.Fatalf("建夹具失败：%v", err)
+	}
+	p := filepath.Join(repo, rel)
 	if err := os.WriteFile(p, []byte("package main\nvar p = \""+lit+"\"\n"), 0o644); err != nil {
 		t.Fatalf("写夹具失败：%v", err)
+	}
+	if o, err := exec.Command("git", "-C", repo, "add", "--", rel).CombinedOutput(); err != nil {
+		t.Fatalf("git add 夹具失败：%v %s", err, o)
 	}
 	if err := os.Chmod(p, 0o000); err != nil {
 		t.Fatalf("chmod 失败：%v", err)
 	}
 	defer os.Chmod(p, 0o644)
-	if hits := twScanReaders(root, []string{rel}, twAuditCopyRel()); len(hits) != 0 {
-		t.Fatalf("读不了的件应静默跳过（真口子现状）：hits=%v", hits)
+	twReaderReadFails = nil // 自清包级登记面（防上一用例残留）
+	var out, errb bytes.Buffer
+	rc := checkTrustrootWitnessGateMain(&out, &errb, []string{"--root", repo, "--state", state, "--no-self-test"})
+	if rc != 2 {
+		t.Fatalf("读不了的件应 rc=2（不给结论）：得 rc=%d out=%q err=%q", rc, out.String(), errb.String())
+	}
+	if !strings.Contains(errb.String(), "⛔ BLOCKED：以下件读失败，覆盖面不完整 —— 不给结论（原 py 此处 `continue` 静默）\n") {
+		t.Fatalf("BLOCKED 头未落 stderr（本件通道）：%q", errb.String())
+	}
+	if !strings.Contains(errb.String(), "   · "+rel+"（") {
+		t.Fatalf("未逐件点名读失败件：%q", errb.String())
+	}
+	if strings.Contains(out.String(), "BLOCKED") {
+		t.Fatalf("BLOCKED 头不该落 stdout（本件通道是 stderr）：%q", out.String())
 	}
 }
 

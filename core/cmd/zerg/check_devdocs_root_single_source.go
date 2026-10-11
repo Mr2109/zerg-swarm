@@ -104,11 +104,24 @@ func cdrssResolveIdent(lines []string, ident string) (int, string, bool) {
 	return 0, "", false
 }
 
+// cdrssReadFails —— B 类读失败登记面（扫描面里读不了的目录/ .go 件 ⇒ 逐件登记 相对路径 + err 正文）。
+// ★ B 类真口子修（与 py 有意分叉 · 同族先例 check_doc_cmds.go 的 dcmdReadFails）：
+//
+//	读失败 ⇒ 登记 + 入口判红（stderr BLOCKED 头 + 逐件点名）⇒ rc=2（✗ 不再静默少判）。
+//	自清点：每次 cdrssScan 起手清空 ⇒ 不许跨调用残留。
+var cdrssReadFails []string
+
 // cdrssScan —— 扫判据件目录，返回（读到的判据件数, 位点表）。
 func cdrssScan(root string) (int, []cdrssSite) {
+	cdrssReadFails = nil // ★ 自清：包级登记面不许跨调用残留
 	dir := filepath.Join(root, filepath.FromSlash(cdrssScanDirRel))
 	entries, err := os.ReadDir(dir)
 	if err != nil {
+		// ★ B 类真口子修（原静默返回 0 件 · ✗ 不再静默）：**在盘却读不了**才是真读失败 ⇒ 登记 + 判红 + rc=2
+		//	（目录不存在 = 本就不该扫 ⇒ 交后续「0 件空转」档）。
+		if fi, serr := os.Stat(dir); serr == nil && fi.IsDir() {
+			cdrssReadFails = append(cdrssReadFails, cdrssScanDirRel+"（读不了目录）")
+		}
 		return 0, nil
 	}
 	var files []string
@@ -126,6 +139,8 @@ func cdrssScan(root string) (int, []cdrssSite) {
 		rel := cdrssScanDirRel + "/" + n
 		raw, rerr := os.ReadFile(filepath.Join(dir, n))
 		if rerr != nil {
+			// ★ B 类真口子修（原 py 静默跳过 · ✗ 不再静默）：登记 + 判红 + rc=2。
+			cdrssReadFails = append(cdrssReadFails, rel+"（"+rerr.Error()+"）")
 			continue
 		}
 		lines := strings.Split(string(raw), "\n")
@@ -173,6 +188,14 @@ func cdrssRun(stdout, stderr io.Writer, root string) int {
 		return cdrssRCblock
 	}
 	nfiles, sites := cdrssScan(root)
+	// ★ B 类真口子修：读失败 ⇒ 响亮 BLOCKED rc=2 + 逐件点名（✗ 不再静默少判）。
+	if len(cdrssReadFails) > 0 {
+		fmt.Fprintf(stderr, "BLOCKED —— 有 %d 件读不到（B 类读失败 ⇒ 登记 + 判红 · rc=2 · 不给结论）：\n", len(cdrssReadFails))
+		for _, u := range cdrssReadFails {
+			fmt.Fprintf(stderr, "  [读失败] %s\n", u)
+		}
+		return cdrssRCblock
+	}
 	if nfiles == 0 {
 		fmt.Fprintf(stdout, "⛔ 不给结论：扫描面 0 件判据件（%s/*.go 读不到 ⇒ 空转）\n", cdrssScanDirRel)
 		return cdrssRCblock

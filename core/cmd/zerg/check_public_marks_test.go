@@ -5,13 +5,14 @@
 //	· cpmPyJoin 三语义差（中间 `..` 原样留 · 后段绝对丢前段 · 空段保留尾 `/`）—— 定向单测
 //	· cpmDecodeB64 严格解码（4k+1 非法 · 填充补不上 · 非 utf-8 ⇒ 不解）
 //	· cpmScanPrivate 真口子：读不了的件 ⇒ 报「读不了文件：[Errno …]」（B 类留牙）
-//	· selftest 33 条全绿（正控）
+//	· selftest 36 条全绿（正控）
 //	· must-fail 有牙：哑化编码变形格 ⇒ 自检必红（见交付③的仓外副本哑化实证）
 package main
 
 import (
 	"encoding/base64"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -90,13 +91,13 @@ func TestCpmScanPrivate读不了文件留牙(t *testing.T) {
 	}
 }
 
-// 正控：33 条自检必须全绿。
-func TestCpmSelftest33全绿(t *testing.T) {
+// 正控：36 条自检必须全绿。
+func TestCpmSelftest全绿(t *testing.T) {
 	var b strings.Builder
 	if rc := cpmSelftest(&b); rc != 0 {
 		t.Fatalf("自检应 rc=0，实际 rc=%d\n%s", rc, b.String())
 	}
-	if !strings.Contains(b.String(), "自证用例：33 条 · 通过 33 条") {
+	if !strings.Contains(b.String(), "自证用例：36 条 · 通过 36 条") {
 		t.Fatalf("自检条数断言缺失：\n%s", b.String())
 	}
 }
@@ -109,5 +110,38 @@ func TestCpmPrivatePattern哑化必红(t *testing.T) {
 	var b strings.Builder
 	if rc := cpmSelftest(&b); rc == 0 {
 		t.Fatalf("摘掉私有模式表后自检必须红（负控有牙），实际 rc=0")
+	}
+}
+
+// 机读面（缺口 GAP-20260926-50）：`--json` 出 payload ＋ 未知字段 ⇒ rc=2（哑化任一 ⇒ 本用例必红）。
+func TestCpm机读面正负控(t *testing.T) {
+	root := t.TempDir()
+	mk := func(rel, body string) {
+		p := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk("scripts/build/good.sh", "#!/bin/sh\necho ok\n")
+	mk(cpmTableRel, "文件\tpublic\t理由\nscripts/build/good.sh\tyes\tA 类：合成夹具\n")
+	run := func(argv ...string) (int, string, string) {
+		var ob, eb strings.Builder
+		rc := checkPublicMarksGateMain(&ob, &eb, argv)
+		return rc, ob.String(), eb.String()
+	}
+	rc, out, _ := run("--root", root, "--json")
+	if rc != 0 || !strings.Contains(out, "\"mode\": \"judge\"") || !strings.Contains(out, "\"missing\": [") {
+		t.Fatalf("--json 正控：期望 rc=0 ＋ payload（mode=judge · missing 在场），实得 rc=%d out=%q", rc, out)
+	}
+	rc, out, _ = run("--root", root, "--json", "root")
+	if rc != 0 || !strings.Contains(out, "\"root\":") || strings.Contains(out, "\"missing\":") {
+		t.Fatalf("--json root：期望只出 root 键，实得 rc=%d out=%q", rc, out)
+	}
+	rc, _, errs := run("--root", root, "--json", "nope")
+	if rc != 2 || !strings.Contains(errs, "不认的字段名") {
+		t.Fatalf("--json nope：期望 rc=2 ＋「不认的字段名」，实得 rc=%d stderr=%q", rc, errs)
 	}
 }

@@ -206,9 +206,14 @@ func cmdEvalRunAll(inv *invocation, stdout, stderr io.Writer) int {
 // （✗ 不混进 tee 流 —— 原件那行由 bash 自己写、文案不可逐字复刻），控制流照旧继续。
 func evalRunAllRun(cmd *exec.Cmd, dir string, stderr io.Writer) []byte {
 	var buf bytes.Buffer
+	// 家族可取消面：把本趟亲手起的这一棵**自成一组**并登记 —— 人打断（`--cancel-on-interrupt`）/
+	// 墙钟闸经 `cancelRunningChild → terminateChildTree` 收**整组**（同 `family_build.go` 的口径）。
+	cmd = armChildGroup(cmd)
 	cmd.Dir = dir
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf
+	runningChild = cmd
+	defer func() { runningChild = nil }()
 	if err := cmd.Run(); err != nil {
 		if _, ok := err.(*exec.ExitError); !ok {
 			fmt.Fprintf(stderr, "%s: 子进程起不来（%s）：%v\n", progName, cmd.Path, err)

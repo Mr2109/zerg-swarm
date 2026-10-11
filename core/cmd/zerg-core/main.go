@@ -163,6 +163,9 @@ func main() {
 	// POST /api/fleet/heartbeat - 接收子端心跳
 	r.Post("/api/fleet/heartbeat", handlers.HeartbeatHandler)
 
+	// POST /api/fleet/forget - 从运行态名册摘掉一台机（干跑 dry_run=true 只报计划；真删需 confirm=true；复用 store.Forget）
+	r.Post("/api/fleet/forget", handlers.FleetForgetHandler)
+
 	// GET /api/fleet/status - 集群状态
 	r.Get("/api/fleet/status", handlers.StatusHandler)
 
@@ -271,6 +274,10 @@ func main() {
 
 	// v2.5.5 #9 补充5: 网关引用注入 handlers（心跳健康清零熔断用）
 	handlers.Gateway = gw
+	// 缺口 GAP-20261010-24：网关与主控同源 —— `POST /api/config/reload` 换掉
+	//   handlers.Config 的那一刻，网关路由表 / 别名 / 机队节点面即看到新条目
+	//   （此前网关持构造时快照 ⇒ reload 后仍 stale）。口径照孵卵面 GAP-20260925-42。
+	gw.SetConfigSource(func() *config.FleetConfig { return handlers.Config })
 
 	// 网关卡表（circuit breaker）手动复位 + 原因可见（Mr2109痛点: 熔断后看不到原因/无手动入口）
 	// 复用全局 AuthMiddleware（挂在本函数顶部的 r.Use）——两接口均走 /api/* 鉴权，不是免鉴权旁路

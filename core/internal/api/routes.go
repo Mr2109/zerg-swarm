@@ -49,6 +49,7 @@ var routeTable = []routeEntry{
 	// ── fleet 族（机群与模型）───────────────────────────────────────────
 	{Name: "list_models", Desc: "可用模型清单（含候选机器）", Method: "GET", Path: "/api/fleet/models"},
 	{Name: "fleet_status", Desc: "集群机器状态（健康/负载）", Method: "GET", Path: "/api/fleet/status"},
+	{Name: "forget_machine", Desc: "从运行态名册摘掉一台机（干跑 dry_run=true 只报计划；真删需 confirm=true；不在册再删幂等）", Method: "POST", Path: "/api/fleet/forget"},
 	// ── resource / doc / git 族 ────────────────────────────────────────
 	{Name: "list_resources", Desc: "资源库（模型/工具/skill/mcp——信任度）", Method: "GET", Path: "/api/resources/{type}"},
 	{Name: "list_docs", Desc: "项目文档（设计/计划）；带 root=/path= 查询参数可参数化读白名单内的文件", Method: "GET", Path: "/api/docs"},

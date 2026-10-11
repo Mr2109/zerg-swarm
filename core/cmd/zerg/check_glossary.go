@@ -140,6 +140,13 @@ var chglUsage = "用法：\n  python3 scripts/gates/check-glossary.py [--lang zh
 
 // ══ posixpath 语义小工具（逐字复刻 py 的 os.path.*）══════════════════════════════════════
 
+// chglReadFails —— B 类读失败登记面（读不了的目录/件 ⇒ 逐件登记 相对路径 + err 正文）。
+// ★ B 类真口子修（与 py 有意分叉 · 同族先例 check_doc_cmds.go 的 dcmdReadFails）：
+//
+//	读失败 ⇒ 登记 + 入口判红（stderr BLOCKED 头 + 逐件点名）⇒ rc=2（✗ 不再静默少判）。
+//	自清点：每次 chglWalkFiles 起手清空 ⇒ 不许跨调用残留。
+var chglReadFails []string
+
 func chglSplitPath(p string) (string, string) {
 	i := strings.LastIndex(p, "/") + 1
 	return p[:i], p[i:]
@@ -747,6 +754,7 @@ func chglLangOf(rel, scope string) string {
 }
 
 func chglWalkFiles(paths []string, root string, langs map[string]bool, scope string) []chglFile {
+	chglReadFails = nil // ★ 自清：包级登记面不许跨调用残留
 	out := []chglFile{}
 	for _, p := range paths {
 		ap := p
@@ -769,11 +777,15 @@ func chglWalkFiles(paths []string, root string, langs map[string]bool, scope str
 func chglWalkDir(dir, root string, langs map[string]bool, scope string, out *[]chglFile) {
 	f, err := os.Open(dir)
 	if err != nil {
+		// ★ B 类真口子修（原 py `os.walk(onerror=None)` 静默 · ✗ 不再静默）：登记 + 判红 + rc=2。
+		chglReadFails = append(chglReadFails, fmt.Sprintf("%s（读不了目录）", chglRelpath(dir, root)))
 		return
 	}
 	entries, err := f.ReadDir(-1) // 未排序：与 py os.scandir/readdir 同序
 	f.Close()
 	if err != nil {
+		// ★ B 类真口子修（原 py 静默 · ✗ 不再静默）：登记 + 判红 + rc=2。
+		chglReadFails = append(chglReadFails, fmt.Sprintf("%s（读不了目录）", chglRelpath(dir, root)))
 		return
 	}
 	dirs := []string{}
@@ -971,6 +983,14 @@ func chglRun(stdout, stderr io.Writer, argv []string) int {
 		return chglRCBlocked
 	}
 	files := chglWalkFiles(paths, root, langs, scope)
+	// ★ B 类真口子修：读失败 ⇒ 响亮 BLOCKED rc=2 + 逐件点名（✗ 不再静默少判）。
+	if len(chglReadFails) > 0 {
+		fmt.Fprintf(stderr, "BLOCKED —— 有 %d 件读不到（B 类读失败 ⇒ 登记 + 判红 · rc=2 · 不给结论）：\n", len(chglReadFails))
+		for _, u := range chglReadFails {
+			fmt.Fprintf(stderr, "  [读失败] %s\n", u)
+		}
+		return chglRCBlocked
+	}
 	if len(files) == 0 {
 		fmt.Fprint(stderr, "✗ 扫到 0 个 .md —— 拒绝静默空转（假绿）。检查 --paths 与 docs/zh|docs/en 是否存在\n")
 		return chglRCBlocked

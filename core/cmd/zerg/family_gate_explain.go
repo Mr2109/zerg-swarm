@@ -302,7 +302,32 @@ func gateStepLogNote(root, name string) (string, bool) {
 // 只 add_step 那一支），源码行序 ≠ 运行期步序；而日志文件名 NN 用的是**运行期步序**。
 // 这一条**跑脚本自己的清单**（只列不跑 —— `--list` 不执行任何步骤），不另造一份表。
 func gateStepIndex(root, name string) (int, bool) {
-	cmd := exec.Command("bash", filepath.Join(root, gateScriptRel), "--list")
+	// ★ GAP-20261010-25（本片）：机读面优先（`--list --json`）—— 复用同族助手 `pgsParseListJSON`。
+	// 机读面在场而形状坏 ⇒ **不给结论**（序号 -1 并响亮出声），✗ 不许静默退回人面。
+	mcmd := armChildGroup(exec.Command("bash", filepath.Join(root, gateScriptRel), "--list", "--json"))
+	runningChild = mcmd
+	defer func() { runningChild = nil }()
+	mcmd.Dir = root
+	if mout, merr := mcmd.Output(); merr == nil {
+		if steps, _, isM, perr := pgsParseListJSON(string(mout)); isM {
+			if perr != "" {
+				fmt.Fprintf(os.Stderr, "%s: 步表机读面（`%s --list --json`）形状坏：%s ⇒ 步序号**不给结论**（✗ 不退回人面）\n", progName, gateScriptRel, perr)
+				return -1, false
+			}
+			idx := 0
+			for _, s := range steps {
+				idx++
+				if normStepName(s.Name) == normStepName(name) {
+					return idx, true
+				}
+			}
+			return idx, false
+		}
+	}
+	// ② 退化路：机读面不在 ⇒ 人面 `--list`（与改前逐字相同）。
+	cmd := armChildGroup(exec.Command("bash", filepath.Join(root, gateScriptRel), "--list"))
+	runningChild = cmd
+	defer func() { runningChild = nil }()
 	cmd.Dir = root
 	out, err := cmd.Output()
 	if err != nil {

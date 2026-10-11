@@ -209,7 +209,33 @@ func gateFullStepNames(root string) ([]string, error) {
 	if _, err := os.Stat(script); err != nil {
 		return nil, fmt.Errorf("门禁最小入口不在（%s）", gateScriptRel)
 	}
-	out, err := exec.Command("bash", script, "--list").Output()
+	// ★ GAP-20261010-25（本片）：机读面优先（`--list --json` 的单对象 `{"count":N,"steps":[…]}`）——
+	// 复用同族助手 `pgsParseListJSON`（✗ 不另造第二套解析）；机读面在场而形状坏 ⇒ 响亮失败（err ⇒ rc=8）。
+	mcmd := armChildGroup(exec.Command("bash", script, "--list", "--json"))
+	runningChild = mcmd
+	defer func() { runningChild = nil }()
+	if mout, merr := mcmd.Output(); merr == nil {
+		if steps, _, isM, perr := pgsParseListJSON(string(mout)); isM {
+			if perr != "" {
+				return nil, fmt.Errorf("步表机读面（`%s --list --json`）形状坏：%s ⇒ **不给结论**（✗ 不退回人面）", gateScriptRel, perr)
+			}
+			names := []string{}
+			for _, s := range steps {
+				if s.Name != "" {
+					names = append(names, s.Name)
+				}
+			}
+			if len(names) == 0 {
+				return nil, fmt.Errorf("`%s --list --json` 机读面一条步骤都没读出来 ⇒ **不给结论**", gateScriptRel)
+			}
+			return names, nil
+		}
+	}
+	// ② 退化路：机读面不在 ⇒ 人面 `--list`（与改前逐字相同）。
+	cmd := armChildGroup(exec.Command("bash", script, "--list"))
+	runningChild = cmd
+	defer func() { runningChild = nil }()
+	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("`%s --list` 跑不动：%v", gateScriptRel, err)
 	}

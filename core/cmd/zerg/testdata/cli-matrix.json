@@ -94,7 +94,7 @@
    "id": "help#说明面不认 --json",
    "want_rc": 2,
    "want_stdout_bytes": 331,
-   "why": "**有**字段表的说明面 ⇒ 2（`help` 自 GAP-20260927-290/-403 起有字段表 `family`/`actions` ⇒ `--json name` 是未知字段，经 reportBadField 逐格点名合法字段；stdout = error.kind=usage 包封 289 字节（含末尾换行）· 现跑派生 · ★ 2026-10-04 重冻 0 → 289：原判词「没有字段表」在字段表落地后已成除旧读数）"
+   "why": "**有**字段表的说明面 ⇒ 2（`help` 自 GAP-20260927-290/-403 起有字段表 `family`/`actions` ⇒ `--json name` 是未知字段，经 reportBadField 逐格点名合法字段；stdout = error.kind=usage 包封 331 字节（含末尾换行）· 现跑派生 · ★ 2026-10-04 重冻 0 → 289：原判词「没有字段表」在字段表落地后已成除旧读数）"
   },
   {
    "argv": [
@@ -664,6 +664,57 @@
    "want_rc": 2,
    "want_stdout_bytes": 0,
    "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "argv": [
+    "agent",
+    "forget",
+    "--nosuchflag-zz"
+   ],
+   "command": "agent forget",
+   "id": "agent/forget#未知旗标",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "argv": [
+    "agent",
+    "forget",
+    "--schema",
+    "zerg/v9"
+   ],
+   "command": "agent forget",
+   "id": "agent/forget#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "argv": [
+    "agent",
+    "forget",
+    "x"
+   ],
+   "command": "agent forget",
+   "id": "agent/forget#缺 --yes（D2）",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "D2 缺 --yes ⇒ fail-closed 2（§九 M3 C2）"
+  },
+  {
+   "argv": [
+    "agent",
+    "forget",
+    "x",
+    "--dry-run",
+    "--yes"
+   ],
+   "command": "agent forget",
+   "id": "agent/forget#--dry-run 与 --yes 同给",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "「`--dry-run`（只出计划件）与 `--yes`（真写）**同给**」= 两道确认档自相矛盾 ⇒ 用法错 2（不给结论）：唯一共享判定 `dryRunYesConflict`（`core/cmd/zerg/guard.go:390` · 逐命令在自己的**唯一写盘点之前**调用）· 本格现跑两遍 rc/stdout 逐字同值（rc=2 · stdout 0 字节）· ★ 本 why 不记绝对字节数（手写时点读数会烂）"
   },
   {
    "argv": [
@@ -1396,7 +1447,7 @@
    "command": "resource pin",
    "id": "resource/pin#说明面不认 --json",
    "want_rc": 2,
-   "want_stdout_bytes": 338,
+   "want_stdout_bytes": 368,
    "why": "没有字段表的说明面 ⇒ 2（与 K2 甲档归一后的 2 **同码、错因不同**：这里根本没有字段表）"
   },
   {
@@ -1434,7 +1485,7 @@
    "command": "resource unpin",
    "id": "resource/unpin#说明面不认 --json",
    "want_rc": 2,
-   "want_stdout_bytes": 340,
+   "want_stdout_bytes": 370,
    "why": "没有字段表的说明面 ⇒ 2（与 K2 甲档归一后的 2 **同码、错因不同**：这里根本没有字段表）"
   },
   {
@@ -1472,7 +1523,7 @@
    "command": "gateway breakers",
    "id": "gateway/breakers#说明面不认 --json",
    "want_rc": 2,
-   "want_stdout_bytes": 342,
+   "want_stdout_bytes": 372,
    "why": "没有字段表的说明面 ⇒ 2（与 K2 甲档归一后的 2 **同码、错因不同**：这里根本没有字段表）"
   },
   {
@@ -1624,7 +1675,7 @@
    "id": "egg/run#说明面不认 --json",
    "want_rc": 2,
    "want_stdout_bytes": 411,
-   "why": "`egg run` 的 `--json` 字段面：闭集外的字段名 ⇒ 退 2 + stderr 列字段表；stdout 是 `error.kind=usage` 那一份包封（354 字节（含末尾换行） · 现跑派生；GAP-20260928-16：reportBadField 前补同口径 inv.setErr ⇒ 包封 error.detail 点名那个未知字段）"
+   "why": "`egg run` 的 `--json` 字段面：闭集外的字段名 ⇒ 退 2 + stderr 列字段表；stdout 是 `error.kind=usage` 那一份包封（411 字节（含末尾换行） · 现跑派生；GAP-20260928-16：reportBadField 前补同口径 inv.setErr ⇒ 包封 error.detail 点名那个未知字段）"
   },
   {
    "argv": [
@@ -2005,6 +2056,31 @@
    "want_rc": 2,
    "want_stdout_bytes": 310,
    "why": "没有字段表的说明面 ⇒ 2（与 K2 甲档归一后的 2 **同码、错因不同**：这里根本没有字段表）"
+  },
+  {
+   "argv": [
+    "build",
+    "doctor",
+    "--nosuchflag-zz"
+   ],
+   "command": "build doctor",
+   "id": "build/doctor#未知旗标",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "argv": [
+    "build",
+    "doctor",
+    "--schema",
+    "zerg/v9"
+   ],
+   "command": "build doctor",
+   "id": "build/doctor#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
   },
   {
    "argv": [
@@ -3205,7 +3281,7 @@
    "command": "plan",
    "id": "plan#--json 不给字段",
    "want_rc": 2,
-   "want_stdout_bytes": 351,
+   "want_stdout_bytes": 381,
    "why": "给了 --json 不给字段 ⇒ 2 + **错误面包封走 stdout**（本批起 `inv.err != nil` 也发射 ⇒ **非危险档命令同样有机器面**：`items` 空 + `error.kind=usage`；★ 本 why **不记绝对字节数** —— 逐字形态见 `want_stdout_bytes` 那一格，手写的时点读数会烂）（§4.1 K2 甲档 · `K2` 归一后码**取自退码表** `usage` = 2；改前退 1；落点显式给 /tmp，不写状态目录）"
   },
   {
@@ -3638,7 +3714,7 @@
    "want_rc_public": 2,
    "want_stdout_bytes": 372,
    "want_stdout_bytes_public": 285,
-   "why": "字段面**执行前判**（先于点名目录的读）⇒ 2 + stderr 列字段表；stdout 是 `error.kind=usage` 那一份包封（316 字节（含末尾换行） · 现跑派生；GAP-20260928-16：reportBadField 前补同口径 inv.setErr(`usage`,`json_field_unknown:`+字段,…) ⇒ 包封 error.detail 点名那个未知字段）",
+   "why": "字段面**执行前判**（先于点名目录的读）⇒ 2 + stderr 列字段表；stdout 是 `error.kind=usage` 那一份包封（372 字节（含末尾换行） · 现跑派生；GAP-20260928-16：reportBadField 前补同口径 inv.setErr(`usage`,`json_field_unknown:`+字段,…) ⇒ 包封 error.detail 点名那个未知字段）",
    "why_public": "同上一格的机理：公开面先撞「门禁最小入口不在」⇒ 退码同为 2，但**包封字节数不同**（本机 301 → 公开 285）。285 字节是**不含路径**的通用错误包封（逐字现读：{\"schema\":\"zerg/v1\",\"kind\":\"GateResults\",\"items\":[]…\"error\"…}）⇒ 与那棵树 clone 到哪无关；与本机那份的差 = 少了字段表那几行字（`GateResults` 比 `GateRun` 长 4 字节，同族 281 字节那格 +4 = 285 ✓ 现读核对）"
   },
   {
@@ -4166,6 +4242,23 @@
    "want_rc": 2,
    "want_stdout_bytes": 0,
    "why": "两种模式（逐件暂存 vs 点名单路径）语义不相容 ⇒ 同时给退 2（`Q-104` 甲案：就长在 `repo commit` 这一条上）"
+  },
+  {
+   "argv": [
+    "repo",
+    "commit",
+    "--message",
+    "t",
+    "--file",
+    "a.go",
+    "--removed",
+    "b.go"
+   ],
+   "command": "repo commit",
+   "id": "repo/commit#--removed 与 --file/--only 同给",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "三种模式（逐件暂存 / 点名单路径 / 只撤跟踪）语义不相容 ⇒ 同时给退 2（缺口 GAP-20261009-17：`--removed` 只撤跟踪 —— 临时索引 = HEAD ＋ 点名件的删除态 ⇒ 真索引一字不动）"
   },
   {
    "argv": [
@@ -6175,7 +6268,7 @@
    "id": "gap/export#说明面不认 --json",
    "want_rc": 2,
    "want_stdout_bytes": 336,
-   "why": "**有**字段表的说明面 ⇒ 2（与 K2 甲档归一后的 2 同码、错因不同：未知字段经 reportBadField 逐格点名合法字段）· ★ 2026-09-28 重冻 282 → 294（`GAP-20260928-16` 那批刷新的**漏格**：同族 `approve/ls` 同批 281 → 293，本格承同两次刷新 —— 先承 `Q-155`：失败面包封的兜底 kind 由**真退码**派生 ⇒ 包封里 `\"kind\":\"failed\"` → `\"kind\":\"usage\"`；再承 `GAP-20260928-16`：`reportBadField` 前补同口径 `inv.setErr(`usage`,`json_field_unknown:`+bad,…)` ⇒ 包封 `error.detail` 点名那个未知字段。取法（现跑两遍逐字同值）：`env -u ZERG_STATE_DIR -u ZERG_REPO ./bin/zerg gap export --json name` ⇒ rc=2 · stdout 294 字节（含末尾换行）· `error.detail=json_field_unknown:name` · stderr 逐字「未知字段 \"name\"」+「合法字段: id,prio,impact,state,want,summary,fp,verify_cmd,found_at」；同源核对：`GapExport` 比同族 `Approval` 长 1 ⇒ 293 + 1 = 294 ✓）；`want_rc` 不动 · 格数/命令数/空白/豁免四个计数一字未动"
+   "why": "**有**字段表的说明面 ⇒ 2（与 K2 甲档归一后的 2 同码、错因不同：未知字段经 reportBadField 逐格点名合法字段）· ★ 2026-09-28 重冻 282 → 294（`GAP-20260928-16` 那批刷新的**漏格**：同族 `approve/ls` 同批 281 → 293，本格承同两次刷新 —— 先承 `Q-155`：失败面包封的兜底 kind 由**真退码**派生 ⇒ 包封里 `\"kind\":\"failed\"` → `\"kind\":\"usage\"`；再承 `GAP-20260928-16`：`reportBadField` 前补同口径 `inv.setErr(`usage`,`json_field_unknown:`+bad,…)` ⇒ 包封 `error.detail` 点名那个未知字段。取法（现跑两遍逐字同值）：`env -u ZERG_STATE_DIR -u ZERG_REPO ./bin/zerg gap export --json name` ⇒ rc=2 · stdout 336 字节（含末尾换行）· `error.detail=json_field_unknown:name` · stderr 逐字「未知字段 \"name\"」+「合法字段: id,prio,impact,state,want,summary,fp,verify_cmd,found_at」；同源核对：`GapExport` 比同族 `Approval` 长 1 ⇒ 293 + 1 = 294 ✓）；`want_rc` 不动 · 格数/命令数/空白/豁免四个计数一字未动"
   },
   {
    "argv": [
@@ -7138,7 +7231,7 @@
    "id": "route/ls#字段面·未知字段",
    "want_rc": 2,
    "want_stdout_bytes": 350,
-   "why": "`route ls` 的 `--json` 字段面：闭集外的字段名（`__zzbad__`）⇒ 退 2 + stderr 列字段表；stdout 是 `error.kind=usage` 那一份包封（302 字节（含末尾换行） · 现跑派生，两遍逐字同值；GAP-20260928-22：`reportBadField` 前补同口径 `inv.setErr` ⇒ 包封 `error.detail` 点名那个未知字段 = `json_field_unknown:__zzbad__`）"
+   "why": "`route ls` 的 `--json` 字段面：闭集外的字段名（`__zzbad__`）⇒ 退 2 + stderr 列字段表；stdout 是 `error.kind=usage` 那一份包封（350 字节（含末尾换行） · 现跑派生，两遍逐字同值；GAP-20260928-22：`reportBadField` 前补同口径 `inv.setErr` ⇒ 包封 `error.detail` 点名那个未知字段 = `json_field_unknown:__zzbad__`）"
   },
   {
    "argv": [
@@ -7152,7 +7245,7 @@
    "id": "agent/reload#字段面·未知字段",
    "want_rc": 2,
    "want_stdout_bytes": 468,
-   "why": "`agent reload` 的 `--json` 字段面：闭集外的字段名（`__zzbad__`）⇒ 退 2 + stderr 列字段表；stdout 是 `error.kind=usage` 那一份包封（415 字节（含末尾换行） · 现跑派生，两遍逐字同值；字段面判在**子端 HTTP 面之前** ⇒ 本格不碰任何真机器（`zz-nosuch` 是不存在的机器名，只凑位置）；GAP-20260928-22：`reportBadField` 前补同口径 `inv.setErr` ⇒ `error.detail` 点名那个未知字段 = `json_field_unknown:__zzbad__`）"
+   "why": "`agent reload` 的 `--json` 字段面：闭集外的字段名（`__zzbad__`）⇒ 退 2 + stderr 列字段表；stdout 是 `error.kind=usage` 那一份包封（468 字节（含末尾换行） · 现跑派生，两遍逐字同值；字段面判在**子端 HTTP 面之前** ⇒ 本格不碰任何真机器（`zz-nosuch` 是不存在的机器名，只凑位置）；GAP-20260928-22：`reportBadField` 前补同口径 `inv.setErr` ⇒ `error.detail` 点名那个未知字段 = `json_field_unknown:__zzbad__`）"
   },
   {
    "argv": [
@@ -7290,7 +7383,7 @@
    "command": "gap status",
    "id": "gap/status#说明面不认 --json",
    "want_rc": 2,
-   "want_stdout_bytes": 336,
+   "want_stdout_bytes": 762,
    "why": "**有**字段表的说明面 ⇒ 2（与 K2 甲档归一后的 2 同码、错因不同：未知字段经 reportBadField 逐格点名合法字段）"
   },
   {
@@ -8192,7 +8285,7 @@
    "id": "model/rm#--json 不给字段",
    "want_rc": 2,
    "want_stdout_bytes": 329,
-   "why": "给了 --json 不给字段 ⇒ 2 + **错误面包封**（不空）；D2 写面走「没有结果面、但错误面必须机器可读」那条（§九 M7）⇒ 287 字节是现跑包封字节数（本制品现跑两遍一致）。"
+   "why": "给了 --json 不给字段 ⇒ 2 + **错误面包封**（不空）；D2 写面走「没有结果面、但错误面必须机器可读」那条（§九 M7）⇒ 329 字节是现跑包封字节数（本制品现跑两遍一致）。"
   },
   {
    "argv": [
@@ -8229,7 +8322,7 @@
    "id": "model/set#--json 不给字段",
    "want_rc": 2,
    "want_stdout_bytes": 330,
-   "why": "给了 --json 不给字段 ⇒ 2 + **错误面包封**（不空）；D2 写面走「没有结果面、但错误面必须机器可读」那条（§九 M7）⇒ 288 字节是现跑包封字节数（本制品现跑两遍一致）。"
+   "why": "给了 --json 不给字段 ⇒ 2 + **错误面包封**（不空）；D2 写面走「没有结果面、但错误面必须机器可读」那条（§九 M7）⇒ 330 字节是现跑包封字节数（本制品现跑两遍一致）。"
   },
   {
    "argv": [
@@ -8266,7 +8359,7 @@
    "id": "context/set-port#--json 不给字段",
    "want_rc": 2,
    "want_stdout_bytes": 312,
-   "why": "给了 --json 不给字段 ⇒ 2 + **错误面包封**（不空）；D2 写面走「没有结果面、但错误面必须机器可读」那条（§九 M7）⇒ 287 字节是现跑包封字节数（本制品现跑两遍一致）。"
+   "why": "给了 --json 不给字段 ⇒ 2 + **错误面包封**（不空）；D2 写面走「没有结果面、但错误面必须机器可读」那条（§九 M7）⇒ 312 字节是现跑包封字节数（本制品现跑两遍一致）。"
   },
   {
    "argv": [
@@ -9296,6 +9389,46 @@
   },
   {
    "argv": [
+    "agent",
+    "workers",
+    "show",
+    "--nosuchflag-zz"
+   ],
+   "command": "agent workers show",
+   "id": "agent/workers/show#未知旗标",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "argv": [
+    "agent",
+    "workers",
+    "show",
+    "--schema",
+    "zerg/v9"
+   ],
+   "command": "agent workers show",
+   "id": "agent/workers/show#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "argv": [
+    "agent",
+    "workers",
+    "show",
+    "extra-arg"
+   ],
+   "command": "agent workers show",
+   "id": "agent/workers/show#多余位置参数",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "只读读面不收位置参数（arity: none）⇒ 多余位置参数 = 用法错 2 · 执行前判"
+  },
+  {
+   "argv": [
     "dev",
     "receipt",
     "--nosuchflag-zz"
@@ -9557,7 +9690,7 @@
    "id": "script/inventory/verify#--json 不给字段",
    "want_rc": 2,
    "want_stdout_bytes": 343,
-   "why": "给了 `--json` 不给字段 ⇒ 用法错（§4.1 K2 甲档 · 码取自退码表 `usage`）· 错误包封走 stdout · 301 字节。"
+   "why": "给了 `--json` 不给字段 ⇒ 用法错（§4.1 K2 甲档 · 码取自退码表 `usage`）· 错误包封走 stdout · 343 字节。"
   },
   {
    "argv": [
@@ -9649,6 +9782,31 @@
   },
   {
    "argv": [
+    "model",
+    "pull",
+    "--nosuchflag-zz"
+   ],
+   "command": "model pull",
+   "id": "model/pull#未知旗标",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "执行前判：未知旗标 ⇒ 退 2 · stdout 0 字节（2026-10-10 现跑派生 · GAP-20261010-14 补格）"
+  },
+  {
+   "argv": [
+    "model",
+    "pull",
+    "--schema",
+    "zerg/v9"
+   ],
+   "command": "model pull",
+   "id": "model/pull#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "执行前判：不认的契约主号 ⇒ 退 2 · stdout 0 字节（2026-10-10 现跑派生 · GAP-20261010-14 补格）"
+  },
+  {
+   "argv": [
     "root",
     "--nosuchflag-zz"
    ],
@@ -9669,6 +9827,260 @@
    "want_rc": 2,
    "want_stdout_bytes": 0,
    "why": "执行前判：不认的契约主号 ⇒ 退 2 · stdout 0 字节（2026-10-10 现跑派生 · 收口窗 FAIL#3b 补格）"
+  },
+  {
+   "argv": [
+    "approve",
+    "rotate",
+    "--nosuchflag-zz"
+   ],
+   "command": "approve rotate",
+   "id": "approve/rotate#未知旗标",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "argv": [
+    "approve",
+    "rotate",
+    "--schema",
+    "zerg/v9"
+   ],
+   "command": "approve rotate",
+   "id": "approve/rotate#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "argv": [
+    "approve",
+    "rotate",
+    "--by",
+    "Mr2109"
+   ],
+   "command": "approve rotate",
+   "id": "approve/rotate#缺工具名",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "撤销/覆盖要指名动哪一枚（位置参数缺 ⇒ 2 · 不猜）"
+  },
+  {
+   "argv": [
+    "approve",
+    "rotate",
+    "dev_edit"
+   ],
+   "command": "approve rotate",
+   "id": "approve/rotate#缺 --by",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "撤销/覆盖都要留痕（谁动的 ⇒ 缺 --by ⇒ 2）"
+  },
+  {
+   "argv": [
+    "approve",
+    "rotate",
+    "dev_edit",
+    "--by",
+    "Mr2109"
+   ],
+   "command": "approve rotate",
+   "id": "approve/rotate#缺 --confirm（D3）",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "D3 不可逆：缺确认 ⇒ fail-closed 2（§九 M3 C2 · §十二 P-014）· 执行前判，不碰任何件、不读口令"
+  },
+  {
+   "argv": [
+    "approve",
+    "rotate",
+    "dev_edit",
+    "--by",
+    "Mr2109",
+    "--confirm=dev_edit"
+   ],
+   "command": "approve rotate",
+   "id": "approve/rotate#缺 --yes（D3）",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "D3 不可逆档：--confirm 与 --yes 两枚都要到（缺 --yes ⇒ 2 · 执行前判）"
+  },
+  {
+   "argv": [
+    "approve",
+    "rotate",
+    "dev_edit",
+    "--by",
+    "Mr2109",
+    "--confirm=别的",
+    "--yes"
+   ],
+   "command": "approve rotate",
+   "id": "approve/rotate#--confirm 值不逐字相同",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "确认值必须与目标工具名逐字相同 —— 给错值一律拒绝（§4.1 K7）· 执行前判"
+  },
+  {
+   "argv": [
+    "approve",
+    "rotate",
+    "dev_edit",
+    "--by",
+    "Mr2109",
+    "--dry-run",
+    "--yes"
+   ],
+   "command": "approve rotate",
+   "id": "approve/rotate#--dry-run 与 --yes 同给",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "两道确认档自相矛盾（干跑 ⟷ 真写）⇒ 硬失败退 2（复用共享判定 dryRunYesConflict · 命令处理器入口）· 现跑 rc=2 / stdout 0 字节"
+  },
+  {
+   "argv": [
+    "approve",
+    "rotate",
+    "dev_edit",
+    "--by",
+    "Mr2109",
+    "--confirm=dev_edit",
+    "--yes"
+   ],
+   "command": "approve rotate",
+   "id": "approve/rotate#非终端不给撤销/覆盖（模型路径）",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "人签面硬线①：撤销/覆盖批准件**只能人在终端上敲** —— 非交互会话（管道/模型）一律拒（§17.3 铁律④③「不出现自批」）"
+  },
+  {
+   "argv": [
+    "dev",
+    "reclaim",
+    "--nosuchflag-zz"
+   ],
+   "command": "dev reclaim",
+   "id": "dev/reclaim#未知旗标",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "argv": [
+    "dev",
+    "reclaim",
+    "--schema",
+    "zerg/v9"
+   ],
+   "command": "dev reclaim",
+   "id": "dev/reclaim#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "publish/accept#未知旗标",
+   "command": "publish accept",
+   "argv": [
+    "publish",
+    "accept",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "publish/accept#不认的契约主号",
+   "command": "publish accept",
+   "argv": [
+    "publish",
+    "accept",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "publish/accept#--json 不给字段",
+   "command": "publish accept",
+   "argv": [
+    "publish",
+    "accept",
+    "--json"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 335,
+   "why": "给了 --json 不给字段 ⇒ 2 + stdout 335 字节（§4.1 K2 甲档 · 码**取自退码表** `usage`）"
+  },
+  {
+   "id": "gap/judge/set#未知旗标",
+   "command": "gap judge set",
+   "argv": [
+    "gap",
+    "judge",
+    "set",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "gap/judge/set#不认的契约主号",
+   "command": "gap judge set",
+   "argv": [
+    "gap",
+    "judge",
+    "set",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "gap/judge/set#缺 --yes（D2）",
+   "command": "gap judge set",
+   "argv": [
+    "gap",
+    "judge",
+    "set",
+    "x"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "D2 缺 --yes ⇒ fail-closed 2（§九 M3 C2）"
+  },
+  {
+   "id": "fleet/render#未知旗标",
+   "command": "fleet render",
+   "argv": [
+    "fleet",
+    "render",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "fleet/render#不认的契约主号",
+   "command": "fleet render",
+   "argv": [
+    "fleet",
+    "render",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
   }
  ],
  "tiers": {

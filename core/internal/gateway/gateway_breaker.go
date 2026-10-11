@@ -117,13 +117,13 @@ func (g *Gateway) BreakerSnapshot() []BreakerInfo {
 		hosts[h] = true
 	}
 	// fleet 配置里的候选机器（未失败也要出现——state=closed）
-	if g.config != nil {
-		for h := range g.config.Fleet {
+	if g.currentConfig() != nil {
+		for h := range g.currentConfig().Fleet {
 			if h != "" {
 				hosts[h] = true
 			}
 		}
-		for _, cands := range g.config.Models {
+		for _, cands := range g.currentConfig().Models {
 			for _, c := range cands {
 				if c.Host != "" {
 					hosts[c.Host] = true

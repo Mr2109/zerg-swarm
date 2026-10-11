@@ -310,6 +310,41 @@ func Validate(name string, candidate ModelCandidate) ValidationResult {
 		})
 	}
 
+	// ===== V017: verified_state 三态闭集 + reported⇒verified_where ∈ 名册（GAP-20261003-21）=====
+	// 设计《设计-verified三态与锚-v0.1-20261010》§二 2.2 / §六：核实面已按 §三乙案迁到加性键
+	// `verified_state`（闭集 true|false|reported）＋ `verified_where`（reported 时必填 · 自报机名 ∈ 名册）。
+	// 本项是**启动校验**，与提交期判据 G（check_nodes_roster.go 的 cnrCheckModelsVerified）**同口径** ——
+	// 否则同一份 yaml 在两个消费面判出不同结论，正是设计 §六点名的「并存期分叉」风险。
+	//   · 缺席 `verified_state`（空）⇒ 回落旧裸 `verified`（bool）⇒ **维持原判**（向后兼容，不判红）。
+	//   · 非空但不 ∈ 闭集 ⇒ Fatal（闭集外值各消费面都读不出语义 · 与判据 G 的 rc=1 同严格度）。
+	//   · == reported ⇒ `verified_where` 必须非空且 ∈ 名册（同判据 G）。
+	// ★ 只落判据 G 的**硬判三支**；判据 G 已降级（GAP-20261003-21）为「只报告」的「true 须带 64hex 锚」支
+	//   **不在此加严** —— 门自己都不判，启动校验不抢在它前面锁死。
+	if vs := strings.ToLower(strings.TrimSpace(candidate.VerifiedState)); vs != "" {
+		if vs != "true" && vs != "false" && vs != "reported" {
+			errs = append(errs, ValidationError{
+				Field:   "verified_state",
+				Level:   FatalLevel,
+				Message: "verified_state 取值 " + candidate.VerifiedState + " 不在闭集 true/false/reported",
+			})
+		} else if vs == "reported" {
+			where := strings.TrimSpace(candidate.VerifiedWhere)
+			if where == "" {
+				errs = append(errs, ValidationError{
+					Field:   "verified_where",
+					Level:   FatalLevel,
+					Message: "reported（仅声明级）却缺 verified_where（哪台自报）",
+				})
+			} else if !isKnownHost(where) {
+				errs = append(errs, ValidationError{
+					Field:   "verified_where",
+					Level:   FatalLevel,
+					Message: "verified_where " + where + " 不在名册",
+				})
+			}
+		}
+	}
+
 	// ===== 以下为 Warn/Info 级别 =====
 
 	// V011: host 不在 fleet 已知主机中

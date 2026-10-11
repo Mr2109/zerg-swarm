@@ -107,12 +107,29 @@ func cmdDocSiteBuild(inv *invocation, stdout, stderr io.Writer) int {
 func docSiteBuildRun(inv *invocation, args []string, stdout, stderr io.Writer) int {
 	// ── 参数面（照 sh 的 for/case 逐字：按序判 · 命中 --help 立即退 0 · 未知立即退 2）──────────────
 	strict, serve := false, false
-	for _, a := range args {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
 		switch a {
 		case "--strict":
 			strict = true
 		case "--serve":
 			serve = true
+		// ★ 全局旗标「吞下」键：`--timeout` / `--cancel-on-interrupt` 由**全局面**（`main.go` 解析器 +
+		//   `wallclock.go`/信号面）消费；命令面**只吞下、不另立语义**（同族先例 `gate run` 的
+		//   `gateRunValueFlags`/`gateRunBoolFlags` · 缺口 `GAP-20261002-15` 同病同修）。`--timeout`
+		//   连同它的值一并跳过（照全局取值旗标口径）。
+		case "--timeout":
+			if i+1 < len(args) {
+				i++
+			}
+		case "--cancel-on-interrupt":
+		// ★ 全局旗标「吞下」键：`--node` 由**全局面**（`main.go` 解析器 ⇒ `enforceNodeRules` 的
+		//   机器名册校验）消费；命令面**只吞下、不另立语义**（同族先例见上条）。`--node` 是**取值
+		//   旗标** ⇒ 连同它的值一并跳过（照全局取值旗标口径）。
+		case "--node":
+			if i+1 < len(args) {
+				i++
+			}
 		case "-h", "--help":
 			fmt.Fprint(stdout, strings.Join(docSiteBuildHelpLines, "\n")+"\n")
 			return exitOK
@@ -210,7 +227,9 @@ func docSiteBuildRun(inv *invocation, args []string, stdout, stderr io.Writer) i
 	fmt.Fprintln(stdout, "=== 1/4 venv + pin 依赖（tools/site-requirements.txt）===")
 	venvPy := venv + "/bin/python"
 	if !dsbIsExec(venvPy) {
-		c := exec.Command(py, "-m", "venv", venv)
+		c := armChildGroup(exec.Command(py, "-m", "venv", venv))
+		runningChild = c
+		defer func() { runningChild = nil }()
 		c.Stdout, c.Stderr = stdout, stderr
 		if err := c.Run(); err != nil {
 			return fail("venv 创建失败（" + venv + "）")
@@ -264,7 +283,9 @@ func docSiteBuildRun(inv *invocation, args []string, stdout, stderr io.Writer) i
 		margs = append(margs, "--strict")
 	}
 	start := time.Now().Unix()
-	mc := exec.Command(venv+"/bin/mkdocs", margs...)
+	mc := armChildGroup(exec.Command(venv+"/bin/mkdocs", margs...))
+	runningChild = mc
+	defer func() { runningChild = nil }()
 	mc.Dir = exportDir
 	logOut, runErr := mc.CombinedOutput()
 	rcBuild := 0
@@ -302,7 +323,9 @@ func docSiteBuildRun(inv *invocation, args []string, stdout, stderr io.Writer) i
 	if serve {
 		fmt.Fprintln(stdout)
 		fmt.Fprintln(stdout, "=== 起本地服务（Ctrl-C 停）：http://127.0.0.1:8000 ===")
-		sc := exec.Command(venv+"/bin/mkdocs", "serve", "--config-file", exportDir+"/mkdocs.yml")
+		sc := armChildGroup(exec.Command(venv+"/bin/mkdocs", "serve", "--config-file", exportDir+"/mkdocs.yml"))
+		runningChild = sc
+		defer func() { runningChild = nil }()
 		sc.Dir = exportDir
 		sc.Stdin, sc.Stdout, sc.Stderr = os.Stdin, stdout, stderr
 		if err := sc.Run(); err != nil {
@@ -761,7 +784,9 @@ func dsbWriteFile(p, content string) error {
 
 // dsbRunSilent —— 起子进程、吞掉两端输出（照 sh 的 `>/dev/null 2>&1`）。
 func dsbRunSilent(name string, args ...string) error {
-	c := exec.Command(name, args...)
+	c := armChildGroup(exec.Command(name, args...))
+	runningChild = c
+	defer func() { runningChild = nil }()
 	c.Stdout, c.Stderr = io.Discard, io.Discard
 	return c.Run()
 }

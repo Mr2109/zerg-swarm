@@ -1,4 +1,5 @@
 // family_agent_workers.go —— `agent workers set` / `agent scheduler set` 两条 D2 写面
+// ＋ `agent workers show` 一条**只读读面**（GAP-20261010-23 · 读本机 config/workers.yaml 的并发上限）
 // （P0 #232 第四/第五面 · 2026-10-08；第三面 `itask interval set` 已落 · DEV-1934）。
 //
 // 病（现读勘定 · 另一路已核）：内核两包 `core/internal/agent` 的调度旋钮（并发上限 / 轮询间隔 /
@@ -533,4 +534,133 @@ func cmdAgentSchedulerSetWrite(inv *invocation, stdout, stderr io.Writer, update
 		row[k.key] = back[k.key]
 	}
 	return listCmd(inv, stdout, stderr, []string{"path", "poll_interval", "max_retries", "cooldown", "changed"}, []map[string]string{row})
+}
+
+// ── ③ `zerg agent workers show`（只读 · 读本机 config/workers.yaml 的并发上限 · GAP-20261010-23）──────
+//
+// 读面：把 `<仓根>/config/workers.yaml` 的 devices 段**按文件序**摊成一行一机 ——
+// hostname · max_workers · state（paused/active/unset）· 是否本机。此前该族只有写面 `set`、没有专用
+// 只读口，读并发上限得手翻 yaml（缺口 `GAP-20261010-23` · 残面 `GAP-20260927-218`）。
+// ★ 只读铁律：不写盘、✗ 不 exec、✗ 不碰 git、✗ 不改任何字节；取不到仓根 / 读不了件 ⇒ fail-closed
+//   不给结论（口径逐字照同族写面 `cmdAgentWorkersSetWrite`：`no_repo_root` / `config_unreadable` ⇒ 退 8）。
+
+// agentWorkersShowFields —— `agent workers show` 的字段（序即人面列序 · 与 `--json` **同源**；
+// 命令树 `fields:` 登记同一份）。state：`0` ⇒ `paused`（显式暂停派活）· 其它有值 ⇒ `active` ·
+// 缺 / 空 ⇒ `unset`（回退内置默认表）；local：本机命中的那一条 ⇒ `yes`（判据见 `agentWorkersLocalHost`）。
+var agentWorkersShowFields = []string{"hostname", "max_workers", "state", "local"}
+
+// agentWorkersLocalHost —— 从 devices 段的 hostname 列表里挑出**本机**命中的那一条原键。
+// 两级匹配（与 `agentDeviceMaxFor` / `workers_config.go` 的 `resolveByDevice` **同一口径**）：
+// 先精确（小写逐字相等）、再模糊（两侧非空 · `Contains` 任一方向；模糊键按字面序取第一个 ⇒ 迭代序确定）。
+// planHost() 取不到（空）⇒ 返回空串（**不猜**）。
+func agentWorkersLocalHost(hosts []string) string {
+	want := strings.ToLower(strings.TrimSpace(planHost()))
+	if want == "" {
+		return ""
+	}
+	for _, h := range hosts {
+		if h == want {
+			return want
+		}
+	}
+	hs := append([]string{}, hosts...)
+	sort.Strings(hs)
+	for _, h := range hs {
+		if h == "" {
+			continue
+		}
+		if strings.Contains(want, h) || strings.Contains(h, want) {
+			return h
+		}
+	}
+	return ""
+}
+
+// agentWorkersDeviceRows —— 从 workers.yaml 正文**按文件序**摊出 devices 段的逐行读数。
+func agentWorkersDeviceRows(text string) []map[string]string {
+	rows := []map[string]string{}
+	inDev := false
+	host, max := "", ""
+	haveMax := false
+	flush := func() {
+		if host == "" {
+			return
+		}
+		state := "unset"
+		if haveMax {
+			if strings.TrimSpace(max) == "0" {
+				state = "paused"
+			} else {
+				state = "active"
+			}
+		}
+		rows = append(rows, map[string]string{
+			"hostname": host, "max_workers": max, "state": state, "local": "no",
+		})
+	}
+	for _, l := range strings.Split(text, "\n") {
+		if l != "" && !strings.HasPrefix(l, " ") && !strings.HasPrefix(l, "\t") {
+			if strings.TrimSpace(l) == "devices:" {
+				inDev = true
+				continue
+			}
+			flush()
+			host, max, haveMax = "", "", false
+			inDev = false
+			continue
+		}
+		if !inDev {
+			continue
+		}
+		t := strings.TrimSpace(l)
+		if strings.HasPrefix(t, "- hostname:") {
+			flush()
+			host = strings.ToLower(yamlScalar(strings.TrimPrefix(t, "- hostname:")))
+			max, haveMax = "", false
+			continue
+		}
+		if host != "" && strings.HasPrefix(t, "max_workers:") {
+			max = yamlScalar(strings.TrimPrefix(t, "max_workers:"))
+			haveMax = true
+		}
+	}
+	flush()
+	// 本机标记（判据与写面/调度器同一口径 · 只标命中的那一条）
+	hosts := make([]string, 0, len(rows))
+	for _, r := range rows {
+		hosts = append(hosts, r["hostname"])
+	}
+	if lh := agentWorkersLocalHost(hosts); lh != "" {
+		for _, r := range rows {
+			if r["hostname"] == lh {
+				r["local"] = "yes"
+				break
+			}
+		}
+	}
+	return rows
+}
+
+// cmdAgentWorkersShow —— `zerg agent workers show`：读 `<仓根>/config/workers.yaml` 的 devices 段
+// （每机 hostname · max_workers · state · 是否本机）。只读 —— 不写盘、✗ 不 exec、✗ 不碰 git。
+func cmdAgentWorkersShow(inv *invocation, stdout, stderr io.Writer) int {
+	path := agentWorkersConfigPath()
+	if path == "" {
+		inv.setErr("blocked", "no_repo_root", "取不到仓根（不给结论）")
+		fmt.Fprintf(stderr, "%s: 取不到仓根 ⇒ 读不了并发上限，不给结论（退码 8）\n", progName)
+		return exitBlocked
+	}
+	text, err := os.ReadFile(path)
+	if err != nil {
+		inv.setErr("blocked", "config_unreadable", "workers.yaml 读不了")
+		fmt.Fprintf(stderr, "%s: 读不了 %s：%v ⇒ 不给结论（退码 8）\n", progName, path, err)
+		return exitBlocked
+	}
+	rows := agentWorkersDeviceRows(string(text))
+	if len(rows) == 0 {
+		fmt.Fprintf(stderr, "%s: %s 的 devices 段 0 条（**空结论** · 退码 0 · 只读：一个字节不写）\n", progName, path)
+	} else {
+		fmt.Fprintf(stderr, "%s: agent workers show · 落点 %s · devices %d 条（只读：一个字节不写）\n", progName, path, len(rows))
+	}
+	return listCmd(inv, stdout, stderr, agentWorkersShowFields, rows)
 }

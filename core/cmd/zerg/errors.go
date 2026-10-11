@@ -256,7 +256,7 @@ func helpErrors() string {
 }
 
 // errEnvelope 渲染带 `error` 块的包封（`items` 恒为空数组 —— 失败时没有结果面 · §九 M6 I3）。
-func errEnvelope(cmd *command, e *cliError) string {
+func errEnvelope(cmd *command, e *cliError, envMeta []envMetaKV) string {
 	kind := ""
 	if cmd != nil {
 		kind = cmd.kind
@@ -269,7 +269,7 @@ func errEnvelope(cmd *command, e *cliError) string {
 		src = cmd.endpoint
 	}
 	out := "{\"schema\":" + jstr(contractID) + ",\"kind\":" + jstr(kind) + ",\"items\":[]," +
-		"\"meta\":{\"count\":0,\"source\":" + jstr(src) + metaSubkeysJSON(e) + "},\"warnings\":[],\"truncated\":false"
+		"\"meta\":{\"count\":0,\"source\":" + jstr(src) + metaSubkeysJSON(e) + envMetaSubkeysJSON(envMeta) + "},\"warnings\":[],\"truncated\":false"
 	if ej := e.errJSON(); ej != "" {
 		out += ",\"error\":" + ej
 	}
@@ -295,7 +295,40 @@ func metaSubkeysJSON(e *cliError) string {
 	return b.String()
 }
 
+// envMetaSubkeysJSON —— 把调用方攒下的按需子键（`invocation.envMeta`）并入失败包封的 `meta`
+// （缺口 `GAP-20260928-164` · 本枚）。序即给定序；**旧子键名**（`envMetaReserved`）与空键 / 空值
+// 一律跳过 —— 与成功侧 `emitEnvelopeWith` 同一条口径（✗ 不覆盖旧子键、✗ 不新造第七键）。
+func envMetaSubkeysJSON(envMeta []envMetaKV) string {
+	if len(envMeta) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for _, kv := range envMeta {
+		if kv.Key == "" || kv.Val == "" {
+			continue
+		}
+		reserved := false
+		for _, r := range envMetaReserved {
+			if kv.Key == r {
+				reserved = true
+				break
+			}
+		}
+		if reserved {
+			continue
+		}
+		b.WriteString("," + jstr(kv.Key) + ":" + kv.Val)
+	}
+	return b.String()
+}
+
 // emitErrEnvelope 把错误块写进 stdout（**只有** `--json <字段>` 的失败路径会走到这里）。
-func emitErrEnvelope(stdout io.Writer, cmd *command, e *cliError) {
-	fmt.Fprint(stdout, errEnvelope(cmd, e))
+//
+// ★ 缺口 `GAP-20260928-164`（2026-10-10 · 本枚）：**收 `envMeta`** —— 失败包封此前只渲染
+// `cliError.Meta`（`metaSubkeysJSON(e)`），**不接调用方攒下的按需子键**（`inv.envMeta`）⇒
+// 查询面在错误 / 零命中档拿不到 `query` / `ledger_sha16` 一类查询上下文（`gap ls` 只能在自己
+// 那一支自出包封绕开）。本枚把 `envMeta` 并进失败包封的 `meta`：**只加格**，✗ 不动顶层六键 /
+// ✗ 不动既有子键语义 / ✗ 不进退码。
+func emitErrEnvelope(stdout io.Writer, cmd *command, e *cliError, envMeta []envMetaKV) {
+	fmt.Fprint(stdout, errEnvelope(cmd, e, envMeta))
 }

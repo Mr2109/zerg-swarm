@@ -44,7 +44,7 @@ func cmdIsolateRO(inv *invocation, stdout, stderr io.Writer) int {
 	}
 	tail := []string{}
 	if len(inv.orig) > 1 {
-		tail = inv.orig[1:]
+		tail = stripGlobalLeak(inv.orig[1:])
 	}
 	return gateCheckRunInproc(isolateRoGateMain, root, stdout, stderr, tail)
 }

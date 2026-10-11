@@ -85,6 +85,12 @@ func TestCodeFind_JSONCountHitCount(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &env); err != nil {
 		t.Fatalf("`--json count` 不是合法包封：%v · %q", err, out)
 	}
+	// ★ ② 冻结下限 = 3（棘轮 · 只许增不许减）：夹具 3 处命中 ⇒ `--json count` 条目现读 3
+	//   —— 结构静默变小（抽到的条目 < 3）⇒ 本格判红，✗ 不许静默绿。
+	cfN := len(env.Items)
+	if cfN < 3 {
+		t.Fatalf("② 冻结下限 3 被破：`--json count` 只抽到 %d 条（棘轮 · 只许增不许减）", cfN)
+	}
 	if len(env.Items) != humanRows {
 		t.Errorf("`--json count` 的条目数 %d ≠ 人面列出的行数 %d", len(env.Items), humanRows)
 	}

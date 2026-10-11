@@ -3,7 +3,7 @@
 // 本件不新增命令（M20 的判据全落在**既有命令的行为**上）；它做两件事：
 //
 //	① 把 M20 的条文落成**一处可查的自描述面**（`zerg help offline`）：
-//	   `O1`–`O8` 八条 + 例外清单 `F-1`–`F-4` + 退码面（`kind=unreachable` · `detail` 五值 · `where`）。
+//	   `O1`–`O8` 八条 + 例外清单 `F-1`–`F-5` + 退码面（`kind=unreachable` · `detail` 五值 · `where`）。
 //	② 把**例外清单与具体命令对上**（§十二 `P-116` 的「定案」那一格）：
 //	   哪些命令**允许**不经主控 —— 逐条点名，且写明 `F-4`（零网络的本机事实面）**不进**例外清单
 //	   （它压根不碰网络 ⇒ 谈不上"例外"）。
@@ -25,13 +25,14 @@ type offlineExceptionRow struct {
 	Why     string
 }
 
-// offlineExceptions —— `F-1`–`F-4` 逐条与**具体命令**对上（本件就是那一处真源）。
+// offlineExceptions —— `F-1`–`F-5` 逐条与**具体命令**对上（本件就是那一处真源）。
 func offlineExceptions() []offlineExceptionRow {
 	return []offlineExceptionRow{
 		{"F-1", "zerg agent bootstrap <机>", "子端引导：目标机上还没有子端可经主控 —— 引导面必须独立（危险档 · 本版未开放）"},
 		{"F-2", "zerg agent ping <机> --direct <host:port>", "探活/诊断：**探的就是「通不通」**，经主控就测不出链路；输出必带回显 `via=direct`"},
 		{"F-3", "zerg update · zerg core update", "主控自身换件/自更新：要换的正是主控 —— 它不能要求主控先可用（危险档 · 本版未开放）"},
 		{"F-4", "（不得列为例外）zerg version / help / context ls / doctor --local", "零网络的本机事实面：它们**压根不碰网络** ⇒ F-4 是「不用例外」的说明，**不进**例外清单"},
+		{"F-5", "zerg agent restart <远端机>", "远端子端重启：`ssh` · **只做重启**、✗ 不提权/不喂口令（edge-node 走既有 polkit 免密格、mini 走用户域 `launchctl`）"},
 	}
 }
 
@@ -53,7 +54,7 @@ func helpOffline() string {
 	b.WriteString("  O6 不许重复报同一句（同一次调用里同一个错只打一次）。\n")
 	b.WriteString("  O7 退码面：`kind=unreachable` · `detail` ∈ {" + strings.Join(offlineDetailValues, " / ") + "}（§十五.5 · M20:347）· `where` ∈ `core|agent` · 退码 `12`。\n")
 	b.WriteString("  O8 离线可跑白名单**四条**：`version` · `help` · `context ls|show` · `doctor --local`。\n\n")
-	b.WriteString("例外清单（`F-1`–`F-4` · **只有这四条** · 每条都要显式命令或旗标 + 输出回显 `via`）：\n")
+	b.WriteString("例外清单（`F-1`–`F-5` · **只有这五条** · 每条都要显式命令或旗标 + 输出回显 `via`）：\n")
 	for _, r := range offlineExceptions() {
 		fmt.Fprintf(&b, "  %-4s %-46s %s\n", r.ID, r.Command, r.Why)
 	}

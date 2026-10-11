@@ -580,8 +580,18 @@ func cpmBuildPatterns() []cpmPat {
 var (
 	cpmEncodedMarkOn = true
 	cpmTreeJudgeOn   = true
-	cpmJSONFields    []string
 )
+
+// cpmJSONFields —— 本门机器面字段表（**唯一真源**：`--json <字段>` 的装包与拒收同读这一处）。
+// 治缺口 GAP-20260926-50：本门此前无机读面（`--json` 按 Q-176 一律拒收）⇒ 现给机读出口。
+// 两档各占一部分键：主判面（A/B/C）13 键 ＋ D 档产出树面；`--json <字段>` 只出所选键，未知 ⇒ rc=2。
+// ★ 只加机读出口：判定面 / 人面文案 / 退码一字不动（新旗标走同族先例的可选字段层 · ✗ 不进冻结帮助表）。
+var cpmJSONFields = []string{
+	"root", "table", "mode", "rc",
+	"rows", "public_yes", "public_no", "face", "face_domains",
+	"dangling", "missing", "private", "encoded",
+	"tree", "no_in", "no_absent", "yes_in", "yes_absent", "unregistered", "self_in",
+}
 
 var (
 	cpmB64Cand    = regexp.MustCompile("[A-Za-z0-9+/]{12,}={0,2}")
@@ -962,7 +972,7 @@ func cpmCtxDump(out io.Writer, title string, items []string, maxExamples int) {
 }
 
 // cpmRun = 判一遍 ⇒ 退出码（0 全绿 · 1 违规 · 2 表不合规/空转）。
-func cpmRun(root string, table *string, maxExamples int, out io.Writer) int {
+func cpmRun(root string, table *string, maxExamples int, out io.Writer, jr *cpmJSONReq) int {
 	t := ""
 	if table == nil {
 		t = cpmPyJoin(root, cpmTableRel)
@@ -1006,20 +1016,16 @@ func cpmRun(root string, table *string, maxExamples int, out io.Writer) int {
 			missing = append(missing, rel)
 		}
 	}
-	type privHit struct {
-		rel, why, sample string
-		ln               int
-	}
-	var private, encoded []privHit
+	var private, encoded []cpmPrivHit
 	sort.Strings(yes)
 	for _, rel := range yes {
 		p := cpmPyJoin(root, rel)
 		for _, h := range cpmScanPrivate(p) {
-			private = append(private, privHit{rel, h.why, h.sample, h.ln})
+			private = append(private, cpmPrivHit{rel, h.why, h.sample, h.ln})
 		}
 		if cpmEncodedMarkOn {
 			for _, h := range cpmScanEncoded(p) {
-				encoded = append(encoded, privHit{rel, h.why, h.sample, h.ln})
+				encoded = append(encoded, cpmPrivHit{rel, h.why, h.sample, h.ln})
 			}
 		}
 	}
@@ -1043,6 +1049,10 @@ func cpmRun(root string, table *string, maxExamples int, out io.Writer) int {
 	}
 	cpmCtxDump(out, "B3e public=yes 面里的**编码变形**（解码成功且解出命中上面同一张 `PRIVATE_PATTERNS`）", b3e, maxExamples)
 
+	lineOf := map[string]int{}
+	for _, r := range rows {
+		lineOf[r.rel] = r.ln
+	}
 	bad := len(dangling) + len(missing) + len(private) + len(encoded)
 	fmt.Fprintf(out, "\n合计：悬空 %d · 漏登记 %d · 私有面 %d · 编码变形 %d\n",
 		len(dangling), len(missing), len(private), len(encoded))
@@ -1050,10 +1060,18 @@ func cpmRun(root string, table *string, maxExamples int, out io.Writer) int {
 		fmt.Fprintf(out, "⇒ 违规 %d 处（rc=1）：修表或修件 —— ① 悬空 ⇒ 改表；② 漏登记 ⇒ 补表（附理由）；"+
 			"③ 私有面 ⇒ 把该件标 public=no，或去掉私有面（**不许**放宽本门的模式表来凑绿）；"+
 			"④ 编码变形 ⇒ 同上，**不许**给编码形态加豁免白名单来凑绿\n", bad)
+		if jr != nil && jr.given {
+			fmt.Fprintln(out, cpmJSONMain(root, t, len(rows), len(yes), face, faceDoms, dangling, missing,
+				private, encoded, lineOf, 1, jr.val))
+		}
 		return 1
 	}
 	fmt.Fprintf(out, "⇒ 全绿（rc=0）：%d 件已登记 · public=yes 面 %d 件未发现私有面 · 编码变形 0 处\n",
 		len(rows), len(yes))
+	if jr != nil && jr.given {
+		fmt.Fprintln(out, cpmJSONMain(root, t, len(rows), len(yes), face, faceDoms, dangling, missing,
+			private, encoded, lineOf, 0, jr.val))
+	}
 	return 0
 }
 
@@ -1093,7 +1111,7 @@ func cpmInDomains(rel string, face []string) bool {
 	return false
 }
 
-func cpmRunTree(tree string, table *string, maxExamples int, out io.Writer, defaultRoot string) int {
+func cpmRunTree(tree string, table *string, maxExamples int, out io.Writer, defaultRoot string, jr *cpmJSONReq) int {
 	t := ""
 	if table == nil {
 		t = cpmPyJoin(defaultRoot, cpmTableRel)
@@ -1127,24 +1145,20 @@ func cpmRunTree(tree string, table *string, maxExamples int, out io.Writer, defa
 	for _, f := range treeAll {
 		inTree[f] = true
 	}
-	type rowRef struct {
-		ln       int
-		rel, why string
-	}
-	var noIn, noAbsent, yesIn, yesAbsent []rowRef
+	var noIn, noAbsent, yesIn, yesAbsent []cpmRowRef
 	for _, r := range rows {
 		inside := inTree[r.rel]
 		if r.pub == "no" {
 			if inside {
-				noIn = append(noIn, rowRef{r.ln, r.rel, r.why})
+				noIn = append(noIn, cpmRowRef{r.ln, r.rel, r.why})
 			} else {
-				noAbsent = append(noAbsent, rowRef{r.ln, r.rel, r.why})
+				noAbsent = append(noAbsent, cpmRowRef{r.ln, r.rel, r.why})
 			}
 		} else {
 			if inside {
-				yesIn = append(yesIn, rowRef{r.ln, r.rel, r.why})
+				yesIn = append(yesIn, cpmRowRef{r.ln, r.rel, r.why})
 			} else {
-				yesAbsent = append(yesAbsent, rowRef{r.ln, r.rel, r.why})
+				yesAbsent = append(yesAbsent, cpmRowRef{r.ln, r.rel, r.why})
 			}
 		}
 	}
@@ -1209,9 +1223,17 @@ func cpmRunTree(tree string, table *string, maxExamples int, out io.Writer, defa
 			"   不计失败项、不改退出码；逐域收敛到 0 之后再**单独一笔**升 `tri`）\n"+
 			"   命中之后只有两条路：① 改表（承认它该发）② 改处置（收进排除清单 / EXCLUDES）\n"+
 			"   —— **不许**放宽本判据来凑绿 ✗（照设计稿 §3.3 纪律 3）\n", hits)
+		if jr != nil && jr.given {
+			fmt.Fprintln(out, cpmJSONTree(defaultRoot, t, tree, len(rows), len(yesIn)+len(yesAbsent),
+				len(noIn)+len(noAbsent), face, noIn, noAbsent, yesIn, yesAbsent, unregistered, selfIn, 1, jr.val))
+		}
 		return 1
 	}
 	fmt.Fprint(out, "⇒ 全绿（rc=0）：表说 no 的件一件都不在产出树里 · 表说 yes 的件全在 · 表自身不在产出树里\n")
+	if jr != nil && jr.given {
+		fmt.Fprintln(out, cpmJSONTree(defaultRoot, t, tree, len(rows), len(yesIn)+len(yesAbsent),
+			len(noIn)+len(noAbsent), face, noIn, noAbsent, yesIn, yesAbsent, unregistered, selfIn, 0, jr.val))
+	}
 	return 0
 }
 
@@ -1267,13 +1289,13 @@ func cpmFixtureTree(tmp, tableText string, treeFiles [][2]string) (string, strin
 
 func cpmRunQuiet(root string, table string) (int, string) {
 	var buf strings.Builder
-	rc := cpmRun(root, &table, 20, &buf)
+	rc := cpmRun(root, &table, 20, &buf, nil)
 	return rc, buf.String()
 }
 
 func cpmRunTreeQuiet(tree string, table string) (int, string) {
 	var buf strings.Builder
-	rc := cpmRunTree(tree, &table, 20, &buf, cpmDefaultRoot())
+	rc := cpmRunTree(tree, &table, 20, &buf, cpmDefaultRoot(), nil)
 	return rc, buf.String()
 }
 
@@ -1313,7 +1335,7 @@ func cpmSelftest(out io.Writer) int {
 		"scripts/build/good.sh\tyes\tA 类：构建/启动链（合成夹具）\n" +
 		"scripts/gates/gate.sh\tno\tB 类：门禁（合成夹具）\n"
 	dirtyNo := "#!/bin/sh\n# 私有面样例（public=no 面 —— 本门**不判**）\n" +
-		"# <worker-ip> /Users/" + "Mr2109/x ghp_AAAAAAAAAAAAAAAAAAAAAAAA\n"
+		"# <worker-ip> /Users/" + "Mr2109/x ghp_" + "AAAAAAAAAAAAAAAAAAAAAAAA" + "\n"
 
 	tmp, err := os.MkdirTemp("", "pubmarks-selftest-")
 	if err != nil {
@@ -1363,7 +1385,7 @@ func cpmSelftest(out io.Writer) int {
 		[]string{"Gitee 镜像账号", "机群机型名 Mr2109"}, mk(r4, t4))
 
 	// ⑤ must-fail：public=yes 面塞令牌 ⇒ 必红
-	r5, t5 := base([][2]string{{"scripts/build/good.sh", "#!/bin/sh\nexport T=ghp_AAAAAAAAAAAAAAAAAAAAAAAA\n"}}, nil, nil)
+	r5, t5 := base([][2]string{{"scripts/build/good.sh", "#!/bin/sh\nexport T=ghp_" + "AAAAAAAAAAAAAAAAAAAAAAAA" + "\n"}}, nil, nil)
 	caseN("⑤ must-fail：public=yes 面塞 GitHub 令牌 ⇒ 红", 1, []string{"GitHub 令牌", "ghp_"}, mk(r5, t5))
 
 	// ⑥ 悬空登记 ⇒ 红
@@ -1555,41 +1577,280 @@ func cpmSelftest(out io.Writer) int {
 	fmt.Fprintf(out, "  %s ㉝ 反向控制：关掉编码变形格 ⇒ ㉙ 那棵树退回绿（rc=%d）—— 证明 ㉙ 不是恒红也不是恒绿\n",
 		map[bool]string{true: "✓", false: "✗"}[g33], rc33)
 
-	fmt.Fprintf(out, "  自证用例：%d 条 · 通过 %d 条（断言用例条数 %d，少跑即失效）\n", total, ok, 33)
-	if ok != total || total != 33 {
+	// ㉞–㊱：机读面（缺口 GAP-20260926-50 · `--json <字段>` 子集选择 ＋ 未知字段 ⇒ rc=2）
+	fmt.Fprint(out, "[机读面档] `--json <字段>` 子集选择 · 未知字段 ⇒ rc=2 印可选字段表（Q-176 形态）\n")
+	captureE := func(argv []string) (int, string, string) {
+		var ob, eb strings.Builder
+		rc := checkPublicMarksGateMain(&ob, &eb, argv)
+		return rc, ob.String(), eb.String()
+	}
+	rc34, out34, _ := captureE([]string{"--root", r1, "--table", t1, "--json"})
+	total++
+	g34 := rc34 == 0 && strings.Contains(out34, "\"mode\": \"judge\"") &&
+		strings.Contains(out34, "\"missing\": [") && strings.Contains(out34, "\"rc\": 0")
+	if g34 {
+		ok++
+	}
+	fmt.Fprintf(out, "  %s ㉞ 机读面 · 正控：`--json` ⇒ rc=0 ＋ payload（mode=judge · rc=0 · missing 在场）（实测 rc=%d）\n",
+		map[bool]string{true: "✓", false: "✗"}[g34], rc34)
+
+	rc35, out35, _ := captureE([]string{"--root", r1, "--table", t1, "--json", "root"})
+	total++
+	g35 := rc35 == 0 && strings.Contains(out35, "\"root\":") && !strings.Contains(out35, "\"missing\":")
+	if g35 {
+		ok++
+	}
+	fmt.Fprintf(out, "  %s ㉟ 机读面 · 字段选择：`--json root` ⇒ 只出 root 键（真收字段）（实测 rc=%d）\n",
+		map[bool]string{true: "✓", false: "✗"}[g35], rc35)
+
+	rc36, _, err36 := captureE([]string{"--root", r1, "--table", t1, "--json", "nope,root"})
+	total++
+	g36 := rc36 == 2 && strings.Contains(err36, "不认的字段名")
+	if g36 {
+		ok++
+	}
+	fmt.Fprintf(out, "  %s ㊱ 机读面 · must-fail：`--json nope,root` ⇒ rc=2 ＋「不认的字段名」（实测 rc=%d）\n",
+		map[bool]string{true: "✓", false: "✗"}[g36], rc36)
+
+	fmt.Fprintf(out, "  自证用例：%d 条 · 通过 %d 条（断言用例条数 %d，少跑即失效）\n", total, ok, 36)
+	if ok != total || total != 36 {
 		return 1
 	}
 	return 0
 }
 
-// ── 缺口 Q-176：本门无机器读面 ⇒ 给了 `--json` 不许沉默 ────────────────────────────────
+// ── 缺口 GAP-20260926-50（原 Q-176 拒收面）：给本门机读出口 `--json <字段>` ──────────────────
+//
+// 口径逐字照同族正解 `check_stale_frozen.go` 的 `csfRefuseUnknownJSONFields`：
+//   · `--json`（无值 / 后随 `-`）⇒ 出全量 payload，不拒；
+//   · `--json <字段表>`（逗号分隔）⇒ 只出所选键（真收字段）；
+//   · 含**不认的名** ⇒ rc=2 ＋ 印可选字段表（**字段名打错 ≠ 零命中** —— 两态在机器面上必须分得开）。
+// ★ 只加机读出口：本门判定面 / 人面文案 / 退码一字不动（新旗标 ✗ 不进冻结帮助表）。
 
-func cpmRefuseJSON(argv []string, stderr io.Writer) (int, bool) {
-	var hits []string
-	for _, x := range argv {
-		if x == "--json" || strings.HasPrefix(x, "--json=") {
-			hits = append(hits, x)
+// cpmJSONReq —— `--json` 的调用意图（given=false ⇒ 人面档，不出 payload）。
+type cpmJSONReq struct {
+	given bool
+	val   string
+}
+
+// cpmJSONKV —— 机器面一格（k=键 · v=已序列化好的 JSON 字面）。
+type cpmJSONKV struct{ k, v string }
+
+// cpmJSONStr —— JSON 字符串字面（ensure_ascii=False 的转义面）。
+func cpmJSONStr(s string) string {
+	var b strings.Builder
+	b.WriteByte('"')
+	for _, c := range s {
+		switch c {
+		case '"':
+			b.WriteString("\\\"")
+		case '\\':
+			b.WriteString("\\\\")
+		case '\n':
+			b.WriteString("\\n")
+		case '\r':
+			b.WriteString("\\r")
+		case '\t':
+			b.WriteString("\\t")
+		case '\b':
+			b.WriteString("\\b")
+		case '\f':
+			b.WriteString("\\f")
+		default:
+			if c < 0x20 {
+				b.WriteString(fmt.Sprintf("\\u%04x", c))
+			} else {
+				b.WriteRune(c)
+			}
 		}
 	}
-	if len(hits) == 0 {
-		return 0, false
+	b.WriteByte('"')
+	return b.String()
+}
+
+func cpmJSONInt(n int) string { return strconv.Itoa(n) }
+
+func cpmJSONBool(b bool) string {
+	if b {
+		return "true"
 	}
-	quoted := make([]string, 0, len(hits))
-	for _, h := range hits {
-		quoted = append(quoted, "`"+h+"`")
+	return "false"
+}
+
+func cpmJSONStrArr(xs []string) string {
+	parts := make([]string, len(xs))
+	for i, x := range xs {
+		parts[i] = cpmJSONStr(x)
 	}
-	fmt.Fprintf(stderr, "⛔ 本门无机器读面：%s 在本门**未实现**（缺口 Q-176）\n", strings.Join(quoted, " · "))
-	fields := "无（本门只出人读面）"
-	if len(cpmJSONFields) > 0 {
-		qs := make([]string, 0, len(cpmJSONFields))
-		for _, f := range cpmJSONFields {
-			qs = append(qs, "`"+f+"`")
+	return "[" + strings.Join(parts, ", ") + "]"
+}
+
+// cpmJSONAssemble —— 全量键序 = all 的给定序（= cpmJSONFields 里该档在场的键序）；`fields` 非空
+// ⇒ 只出所选键（按用户给的字段序）；未知名已由 cpmRefuseUnknownJSONFields 先拦（此处防御性跳过）。
+func cpmJSONAssemble(all []cpmJSONKV, fields string) string {
+	byKey := map[string]string{}
+	for _, kv := range all {
+		byKey[kv.k] = kv.v
+	}
+	sel := all
+	if fields != "" {
+		sel = nil
+		for _, f := range strings.Split(fields, ",") {
+			k := strings.TrimSpace(f)
+			if k == "" {
+				continue
+			}
+			if v, ok := byKey[k]; ok {
+				sel = append(sel, cpmJSONKV{k, v})
+			}
 		}
-		fields = strings.Join(qs, " · ")
 	}
-	fmt.Fprintf(stderr, "   字段表：%s\n", fields)
-	fmt.Fprint(stderr, "⇒ 用法错（rc=2）：**机器面缺 ≠ 零命中** —— 两态不许同形\n")
-	return 2, true
+	var b strings.Builder
+	b.WriteString("{")
+	for i, kv := range sel {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString("\"" + kv.k + "\": " + kv.v)
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
+// cpmPrivHit —— public=yes 面命中的一格（私有面 / 编码变形共用）。
+type cpmPrivHit struct {
+	rel, why, sample string
+	ln               int
+}
+
+// cpmJSONPrivHits —— 命中列表装包（结构化，✗ 不是人面那行字符串 ⇒ 机器可直接抠）。
+func cpmJSONPrivHits(hs []cpmPrivHit) string {
+	out := make([]string, 0, len(hs))
+	for _, h := range hs {
+		out = append(out, "{\"rel\": "+cpmJSONStr(h.rel)+", \"line\": "+cpmJSONInt(h.ln)+
+			", \"why\": "+cpmJSONStr(h.why)+", \"sample\": "+cpmJSONStr(h.sample)+"}")
+	}
+	return "[" + strings.Join(out, ", ") + "]"
+}
+
+// cpmJSONDangling —— B1 悬空登记装包（rel ＋ 表行号）。
+func cpmJSONDangling(rels []string, lineOf map[string]int) string {
+	out := make([]string, 0, len(rels))
+	for _, r := range rels {
+		out = append(out, "{\"rel\": "+cpmJSONStr(r)+", \"table_line\": "+cpmJSONInt(lineOf[r])+"}")
+	}
+	return "[" + strings.Join(out, ", ") + "]"
+}
+
+// cpmRowRef —— D 档行引用（rel ＋ 表行号 ＋ 理由）。
+type cpmRowRef struct {
+	ln       int
+	rel, why string
+}
+
+// cpmJSONRowRefs —— D 档行引用装包；`withOff` ⇒ 附「面外件」标记（D1 档用）。
+func cpmJSONRowRefs(rows []cpmRowRef, withOff bool, face []string) string {
+	out := make([]string, 0, len(rows))
+	for _, x := range rows {
+		obj := "{\"rel\": " + cpmJSONStr(x.rel) + ", \"table_line\": " + cpmJSONInt(x.ln) + ", \"why\": " + cpmJSONStr(x.why)
+		if withOff {
+			obj += ", \"off_domain\": " + cpmJSONBool(!cpmInDomains(x.rel, face))
+		}
+		obj += "}"
+		out = append(out, obj)
+	}
+	return "[" + strings.Join(out, ", ") + "]"
+}
+
+// cpmJSONMain —— 主判面 payload（键序 = cpmJSONFields 前 13 键）。
+func cpmJSONMain(root, table string, nRows, nYes int, face []string, faceDoms, dangling, missing []string,
+	private, encoded []cpmPrivHit, lineOf map[string]int, rc int, fields string) string {
+	all := []cpmJSONKV{
+		{"root", cpmJSONStr(root)},
+		{"table", cpmJSONStr(table)},
+		{"mode", cpmJSONStr("judge")},
+		{"rc", cpmJSONInt(rc)},
+		{"rows", cpmJSONInt(nRows)},
+		{"public_yes", cpmJSONInt(nYes)},
+		{"public_no", cpmJSONInt(nRows - nYes)},
+		{"face", cpmJSONInt(len(face))},
+		{"face_domains", cpmJSONStrArr(faceDoms)},
+		{"dangling", cpmJSONDangling(dangling, lineOf)},
+		{"missing", cpmJSONStrArr(missing)},
+		{"private", cpmJSONPrivHits(private)},
+		{"encoded", cpmJSONPrivHits(encoded)},
+	}
+	return cpmJSONAssemble(all, fields)
+}
+
+// cpmJSONTree —— D 档产出树面 payload（键序 = 公共 4 键 ＋ cpmJSONFields 后段 7 键）。
+func cpmJSONTree(root, table, tree string, nRows, nYes, nNo int, face []string,
+	noIn, noAbsent, yesIn, yesAbsent []cpmRowRef, unregistered []string, selfIn bool, rc int, fields string) string {
+	all := []cpmJSONKV{
+		{"root", cpmJSONStr(root)},
+		{"table", cpmJSONStr(table)},
+		{"mode", cpmJSONStr("judge-tree")},
+		{"rc", cpmJSONInt(rc)},
+		{"tree", cpmJSONStr(tree)},
+		{"rows", cpmJSONInt(nRows)},
+		{"public_yes", cpmJSONInt(nYes)},
+		{"public_no", cpmJSONInt(nNo)},
+		{"no_in", cpmJSONRowRefs(noIn, true, face)},
+		{"no_absent", cpmJSONRowRefs(noAbsent, false, nil)},
+		{"yes_in", cpmJSONRowRefs(yesIn, false, nil)},
+		{"yes_absent", cpmJSONRowRefs(yesAbsent, false, nil)},
+		{"unregistered", cpmJSONStrArr(unregistered)},
+		{"self_in", cpmJSONBool(selfIn)},
+	}
+	return cpmJSONAssemble(all, fields)
+}
+
+// cpmRefuseUnknownJSONFields —— `--json <字段>` 里有不认的名 ⇒ rc=2 ＋ 印可选字段表（Q-176 口径）。
+// 与同族判据件同形：字段名打错 ≠ 零命中。★ 先于 argparse 判；`--json`（无值 / 后随 `-`）⇒ 收全量，不拒。
+func cpmRefuseUnknownJSONFields(stderr io.Writer, argv []string) *int {
+	var want []string
+	for i, x := range argv {
+		if x == "--json" {
+			v := ""
+			if i+1 < len(argv) && !strings.HasPrefix(argv[i+1], "-") {
+				v = argv[i+1]
+			}
+			want = append(want, strings.Split(v, ",")...)
+		} else if strings.HasPrefix(x, "--json=") {
+			want = append(want, strings.Split(strings.SplitN(x, "=", 2)[1], ",")...)
+		}
+	}
+	var fields []string
+	for _, f := range want {
+		if fs := strings.TrimSpace(f); fs != "" {
+			fields = append(fields, fs)
+		}
+	}
+	known := map[string]bool{}
+	for _, f := range cpmJSONFields {
+		known[f] = true
+	}
+	var bad []string
+	for _, f := range fields {
+		if !known[f] {
+			bad = append(bad, f)
+		}
+	}
+	if len(bad) == 0 {
+		return nil
+	}
+	quoted := func(xs []string) string {
+		out := make([]string, 0, len(xs))
+		for _, x := range xs {
+			out = append(out, "`"+x+"`")
+		}
+		return strings.Join(out, " · ")
+	}
+	fmt.Fprintf(stderr, "⛔ `--json` 不认的字段名：%s\n", quoted(bad))
+	fmt.Fprintf(stderr, "   可选字段表：%s\n", quoted(cpmJSONFields))
+	fmt.Fprint(stderr, "⇒ 用法错（rc=2）：**字段名打错 ≠ 零命中** —— 两态在机器面上必须分得开\n")
+	rc := 2
+	return &rc
 }
 
 // ── 默认根推导（声明 (a)：无 `__file__` ⇒ 从 cwd 上溯找含标记表的目录）────────────────────
@@ -1626,13 +1887,15 @@ const cpmHelpBody = "\noptional arguments:\n" +
 
 // checkPublicMarksGateMain = 本判据的 Go 入口（argv 不含程序名；stdout/stderr 由调用方给）。
 func checkPublicMarksGateMain(stdout, stderr io.Writer, argv []string) int {
-	if rc, hit := cpmRefuseJSON(argv, stderr); hit {
-		return rc
+	if rc := cpmRefuseUnknownJSONFields(stderr, argv); rc != nil {
+		return *rc
 	}
 	root := cpmDefaultRoot()
 	var table, tree *string
 	maxExamples := 20
 	selftest := false
+	jsonGiven := false
+	jsonVal := ""
 	i := 0
 	errf := func(msg string) int {
 		fmt.Fprint(stderr, cpmUsage)
@@ -1684,6 +1947,16 @@ func checkPublicMarksGateMain(stdout, stderr io.Writer, argv []string) int {
 				return errf(fmt.Sprintf("argument --max-examples: invalid int value: %s", cpmPyRepr(v)))
 			}
 			maxExamples = n
+		case a == "--json" || strings.HasPrefix(a, "--json="):
+			jsonGiven = true
+			if eq := strings.IndexByte(a, '='); eq >= 0 {
+				jsonVal = a[eq+1:]
+			} else if i+1 < len(argv) && !strings.HasPrefix(argv[i+1], "-") {
+				i++
+				jsonVal = argv[i]
+			} else {
+				jsonVal = ""
+			}
 		case a == "--self-test" || a == "--selftest":
 			selftest = true
 		default:
@@ -1695,9 +1968,13 @@ func checkPublicMarksGateMain(stdout, stderr io.Writer, argv []string) int {
 		fmt.Fprint(stdout, "── check-public-marks.py 自证（含 must-fail 负控 · 合成夹具）\n")
 		return cpmSelftest(stdout)
 	}
+	var jr *cpmJSONReq
+	if jsonGiven {
+		jr = &cpmJSONReq{given: true, val: jsonVal}
+	}
 	if tree != nil {
 		fmt.Fprint(stdout, "── check-public-marks.py D 档（产出树 ⨯ 标记表 · **只报告**：命中 rc=1 不改退出码）\n")
-		return cpmRunTree(*tree, table, maxExamples, stdout, root)
+		return cpmRunTree(*tree, table, maxExamples, stdout, root, jr)
 	}
-	return cpmRun(root, table, maxExamples, stdout)
+	return cpmRun(root, table, maxExamples, stdout, jr)
 }

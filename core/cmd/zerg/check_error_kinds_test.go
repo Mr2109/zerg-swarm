@@ -119,3 +119,26 @@ func TestCheckErrorKindsGatePort(t *testing.T) {
 		t.Fatalf("--self-test 失败：得 rc=%d out=%q", rcST, outST)
 	}
 }
+
+// TestCheckErrorKindsReadFailTeeth —— B 类读失败不再静默的回归牙：R3 扫描面里一件 .go 锁成
+// chmod 000 ⇒ 登记面（cekReadFails）必响：rc=2 + stderr BLOCKED 头 + 逐件点名。
+// 删回静默（原 os.ReadFile 失败即 continue）本用例必红。
+func TestCheckErrorKindsReadFailTeeth(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root 无视权限位（chmod 000 仍可读）⇒ 跳过")
+	}
+	good := "var errorKinds = []errorKindRow{\n\t{\"conflict\", 14, false, \"r\", \"m\", \"s\"},\n}\n"
+	root := cekFixture(t, good, map[string]string{
+		"usage_ok.go": "package main\nfunc f(){ setErr(\"conflict\") }\n",
+		"locked.go":   "package main\nfunc z(){ setErr(\"conflict\") }\n",
+	})
+	locked := filepath.Join(root, "core", "cmd", "zerg", "locked.go")
+	if err := os.Chmod(locked, 0o000); err != nil {
+		t.Fatalf("chmod 000 失败：%v", err)
+	}
+	defer func() { _ = os.Chmod(locked, 0o644) }()
+	rc, out, errb := cekRun(t, root)
+	if rc != 2 || !strings.Contains(errb, "BLOCKED") || !strings.Contains(errb, "core/cmd/zerg/locked.go") {
+		t.Fatalf("读不到件应 rc=2 + BLOCKED 点名 locked.go，得 rc=%d out=%q err=%q", rc, out, errb)
+	}
+}

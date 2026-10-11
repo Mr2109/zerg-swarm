@@ -585,6 +585,21 @@ func iaudMainWithRoot(stdout, stderr io.Writer, root string, argv []string) int 
 	if len(argv) > 0 {
 		mode = argv[0]
 	}
+	// ★ 8 的静默吞（本单）：补回 py 的**严格解析面** —— 位置参（模式）可任意（`bogus` 仍只出
+	// 头两行 · rc=0，既有测试件 `TestI18nAuditUnknownModeHeaderOnly` 钉着），但**旗标一律要登记**：
+	// py 侧 argparse 对未登记选项报「unrecognized arguments」退 2，本 Go 真搬此前**丢了这一档**
+	// ⇒ `zerg ui i18n-audit --nosuch` 被读成「模式 = --nosuch」⇒ 两个 if 都不进 ⇒ **静默 rc=0**。
+	// 现补：argv 出现旗标形态、或多于一个位置参 ⇒ 用法错退 2（✗ 不改正常输出/语义）。
+	for i, a := range argv {
+		if strings.HasPrefix(a, "-") && a != "-" {
+			fmt.Fprintf(stderr, "i18n_audit: 未登记旗标 %q（本命令只收位置参 classify|keys|all）⇒ 退码 2\n", a)
+			return 2
+		}
+		if i >= 1 {
+			fmt.Fprintf(stderr, "i18n_audit: 多余参数 %q（本命令只收一个位置参 classify|keys|all）⇒ 退码 2\n", a)
+			return 2
+		}
+	}
 
 	outdir := strings.TrimSpace(os.Getenv("ZERG_I18N_AUDIT_OUT"))
 	if outdir == "" {

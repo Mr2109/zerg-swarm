@@ -25,6 +25,10 @@ import (
 // cicgTestPython —— 测件里 python3 一律钉这根（GAP-20261001-61）。
 const cicgTestPython = "/usr/bin/python3"
 
+// cicgThreeGapsFloor —— ② 三条缺项的**冻结下限**（棘轮 · 只许增不许减；本值 = 当次现读）。
+// 三条缺项现读 3 条（`check_public_ci_green.go` 的 `cicgThreeGaps`）⇒ 结构静默变小（< 3）即判红。
+const cicgThreeGapsFloor = 3
+
 func cicgRunMain(t *testing.T, argv ...string) (int, string, string) {
 	t.Helper()
 	var out, errb bytes.Buffer
@@ -208,6 +212,10 @@ func TestCICGThreeGapsLiteral(t *testing.T) {
 		"② `warnings[]` 恒空",
 		"③ attestation 今天没出（源件逐字「将来若要出 attestation，也在本 job 内单独加」）",
 	}
+	// ② 冻结下限（棘轮 · 只许增）：三条缺项条数 < 当次现读数下限 3 ⇒ 判红（结构静默变小）。
+	if n := len(cicgThreeGaps); n < cicgThreeGapsFloor {
+		t.Fatalf("三条缺项条数 %d < 冻结下限 %d（棘轮只许增 · 结构静默变小）", n, cicgThreeGapsFloor)
+	}
 	if len(cicgThreeGaps) != len(want) {
 		t.Fatalf("三条缺项条数=%d（期望 %d）", len(cicgThreeGaps), len(want))
 	}
@@ -339,6 +347,10 @@ func TestCICGJSONFaceShape(t *testing.T) {
 	got, ok := m["rc"].(float64)
 	if !ok || int(got) != rc {
 		t.Fatalf("JSON 面 rc=%v 与文本面 rc=%d 不一致", m["rc"], rc)
+	}
+	// ② 冻结下限（棘轮 · 只许增）：三条缺项条数 < 当次现读数下限 3 ⇒ 判红（结构静默变小）。
+	if n := len(cicgThreeGaps); n < cicgThreeGapsFloor {
+		t.Fatalf("三条缺项条数 %d < 冻结下限 %d（棘轮只许增 · 结构静默变小）", n, cicgThreeGapsFloor)
 	}
 	if n, ok := m["gaps_missing"].(float64); !ok || int(n) != len(cicgThreeGaps) {
 		t.Fatalf("gaps_missing=%v（期望 %d）", m["gaps_missing"], len(cicgThreeGaps))

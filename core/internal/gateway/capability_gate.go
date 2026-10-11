@@ -165,10 +165,10 @@ func (g *Gateway) gateRequiredCapabilities(model, engine string, required []stri
 // engineForModelHost 找 (model, host) 候选中该 host 的引擎（fleet backend，已规范化）。
 // 找不到返回 ""（缺 = 未知，由门槛按"目标引擎未知"fail-closed）。
 func (g *Gateway) engineForModelHost(model, host string) string {
-	if g.config == nil {
+	if g.currentConfig() == nil {
 		return ""
 	}
-	for _, c := range g.config.Models[model] {
+	for _, c := range g.currentConfig().Models[model] {
 		if c.Host == host {
 			return modelreg.CanonicalEngine(c.Backend)
 		}

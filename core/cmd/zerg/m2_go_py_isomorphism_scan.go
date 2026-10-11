@@ -30,7 +30,7 @@
 //
 //	func m2GoPyIsomorphismScanGateMain(stdout, stderr io.Writer, argv []string) int
 //	  · argv   —— 与 py `sys.argv[1:]` 同形（**不含程序名**）
-//	  · 退码   —— 0 扫描完成 / 2 不给结论（扫描根不在盘 · 空域 · 自检不过 · 用法错）
+//	  · 退码   —— 0 扫描完成 / 2 不给结论（扫描根不在盘 · 空域 · 自检不过 · 用法错 · 扫描面件读失败）
 //	  · 输出   —— stdout/stderr 与 py 逐字节对齐（见件尾「已对拍面 / 未覆盖面」）
 //
 // ── 两行标准声明（本单必写）────────────────────────────────────────────────────────
@@ -206,15 +206,16 @@ func m2sJSONStr(s string) string {
 
 // ── 判据体（与 py 同构）──────────────────────────────────────────────────────────────
 
-// m2sScan —— py `scan(root)`：⇒ (rows, errMsg)。
-func m2sScan(root string) ([]m2sRow, string) {
+// m2sScan —— py `scan(root)`：⇒ (rows, errMsg, readFails)。★ readFails = B 类读失败登记面
+// （扫描面 `.go` 件读不了 ⇒ 逐件登记 仓内相对路径 + 原因；调用方汇总后 rc=2 不给结论）。
+func m2sScan(root string) ([]m2sRow, string, []string) {
 	d := m2sJoin(append([]string{root}, m2sScanRel...)...)
 	if fi, err := os.Stat(d); err != nil || !fi.IsDir() {
-		return nil, "扫描根不在盘：" + d
+		return nil, "扫描根不在盘：" + d, nil
 	}
 	entries, err := os.ReadDir(d)
 	if err != nil {
-		return nil, "扫描根不在盘：" + d
+		return nil, "扫描根不在盘：" + d, nil
 	}
 	names := make([]string, 0, len(entries))
 	for _, e := range entries {
@@ -223,13 +224,18 @@ func m2sScan(root string) ([]m2sRow, string) {
 	sort.Strings(names)
 
 	var rows []m2sRow
+	var readFails []string
 	for _, fn := range names {
 		if !strings.HasSuffix(fn, ".go") || strings.HasSuffix(fn, "_test.go") {
 			continue
 		}
 		b, err := os.ReadFile(m2sJoin(d, fn))
 		if err != nil {
-			continue // py `except OSError: continue`（B 类真口子 · 逐字照搬）
+			// ★ B 类真口子修（原 py `except OSError: continue` 静默 · ✗ 不再静默）：扫描面 .go 件
+			//   读不了（权限 / 竞态）⇒ 登记（仓内相对路径 + 原因），汇总后按 rc=2 不给结论。
+			//   体例照同包已治件 check_no_symlink_farm.go / check_lineref_limit.go（登记 + 判红 + rc=2）。
+			readFails = append(readFails, m2sJoin("core", "cmd", "zerg", fn)+"（"+err.Error()+"）")
+			continue
 		}
 		txt := string(b)
 		r := m2sRow{file: fn}
@@ -268,7 +274,7 @@ func m2sScan(root string) ([]m2sRow, string) {
 		}
 		return a.file < b.file
 	})
-	return rows, ""
+	return rows, "", readFails
 }
 
 // m2sTotalsLine —— py 末行 `json.dumps(tot, ensure_ascii=False)`（键序 = 表头去 file）。
@@ -365,7 +371,7 @@ func m2sSelfTest(stdout io.Writer) int {
 	writeErr := os.WriteFile(m2sJoin(scanDir, "x.go"), []byte(m2sSelfXGo), 0o644)
 	_ = os.WriteFile(m2sJoin(scanDir, "x_test.go"), []byte("package main\nvar _ = filepath.Join\n"), 0o644)
 
-	rows, errMsg := m2sScan(d)
+	rows, errMsg, _ := m2sScan(d)
 	if writeErr != nil {
 		errMsg = "写夹具失败：" + writeErr.Error()
 	}
@@ -497,9 +503,17 @@ func m2GoPyIsomorphismScanGateMain(stdout, stderr io.Writer, argv []string) int 
 			root = wd
 		}
 	}
-	rows, errMsg := m2sScan(root)
+	rows, errMsg, readFails := m2sScan(root)
 	if errMsg != "" {
 		fmt.Fprintf(stderr, "%s: %s ⇒ 不给结论（退码 2）\n", m2sVersion, errMsg)
+		return 2
+	}
+	if len(readFails) > 0 {
+		// ★ B 类读失败不再静默（原 py `except OSError: continue`）：响亮 BLOCKED + 逐件点名 + rc=2。
+		fmt.Fprintf(stderr, "BLOCKED —— 扫描面 .go 件读不了 %d 件（B 类读失败 ⇒ 登记 + 判红 · rc=2 · 不给结论 · 读不到不许当健康）：\n", len(readFails))
+		for _, u := range readFails {
+			fmt.Fprintf(stderr, "  ── %s\n", u)
+		}
 		return 2
 	}
 	if len(rows) == 0 {
@@ -524,3 +538,6 @@ func m2GoPyIsomorphismScanGateMain(stdout, stderr io.Writer, argv []string) int 
 //  ③ py `os.listdir` 读目录失败在 `scan()` 内**不捕**（裸回溯 rc=1，C 类）；本件 fail-closed rc=2。
 //  ④ 自检夹具 `mkdtemp` py **无回收**（A 类泄漏）；本件补 `defer os.RemoveAll`（输出不含路径 ⇒ 对拍无差）。
 //  ⑤ argparse 极角落形态（短选项簇 `-hx` 等）未逐一复刻，只复刻被扫常见档。
+//  ⑥ ★ 读失败面（B 类真口子已治 · 原 py `except OSError: continue` 静默）：py 扫描面内 `.go` 件读不了
+//     时静默跳过（该件既不进清单也不判红）；本件改为登记 + stderr `BLOCKED` 逐件点名 + 退 2（✗ 不再
+//     静默）⇒ 此档两态（py 静默 ⟷ 本件退 2）不再逐字对齐（真仓零此形态）。

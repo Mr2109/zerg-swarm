@@ -47,7 +47,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 )
@@ -243,15 +245,23 @@ func gateCheckRoster(root string) (map[string]string, []string, error) {
 //
 // ★ 单件调用 ⇒ 无并发；`os.Chdir` 是进程级全局状态，故必须在返回前恢复（defer）。
 func gateCheckRunInproc(fn func(stdout, stderr io.Writer, argv []string) int, root string, stdout, stderr io.Writer, argv []string) int {
+	return gateCheckRunInprocIn(fn, root, root, stdout, stderr, argv)
+}
+
+// gateCheckRunInprocIn —— 同 gateCheckRunInproc，但 chdir 目标**显式**给（`chdirDir`）：
+// 缺省档（本壳不给 `--keep-cwd`）一律 chdirDir == root ⇒ 与旧 body 逐字同；给了 `--keep-cwd`
+// ⇒ chdirDir = 调用方 cwd（缺口 GAP-20261008-10）—— 保留调用方 cwd，而仓根仍经
+// ZERG_REPO_ROOT/ZERG_REPO 注入（判据件的**根定位**不受 cwd 影响）。
+func gateCheckRunInprocIn(fn func(stdout, stderr io.Writer, argv []string) int, root, chdirDir string, stdout, stderr io.Writer, argv []string) int {
 	wd, werr := os.Getwd()
 	if werr == nil {
-		if cerr := os.Chdir(root); cerr == nil {
+		if cerr := os.Chdir(chdirDir); cerr == nil {
 			defer func() {
-				// ★ 恢复失败**不许静默**（GAP-20261002-02）：cwd 是进程级全局状态，留在 root
+				// ★ 恢复失败**不许静默**（GAP-20261002-02）：cwd 是进程级全局状态，留在 chdirDir
 				// 会把污染扩散给后续所有判据。真实场景 wd 必在；wd 已被删（如上游测试没收
 				// 回自己的 t.TempDir()）时如实留痕 —— 只留痕，**退码一字不动**。
 				if rerr := os.Chdir(wd); rerr != nil {
-					fmt.Fprintf(stderr, "%s: ⚠ cwd 回收失败（%v）：进程 cwd 留在 %s\n", progName, rerr, root)
+					fmt.Fprintf(stderr, "%s: ⚠ cwd 回收失败（%v）：进程 cwd 留在 %s\n", progName, rerr, chdirDir)
 				}
 			}()
 		}
@@ -792,6 +802,124 @@ func gateCheckStripShellFlags(rest []string) []string {
 	return out
 }
 
+// gateCheckStripKeepCwd —— 从本壳尾参里剔掉壳级布尔旗标 `--keep-cwd`（缺口 GAP-20261008-10）。
+// 返回（剔后尾参, 是否给过）。只在**本壳**这一层消费；✗ 不落给子件、✗ 不改任何既有旗标语义。
+// 判据是**逐字等于** `--keep-cwd`（✗ 不吃 `--keep-cwd=x` —— 它本就不收值）。
+func gateCheckStripKeepCwd(tail []string) ([]string, bool) {
+	out := make([]string, 0, len(tail))
+	found := false
+	for _, a := range tail {
+		if a == "--keep-cwd" {
+			found = true
+			continue
+		}
+		out = append(out, a)
+	}
+	return out, found
+}
+
+// gateCheckStripListSelfcases —— 从本壳尾参里剔掉壳级布尔旗标 `--list-selfcases`（缺口 GAP-20260927-240）。
+// 返回（剔后尾参, 是否给过）。只在**本壳**这一层消费；✗ 不落给子件（避免判据件收到不认识的参数）、
+// ✗ 不改任何既有旗标语义。判据是**逐字等于** `--list-selfcases`（✗ 不吃 `--list-selfcases=x` —— 它本就不收值）。
+func gateCheckStripListSelfcases(tail []string) ([]string, bool) {
+	out := make([]string, 0, len(tail))
+	found := false
+	for _, a := range tail {
+		if a == "--list-selfcases" {
+			found = true
+			continue
+		}
+		out = append(out, a)
+	}
+	return out, found
+}
+
+// gateCheckSelfcaseStrRE —— 件内**串字面量**（Go 双引号 / 反引号原串 · py 的 `"…"`/`'…'`）的现读形态。
+// 只用它当「格名的取词窗口」：格名只可能写在串里 ⇒ 先切串、再在串内找圈号，注释里的圈号不会被误收。
+var gateCheckSelfcaseStrRE = regexp.MustCompile("`[^`]*`|\"(?:[^\"\\\\]|\\\\.)*\"|'(?:[^'\\\\]|\\\\.)*'")
+
+// gateCheckSelfcaseMarkRE —— **自测格名**的现读约定：以**圈号**起头（①…⑳ · ㉑…㉟ · ⑴…⒇ · ❶…➓）。
+var gateCheckSelfcaseMarkRE = regexp.MustCompile("[\u2460-\u2473\u3251-\u325f\u2474-\u2487\u2776-\u2793]")
+
+// gateCheckSelfcaseLabels —— 从判据件源码里抽**自测格名**（断言表的格名），去重保序。
+//
+// 取法：**逐行**切串字面量（✗ 不让串跨行 —— 跨行只可能是 heredoc / 裸串里的排版文本，不是格名），
+// 再在串内找圈号；每个圈号 ⇒ 取到「**同一串内的下一圈号**」「串尾」或「第一个转义 `\`」为止
+// （`\n` 一类排版尾巴不是格名的一部分），右去空白、超长截尾。只有圈号、其后无格名 ⇒ 跳过。
+// 解析不到 ⇒ 返回空表（调用方如实报 0 格 · ✗ 不编）。
+func gateCheckSelfcaseLabels(src string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, line := range strings.Split(src, "\n") {
+		for _, lit := range gateCheckSelfcaseStrRE.FindAllString(line, -1) {
+			if len(lit) < 3 {
+				continue
+			}
+			body := lit[1 : len(lit)-1]
+			idx := gateCheckSelfcaseMarkRE.FindAllStringIndex(body, -1)
+			for k, m := range idx {
+				end := len(body)
+				if k+1 < len(idx) {
+					end = idx[k+1][0]
+				}
+				if strings.TrimSpace(body[m[1]:end]) == "" {
+					continue // 只有圈号、其后无格名 ⇒ 不是格名
+				}
+				seg := body[m[0]:end]
+				// 串尾的**转义序列**（`\n` 一类排版尾巴）不是格名的一部分 ⇒ 截在第一个反斜杠前。
+				if j := strings.IndexByte(seg, '\\'); j >= 0 {
+					seg = seg[:j]
+				}
+				label := strings.TrimRight(seg, " \t")
+				if label == "" {
+					continue
+				}
+				if r := []rune(label); len(r) > 160 {
+					label = string(r[:160]) + "…"
+				}
+				if seen[label] {
+					continue
+				}
+				seen[label] = true
+				out = append(out, label)
+			}
+		}
+	}
+	return out
+}
+
+// gateCheckListSelfcases —— 本壳的**只读列举档**（缺口 GAP-20260927-240）：
+// 列该判据件声明的**自测格名**（断言表）。**只读**：只**读**该件源码 · ✗ 不跑判据 · ✗ 不 exec · ✗ 不写盘
+// （与同族 `gate check --dry-run` 全表干跑同一种零副作用口径）。
+//
+// `js`（用户给了 `--json`）⇒ 机器面：**键集与全表干跑同源**（`count`/`resolved`/`dry_run`/`entries` —— 与
+// 命令树登记的 `fields` 逐字同集，✗ 不自造第二套字段表）。
+func gateCheckListSelfcases(name, full string, stdout, stderr io.Writer, js bool) int {
+	src, err := os.ReadFile(full)
+	if err != nil {
+		fmt.Fprintf(stderr, "%s: ⛔ 判据件读不到（%s：%v）⇒ **不给结论**\n", progName, full, err)
+		fmt.Fprintf(stderr, "%s: judge_resolved=false\n", progName)
+		return exitBlocked
+	}
+	cases := gateCheckSelfcaseLabels(string(src))
+	if js {
+		enc := json.NewEncoder(stdout)
+		enc.SetEscapeHTML(false)
+		_ = enc.Encode(map[string]any{
+			"count":    len(cases),
+			"resolved": len(cases),
+			"dry_run":  true,
+			"entries":  cases,
+		})
+		return exitOK
+	}
+	fmt.Fprintf(stdout, "自测格清单（只读 · 未跑判据 · 未写盘）：件 %s · 格 %d\n", name, len(cases))
+	for i, c := range cases {
+		fmt.Fprintf(stdout, "  %d. %s\n", i+1, c)
+	}
+	return exitOK
+}
+
 // gateCheck —— `zerg gate check <判据名> [子件参数…]` 的转发壳。
 //
 // `tail` = 用户敲在 `zerg gate check` 之后的**一切**（首枚 = 判据名，其余**逐字**交给子件）；
@@ -800,6 +928,25 @@ func gateCheck(inv *invocation, stdout, stderr io.Writer, root string) int {
 	tail := []string{}
 	if len(inv.orig) > 2 {
 		tail = inv.orig[2:]
+	}
+
+	// ★ 本单（缺口 GAP-20261008-10）· 壳级布尔旗标 `--keep-cwd` —— **保留调用方 cwd**：
+	//   不给（缺省）⇒ 现行为**逐字不变**（子件 cwd = 仓根）；给了 ⇒ 子件在**调用方 cwd**里跑。
+	//   本壳是**透传型**（`cmd.passthrough`）⇒ 解析器不认识的旗标不拒，由本壳自兜这一档。
+	//   ✗ 危险档（写工具 / 重编类 / 整套门类）**拒** `--keep-cwd`（见下方盾）—— 只收紧、不放宽。
+	keepCwd := false
+	if filtered, found := gateCheckStripKeepCwd(tail); found {
+		keepCwd = true
+		tail = filtered
+	}
+
+	// ★ 本单（缺口 GAP-20260927-240）· 壳级布尔旗标 `--list-selfcases` —— **只读列举档**（列该判据件的
+	//   自测格清单 / 断言表）。形状与 `--keep-cwd` 逐字同一种（壳级消费 · ✗ 不落给子件）——
+	//   本壳是**透传型**（`cmd.passthrough`）⇒ 解析器认识的旗标也由本壳自兜这一档。
+	listSelfcases := false
+	if filtered, found := gateCheckStripListSelfcases(tail); found {
+		listSelfcases = true
+		tail = filtered
 	}
 
 	// M1-06 · 壳级全表档：`--dry-run` / `--json`（只认这两位 · 只认首枚段 · ✗ 不与判据名同给）。
@@ -828,6 +975,17 @@ func gateCheck(inv *invocation, stdout, stderr io.Writer, root string) int {
 		return exitUsage
 	}
 	rest := tail[1:]
+
+	// ★ 本单（缺口 GAP-20261008-10）：子件的目标 cwd —— 缺省 = 仓根（现行为逐字不变）；
+	//   给了 `--keep-cwd` ⇒ **调用方 cwd**（本壳进程的 cwd，即调用方 / 步运行器所在目录）。
+	childCwd := root
+	if keepCwd {
+		if wd, werr := os.Getwd(); werr == nil && wd != "" {
+			childCwd = wd
+		} else {
+			fmt.Fprintf(stderr, "%s: ⚠ `--keep-cwd` 取不到调用方 cwd（%v）⇒ 回落仓根（退码不变）\n", progName, werr)
+		}
+	}
 
 	// M1-10 · 转发开关（**唯一变量名** `ZERG_GATE_FORWARD` · **唯一取值** `off` · 缺省＝不设 ⇒ 转发开）。
 	// 语义**只收紧**：`off` ⇒ 关掉转发这一路（**不 exec**）⇒ 子件跑不起来 ⇒ 退 `8`（不给结论）。
@@ -894,6 +1052,14 @@ func gateCheck(inv *invocation, stdout, stderr io.Writer, root string) int {
 			progName, full)
 		fmt.Fprintf(stderr, "%s: judge_resolved=false\n", progName)
 		return exitUsage
+	}
+
+	// ★ 本单（缺口 GAP-20260927-240）· **只读列举档** `gate check <判据名> --list-selfcases`：
+	//   列该判据件的**自测格清单 / 断言表**。**只读** —— 只读该件源码、✗ 不跑判据、✗ 不 exec、✗ 不写盘
+	//   （与同族 `gate check --dry-run` 全表干跑同一种零副作用口径）⇒ 放行在**写工具危险档闸之前**
+	//   （该档零写盘，与 `--dry-run`/`--help` 同档 · 不受写工具确认盾约束）。
+	if listSelfcases {
+		return gateCheckListSelfcases(name, full, stdout, stderr, inv.jsonGiven)
 	}
 
 	// ★ M1 批B · **写工具危险档闸**（壳侧 exec 前 · **唯一写盘点之前**）：
@@ -991,6 +1157,15 @@ func gateCheck(inv *invocation, stdout, stderr io.Writer, root string) int {
 			fmt.Fprintf(stderr, "%s: ★ 留痕 waiver=%s（写进本步台账行）· --yes 本身未放宽（生人/模型直敲仍拒执）\n",
 				progName, waiver)
 		}
+		// ★ 本单（缺口 GAP-20261008-10）· 危险档 ✗ 不接受 `--keep-cwd`（只收紧）：写工具 / 重编类 /
+		//   整套门类一律在**仓根**（受信前缀）里跑，不给它们换 cwd 的口子。
+		if keepCwd {
+			msg := fmt.Sprintf("`%s` 是**%s**（%s 档）—— 危险档一律在仓根跑，✗ 不接受 `--keep-cwd`（只收紧不放宽）", name, kind, lvl)
+			inv.setErr("usage", "keep_cwd_forbidden", msg)
+			fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
+			fmt.Fprintf(stderr, "error.kind=usage · detail=keep_cwd_forbidden · retryable=false · remedy=fix_usage\n")
+			return exitUsage
+		}
 		// ⑥ 过闸：**壳级确认旗标不落给子件**（剔掉 --yes/--dry-run/--confirm*）。
 		rest = gateCheckStripShellFlags(rest)
 	}
@@ -1004,7 +1179,16 @@ func gateCheck(inv *invocation, stdout, stderr io.Writer, root string) int {
 	// 排在锁（上面那一段）之后 ⇒ 锁天然覆盖；排在本行之后原有的解释器解析之前
 	// ⇒「无后缀 shebang 不可识别退 8」那一档自然只留给 exec 路径（命中 Go 体走不到那里）。
 	if fn, hit := gateCheckGoEntry[name]; hit {
-		rc := gateCheckRunInproc(fn, root, stdout, stderr, rest)
+		// ★ 缺口 GAP-20261001-70 · inproc 按件分档：判据体本体引用 `os/exec`（＝会自己起子进程）
+		//   ⇒ re-exec 自身起一个**自成一组**的子进程（`armChildGroup` ＋ 登记 `runningChild` ＋
+		//   `pinGateStateDir` ＋ 防递归 env 标）—— 判据体在该子进程里跑、它起的孙留在该组内 ⇒
+		//   `terminateChildTree` 收整树含孙（与 exec 径同规）；只读快返件仍留 inproc。
+		if gateCheckShouldReexecSelf(root, name, os.Args[0], gateCheckInprocChildMarked()) {
+			if rc, ok := gateCheckRunSelfChild(root, childCwd, inv, stdout, stderr, full, waiver); ok {
+				return rc
+			}
+		}
+		rc := gateCheckRunInprocIn(fn, root, childCwd, stdout, stderr, rest)
 		// 与 exec 档同规：登记在跑的这一次（append-only；写不出只报 stderr、**不改退码**）。
 		// ★ 与 exec 档逐支对齐（真源 family_gate_check.go 的成功支 :818 / 失败支 :806）：
 		//   rc==0 ⇒ detail="ok"（exec 档即「cmd.Run() 无 err」那一支）；rc!=0 ⇒ detail="judge_rc"。
@@ -1040,7 +1224,7 @@ func gateCheck(inv *invocation, stdout, stderr io.Writer, root string) int {
 	// 与 `cmdGate` 的其余转发同规：登记在跑的这一步（人打断时 `--cancel-on-interrupt` 有东西可取消）。
 	runningChild = cmd
 	defer func() { runningChild = nil }()
-	cmd.Dir = root
+	cmd.Dir = childCwd
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
@@ -1062,4 +1246,143 @@ func gateCheck(inv *invocation, stdout, stderr io.Writer, root string) int {
 	// M1-08 · 成功支落一行台账。
 	gateCheckLedgerAppend(root, full, 0, "ok", true, false, waiver, stderr)
 	return exitOK
+}
+
+// ── 缺口 GAP-20261001-70 · inproc 按件分档（属性 = 判据体本体引用 `os/exec`）─────────────
+//
+// 病（缺口逐字）：107 件 Go 搬体里 57 件自身 spawn 子进程，而 inproc 径的判据体 `exec.Command`
+// **未 armChildGroup** ⇒ 子进程留前台组：`--cancel-on-interrupt` / 墙钟闸走 `terminateChildTree`
+// 时收不到它、父一 `os.Exit` 子/孙成孤儿 PPID=1 续跑；且 inproc 径未登记 `runningChild` ⇒
+// `cancelRunningChild` 见 nil 即 return，与 exec 径行为分叉。
+//
+// 治法（本单 · 最小插桩）：分派点前按**属性**分档 —— 判据体**本体引用 `os/exec`**（＝它会自己
+// 起子进程）⇒ 判 spawn：re-exec 自身起一个**自成一组**的子进程（`armChildGroup` ＋ 登记
+// `runningChild` ＋ `pinGateStateDir` ＋ 防递归 env 标），判据体在该子进程里跑、它起的孙留在该
+// 组内 ⇒ `terminateChildTree` 收整树含孙（与 exec 径同规）；其余（只读快返件）仍留 inproc。
+//
+// ★ 属性（照已盖章口径 · ✗ 不是按名名单 · 门80）：属性源 = 判据体的 Go 真身件
+// `<root>/core/cmd/zerg/<键，dashes→underscores>.go` 是否**含 `os/exec`**；该件读不到 ⇒
+// 回落「handler 名 → 件」（经 runtime 取具名入口函数名、在同包目录里找定义它的件）；两路都
+// 判不了 ⇒ **fail-closed 判 spawn**（宁可多起一个子进程，也不让起孙的判据体留前台）。
+
+// gateCheckInprocChildEnvMark —— 防递归 env 标（唯一变量名 · 唯一取值 `1`）。子进程命中该标
+// ⇒ 直跑 inproc、✗ 不再 re-exec 自身（否则 spawn 件会无限自我重入）。
+const gateCheckInprocChildEnvMark = "ZERG_GATE_INPROC_CHILD"
+
+// gateCheckInprocChildMarked —— 本进程是不是那棵 re-exec 子进程（命中防递归标）。
+func gateCheckInprocChildMarked() bool {
+	return os.Getenv(gateCheckInprocChildEnvMark) != ""
+}
+
+// gateCheckFileReadable —— 件存在且是普通件（✗ 不吃目录）。
+func gateCheckFileReadable(p string) bool {
+	st, err := os.Stat(p)
+	return err == nil && !st.IsDir()
+}
+
+// gateCheckHandlerFile —— 「handler 名 → 件」回落：经 `runtime` 取**具名入口函数名**，在同包目录
+// （`<root>/core/cmd/zerg/`）里找第一件定义 `func <名>(` 的 `.go`。取不到 / 未具名（闭包形如
+// `…func1`）/ 目录读不动 ⇒ `""`（调用方 fail-closed）。
+func gateCheckHandlerFile(dir string, fn func(stdout, stderr io.Writer, argv []string) int) string {
+	if fn == nil {
+		return ""
+	}
+	rf := runtime.FuncForPC(reflect.ValueOf(fn).Pointer())
+	if rf == nil {
+		return ""
+	}
+	short := rf.Name() // 形如 `main.cliContractGateMain`；闭包形如 `main.x.func1`。
+	if i := strings.LastIndex(short, "."); i >= 0 {
+		short = short[i+1:]
+	}
+	if short == "" || strings.HasPrefix(short, "func") {
+		return "" // 未具名 ⇒ 无法靠名定位
+	}
+	needle := "func " + short + "("
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return ""
+	}
+	for _, e := range ents {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") {
+			continue
+		}
+		p := filepath.Join(dir, e.Name())
+		b, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		if strings.Contains(string(b), needle) {
+			return p
+		}
+	}
+	return ""
+}
+
+// gateCheckJudgeBodySpawns —— 属性判据（缺口 GAP-20261001-70）：「判据体本体引用 `os/exec`」⇒
+// true（判 spawn · 须走 exec 旁路起自成一组之子进程）。属性源读不到 / 判不了 ⇒ **fail-closed true**。
+// 非 inproc 键（走 exec 径）⇒ false（✗ 不经本判据）。
+func gateCheckJudgeBodySpawns(root, name string) bool {
+	fn, hit := gateCheckGoEntry[name]
+	if !hit {
+		return false
+	}
+	dir := filepath.Join(root, "core", "cmd", "zerg")
+	p := filepath.Join(dir, strings.ReplaceAll(name, "-", "_")+".go")
+	if !gateCheckFileReadable(p) {
+		p = gateCheckHandlerFile(dir, fn)
+	}
+	if p == "" {
+		return true // fail-closed
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return true // fail-closed
+	}
+	return strings.Contains(string(b), "os/exec")
+}
+
+// gateCheckShouldReexecSelf —— 分派点分档决策（纯函数 · 便于定向单测）：
+// 防递归标已置 ⇒ false；`go test` 进程（二进制名 `*.test` · re-exec 自身会再跑一遍测试而非判据
+// 壳 · 结构性不可行）⇒ false；否则 = 属性判据。生产进程 `os.Args[0]` 不以 `.test` 结尾 ⇒ 走属性判据。
+func gateCheckShouldReexecSelf(root, name, selfArgv0 string, marked bool) bool {
+	if marked {
+		return false
+	}
+	if strings.HasSuffix(selfArgv0, ".test") {
+		return false
+	}
+	return gateCheckJudgeBodySpawns(root, name)
+}
+
+// gateCheckRunSelfChild —— re-exec 自身起一个**自成一组**的子进程跑判据体，返回它的退码。
+// 尾参**原样转发**（`inv.orig[2:]` ＝ 用户敲在 `gate check` 之后的一切，含 `--yes`/`--confirm`/
+// `--keep-cwd`）⇒ 子进程重走同一套壳逻辑、落到同一分派点；防递归标 ⇒ 它直跑 inproc（不再 re-exec）
+// ⇒ 该判据体（及其 spawn）恰成**子进程那一棵**。台账由子进程那趟落一行（✗ 父不重记）。
+// ok=false = 取不到自身路径 ⇒ 调用方退化为 inproc（现行为 · 如实留痕）。
+func gateCheckRunSelfChild(root, childCwd string, inv *invocation, stdout, stderr io.Writer, full, waiver string) (int, bool) {
+	exe, err := os.Executable()
+	if err != nil {
+		fmt.Fprintf(stderr, "%s: ⚠ GAP-20261001-70 取不到自身可执行件（%v）⇒ 本件退化为 inproc\n", progName, err)
+		return 0, false
+	}
+	cmd := armChildGroup(exec.Command(exe, append([]string{"gate", "check"}, inv.orig[2:]...)...))
+	cmd.Env = append(pinGateStateDir(os.Environ()), gateCheckInprocChildEnvMark+"=1")
+	runningChild = cmd
+	defer func() { runningChild = nil }()
+	cmd.Dir = childCwd
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	if err := cmd.Run(); err != nil {
+		if ee, ok := err.(*exec.ExitError); ok {
+			// 子进程（判据壳那趟）自己已落台账 ⇒ 父只转发退码（✗ 不重记）。
+			return ee.ExitCode(), true
+		}
+		// exec 层跑不起来：**不给结论**（照 exec 径同规）。
+		gateCheckLedgerAppend(root, full, -1, "judge_broken", true, false, waiver, stderr)
+		fmt.Fprintf(stderr, "%s: ⛔ GAP-20261001-70 re-exec 自身跑不起来（%v）⇒ 不给结论（%d）\n", progName, err, exitBlocked)
+		return exitBlocked, true
+	}
+	return exitOK, true
 }

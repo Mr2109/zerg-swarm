@@ -55,6 +55,12 @@ func crrfRun(t *testing.T, argv ...string) (int, string, string) {
 }
 
 func TestCheckReplaceRuleFixturesGatePort(t *testing.T) {
+	// ★ 反向棘轮基线：本件是 py 逐字对齐的成对负控 ⇒ 基线钉 0（存量全计 = **改前**语义），
+	//   棘轮本身（存量 ≤ 基线 ⇒ 绿 / 超出 ⇒ 红）由 TestCheckReplaceRuleFixturesReverseRatchet + `--self-test` 覆盖。
+	savedB := crrfReverseBaseline
+	crrfReverseBaseline = map[string]int{"rules": 0, "files": 0}
+	t.Cleanup(func() { crrfReverseBaseline = savedB })
+
 	// ── 正控（必然判绿）：规则命中**非夹具**件 ⇒ rc=0 ────────────────────────────
 	t.Run("正控_命中非夹具_rc0", func(t *testing.T) {
 		root := crrfFx(t)
@@ -378,13 +384,13 @@ func TestCheckReplaceRuleFixturesGatePort(t *testing.T) {
 		if rc != 0 || !strings.Contains(out, "自检结论: 全过") {
 			t.Fatalf("自检应 rc=0 全过，得 rc=%d out=%s", rc, out)
 		}
-		if !strings.Contains(out, "断言 18 条 · 失败 0 条") {
+		if !strings.Contains(out, "断言 20 条 · 失败 0 条") {
 			t.Fatalf("自检断言计数不符 out=%s", out)
 		}
 	})
 	t.Run("档位_rc0", func(t *testing.T) {
 		rc, out, _ := crrfRun(t, "--list-rules")
-		if rc != 0 || !strings.Contains(out, "退码：0 双侧全绿 · 1 有缺口（反向命中 / 正向缺侧）· 2 不给结论") {
+		if rc != 0 || !strings.Contains(out, "退码：0 双侧全绿（或反向存量 ≤ 基线）· 1 有缺口（反向**棘轮超额** / 正向缺侧）· 2 不给结论") {
 			t.Fatalf("档位面应 rc=0 且逐字含退码行，得 rc=%d out=%s", rc, out)
 		}
 	})
@@ -431,4 +437,47 @@ func TestCheckReplaceRuleFixturesGatePort(t *testing.T) {
 			t.Fatalf("缺省根应上溯到夹具根，得 rc=%d out=%s", rc, out)
 		}
 	})
+}
+
+// TestCheckReplaceRuleFixturesReverseRatchet —— 反向存量基线（棘轮 · 只判增量）的**成对负控**。
+//
+//	① **纯格**：现测 − 基线 > 0 ⇒ 超额；≤ 0 ⇒ 存量内（规则条数 / 件数两类各一条）。
+//	② **端到端（仓外夹具）**：合成树里一条规则命中一个夹具 ⇒ 基线 0 之下 rc=1（逐条点名）；
+//	   基线放到存量之上 ⇒ 同一夹具存量段 rc=0（存量已登记、不再恒红）。
+//	   ★ 基线经包级 `crrfReverseBaseline` 注入（同包 · 保存/还原 —— ✗ 不改默认常量、✗ 不落盘）。
+func TestCheckReplaceRuleFixturesReverseRatchet(t *testing.T) {
+	// ① 纯格（成对）。
+	if _, _, over := crrfReverseExtra(42, 145, map[string]int{"rules": 41, "files": 145}); !over {
+		t.Fatalf("规则 42 > 41 应判超额")
+	}
+	if _, _, over := crrfReverseExtra(41, 146, map[string]int{"rules": 41, "files": 145}); !over {
+		t.Fatalf("件数 146 > 145 应判超额（两类各一条基线）")
+	}
+	if _, _, over := crrfReverseExtra(41, 145, map[string]int{"rules": 41, "files": 145}); over {
+		t.Fatalf("41/145 ≤ 基线应判存量内（不超额）")
+	}
+
+	// ② 端到端仓外夹具。
+	root := crrfFx(t)
+	crrfW(t, filepath.Join(root, "publish", "whitelist.txt"), "core/\n")
+	crrfW(t, filepath.Join(root, "publish", "replace-rules.tsv"), "regex:/srv/demo\t<home>\t合成\n")
+	crrfW(t, filepath.Join(root, "core", "a", "fixture_test.go"), "home := \"/srv/demo/x\"\n")
+	crrfW(t, filepath.Join(root, "core", "a", "impl.go"), "home := \"/srv/demo\"\n")
+
+	saved := crrfReverseBaseline
+	t.Cleanup(func() { crrfReverseBaseline = saved })
+
+	// (a) 基线 0 ⇒ 该命中即「新增」⇒ rc=1（逐条点名）。
+	crrfReverseBaseline = map[string]int{"rules": 0, "files": 0}
+	rc, out, _ := crrfRun(t, "--root", root)
+	if rc != 1 || !strings.Contains(out, "反向命中：**1 条**规则") {
+		t.Fatalf("基线 0 + 一条命中夹具 ⇒ 期望 rc=1 并点名：得 rc=%d out=%s", rc, out)
+	}
+
+	// (b) 基线放到存量之上 ⇒ 同一夹具存量段绿（rc=0）—— 成对负控。
+	crrfReverseBaseline = map[string]int{"rules": 99, "files": 99}
+	rc, out, _ = crrfRun(t, "--root", root)
+	if rc != 0 || !strings.Contains(out, "存量段绿") {
+		t.Fatalf("存量 ≤ 基线 ⇒ 期望 rc=0（存量段绿）：得 rc=%d out=%s", rc, out)
+	}
 }

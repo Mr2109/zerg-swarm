@@ -42,8 +42,8 @@ const ds4MemGB = 86
 // ds4RouteMemGB 实读 DS4 内存需求（fleet.yaml `mem_gb`）—— 不再把 86 写死在路由逻辑里。
 // 缺档（名册没登记 DS4 / mem_gb<=0）⇒ 记日志 + 用 ds4MemGB 保守兜底（两态都不静默）。
 func (g *Gateway) ds4RouteMemGB() float64 {
-	if g.config != nil {
-		if cands := g.config.Models[ds4ModelName]; len(cands) > 0 && cands[0].MemGb > 0 {
+	if g.currentConfig() != nil {
+		if cands := g.currentConfig().Models[ds4ModelName]; len(cands) > 0 && cands[0].MemGb > 0 {
 			return cands[0].MemGb
 		}
 	}

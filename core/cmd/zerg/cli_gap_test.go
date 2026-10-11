@@ -89,15 +89,23 @@ func gapAuditLines(t *testing.T, p string) []map[string]any {
 		}
 		t.Fatalf("读不了审计件：%v", err)
 	}
+	nonEmpty := 0
 	for _, ln := range strings.Split(string(b), "\n") {
 		if strings.TrimSpace(ln) == "" {
 			continue
 		}
+		nonEmpty++
 		var m map[string]any
 		if err := json.Unmarshal([]byte(ln), &m); err != nil {
 			t.Fatalf("审计件第 %d 行不是 JSON：%v", len(rows)+1, err)
 		}
 		rows = append(rows, m)
+	}
+	// ★ ② 冻结下限 = 1（棘轮 · 只许增）：审计件非空即须至少解析出 1 条记录 ——
+	//   结构静默变小（解析面漏行 / 抽到 0 条）⇒ 本格判红，✗ 不许静默绿。
+	gN := len(rows)
+	if nonEmpty > 0 && gN < 1 {
+		t.Fatalf("② 冻结下限 1 被破：审计件 %d 行非空却只解析出 %d 条记录（棘轮 · 只许增）", nonEmpty, gN)
 	}
 	return rows
 }

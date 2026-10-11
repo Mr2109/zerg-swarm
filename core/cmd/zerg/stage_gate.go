@@ -41,7 +41,10 @@ var devFamilyClosureForGate = []string{"dev proposal", "dev release", "dev rollb
 	"dev build", "dev test", "dev verify", "dev edit",
 	// ★ GAP-20260927-377（本枚随动）：`dev check --syntax` 落地 ⇒ 与测试那份 `devFamilyClosure`
 	//   **同批同步**（两处不一致时 `G2` 红 —— 见上面那段注释的成对纪律）。
-	"dev check"}
+	"dev check",
+	// ★ GAP-20261010-30（本枚随动）：`dev reclaim`（直写补正门 · D3 写面）落地 ⇒ 与测试那份
+	//   `devFamilyClosure` **同批同步**（两处不一致时 `G2` 红）。
+	"dev reclaim"}
 
 // judgeFourGates —— **唯一判定口**：四道闸逐条判，缺一道即不算过。
 //

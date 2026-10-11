@@ -176,3 +176,65 @@ func TestCheckExecTwoConditionGatePort(t *testing.T) {
 		}
 	})
 }
+
+// ── B 类（读失败静默）回归牙 ────────────────────────────────────────────────────
+// 扫描面内一件 / 一个目录锁成 chmod 000（仓外夹具 · ✗ 不删仓内件）⇒ 读失败登记面（cetcReadFails）必响：
+// rc=2 + stderr BLOCKED 头 + 逐件点名。删回静默（原 py `except OSError` 返回空集 / `os.walk(onerror=None)`）
+// 本用例必红。同族先例：check_doc_cmds_test.go 的 TestCheckDocCmdsReadFailTeeth。
+func TestCheckExecTwoConditionReadFailTeeth(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root 绕过权限位 ⇒ chmod 000 不挡读，本用例无鉴别力")
+	}
+	t.Run("件面", func(t *testing.T) {
+		root, s := cetcTFix(t)
+		cetcTWrite(t, filepath.Join(s, "good.py"), cetcTbP1)
+		locked := filepath.Join(s, "locked.py")
+		cetcTWrite(t, locked, cetcTbP1)
+		if err := os.Chmod(locked, 0o000); err != nil {
+			t.Fatal(err)
+		}
+		defer os.Chmod(locked, 0o644)
+		rc, out, errs := cetcTEntry("--root", root)
+		if rc != 2 {
+			t.Fatalf("件读失败回归牙：应 rc=2，得 rc=%d out=%q stderr=%q", rc, out, errs)
+		}
+		if !strings.Contains(errs, "BLOCKED") || !strings.Contains(errs, "读不到") || !strings.Contains(errs, "locked.py") {
+			t.Fatalf("件读失败回归牙：stderr 须带 BLOCKED 头 + 点名 locked.py，得 stderr=%q", errs)
+		}
+		if out != "" {
+			t.Fatalf("件读失败不应给结论(stdout 须空)：out=%q", out)
+		}
+	})
+	t.Run("目录面", func(t *testing.T) {
+		root, s := cetcTFix(t)
+		cetcTWrite(t, filepath.Join(s, "good.py"), cetcTbP1)
+		locked := filepath.Join(s, "lockeddir")
+		if err := os.MkdirAll(locked, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		cetcTWrite(t, filepath.Join(locked, "inner.py"), cetcTbP1)
+		if err := os.Chmod(locked, 0o000); err != nil {
+			t.Fatal(err)
+		}
+		defer os.Chmod(locked, 0o755)
+		rc, out, errs := cetcTEntry("--root", root)
+		if rc != 2 {
+			t.Fatalf("目录读失败回归牙：应 rc=2，得 rc=%d out=%q stderr=%q", rc, out, errs)
+		}
+		if !strings.Contains(errs, "BLOCKED") || !strings.Contains(errs, "lockeddir") {
+			t.Fatalf("目录读失败回归牙：stderr 须带 BLOCKED 头 + 点名 lockeddir，得 stderr=%q", errs)
+		}
+		if out != "" {
+			t.Fatalf("目录读失败不应给结论(stdout 须空)：out=%q", out)
+		}
+	})
+	// 成对反控（✗ 禁恒红）：可读同形 ⇒ rc=0 且 stderr 无 BLOCKED。
+	t.Run("成对反控", func(t *testing.T) {
+		root, s := cetcTFix(t)
+		cetcTWrite(t, filepath.Join(s, "only.sh"), cetcTbOnly)
+		rc, _, errs := cetcTEntry("--root", root)
+		if rc != 0 || strings.Contains(errs, "BLOCKED") {
+			t.Fatalf("成对反控失败：好件应 rc=0 且无 BLOCKED，得 rc=%d stderr=%q", rc, errs)
+		}
+	})
+}

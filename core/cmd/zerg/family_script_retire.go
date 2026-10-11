@@ -734,6 +734,7 @@ func cmdScriptRetire(inv *invocation, stdout, stderr io.Writer) int {
 			}
 		}
 		inv.setErr("usage", "yes_required", "D2 档缺 --yes ⇒ 不执行")
+		guardMarkDecision(inv, guardDecisionApproval)
 		fmt.Fprintf(stderr, "%s: `script retire` 是 D2 档 —— **缺 --yes ⇒ 不执行**（照 `repo commit` 的 fail-closed · 从不提问）\n", progName)
 		fmt.Fprintf(stderr, "先看计划件：%s script retire %s --dry-run\n", progName, target)
 		return exitUsage

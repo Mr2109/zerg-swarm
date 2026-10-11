@@ -179,11 +179,29 @@ func codeFindBackslashPipe(pat string) bool {
 	return false
 }
 
+// codeFindUsage —— `code find` 的兜底用法串**唯一真源 = 命令树**（缺口 `GAP-20260927-301`）。
+//
+// 病（改前）：本件两处兜底用法串各写一份**字面量**（缺正则那一处 / 聚合档互斥那一处），与命令树里
+// `code find` 那一条的 `usage:` **不同形** —— 只差旗标顺序与短形（`-A/-B/-C`），肉眼几乎看不出，
+// 却让「同一命令两个用法串版本」长期并存（want 逐字：`usage-string-two-versions 补门比对两处用法串
+// 同形，或让兜底串复用树真源`）。
+//
+// 治法（want 第二选项 · 复用树真源）：**现读命令树里那一条的 `usage`** —— `commands` 表在同包
+// `main.go`（`init()` 落表，头注明言 handler 会回头读它），同包直接 `find([]string{"code", "find"})`
+// 取（先例 `root.go` 的 `find([]string{"root"})`）⇒ 族件内已能拿到树真源，**不必**把常量提到 `main.go`。
+// 改写后两处兜底串同源、且与树真源逐字节一致（含顺序与短形）。
+func codeFindUsage() string {
+	if c := find([]string{"code", "find"}); c != nil {
+		return c.usage
+	}
+	return ""
+}
+
 func cmdCodeFind(inv *invocation, stdout, stderr io.Writer) int {
 	if len(inv.args) == 0 || strings.TrimSpace(inv.args[0]) == "" {
 		inv.setErr("usage", "missing_pattern", "缺正则")
 		fmt.Fprintf(stderr, "%s: `code find` 要给正则（例：zerg code find 'func cmdGate' --path core/cmd/zerg）\n", progName)
-		fmt.Fprintf(stderr, "用法：zerg code find <正则> [--path <目录或单件>] [--glob <模式>] [--full] [-i|--ignore-case] [--after <N>] [--before <N>] [--kind <代码|注释>] [--timeout <秒>] [--hidden] [--include-runtime] [--json <字段>]\n")
+		fmt.Fprintf(stderr, "用法：%s\n", codeFindUsage())
 		return exitUsage
 	}
 	pat := inv.args[0]
@@ -229,6 +247,9 @@ func cmdCodeFind(inv *invocation, stdout, stderr io.Writer) int {
 		return exitBlocked
 	}
 	base := root
+	// ★ 缺口 `GAP-20260927-307`（第一半）：`--path` 指的**那一件**的形态（`dir` / `file`）——
+	//   在下面**同一处** `os.Stat(base)` 现算（✗ 不另造第二套判定）；不给 `--path` ⇒ 扫的是仓根（**目录**）。
+	pathKind := codeFindPathKindDir
 	if sub := strings.TrimSpace(inv.flagVal("--path")); sub != "" {
 		if filepath.IsAbs(sub) {
 			// 绝对路径 = **显式**指向另一根（例：文档仓）—— 不再与仓根拼接。
@@ -256,6 +277,11 @@ func cmdCodeFind(inv *invocation, stdout, stderr io.Writer) int {
 			inv.setErr("usage", "path_not_dir", "--path 既不是件也不是目录")
 			fmt.Fprintf(stderr, "%s: --path 指的既不是件也不是目录：%s（路径不存在、或它不是件也不是目录 · 先 ls 确认路径名 · 退码 2）\n", progName, sub)
 			return exitUsage
+		}
+		// ★ 缺口 `GAP-20260927-307`（第一半）：`--path` 指的**那一件**是目录还是常规件 ——
+		//   从**同一真源**（本处 `st.IsDir()`）现算，落 `path_kind`（`dir` / `file`）。
+		if !st.IsDir() {
+			pathKind = codeFindPathKindFile
 		}
 	}
 	glob := strings.TrimSpace(inv.flagVal("--glob"))
@@ -353,7 +379,7 @@ func cmdCodeFind(inv *invocation, stdout, stderr io.Writer) int {
 	if aggFilesOnly && aggCount {
 		inv.setErr("usage", "agg_flags_conflict", "--count 与 --files-only 同给")
 		fmt.Fprintf(stderr, "%s: --count 与 --files-only 是**两枚互斥的聚合档**（同给 = 自相矛盾 · 只给一枚）⇒ 退码 2\n", progName)
-		fmt.Fprintf(stderr, "用法：zerg code find <正则> [--path <目录或单件>] [--glob <模式>] [--limit <N>] [--count | --files-only] [--full] [-i|--ignore-case] [--after <N>] [--before <N>] [--kind <代码|注释>] [--timeout <秒>] [--hidden] [--include-runtime] [--json <字段>]\n")
+		fmt.Fprintf(stderr, "用法：%s\n", codeFindUsage())
 		return exitUsage
 	}
 
@@ -371,12 +397,12 @@ func cmdCodeFind(inv *invocation, stdout, stderr io.Writer) int {
 		if len(inv.fields) == 0 {
 			return requireFields(inv, stderr)
 		}
-		allowed := map[string]bool{"path": true, "line": true, "text": true, "kind": true, "match": true, "truncated": true, "face": true, "count": true}
+		allowed := map[string]bool{"path": true, "line": true, "text": true, "kind": true, "match": true, "truncated": true, "face": true, "count": true, "path_kind": true}
 		switch {
 		case aggCount:
-			allowed = map[string]bool{"path": true, "count": true, "truncated": true, "face": true}
+			allowed = map[string]bool{"path": true, "count": true, "truncated": true, "face": true, "path_kind": true}
 		case aggFilesOnly:
-			allowed = map[string]bool{"path": true, "count": true, "truncated": true, "face": true}
+			allowed = map[string]bool{"path": true, "count": true, "truncated": true, "face": true, "path_kind": true}
 		}
 		for _, f := range inv.fields {
 			if !allowed[f] {
@@ -577,6 +603,7 @@ func cmdCodeFind(inv *invocation, stdout, stderr io.Writer) int {
 		}
 		markCodeFindTruncated(inv, aggRows, cut)
 		markCodeFindFace(inv, aggRows)
+		markCodeFindPathKind(inv, aggRows, pathKind)
 		if aggFilesOnly {
 			markCodeFindCount(inv, aggRows, hits)
 		}
@@ -631,6 +658,7 @@ func cmdCodeFind(inv *invocation, stdout, stderr io.Writer) int {
 	}
 	markCodeFindTruncated(inv, rows, cut)
 	markCodeFindFace(inv, rows)
+	markCodeFindPathKind(inv, rows, pathKind)
 	markCodeFindCount(inv, rows, hits)
 	rc := listCmd(inv, stdout, stderr, []string{"path", "line", "text"}, rows)
 	if cut {
@@ -640,6 +668,33 @@ func cmdCodeFind(inv *invocation, stdout, stderr io.Writer) int {
 			progName, emittedMatches, hits, hits-emittedMatches)
 	}
 	return rc
+}
+
+// codeFindPathKindDir / codeFindPathKindFile —— `code find --json path_kind` 的取值**闭集**（缺口
+// `GAP-20260927-307` 第一半）：`--path` 指的**那一件**是目录（`dir`）还是常规件（`file`）。
+const (
+	codeFindPathKindDir  = "dir"
+	codeFindPathKindFile = "file"
+)
+
+// markCodeFindPathKind —— `--json` 那一态给每条目落一格 `path_kind`（缺口 `GAP-20260927-307` 第一半）。
+//
+// 病（缺口逐字）：`code find --path <单件>` 在 `--json` 面**分不出 dir/file** —— 只给件名，
+// 机读脚本无从知道这一跑扫的是一件还是整棵子树。
+//
+// 与 `markCodeFindTruncated` / `markCodeFindFace` / `markCodeFindCount` **同一形态**（逐行写 ·
+// 跑级真值 · 只在 `--json` 落键 ⇒ 不给这一格时输出逐字节不变）：
+//
+//	· 值从**同一真源**现算 —— `--path` 分支里那一处 `os.Stat(base)` 的 `st.IsDir()`（✗ 不另造第二套判定）；
+//	  不给 `--path` ⇒ 扫的是仓根（目录）⇒ `dir`；
+//	· 逐行写（`items` 里每一格同一值：这是**跑级真值**、不是条目自己的属性）。
+func markCodeFindPathKind(inv *invocation, rows []map[string]string, kind string) {
+	if inv == nil || !inv.jsonGiven {
+		return
+	}
+	for _, r := range rows {
+		r["path_kind"] = kind
+	}
 }
 
 // markCodeFindTruncated —— `GAP-20260928-118`（2026-09-28 · 本枚）：把**跑级**截断真值落到字段面上。
@@ -797,16 +852,22 @@ func cmdCodeShow(inv *invocation, stdout, stderr io.Writer) int {
 // `--ctx` 在整件档无意义（无被点的行）⇒ 忽略（不报错，避免与单行档两套判法）。
 func codeShowWholeFile(inv *invocation, stdout, stderr io.Writer, root, rel string) int {
 	clean := filepath.Clean(filepath.FromSlash(rel))
-	if filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
-		inv.setErr("usage", "path_outside_repo", "件出仓")
-		fmt.Fprintf(stderr, "%s: 件出仓了（%s 不在 %s 下）⇒ 退码 2\n", progName, rel, root)
-		return exitUsage
-	}
-	abs := filepath.Join(root, clean)
-	if !strings.HasPrefix(abs, root) {
-		inv.setErr("usage", "path_outside_repo", "件出仓")
-		fmt.Fprintf(stderr, "%s: 件出仓了（%s 不在 %s 下）⇒ 退码 2\n", progName, rel, root)
-		return exitUsage
+	// ★ 缺口 `GAP-20260928-103`（本枚 · 只读放行）：**绝对路径 = 显式指向仓外件**（与 `code find --path`
+	//   同一口径 `filepath.IsAbs`）⇒ **只读**放行（读该件 · 输出与仓内件同形）；相对路径一律按既有口径
+	//   （`..` 逃逸 / 出仓 ⇒ 退 2「件出仓了」）。✗ 不放行任何写面（本命令无写面）。
+	abs := clean
+	if !filepath.IsAbs(clean) {
+		if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+			inv.setErr("usage", "path_outside_repo", "件出仓")
+			fmt.Fprintf(stderr, "%s: 件出仓了（%s 不在 %s 下）⇒ 退码 2\n", progName, rel, root)
+			return exitUsage
+		}
+		abs = filepath.Join(root, clean)
+		if !strings.HasPrefix(abs, root) {
+			inv.setErr("usage", "path_outside_repo", "件出仓")
+			fmt.Fprintf(stderr, "%s: 件出仓了（%s 不在 %s 下）⇒ 退码 2\n", progName, rel, root)
+			return exitUsage
+		}
 	}
 	st, serr := os.Stat(abs)
 	if serr != nil {
@@ -915,16 +976,22 @@ func codeShowResolveOne(inv *invocation, stderr io.Writer, root, target string, 
 		ctx = 0
 	}
 	clean := filepath.Clean(filepath.FromSlash(rel))
-	if filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
-		inv.setErr("usage", "path_outside_repo", "件出仓")
-		fmt.Fprintf(stderr, "%s: 件出仓了（%s 不在 %s 下）⇒ 退码 2\n", progName, rel, root)
-		return nil, "", exitUsage
-	}
-	abs := filepath.Join(root, clean)
-	if !strings.HasPrefix(abs, root) {
-		inv.setErr("usage", "path_outside_repo", "件出仓")
-		fmt.Fprintf(stderr, "%s: 件出仓了（%s 不在 %s 下）⇒ 退码 2\n", progName, rel, root)
-		return nil, "", exitUsage
+	// ★ 缺口 `GAP-20260928-103`（本枚 · 只读放行）：**绝对路径 = 显式指向仓外件**（与 `code find --path`
+	//   同一口径 `filepath.IsAbs`）⇒ **只读**放行（读该件 · 输出与仓内件同形）；相对路径一律按既有口径
+	//   （`..` 逃逸 / 出仓 ⇒ 退码 2「件出仓了」）。✗ 不放行任何写面（本命令无写面）。
+	abs := clean
+	if !filepath.IsAbs(clean) {
+		if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+			inv.setErr("usage", "path_outside_repo", "件出仓")
+			fmt.Fprintf(stderr, "%s: 件出仓了（%s 不在 %s 下）⇒ 退码 2\n", progName, rel, root)
+			return nil, "", exitUsage
+		}
+		abs = filepath.Join(root, clean)
+		if !strings.HasPrefix(abs, root) {
+			inv.setErr("usage", "path_outside_repo", "件出仓")
+			fmt.Fprintf(stderr, "%s: 件出仓了（%s 不在 %s 下）⇒ 退码 2\n", progName, rel, root)
+			return nil, "", exitUsage
+		}
 	}
 	st, serr := os.Stat(abs)
 	if serr != nil {

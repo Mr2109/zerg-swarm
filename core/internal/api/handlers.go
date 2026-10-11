@@ -1374,6 +1374,12 @@ func (h *Handlers) ModelDetailHandler(w http.ResponseWriter, r *http.Request) {
 		"can_start":    true,                   // 3c：有候选机即可启动（由主控转发到子端；原来仅限 host=="local"）
 		"adapter_opts": h.AdapterOptions(name), // v2.5.6: 适配器调用选项（Temperature/APIFormat/ReasoningEffort 等——反射读适配器实例）
 		"note":         "适配器选项=fleet.yaml 配置字段——启动/停止由主控转发到候选子端执行（3c：引擎一律由子端起）",
+
+		// ═══ GAP-20261003-21（设计稿 §五 步4 · 加性出参）：对外面也出 verified 三态与自报机名 ═══
+		// 旧 "verified": bool 一字不动（零破坏）；第三态 reported 与锚走加性新键。
+		// 空串 = 旧读者按 verified 回落（本件只透传，不判、不推导——以谁为准属待拍口径）。
+		"verified_state": c.VerifiedState,
+		"verified_where": c.VerifiedWhere,
 	})
 }
 

@@ -28,9 +28,11 @@
 package main_test
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -340,9 +342,10 @@ func checkLedgerShape(raw string) []error {
 	return errs
 }
 
-// TestUnresolvedEvidenceHintRefresh —— **重取行号提示的工具**（不是判据：不判红绿）。
+// TestUnresolvedEvidenceHintRefresh —— **重取/写回行号提示的工具**（不是判据：不判红绿）。
 // 只在 ZERG_REFRESH_HINTS=1 时跑（默认 skip，免得每次 go test 都刷一屏）。
-// 它按现跑逐条打印 `file` / `anchor` / 现跑锚起行 —— 照它改台账里的 `line_hint` 即可（锚一个字都不用动）。
+// 它按现跑逐条打印 `file` / `anchor` / 现跑锚起行；再加 `ZERG_WRITE_HINTS=1` 即把现跑锚起行
+// **写回**台账的 `line_hint`（锚一个字都不用动 —— 缺口 `GAP-20260929-09`）。
 func TestUnresolvedEvidenceHintRefresh(t *testing.T) {
 	if strings.TrimSpace(os.Getenv("ZERG_REFRESH_HINTS")) == "" {
 		t.Skip("本测试是重取提示的工具（不是判据）：ZERG_REFRESH_HINTS=1 才跑")
@@ -351,7 +354,8 @@ func TestUnresolvedEvidenceHintRefresh(t *testing.T) {
 	if err != nil {
 		t.Fatalf("取出台账读不出来：%v", err)
 	}
-	v := judgeUnresolved(repoRootFromCLI(t), *led, nil)
+	root := repoRootFromCLI(t)
+	v := judgeUnresolved(root, *led, nil)
 	t.Logf("行号提示现读（共 %d 条证据 · %d 条提示已漂）：", len(v.Hits), len(v.Warns))
 	for _, h := range v.Hits {
 		flag := ""
@@ -360,6 +364,109 @@ func TestUnresolvedEvidenceHintRefresh(t *testing.T) {
 		}
 		t.Logf("  %s\t%s\tline_hint=%d%s", h.EntryID, h.File, h.StartLine, flag)
 	}
+	// ★ 写回档（缺口 `GAP-20260929-09`）：`ZERG_WRITE_HINTS=1` ⇒ 把现跑锚起行刷回台账的 `line_hint`。
+	//   与只打印的 `ZERG_REFRESH_HINTS=1` 分开：默认（不给该变量）**一个字节都不写**，只读人面口径不变。
+	if strings.TrimSpace(os.Getenv("ZERG_WRITE_HINTS")) != "" {
+		writeBackLineHints(t, root, v)
+	} else {
+		t.Logf("（只打印 · 未写回）：要写回台账的 `line_hint` 请再加 `ZERG_WRITE_HINTS=1`")
+	}
+}
+
+// writeBackLineHints —— `ZERG_WRITE_HINTS=1` 的**写回面**：把现跑锚起行刷回台账的 `line_hint`。
+//
+// 口径（照既有体例）：
+//
+//	· **逐格文本替换**，不是整件重序列化 —— 台账件里每条证据占**一行**，只改那一行
+//	  `"line_hint": <旧>` 的数字，其余字节（note / source / 历史段）逐字不动、一个都不删。
+//	· **顺序对拍**：台账里 `"line_hint":` 的出现**行序** == 判据 Hits 的顺序（判据按 entries→callers 正序收），
+//	  两者条数必须相等；不等 ⇒ fail-closed，一个字节不写。
+//	· **写后回读**：再解一次台账 + 重跑 judgeUnresolved，断言 0 漂 ⇒ 才算成（否则台账被写坏）。
+func writeBackLineHints(t *testing.T, root string, v unresolvedVerdict) {
+	t.Helper()
+	// ★ fail-closed：判据先报错（锚不存在 / 锚不唯一 / 件读不到 …）⇒ 台账可能已腐 ——
+	//   照 `StartLine=0` 刷下去会把 `line_hint` 写成 0 ⇒ **一个字节不写**（先跑 TestUnresolved 看清错因）。
+	if len(v.Errs) > 0 {
+		t.Fatalf("写回面：判据报 %d 条错 ⇒ 台账可能已腐 · 一个字节不写（先跑 TestUnresolved 看清错因）", len(v.Errs))
+	}
+	hits := v.Hits
+	p := filepath.Join(root, "core/internal/contract/unresolved-entries.json")
+	b, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatalf("写回面：台账件读不到 %s：%v", p, err)
+	}
+	lines := strings.Split(string(b), "\n")
+	idx, changed := 0, 0
+	for i, ln := range lines {
+		if !strings.Contains(ln, `"line_hint":`) {
+			continue
+		}
+		if idx >= len(hits) {
+			t.Fatalf("写回面：台账里 `\"line_hint\":` 的行数 > 判据 Hits 条数（%d）⇒ 顺序对拍失败 · 一个字节不写", len(hits))
+		}
+		out, ok := replaceLineHintValue(ln, hits[idx].StartLine)
+		if !ok {
+			t.Fatalf("写回面：第 %d 行 `\"line_hint\":` 后面取不到数字 ⇒ 判不了 · 一个字节不写", i+1)
+		}
+		idx++
+		if out != ln {
+			changed++
+		}
+		lines[i] = out
+	}
+	if idx != len(hits) {
+		t.Fatalf("写回面：台账里 `\"line_hint\":` 的行数 %d ≠ 判据 Hits 条数 %d ⇒ 顺序对拍失败 · 一个字节不写", idx, len(hits))
+	}
+	if changed == 0 {
+		t.Logf("写回面：现读 0 条漂 ⇒ 台账逐字节不动（%s）", p)
+		return
+	}
+	newBody := strings.Join(lines, "\n")
+	tmp := p + ".writehints.tmp"
+	if err := os.WriteFile(tmp, []byte(newBody), 0o644); err != nil {
+		t.Fatalf("写回面：临时件写不进 %s：%v", tmp, err)
+	}
+	if err := os.Rename(tmp, p); err != nil {
+		_ = os.Remove(tmp)
+		t.Fatalf("写回面：rename 失败 %s：%v", p, err)
+	}
+	// 写后回读：解得出 + 重跑判据 0 漂。
+	var led2 contract.UnresolvedLedger
+	if err := json.Unmarshal([]byte(newBody), &led2); err != nil {
+		t.Fatalf("写回面：写后回读解不动（台账被写坏）：%v", err)
+	}
+	v2 := judgeUnresolved(root, led2, nil)
+	if len(v2.Errs) > 0 {
+		t.Fatalf("写回面：写后回读判据报 %d 条错 ⇒ 台账被写坏", len(v2.Errs))
+	}
+	drift := 0
+	for _, h := range v2.Hits {
+		if h.HintDrift != 0 {
+			drift++
+		}
+	}
+	if drift != 0 {
+		t.Fatalf("写回面：写后回读仍有 %d 条漂 ⇒ 没刷干净", drift)
+	}
+	t.Logf("写回面：已刷 %d 条 `line_hint`（%s）· 写后回读 0 漂", changed, p)
+}
+
+// replaceLineHintValue —— 把一行里 `"line_hint": <N>` 的数字换成 newN（只动那个数字，其余逐字不动）。
+func replaceLineHintValue(line string, newN int) (string, bool) {
+	const key = `"line_hint": `
+	i := strings.Index(line, key)
+	if i < 0 {
+		return line, false
+	}
+	j := i + len(key)
+	k := j
+	for k < len(line) && line[k] >= '0' && line[k] <= '9' {
+		k++
+	}
+	if k == j {
+		return line, false
+	}
+	return line[:j] + strconv.Itoa(newN) + line[k:], true
 }
 
 // ---- 负控：判定口**真的有牙**（每格一条 + 一条对偶正控） ----

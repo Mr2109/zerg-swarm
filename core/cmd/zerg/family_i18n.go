@@ -103,7 +103,7 @@ func cmdI18n(inv *invocation, stdout, stderr io.Writer) int {
 func cmdI18nAudit(inv *invocation, stdout, stderr io.Writer) int {
 	tail := []string{}
 	if len(inv.orig) > len(inv.path) {
-		tail = inv.orig[len(inv.path):]
+		tail = stripGlobalLeak(inv.orig[len(inv.path):])
 	}
 	return i18nAuditGateMain(stdout, stderr, tail)
 }

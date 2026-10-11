@@ -89,7 +89,7 @@
 //	· py `\s`/`\w`/`\b` 是 Unicode 语义；Go RE2 为 ASCII ⇒ 仅当被扫文本含非 ASCII 空白/词字符时可能分叉
 //	  （真仓与夹具均为 ASCII 空白）。
 //	· py 读档 UTF-8 严格模式：非法字节 ⇒ 回溯 rc=1；Go 侧按 replacement 走、跳过该件（真仓无障碍）。
-//	· 不可读件：py `open` 无 try ⇒ OSError 回溯 rc=1；Go 侧跳过（声明）。
+//	· 不可读件：py `open` 无 try ⇒ OSError 回溯 rc=1；✗ Go 侧不再静默跳过 —— B 类读失败 ⇒ 登记 + BLOCKED rc=2 逐件点名（正解体例 = check_doc_cmds.go 的 dcmdReadFails）。
 //	· `_cwa is None`（跨件 importlib 加载失败）兜底支在 Go 不可达（编译期链接）⇒ 声明。
 //	· 自检档失败分支的 `%r`/`%q` repr 措辞按 py 单引号 repr 未逐字复刻（**PASS 档不打印该支**）。
 //	· argparse 短选项聚类（`-hx` 一类）与 `--` 之后的复杂 positional 语义未逐一复刻（声明）。
@@ -116,7 +116,26 @@ const (
 	cwfgBlockedScope = "BLOCKED —— 缺 main.go / 扫描面 ⇒ rc=2 不给结论"
 	cwfgBlockedCat0  = "BLOCKED —— catalog() 解析出 0 条（空域）⇒ rc=2 不给结论"
 	cwfgRegMissing   = "authority-map.json 缺「写面登记」表（非 list）"
+	// cwfgScopeRel —— 扫描面相对仓根（B 类读失败登记面用；与 cwfgRun 的 scopedir 同源）。
+	cwfgScopeRel = "core/cmd/zerg"
 )
+
+// cwfgReadFails —— B 类读失败登记面（扫描面里读不了的 *.go 件 · 逐件 相对路径 + err 正文）。
+//
+//	★ 正解体例 = check_doc_cmds.go 的 dcmdReadFails（同族先例）：读失败 ✗ 不静默 ⇒ 登记 + cwfgRun
+//	  出口 BLOCKED rc=2 逐件点名 ＋ 不给结论（读不到 ≠ 通过）。★ 自清：包级登记面不许跨调用残留。
+var cwfgReadFails []string
+
+// cwfgRegReadFail —— 登记一件读失败（同一件同名同 err 只记一次：实现面与常量面两次扫同一件）。
+func cwfgRegReadFail(rel string, err error) {
+	msg := fmt.Sprintf("%s（%v）", rel, err)
+	for _, ex := range cwfgReadFails {
+		if ex == msg {
+			return
+		}
+	}
+	cwfgReadFails = append(cwfgReadFails, msg)
+}
 
 // cwfgUsageLine —— py argparse 用法行（单行，72 列 < 80 ⇒ 不换行，逐字）。
 const cwfgUsageLine = "usage: check-write-face-gate.py [-h] [--root ROOT] [--json] [--self-test]\n"
@@ -180,25 +199,27 @@ type cwfgClsGroup struct {
 }
 
 // ── py 目录遍历（sorted(os.listdir)）────────────────────────────────────────
-func cwfgReadDirSorted(dir string) ([]string, bool) {
+func cwfgReadDirSorted(dir string) ([]string, error) {
 	des, err := os.ReadDir(dir)
 	if err != nil {
-		return nil, false
+		return nil, err
 	}
 	list := make([]string, 0, len(des))
 	for _, de := range des {
 		list = append(list, de.Name())
 	}
 	sort.Strings(list)
-	return list, true
+	return list, nil
 }
 
 // cwfgImplWriteFuncs —— py impl_write_funcs：回「含写调用的顶层函数名」集合。
 // ★ py 走 `_cwa.scan_file`（跨件 importlib）⇒ Go 复用同包 cwaScanFile（单一定义）。
 func cwfgImplWriteFuncs(scopedir string) map[string]bool {
 	out := map[string]bool{}
-	list, ok := cwfgReadDirSorted(scopedir)
-	if !ok {
+	list, derr := cwfgReadDirSorted(scopedir)
+	if derr != nil {
+		// ★ B 类读失败：✗ 不静默跳过（那会让该件里的写面函数凭空消失 ⇒ 假绿）⇒ 登记。
+		cwfgRegReadFail(cwfgScopeRel, derr)
 		return out
 	}
 	for _, name := range list {
@@ -207,6 +228,8 @@ func cwfgImplWriteFuncs(scopedir string) map[string]bool {
 		}
 		hits, err := cwaScanFile(cwaPyJoin(scopedir, name))
 		if err != nil {
+			// ★ B 类读失败：逐件登记（含 err 正文），✗ 不静默 continue。
+			cwfgRegReadFail(cwfgScopeRel+"/"+name, err)
 			continue
 		}
 		for _, h := range hits {
@@ -219,8 +242,10 @@ func cwfgImplWriteFuncs(scopedir string) map[string]bool {
 // cwfgConstUsageMap —— py const_usage_map：扫包内 `*.go`（非测试）取 {标识符: "字面量"}（首选胜）。
 func cwfgConstUsageMap(scopedir string) map[string]string {
 	out := map[string]string{}
-	list, ok := cwfgReadDirSorted(scopedir)
-	if !ok {
+	list, derr := cwfgReadDirSorted(scopedir)
+	if derr != nil {
+		// ★ B 类读失败：✗ 不静默跳过 ⇒ 登记（照 cwfgImplWriteFuncs 同款）。
+		cwfgRegReadFail(cwfgScopeRel, derr)
 		return out
 	}
 	for _, name := range list {
@@ -229,6 +254,8 @@ func cwfgConstUsageMap(scopedir string) map[string]string {
 		}
 		text, err := cwaReadText(cwaPyJoin(scopedir, name))
 		if err != nil {
+			// ★ B 类读失败：逐件登记，✗ 不静默 continue。
+			cwfgRegReadFail(cwfgScopeRel+"/"+name, err)
 			continue
 		}
 		for _, m := range cwfgConstRe.FindAllStringSubmatch(text, -1) {
@@ -515,6 +542,7 @@ func cwfgClassSummary(byCls []cwfgClsGroup) string {
 
 // cwfgRun —— py run(root, as_json)。
 func cwfgRun(stdout, stderr io.Writer, root string, asJSON bool) int {
+	cwfgReadFails = nil // ★ 自清：包级登记面不许跨调用残留（残留会让下一次一进来就被 BLOCKED）
 	scopedir := cwaPyJoin(root, "core", "cmd", "zerg")
 	mainGo := cwaPyJoin(scopedir, "main.go")
 	dOK := false
@@ -536,6 +564,14 @@ func cwfgRun(stdout, stderr io.Writer, root string, asJSON bool) int {
 	}
 	wfuncs := cwfgImplWriteFuncs(scopedir)
 	consts := cwfgConstUsageMap(scopedir)
+	// ★ B 类读失败（扫描面读不了的 *.go）⇒ 登记 + 判红 + rc=2：读不到 ≠ 通过（✗ 不给「全绿」结论）。
+	if len(cwfgReadFails) > 0 {
+		fmt.Fprintf(stderr, "BLOCKED —— 有 %d 件读不到（B 类读失败 ⇒ 登记 + 判红 · rc=2 · 不给结论）：\n", len(cwfgReadFails))
+		for _, u := range cwfgReadFails {
+			fmt.Fprintf(stderr, "  [读失败] %s\n", u)
+		}
+		return 2
+	}
 	entries, err := cwfgCatalogEntries(mainGo, consts)
 	if err != nil {
 		// py 原件此路为未捕异常（回溯 rc=1）；Go fail-closed rc=2，声明为未覆盖面。

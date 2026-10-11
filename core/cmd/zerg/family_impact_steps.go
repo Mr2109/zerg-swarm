@@ -141,6 +141,32 @@ func impactStepTablePull(root string) impactStepTable {
 		return t
 	}
 	beg := time.Now()
+	// ★ GAP-20261010-25（本片）：机读面优先（`--list --json`）—— 复用同族助手 `pgsParseListJSON`。
+	if mout, merrb, mcode, merr := impactRunIn(root, "bash", gateScriptRel, "--list", "--json"); merr == nil && mcode == 0 {
+		if msteps, mtotal, isM, perr := pgsParseListJSON(mout + "\n" + merrb); isM {
+			t.ListCost = time.Since(beg)
+			t.HeadSHA = impactHeadSHA(root)
+			t.At = impactEffectiveAt()
+			t.Dirty = impactStepWorktreeNote(root)
+			if perr != "" {
+				t.Detail = fmt.Sprintf("步表机读面（`%s --list --json`）形状坏：%s ⇒ **不给结论**（✗ 不静默退回人面）", gateScriptRel, perr)
+				return t
+			}
+			rows := []impactStepRow{}
+			for _, s := range msteps {
+				rows = append(rows, impactStepRow{Scope: s.Scope, Mode: s.Mode, Name: s.Name})
+			}
+			t.Rows, t.Total, t.Listed = rows, mtotal, len(rows)
+			if t.Listed == 0 || t.Listed != t.Total {
+				t.Detail = fmt.Sprintf("机读面 `count`=%d ≠ `steps` 解出 %d 条 ⇒ **不对齐 ⇒ 不可机检**（两个数都不当结论）", t.Total, t.Listed)
+				return t
+			}
+			t.Status = "取值"
+			t.Detail = fmt.Sprintf("`%s --list --json` 机读面自报 `count`=%d · 解出 %d 条（逐字相同）", gateScriptRel, t.Total, t.Listed)
+			return t
+		}
+	}
+	// ② 退化路：机读面不在 ⇒ 人面 `--list`（与改前逐字相同）。
 	out, errb, code, err := impactRunIn(root, "bash", gateScriptRel, "--list")
 	t.ListCost = time.Since(beg)
 	if err != nil {
