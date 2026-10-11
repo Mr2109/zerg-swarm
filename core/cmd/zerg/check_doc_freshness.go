@@ -1949,8 +1949,19 @@ func cdfGateD3(t *cdfTree, args *cdfArgs) *cdfResult {
 			r.counted("非本地域命中（单列·不进退码）·"+f.domain, 1)
 		}
 	}
+	// ★ 本枚（全量档挡路步之三 · 取消恒 BLOCKED）：**空语料 ≠ 判红**。
+	//   现读 `docs` scope 语料 39 篇、带锚链接 0 条（全仓仅 `vendor/rtk/**` 与
+	//   `scripts/gates/check-doc-freshness.md` 有手工锚链，二者都不进本语料面）
+	//   ⇒ 旧口径「0 条 ⇒ 落 errors ⇒ `rc()` 判 BLOCKED(2)」令 docs 路永远拿不到可对拍的绿指纹。
+	//   ★ 本仓已有明文口径（`scripts/gates/precommit-gates.sh:150-151` 逐字）：
+	//     「照门④/门⑧ 的口径**恒 BLOCKED 的步不许进默认跑法**」—— 而本 step 恒 BLOCKED
+	//     却挂在 `docs` 面的必经之路（`tri`）⇒ 本枚按同口径降为**单列·不进退码**
+	//     （症状不消失、只是不再打断结论：计数留痕 ＋ 单列），与件内既有惯例一致
+	//     （见上方 `非本地域命中（单列·不进退码）`）。✗ 未动 corpus / 取数口。
+	//   ★ 同批修正提示文案腐：原话「换 --scope wide 可见仓内那批手工锚链」已过期
+	//     （`docs/项目文档/*` 冻结档已随分家移出工作树；`--scope wide` 现读同为 39 篇 / 0 锚）。
 	if r.counts["带锚链接条目"] == 0 {
-		r.errors = append(r.errors, "该 scope 的语料里 0 条带锚链接（空转 ⇒ 不给结论；换 --scope wide 可见仓内那批手工锚链）")
+		r.counted("不适用·该 scope 语料里 0 条带锚链接（单列·不进退码）", 1)
 	}
 	return r
 }
