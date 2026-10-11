@@ -181,9 +181,9 @@ func TestPgsParseProposalRejections(t *testing.T) {
 
 // ── ③ diff_steps：序（提案序 / 现表序）+ 注记排序 ──────────────────────────────
 func TestPgsDiffStepsOrderAndNotes(t *testing.T) {
-	cur := []pgsStep{{"gates", "tri", "甲"}, {"docs", "tri-report", "乙"}}
+	cur := []pgsStep{{"gates", "tri", "甲", false}, {"docs", "tri-report", "乙", false}}
 	// 提案序：乙（先）改 scope、甲（后）改模式、丙 新增。
-	prop := []pgsStep{{"release", "tri-report", "乙"}, {"gates", "tri-report", "甲"}, {"gates", "tri", "丙"}}
+	prop := []pgsStep{{"release", "tri-report", "乙", false}, {"gates", "tri-report", "甲", false}, {"gates", "tri", "丙", false}}
 	added, removed, changed, notes := pgsDiffSteps(cur, prop)
 	// added 依**提案序**（只丙）
 	if len(added) != 1 || added[0].Name != "丙" {
@@ -207,7 +207,7 @@ func TestPgsDiffStepsOrderAndNotes(t *testing.T) {
 		t.Fatalf("scope 注记错：%+v", notes)
 	}
 	// 成对负控：模式变化**不算**增删
-	if _, _, c2, _ := pgsDiffSteps(cur, []pgsStep{{"gates", "tri-report", "甲"}, {"docs", "tri-report", "乙"}}); len(c2) != 1 {
+	if _, _, c2, _ := pgsDiffSteps(cur, []pgsStep{{"gates", "tri-report", "甲", false}, {"docs", "tri-report", "乙", false}}); len(c2) != 1 {
 		t.Fatalf("只改一档应 1 处变化：%+v", c2)
 	}
 }

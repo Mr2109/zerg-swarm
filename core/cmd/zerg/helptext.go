@@ -11,6 +11,7 @@ package main
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
 )
 
 // gateExitLine —— `scripts/gates/precommit-gates.sh` 头注释里以「# 退出码：」起头的那一行的正文（去掉行首 `# `）。
@@ -48,8 +49,8 @@ func helpText(all bool) string {
 	b.WriteString("\n命令（本版已开放 · 名字逐字来自命令树）:\n")
 	w := 0
 	for _, c := range catalog() {
-		if c.danger == nil && len(c.usage) > w {
-			w = len(c.usage)
+		if c.danger == nil && utf8.RuneCountInString(c.usage) > w {
+			w = utf8.RuneCountInString(c.usage)
 		}
 	}
 	for _, c := range catalog() {
@@ -75,8 +76,8 @@ func helpText(all bool) string {
 		// `--all`：把危险档**逐条**列全（用法行逐字来自命令树；行数与危险档条数**恒等** —— 少一行由判据件抓）。
 		dw := 0
 		for _, c := range catalog() {
-			if c.danger != nil && len(c.usage) > dw {
-				dw = len(c.usage)
+			if c.danger != nil && utf8.RuneCountInString(c.usage) > dw {
+				dw = utf8.RuneCountInString(c.usage)
 			}
 		}
 		for _, c := range catalog() {

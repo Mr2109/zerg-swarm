@@ -215,7 +215,7 @@ func repoStatusMulti(roots []string, inv *invocation, stdout, stderr io.Writer) 
 			// 波19 序137：字段表是**命令级**的 ⇒ 多仓面也必须让这两格**通得了**
 			// （否则 `--json mtime` 在两个仓上退 2「未知字段」= 字段面时通时不通）。
 			// 本面**不是逐件的面**（一行一仓）⇒ 身份两格给 `—`；逐件的身份在**单仓面**。
-			"mtime": "—", "sha256": "—",
+			"mtime": "—", "sha256": "—", "head_files": "—",
 		})
 	}
 	fmt.Fprintf(stderr, "%s: 多仓汇总（`--root` 给了 %d 次 · **只读** · 口径与单仓同源）\n", progName, len(rows))
@@ -318,13 +318,14 @@ func repoStatusOne(root string, inv *invocation, stdout, stderr io.Writer) int {
 			unreadable++
 		}
 		rows = append(rows, map[string]string{
-			"head":      sum.head,
-			"branch":    sum.branch,
-			"path":      path,
-			"status":    code,
-			"untracked": untracked,
-			"mtime":     mt,
-			"sha256":    sh,
+			"head":       sum.head,
+			"branch":     sum.branch,
+			"path":       path,
+			"status":     code,
+			"untracked":  untracked,
+			"mtime":      mt,
+			"sha256":     sh,
+			"head_files": repoHeadFiles(root, path),
 		})
 	}
 	if sum.branch == "" {
@@ -368,7 +369,7 @@ func repoStatusOne(root string, inv *invocation, stdout, stderr io.Writer) int {
 		// 身份两格给 `—`（本行不是件）：否则 `--json mtime` 在这条命令上会**时通时不通**。
 		rows = append(rows, map[string]string{
 			"head": sum.head, "branch": sum.branch, "path": "（无脏件）",
-			"status": "clean", "untracked": "否", "mtime": "—", "sha256": "—",
+			"status": "clean", "untracked": "否", "mtime": "—", "sha256": "—", "head_files": "—",
 		})
 		fmt.Fprintf(stderr, "%s: 干净（退码 0）—— 逐字对拍请用 `zerg repo status --json` 两跑 diff\n", progName)
 		if rc := listCmd(inv, stdout, stderr, []string{"head", "branch", "path", "status"}, rows); rc != exitOK {
@@ -568,4 +569,23 @@ func gitRun(root string, args ...string) (string, error) {
 		return "", fmt.Errorf("git %s：%v（%s）", strings.Join(args, " "), err, strings.TrimSpace(errb.String()))
 	}
 	return out.String(), nil
+}
+
+// repoHeadAbsent —— HEAD 面读不到那一件时的**逐字**占位（不编造、不拿空串顶替）。
+const repoHeadAbsent = "（HEAD 无此件）"
+
+// repoHeadFiles —— 取一件在 **HEAD（已提交态）** 里的版本正文（只读 · 缺口 `GAP-20260928-135`）。
+//
+// 为什么在这条命令里：两态对照（改前/改后）要拿**已提交版件**到仓外跑，过去只能手搓
+// `git show HEAD:<件>`；`repo status` 已逐行报出「哪些件变了 + 它们的现读身份」，
+// 补上这一格 ⇒ 同一行即可拿到**两态**（工作树 `sha256` ⟷ HEAD 版正文）。
+//
+// 口径：走 `git show HEAD:<件>`（`gitRun` · 只读）；件在 HEAD 里没有（未跟踪 / 新件）
+// ⇒ 逐字 `repoHeadAbsent`（不编造、不拿空串顶替）；git 跑不动 ⇒ 同一占位（照实）。
+func repoHeadFiles(root, rel string) string {
+	out, err := gitRun(root, "show", "HEAD:"+rel)
+	if err != nil {
+		return repoHeadAbsent
+	}
+	return out
 }

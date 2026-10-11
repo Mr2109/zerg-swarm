@@ -41,6 +41,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -91,6 +92,7 @@ type scriptInvRow struct {
 	Help  string
 	JSON  string
 	Lines int
+	Refs  string // 本件的死引用（`-` = 无；多条 `; ` 连 · 只读助手 scriptInvRefsOf 算）
 }
 
 // scriptInvKindOK —— 第 2 列的类型闭集（消费者逐字同：`sh` / `py` / `无后缀`）。
@@ -123,8 +125,28 @@ func scriptInvCountLines(s string) int {
 
 // scriptInvScan —— 现跑扫 `scripts/` 面：`.sh` / `.py` / 无后缀且首行 `#!` 的可执行件。
 // 三列（类型 / 有 --help / 有 --json）**从件自己的正文重算**（不抄台账里的旧值 —— 那是回潮的口子）。
+// scriptInvScanRoots —— 收件面三根（`GAP-20260926-91` 已拍口径：脚本/部署面 = 这三根下的 `.sh`/`.bash`）。
+var scriptInvScanRoots = []string{"scripts", "deploy", "gateway"}
+
 func scriptInvScan(root string) ([]scriptInvRow, error) {
-	base := filepath.Join(root, "scripts")
+	rows := []scriptInvRow{}
+	for _, sub := range scriptInvScanRoots {
+		got, err := scriptInvScanRoot(root, sub)
+		if err != nil {
+			return nil, err
+		}
+		rows = append(rows, got...)
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].Path < rows[j].Path })
+	return rows, nil
+}
+
+// scriptInvScanRoot —— 单根扫描（WalkDir 体逐字取自旧 `scriptInvScan` · 只把 base 换成入参）。
+func scriptInvScanRoot(root, sub string) ([]scriptInvRow, error) {
+	base := filepath.Join(root, sub)
+	if _, serr := os.Stat(base); serr != nil {
+		return nil, nil // 该根不在盘（裁剪过的部署机）⇒ 不列、也不报错
+	}
 	rows := []scriptInvRow{}
 	err := filepath.WalkDir(base, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -139,7 +161,7 @@ func scriptInvScan(root string) ([]scriptInvRow, error) {
 		name := d.Name()
 		kind := ""
 		switch {
-		case strings.HasSuffix(name, ".sh"):
+		case strings.HasSuffix(name, ".sh"), strings.HasSuffix(name, ".bash"):
 			kind = "sh"
 		case strings.HasSuffix(name, ".py"):
 			kind = "py"
@@ -171,14 +193,92 @@ func scriptInvScan(root string) ([]scriptInvRow, error) {
 			Help:  scriptInvYN(strings.Contains(text, "--help")),
 			JSON:  scriptInvYN(strings.Contains(text, "--json")),
 			Lines: scriptInvCountLines(text),
+			Refs:  scriptInvRefsOf(root, text),
 		})
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
-	sort.Slice(rows, func(i, j int) bool { return rows[i].Path < rows[j].Path })
 	return rows, nil
+}
+
+// ---- 死引用只读助手（`GAP-20260926-91`）-----------------------------------------------
+
+// scriptInvRefConsumerWords —— 认的**文件消费类命令**（整词匹配 · 只有它们的实参才当「引用」）。
+// 名单 / 报文 / 夹具自造件（`printf >`、`git add`、`git checkout` 一类）不在其内 ⇒ 天然出局。
+var scriptInvRefConsumerWords = map[string]bool{
+	"scp": true, "rsync": true, "cp": true, "source": true, "bash": true, "sh": true,
+	"python3": true, "python": true, "cat": true, "install": true, "tar": true, "unzip": true,
+}
+
+// scriptInvRefToken —— 「独立仓内相对件路径词」的形态（含 `/` 且末段带 `.扩展`）。
+var scriptInvRefToken = regexp.MustCompile(`(?:[A-Za-z0-9_][A-Za-z0-9_.\-]*/)+[A-Za-z0-9_][A-Za-z0-9_.\-]*\.[A-Za-z0-9]{1,6}`)
+
+// scriptInvRefIsBoundary —— 路径词前界（`$VAR/…` 前缀、URL、更长的词都不算「独立词」）。
+func scriptInvRefIsBoundary(r byte) bool {
+	switch r {
+	case ' ', '\t', '"', '\'', '(', '=', ':', ',':
+		return true
+	}
+	return false
+}
+
+// scriptInvRefsOf —— 只读助手：一件脚本正文里的**死引用** =「以文件消费类命令引用、而仓内不存在的仓内相对件」。
+// 返回形如 `184:agent/agent_models.yaml`（多条以 `;` 连；无 ⇒ `-`）。判定逐条（机械 · 现读自证见该缺口）：
+//
+//	① 整行注释（行首去空白为 `#`）跳过；`\` 续行按同一**逻辑行**继承「消费上下文」。
+//	② 逻辑行须出现 `scriptInvRefConsumerWords` 里的**整词**。
+//	③ 取**独立**路径词（前界见 `scriptInvRefIsBoundary`），词形见 `scriptInvRefToken`，首段须是仓顶层现有目录。
+//	④ 仓内不存在 ⇒ 死引用（记**物理行号**）。
+//
+// ✗ 不碰仓件 · ✗ 不起子进程 · ✗ 不写盘（纯只读）。
+func scriptInvRefsOf(root, body string) string {
+	top := map[string]bool{}
+	if ents, err := os.ReadDir(root); err == nil {
+		for _, e := range ents {
+			top[e.Name()] = true
+		}
+	}
+	refs := []string{}
+	inConsumer := false
+	for i, raw := range strings.Split(body, "\n") {
+		line := strings.TrimRight(raw, "\r")
+		trimmed := strings.TrimLeft(line, " \t")
+		if !inConsumer && strings.HasPrefix(trimmed, "#") {
+			inConsumer = false
+			continue
+		}
+		cons := inConsumer
+		if !cons {
+			for _, w := range strings.Fields(trimmed) {
+				if scriptInvRefConsumerWords[w] {
+					cons = true
+					break
+				}
+			}
+		}
+		if cons {
+			for _, m := range scriptInvRefToken.FindAllStringIndex(line, -1) {
+				if m[0] > 0 && !scriptInvRefIsBoundary(line[m[0]-1]) {
+					continue
+				}
+				tok := line[m[0]:m[1]]
+				if !top[strings.SplitN(tok, "/", 2)[0]] {
+					continue
+				}
+				if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(tok))); err == nil {
+					continue
+				}
+				refs = append(refs, fmt.Sprintf("%d:%s", i+1, tok))
+			}
+		}
+		inConsumer = cons && strings.HasSuffix(strings.TrimRight(line, " \t"), "\\")
+	}
+	if len(refs) == 0 {
+		return "-"
+	}
+	return strings.Join(refs, "; ")
 }
 
 // scriptInvParseLedger —— 解台账：**逐字照消费者 `parseInventory` 的跳行规则**

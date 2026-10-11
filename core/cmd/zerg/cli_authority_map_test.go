@@ -371,7 +371,7 @@ func authorityRowRawKey(vals []any) string {
 }
 
 // authorityWitnessPinned —— 本批钉死的三个**不写盘**子集（父代理 2026-10-10 口径）。
-var authorityWitnessPinned = []string{"", "--dry-run", "--dry-run+--yes"}
+var authorityWitnessPinned = []string{"", "--dry-run", "--dry-run+--yes", "--confirm=<别的值>"}
 
 // authorityWitnesses —— 见证命令面，键 = `authorityRowRawKey`。
 var authorityWitnesses = map[string]authorityWitness{
@@ -406,7 +406,10 @@ var authorityWitnesses = map[string]authorityWitness{
 		reason: "无见证命令 —— 含 `--yes` 真跑会写盘，且带 `--confirm <真目标>`；本单 ✗ 绝不真跑写盘形态 ⇒ 只登记、不给见证命令",
 	},
 	"--confirm=<别的值>": {
-		reason: "无见证命令 —— 本批只钉三个不写盘子集（∅ / `--dry-run` / `--dry-run --yes`）；该 block 行不在其内（其见证须真跑 `--confirm <别的值>`，按父代理口径本批 ✗ 不扩到三子集外）⇒ 只登记、不给见证命令",
+		argv:   []string{"task", "pause", "T-zzz", "--confirm=T-zzz-other"},
+		rc:     2,
+		needle: "确认值不匹配",
+		ctl:    "block",
 	},
 	"--confirm=<目标>+--dry-run": {
 		reason: "无见证命令 —— 带 `--confirm <真目标>`（写盘形态的确认旗标）；本单 ✗ 绝不真跑写盘形态 ⇒ 只登记、不给见证命令",
@@ -473,7 +476,7 @@ func TestAuthorityMapWitness(t *testing.T) {
 			t.Errorf("见证表面积 %q 对不上任何映射行（死条目 —— 表老了或键写歪了）", k)
 		}
 	}
-	// 口径钉死：本批只钉这三个不写盘子集（✗ 不扩到三子集外）。
+	// 口径钉死：本批钉四个子集（三个不写盘子集 + `--confirm=<别的值>` 这一格：用不带干跑且不带 --yes 的安全形态取证）。
 	for _, k := range authorityWitnessPinned {
 		if w, ok := authorityWitnesses[k]; !ok || len(w.argv) == 0 {
 			t.Errorf("钉死的见证子集 %q 没给 `argv`（本批三个不写盘子集必须可见证）", k)

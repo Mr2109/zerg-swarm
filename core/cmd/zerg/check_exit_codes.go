@@ -829,6 +829,46 @@ func cecCheck(root string) (int, []string, []string, map[string]any) {
 		notes = append(notes, fmt.Sprintf("R6 %s:%d [%s] 理由: %s ｜逐字: %s", h.Site, h.Line, h.Verdict, h.Why, h.Text))
 	}
 
+	// ── R8 「没有 / 零命中 / 判不了」分派表 ↔ 实现（缺口 GAP-20261005-32）──
+	// 把「同一句『不是错、是没有』落在不同码」变成机器可判：登记表 absence_dispatch 声明每一档
+	// 的码与实现落点，本规则逐条核 ① 声明的 rc 在主表内 ② 落点件在盘 ③ 落点行仍含该码标记
+	// （实现漂移即红）。✗ 不登记任何新码值、✗ 不改任何实现件 —— 只读实现、只判「表 ⟷ 实现」一致。
+	absSection, _ := reg["absence_dispatch"].(map[string]any)
+	absRows := cecArrOfObj(absSection["tiers"])
+	for _, a := range absRows {
+		code, hasCode := cecToInt(a["rc"])
+		if !hasCode || !tableCodes[code] {
+			problems = append(problems, fmt.Sprintf("FAIL R8 分派表档 %q 的 rc=%s 不在主表（码值必须取自 exitcodes.go）",
+				cecStr(a["id"]), cecRawNum(a["rc"])))
+			continue
+		}
+		for _, sc := range cecArrOfObj(a["sites"]) {
+			rel := cecStr(sc["site"])
+			ln, _ := cecToInt(sc["line"])
+			want := cecStr(sc["must_contain"])
+			p := cecJoin(root, rel)
+			if !cecIsFile(p) {
+				problems = append(problems, fmt.Sprintf("FAIL R8 %s 落点件不在盘：%s", cecStr(a["id"]), rel))
+				continue
+			}
+			txt, ok := cecReadText(p)
+			if !ok {
+				problems = append(problems, fmt.Sprintf("FAIL R8 %s 落点件读不到：%s", cecStr(a["id"]), rel))
+				continue
+			}
+			ls := cecSplitLines(txt)
+			if ln < 1 || ln > len(ls) {
+				problems = append(problems, fmt.Sprintf("FAIL R8 %s 落点越界：%s:%d", cecStr(a["id"]), rel, ln))
+				continue
+			}
+			if want != "" && !strings.Contains(ls[ln-1], want) {
+				problems = append(problems, fmt.Sprintf("FAIL R8 %s 落点 %s:%d 不再含 %q（表 ⟷ 实现漂移）：%s",
+					cecStr(a["id"]), rel, ln, want, cecTrunc(strings.TrimSpace(ls[ln-1]), 120)))
+			}
+		}
+	}
+	notes = append(notes, fmt.Sprintf("R8 「没有/零命中/判不了」分派表 %d 档逐条对拍实现落点（缺口 GAP-20261005-32）", len(absRows)))
+
 	rc := 0
 	if len(problems) > 0 {
 		rc = 1
@@ -842,6 +882,7 @@ func cecCheck(root string) (int, []string, []string, map[string]any) {
 		"r6_mixed_8":         len(r6mix),
 		"r6_blocked_8":       len(r6bd),
 		"r6_self_exempt":     len(r6Exempt),
+		"r8_absence":         len(absRows),
 	}
 }
 

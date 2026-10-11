@@ -48,7 +48,9 @@ var proposalFields = []string{"id", "title", "target", "goal", "evidence", "roll
 	"subject", "subject_kind", "egg_id", "approver", "approver_kind",
 	// ★ GAP-20260928-161（方案甲 · 本枚）：前瞻判据两格 —— `criterion_new`（值）+ `criterion_new_state`（它的态）。
 	//   与 `criterion`/`criterion_state` **同体例**（**只增不改**：强档那两格一字未动）。
-	"criterion_new", "criterion_new_state"}
+	"criterion_new", "criterion_new_state",
+	// ★ GAP-20260928-66（本枚）：作废四格 —— `--json` 面须能带出 `void:true` + 原文（口径照 `gap note --retract`）。
+	"void", "void_at", "void_by", "void_reason"}
 
 // proposalStates —— 三态闭集（§17.4 #1 的 `--state 未决|已批准|已否决`，逐字）。
 var proposalStates = []string{"未决", "已批准", "已否决"}
@@ -360,6 +362,13 @@ func cmdDevProposalNew(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s: %s\n", progName, why)
 		fmt.Fprintf(stderr, "口径（§17.3 铁律② · 缺口-命令面 §九 I5）：判据要**可机检** —— 给一条本版跑得动的 `zerg …`，"+
 			"例：%s gate run --fast\n", progName)
+		return exitUsage
+	}
+	// ★ GAP-20261001-25（本枚）：**参数级可解析** —— 命令词解析到了不等于**参数合法**（如
+	//   `gate run --step <不存在的步名>`）。零副作用地再核一遍闭集参数；不合法 ⇒ 与「判据不可机检」同档拒收。
+	if why := criterionGivenWhy(rec.Criterion); why != "" {
+		inv.setErr("usage", "criterion_not_machine_checkable", why)
+		fmt.Fprintf(stderr, "%s: %s\n", progName, why)
 		return exitUsage
 	}
 	// ⑤b 前瞻判据档（★ GAP-20260928-161 · 方案甲）：`--criterion-new` 收的是「**本版还跑不动**」的判据
@@ -1024,6 +1033,10 @@ func proposalList(inv *invocation, stdout, stderr io.Writer) int {
 	}
 	rows := []map[string]string{}
 	for _, r := range recs {
+		// ★ GAP-20260928-66（本枚）：读面默认不显示作废件（口径照 gap note --retract）。
+		if r.Void {
+			continue
+		}
 		if want != "" && r.State != want {
 			continue
 		}
@@ -1368,6 +1381,11 @@ func proposalRow(r proposalRecord) map[string]string {
 		"criterion_new_state": criterionNewState(r.CriterionNew),
 		"created_at":          r.CreatedAt,
 		"path":                r.Path,
+		// ★ GAP-20260928-66（本枚）：作废四格（照 proposalFields 同体例 · --json 真键表在此）。
+		"void":        fmt.Sprintf("%t", r.Void),
+		"void_at":     r.VoidAt,
+		"void_by":     r.VoidBy,
+		"void_reason": r.VoidReason,
 	}
 }
 
@@ -1465,6 +1483,86 @@ func hasDryRunFlag(fields []string) bool {
 }
 
 // criterionState —— 判据的可跑态（三值 · 给 `--json` 与 check 表用）：可跑 / 缺 / 跑不动。
+
+// criterionGivenWhy —— 判据命令串的**参数级可解析**校验（★ 本枚 · 账 `GAP-20261001-25`）。
+//
+// 病灶：`criterionRunnable` 只判「命令词解析得到 / 不是危险档」——**不校验参数**（步名/旗标值），
+// 于是非法串（如 `gate run --step gofmt-core`，步名不存在）照样报「可跑」、`new` 照样收下。
+// 本判在命令词解析得到之后对**闭集参数**再核一遍：首治本账点名的 `gate run --step <步名>`，
+// 步名真源 = **现读**门禁脚本的 `add_step` 行（复用同包 `gateShowReadDecls`/`gateShowZeroHit`
+// —— 与 `gate run --step` 执行前那一判**同一份真源**，不另抄表）。非法步名 ⇒ 拒收（rc=2）。
+//
+// ✗ **不真跑** —— 真跑是 `--deep` 的贵面档（`check --deep` 逐条 `sh -c` 真执行判据本体，含 gate run，
+// 耗时/副作用不可控）。本判**零副作用、快**，可挂在 `new` 与默认 `check`。
+// 返回空 = 无可判参数 / 读不到真源（原判照旧 · 不新增阻断面）。
+func criterionGivenWhy(spec string) string {
+	fields := splitQuoted(spec)
+	if len(fields) < 2 {
+		return ""
+	}
+	rest := []string{}
+	for _, f := range fields[1:] {
+		if strings.HasPrefix(f, "-") {
+			break
+		}
+		rest = append(rest, f)
+	}
+	if len(rest) == 0 || rest[0] != "gate" {
+		return ""
+	}
+	step := ""
+	for i, f := range fields {
+		if f == "--step" && i+1 < len(fields) {
+			step = fields[i+1]
+			break
+		}
+	}
+	if strings.TrimSpace(step) == "" {
+		return ""
+	}
+	root := repoRoot()
+	if root == "" {
+		return ""
+	}
+	decls, ok := gateShowReadDecls(filepath.Join(root, gateScriptRel))
+	if !ok || len(decls) == 0 {
+		return ""
+	}
+	if !gateShowZeroHit(decls, step) {
+		return ""
+	}
+	return fmt.Sprintf("判据里的 `gate run --step %q` **步名解析不到**（现读 %s 的 add_step 行 %d 条）—— "+
+		"非法判据串 ⇒ 拒收（账 `GAP-20261001-25`：步名/命令须可解析）；要列全部步名 ⇒ `%s gate ls`",
+		step, gateScriptRel, len(decls), progName)
+}
+
+// splitQuoted —— 极简**引号感知**分词（本枚 `GAP-20261001-25` 用）：按空白切词，单/双引号内的空白
+// 不切、引号本身剥离（够用即止 —— 判据串不出现嵌套引号/转义）。空串 ⇒ 空切片。
+func splitQuoted(s string) []string {
+	var out []string
+	var b strings.Builder
+	quote := rune(0)
+	flush := func() {
+		if b.Len() > 0 {
+			out = append(out, b.String())
+			b.Reset()
+		}
+	}
+	for _, r := range s {
+		switch {
+		case quote != 0 && r == quote:
+			quote = 0
+		case quote == 0 && (r == '\'' || r == '"'):
+			quote = r
+		case quote == 0 && unicode.IsSpace(r):
+			flush()
+		default:
+			b.WriteRune(r)
+		}
+	}
+	flush()
+	return out
+}
 func criterionState(spec string) string {
 	if strings.TrimSpace(spec) == "" {
 		return "缺"
@@ -1831,6 +1929,11 @@ func cmdDevProposalCheck(inv *invocation, stdout, stderr io.Writer) int {
 		seen++
 		st := criterionState(r.Criterion)
 		_, why := criterionRunnable(r.Criterion)
+		// ★ GAP-20261001-25（本枚）：**参数级可解析** —— 形状过 ≠ 参数合法（非法步名之类），
+		//   零副作用地再核一遍；不合法 ⇒ 与「跑不动」同档（bad++ ⇒ 退码 2）。
+		if gwhy := criterionGivenWhy(r.Criterion); gwhy != "" {
+			st, why = "跑不动", gwhy
+		}
 		if st != "可跑" {
 			bad++
 		}

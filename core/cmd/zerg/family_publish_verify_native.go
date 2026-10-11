@@ -2,7 +2,7 @@
 // （发布链 Go 半优先 · 本批第三件 · 上两件 = 预检 `family_publish_preflight_native.go` ·
 // 压平器 `family_publish_public_native.go`）。
 //
-// 源件：`scripts/build/test-publish-parity.sh`（279 行 · B8「两器产出一致性」可重复验收 · **无 CLI 入口**）。
+// 源件：`scripts/build/test-publish-parity.sh`（B8「两器产出一致性」可重复验收 · **无 CLI 入口**）。
 // 本笔把它的**编排**搬进 CLI 进程内，逐段与旧壳逐字对齐：
 //
 //	① 准备（仓根 / 件路径 / BASE 工作区 · 私有仓 HEAD 与 porcelain 基线）

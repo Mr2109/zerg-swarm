@@ -239,5 +239,124 @@
     "scripts/build/build-all.sh",
     "publish/mirror-cn.sh",
     "publish/mirror-public.sh"
-  ]
+  ],
+  "absence_dispatch": {
+    "_purpose": "「没有 / 零命中 / 判不了」分派表（缺口 GAP-20261005-32）—— 把「同一句『不是错、是没有』落在不同退码」从口头口径变成机器可读的一张表。判定器 = 门⑨ check-exit-codes（R8）。本表只登记「哪一档『没有』归哪个码 + 实现落点」，不另立语义；码值一律取自命令面主表 core/cmd/zerg/exitcodes.go。",
+    "_rule": "四档（按语义分，不按措辞分）：0 = 空/默认态（查询成功、结果就是空的）；1 = 查询跑到了但结果为「没有」（零命中 / 件不在 / 状态脏 —— 不是错）；2 = 参数值无效 / 名给错（点名对象不在真源里 ⇒ 用法错，照甲案『参数值无效 ⇒ 2』）；8 = 真源那一层读不到 / 端点没接 / 前置不在（「读不到」不许当健康）。★ 本表要治的缺陷：同一句『不是错、是没有』在 zero-hit 写 1、在 bad-name 写 2；同一族 `gap show`（账内没有 id）写 2 而 `gap verify`（账内没有 id）写 8 —— 措辞相同、码不同，调用者无法从措辞判码。",
+    "tiers": [
+      {
+        "id": "empty-default",
+        "rc": 0,
+        "semantics": "查询成功、结果为空（空 / 默认态）",
+        "sites": [
+          {
+            "site": "core/cmd/zerg/family_route.go",
+            "line": 326,
+            "must_contain": "退码 0"
+          },
+          {
+            "site": "core/cmd/zerg/plugin.go",
+            "line": 162,
+            "must_contain": "这不是错"
+          }
+        ]
+      },
+      {
+        "id": "zero-hit",
+        "rc": 1,
+        "semantics": "跑到了但结果「没有」（零命中 / 件不在 / 状态脏）",
+        "sites": [
+          {
+            "site": "core/cmd/zerg/family_code.go",
+            "line": 620,
+            "must_contain": "退码 1"
+          },
+          {
+            "site": "core/cmd/zerg/family_code.go",
+            "line": 901,
+            "must_contain": "退码 1"
+          },
+          {
+            "site": "core/cmd/zerg/family_find.go",
+            "line": 192,
+            "must_contain": "退码 1"
+          },
+          {
+            "site": "core/cmd/zerg/family_gate_find.go",
+            "line": 165,
+            "must_contain": "退码 1"
+          },
+          {
+            "site": "core/cmd/zerg/family_gap.go",
+            "line": 1282,
+            "must_contain": "退码 1"
+          },
+          {
+            "site": "core/cmd/zerg/family_repo.go",
+            "line": 381,
+            "must_contain": "退码 1"
+          }
+        ]
+      },
+      {
+        "id": "bad-name",
+        "rc": 2,
+        "semantics": "点名对象不在真源 ⇒ 用法错（甲案：参数值无效 ⇒ 2）",
+        "sites": [
+          {
+            "site": "core/cmd/zerg/family_eggs_cocoons.go",
+            "line": 1074,
+            "must_contain": "退码 2"
+          },
+          {
+            "site": "core/cmd/zerg/family_agent_ops.go",
+            "line": 164,
+            "must_contain": "退码 2"
+          },
+          {
+            "site": "core/cmd/zerg/family_archive.go",
+            "line": 246,
+            "must_contain": "用法错 2"
+          },
+          {
+            "site": "core/cmd/zerg/family_gap.go",
+            "line": 1603,
+            "must_contain": "退码 2"
+          }
+        ]
+      },
+      {
+        "id": "unreadable",
+        "rc": 8,
+        "semantics": "真源读不到 / 端点没接 / 前置不在（读不到不许当健康）",
+        "sites": [
+          {
+            "site": "core/cmd/zerg/family_archive.go",
+            "line": 464,
+            "must_contain": "退码 8"
+          },
+          {
+            "site": "core/cmd/zerg/family_task.go",
+            "line": 204,
+            "must_contain": "退码 8"
+          },
+          {
+            "site": "core/cmd/zerg/family_eggs_cocoons.go",
+            "line": 223,
+            "must_contain": "退码 8"
+          },
+          {
+            "site": "core/cmd/zerg/family_gap.go",
+            "line": 2522,
+            "must_contain": "取数不到"
+          },
+          {
+            "site": "core/cmd/zerg/family_publish.go",
+            "line": 194,
+            "must_contain": "退码 8"
+          }
+        ]
+      }
+    ]
+  }
 }

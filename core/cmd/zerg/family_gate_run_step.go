@@ -571,6 +571,7 @@ func gateRunPrecheckFlags(tail []string, stderr io.Writer) int {
 			continue
 		}
 		fmt.Fprintf(stderr, "✗ 未知参数: %s\n", a)
+		fmt.Fprintf(stderr, "error.kind=usage · detail=unknown_flag · retryable=false · remedy=fix_usage\n")
 		fmt.Fprintf(stderr, "%s: 这一发**没跑任何步骤** —— `gate run` 的旗标在**命令面**就校验（缺口 `GAP-20260928-146`；改前先白跑合成自检＋软门禁才退 2）\n", progName)
 		return exitUsage
 	}
@@ -632,6 +633,7 @@ func gateRunPrecheckScopeValues(script string, tail []string, stderr io.Writer) 
 		}
 		if !known && v != "" {
 			fmt.Fprintf(stderr, "✗ 未知 scope: %s（可用: %s）\n", v, list)
+			fmt.Fprintf(stderr, "error.kind=usage · detail=scope_unknown · retryable=false · remedy=fix_usage\n")
 			fmt.Fprintf(stderr, "%s: 这一发**没跑任何步骤**（stdout 0 行）—— `--scope` 的**值**在**命令面**就校验（缺口 `GAP-20260928-153`；改前先白跑一遍合成自检＋软门禁、stdout 175 行落地才退 2）\n", progName)
 			return exitUsage
 		}
@@ -709,6 +711,7 @@ func gateRunPrecheckCandidateValue(tail []string, stderr io.Writer) int {
 		return exitOK
 	}
 	fmt.Fprintf(stderr, "✗ --candidate 的形态不对：%s（闭集 = DEV- 加四位十进制，逐字；照 core/internal/contract/dev-candidate.json）\n", id)
+	fmt.Fprintf(stderr, "error.kind=usage · detail=candidate_bad · retryable=false · remedy=fix_usage\n")
 	fmt.Fprintf(stderr, "%s: 这一发**没跑任何步骤**（stdout 0 行）—— `--candidate` 的**值**在**命令面**就校验（缺口 `GAP-20260928-157`；改前先白跑一遍尾部软门禁、stdout 22 行落地才退 2）\n", progName)
 	return exitUsage
 }

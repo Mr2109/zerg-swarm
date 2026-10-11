@@ -4,7 +4,7 @@
 // —— 压平快照发布器的**九段编排**（环境检查 / 导出白名单树 / 套发布件 / 快照变换 / 门禁扫描 /
 // 压平提交 / 推送）长在 shell 里，CLI 面看不见真身。
 //
-// 本笔把编排**搬进 CLI 进程内**，逐段与旧壳 `scripts/build/publish-public.sh`（1284 行）逐字对齐：
+// 本笔把编排**搬进 CLI 进程内**，逐段与旧壳 `scripts/build/publish-public.sh`逐字对齐：
 //
 //	① 环境检查（缺 wl/rules、缺 rsync/python3、私有 HEAD、输出目录）
 //	② EXCLUDES 双源对拍闸（新真源 `publish/excludes.txt` ⟷ 旧壳内联 `EXCLUDES=(…)` 数组）

@@ -372,7 +372,14 @@ var gateLsFields = []string{"total", "scope", "mode", "step"}
 // 已由 `pgsParseListJSON` 的 `gates_total==len(steps)` 自证钉住）—— ✗ 不进冻结 `fields:`
 // （帮助/导出面与命令页一行不动，同 `name` 体例）。逐字：`zerg gate ls --json gates_total`
 // ⇒ `{"gates_total":N}`。
-var gateLsOptFields = []string{"name", "gates_total"}
+// ★ 缺口 `GAP-20260927-21`（本片）：`fast` 同走**可选字段层** —— 步表机读面
+// （`precommit-gates.sh --list --json`）每步新增一格 `fast`（该步**是否在快速档** = 步名 ∈
+// `FAST_STEPS`；名单**唯一来源是门脚本自己**，命令面只转发、✗ 不自留第二份）⇒
+// `zerg gate ls --json fast` 点得出来（快速档 = `--fast` 跑的那批步 ⇒ 「某门不进快速档」可机读对拍）。
+// 它是本命令**唯一的布尔格**（其余四格都是串）—— 逐字：
+// `zerg gate ls --json fast` ⇒ `{"steps":[{"fast":true},{"fast":false},…]}`。
+// ✗ 不进冻结 `fields:`（帮助/导出面与命令页一行不动，同 `name`/`gates_total` 体例）。
+var gateLsOptFields = []string{"name", "gates_total", "fast"}
 
 // gateLsFieldLegal —— 字段是否在闭集四格内（与 `gateShowFieldLegal` 同形 · 不另写第二份口径）。
 func gateLsFieldLegal(f string) bool {
@@ -430,6 +437,10 @@ func gateLsJSON(inv *invocation, stdout, stderr io.Writer, root, script string) 
 		Scope string `json:"scope"`
 		Mode  string `json:"mode"`
 		Step  string `json:"step"`
+		// fast —— 该步是否在快速档（缺口 `GAP-20260927-21`）。**小写且无 tag** ⇒ `json` 包
+		// 不序列化它 ⇒ 裸 `--json`（`enc.Encode(… {"steps": rows})`）的逐字节形态**一字不动**；
+		// 只有点名档 `--json fast` 手工拼它。
+		fast bool
 	}
 	rows := []row{}
 	total := 0
@@ -452,7 +463,7 @@ func gateLsJSON(inv *invocation, stdout, stderr io.Writer, root, script string) 
 				return exitUsage
 			}
 			for _, s := range msteps {
-				rows = append(rows, row{Scope: s.Scope, Mode: s.Mode, Step: s.Name})
+				rows = append(rows, row{Scope: s.Scope, Mode: s.Mode, Step: s.Name, fast: s.fast})
 			}
 			total = mtotal
 			machineDone = true
@@ -508,6 +519,7 @@ func gateLsJSON(inv *invocation, stdout, stderr io.Writer, root, script string) 
 	// ② 点名档：只出点到的几格（顶层 `total` + 行级 `scope`/`mode`/`step` · 序即用户给的序）。
 	wantTotal := false
 	wantGatesTotal := false
+	wantFast := false
 	rowKeys := []string{}
 	for _, f := range fields {
 		switch f {
@@ -518,6 +530,36 @@ func gateLsJSON(inv *invocation, stdout, stderr io.Writer, root, script string) 
 			wantGatesTotal = true
 		case "scope", "mode", "step", "name":
 			rowKeys = append(rowKeys, f)
+		case "fast":
+			// ★ 缺口 `GAP-20260927-21`（本片）：每步**是否在快速档**（名单真源 = 门脚本的 `FAST_STEPS`）。
+			wantFast = true
+			rowKeys = append(rowKeys, f)
+		}
+	}
+	// ★ 缺口 `GAP-20260927-21`（本片）：`fast` 的取数只有**一条**路 —— 步表机读面。两态都**响亮失败**，
+	//   ✗ 不拿「全 false」当读数（那会把「取不到」伪装成「都不在快速档」= 把这条约束变成不可证伪）：
+	//   ① 机读面不在（脚本不认 `--json`）⇒ 人面 `--list` 根本没有这一格；
+	//   ② 机读面在场而**一步都没有** `fast:true` ⇒ 只可能是旧机读面缺该格（`FAST_STEPS` 非空 ∧
+	//      脚本自检 ⑬ 钉住「名单每一条都能在默认集步骤表里找到」⇒ `--list` 默认集里必有 ≥1 步在快速档）。
+	if wantFast {
+		if !machineDone {
+			inv.setErr("usage", "gate_ls_fast_needs_machine_face", "快速档归属取不到")
+			fmt.Fprintf(stderr, "%s: `--json fast` 要**步表机读面**（`%s --list --json` 的每步 `fast` 格）；人面 `--list` 不带这一格 ⇒ 不给结论\n",
+				progName, gateScriptRel)
+			return exitUsage
+		}
+		anyFast := false
+		for _, r := range rows {
+			if r.fast {
+				anyFast = true
+				break
+			}
+		}
+		if !anyFast {
+			inv.setErr("usage", "gate_ls_fast_field_absent", "步表机读面缺 fast 格")
+			fmt.Fprintf(stderr, "%s: 步表机读面（`%s --list --json`）**一步都没有** `fast:true` ⇒ 该格缺失（旧机读面）⇒ 不给结论（✗ 不把「全 false」当读数）\n",
+				progName, gateScriptRel)
+			return exitUsage
 		}
 	}
 	var b strings.Builder
@@ -543,8 +585,36 @@ func gateLsJSON(inv *invocation, stdout, stderr io.Writer, root, script string) 
 			if i > 0 {
 				b.WriteString(",")
 			}
-			obj, _ := marshalObject(rowKeys, map[string]string{"scope": r.Scope, "mode": r.Mode, "step": r.Step, "name": r.Step})
-			b.WriteString(obj)
+			// ★ 行级对象按**用户给的键序**拼 —— `fast` 是布尔格（本命令唯一非串格）
+			//   ⇒ ✗ 不走 `marshalObject`（取值面是 `map[string]string`，bool 会被出成 `"true"` 串）。
+			b.WriteString("{")
+			for j, f := range rowKeys {
+				if j > 0 {
+					b.WriteString(",")
+				}
+				switch f {
+				case "fast":
+					b.WriteString("\"fast\":")
+					if r.fast {
+						b.WriteString("true")
+					} else {
+						b.WriteString("false")
+					}
+				default:
+					v := r.Step
+					if f == "scope" {
+						v = r.Scope
+					} else if f == "mode" {
+						v = r.Mode
+					}
+					kk, _ := json.Marshal(f)
+					vv, _ := json.Marshal(v)
+					b.Write(kk)
+					b.WriteString(":")
+					b.Write(vv)
+				}
+			}
+			b.WriteString("}")
 		}
 		b.WriteString("]")
 	}

@@ -194,6 +194,7 @@ func cmdScriptLs(inv *invocation, stdout, stderr io.Writer) int {
 				"public":      "",
 				"kind":        scriptLsKind(r.Kind),
 				"count_basis": scriptLsCountBasis(),
+				"refs":        r.Refs,
 			})
 		}
 	}
@@ -209,7 +210,7 @@ func cmdScriptLs(inv *invocation, stdout, stderr io.Writer) int {
 			r["public"] = "（未登记）"
 		}
 	}
-	return listCmd(inv, stdout, stderr, []string{"path", "public", "kind", "count_basis"}, rows)
+	return listCmd(inv, stdout, stderr, []string{"path", "public", "kind", "count_basis", "refs"}, rows)
 }
 
 // scriptLsKind —— 命令面那一格**量词面** `kind` 的取值（`O-16` · 缺口 `Q-162`）。
@@ -246,7 +247,7 @@ func scriptLsCountBasis() string {
 	if scriptInvTakesSuffixless {
 		suffixless = "是（可执行 + 首行 #!）"
 	}
-	return fmt.Sprintf("收件口径=scriptInvScan（.sh / .py / 无后缀且可执行且首行 #!）· 扫的根=scripts/（排除面 13 项）· 含无后缀=%s", suffixless)
+	return fmt.Sprintf("收件口径=scriptInvScan（.sh / .bash / .py / 无后缀且可执行且首行 #!）· 扫的根=scripts/ · deploy/ · gateway/（排除面 13 项）· 含无后缀=%s", suffixless)
 }
 
 // scriptLsOrderKey —— `script ls` 的**行序**（与旧输出逐字同序，换口径时不许顺手挪行）：

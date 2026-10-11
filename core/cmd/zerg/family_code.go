@@ -6,7 +6,8 @@
 //
 // 口径（照 §十一 P0-1 的形态，不自造）：
 //
-//	形态 `zerg code find <正则> [--path <目录或单件>] [--glob <模式>] [--full] [--json <字段>]`
+//	形态 `zerg code find <正则> [旗标…]` —— **旗标全表以 `main.go` 的树真源用法串为准**
+//	  （本件**不另抄第二份**：抄了必与树真源漂 —— 缺口 `GAP-20260927-301`）
 //	输出 `path/line/text` 逐条 + 命中数（人面表格 · 机器面六键包封）
 //	退码 `0` 有命中 / `1` 零命中（**不是错**，是「没有」）/ `2` 用法错（正则坏）/ `8` 仓根/面读不到
 package main
@@ -333,7 +334,7 @@ func cmdCodeFind(inv *invocation, stdout, stderr io.Writer) int {
 	// 全局布尔）过去被**静默吞** —— 同一个命令上因此并存两套命运（`--max` 会被点名退 2、
 	// `--all` 却一声不响），这正是缺口 `GAP-20260927-16`。现按 dispatch 那条「未知旗标 2」的
 	// **同一形状**归一：rc=2 + 逐字点名。判在扫之前 ⇒ 零副作用。
-	if bad := foreignFlag(inv, "--path", "--glob", "--full", "--limit", "--count", "--files-only", "--hidden", "--include-runtime", "--ignore-case", "--after", "--before", "--kind", "--timeout"); bad != "" {
+	if bad := foreignFlag(inv, "--path", "--glob", "--full", "--limit", "--count", "--files-only", "--hidden", "--include-runtime", "--tracked", "--ignore-case", "--after", "--before", "--kind", "--timeout"); bad != "" {
 		fmt.Fprintf(stderr, "%s: 未知旗标 %q\n", progName, bad)
 		fmt.Fprintf(stderr, "See '%s --help'。\n", progName)
 		return exitUsage
@@ -419,6 +420,23 @@ func cmdCodeFind(inv *invocation, stdout, stderr io.Writer) int {
 	//   （**不是静默吞**）；登记片段见回执，由父代理落。
 	showHidden := inv.hasFlag("--hidden")
 	includeRuntime := inv.hasFlag("--include-runtime")
+	// ★ 本枚（缺口 `GAP-20260926-77`）：`--tracked` —— **只在跟踪面内搜索**（掉不进 `tools/ocr/venv`
+	//   一类未跟踪/被忽略的重目录：真数据源是 `git ls-files` 的**索引面** ⇒ 那些目录**根本不进面**，
+	//   不是靠排除表碰运气）。★ 跟踪面取不到（不在 git 仓 / `git ls-files` 失败）⇒ fail-closed（退 8
+	//   不给结论），✗ 不静默回落全盘 —— 那会把「只在跟踪面」悄悄变成「哪儿都搜」。
+	trackedOnly := inv.hasFlag("--tracked")
+	trackedSet := map[string]bool{}
+	if trackedOnly {
+		names, gerr := gitRun(root, "ls-files")
+		if gerr != nil {
+			inv.setErr("blocked", "tracked_face_unreadable", "取不到跟踪面")
+			fmt.Fprintf(stderr, "%s: --tracked 取不到跟踪面（git ls-files 失败）：%v ⇒ 不给结论（退码 8）\n", progName, gerr)
+			return exitBlocked
+		}
+		for _, n := range splitLines(names) {
+			trackedSet[filepath.ToSlash(n)] = true
+		}
+	}
 	rows := []map[string]string{}
 	// 逐件命中数（**不受一页硬顶影响** —— 「数命中」与「列一页」是两件事；下面 walk 里每命中一条就 +1）。
 	fileHits := map[string]int{}
@@ -442,6 +460,14 @@ func cmdCodeFind(inv *invocation, stdout, stderr io.Writer) int {
 		// 件级闸（缺口 `GAP-20260927-66`）：`.` 开头的件默认不进码面（只加目录闸修不掉 `.env`）。
 		if !showHidden && !includeRuntime && codeScanSkipFile(root, p) {
 			return nil
+		}
+		// ★ 本枚（缺口 `GAP-20260926-77`）：`--tracked` ⇒ 只在跟踪面内搜索 —— 件不在 `git ls-files`
+		//   面内（未跟踪 / 被忽略）一律跳过。这是与上面各件级/目录闸**同一条 AND 轴**的又一枚闸；
+		//   不给 `--tracked` 时 `trackedOnly` 恒假 ⇒ 本命令旧档的件面/命中/退码逐字节不变。
+		if trackedOnly {
+			if rel, rerr := filepath.Rel(root, p); rerr != nil || !trackedSet[filepath.ToSlash(rel)] {
+				return nil
+			}
 		}
 		if glob != "" {
 			// 上面已验过模式：这里的第二返回值（坏模式）此刻必为 nil ⇒ 丢弃不再是吞错。

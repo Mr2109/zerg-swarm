@@ -162,9 +162,11 @@ func TestGateResultsJSONSubsetProjects(t *testing.T) {
 	_, outAll, _ := runZergRepo(t, resultsRepo(t), "gate", "results", "--dir", dir, "--json")
 	all := envelopeItems(t, outAll)
 	// ★ 2026-09-29 随动（门新鲜度闸 `GAP-20260928-194`）：字段表从五格续到**七格**
-	//   （步名/状态/退码/耗时/日志 + 跑级 `worktree_fp`/`head`）⇒ 不给字段那一档出的是七格。
-	if len(all) == 0 || len(all[0]) != 7 {
-		t.Fatalf("`--json` 不给字段 ⇒ 出全部七格（步名/状态/退码/耗时/日志 + 跑级 worktree_fp/head），得到 %+v", all)
+	//   （步名/状态/退码/耗时/日志 + 跑级 `worktree_fp`/`head`）。
+	// ★ 2026-10-12 随动（缺口 `GAP-20260927-286`）：再续**两格逐规则读数** `per_rule`/`examples`
+	//   （取自那一行点名的日志件 · 0 新运行）⇒ 不给字段那一档出的是**九格**。
+	if len(all) == 0 || len(all[0]) != 9 {
+		t.Fatalf("`--json` 不给字段 ⇒ 出全部九格（步名/状态/退码/耗时/日志 + 跑级 worktree_fp/head + per_rule/examples），得到 %+v", all)
 	}
 }
 

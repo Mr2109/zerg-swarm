@@ -31,10 +31,25 @@ var scriptInvExclude = map[string]bool{
 	"__pycache__": true,
 }
 
-// scanScripts 现跑扫描：`scripts/` 面下的 .sh / .py / 可执行无后缀件 ⇒ 相对路径集合。
+// scanScripts 现跑扫描：**收件面三根**（`scripts/` · `deploy/` · `gateway/`）下的 .sh / .bash 件 ⇒ 相对路径集合
+// （★ 2026-10-12 随 `GAP-20260926-91` 扩面：与生产侧 `scriptInvScan` 同源同形 ⇒ 两处同批改）。
 func scanScripts(t *testing.T, root string) map[string]bool {
 	t.Helper()
-	base := filepath.Join(root, "scripts")
+	out := map[string]bool{}
+	for _, sub := range []string{"scripts", "deploy", "gateway"} {
+		for rel := range scanScriptsRoot(t, root, sub) {
+			out[rel] = true
+		}
+	}
+	return out
+}
+
+// scanScriptsRoot —— 单根扫描（WalkDir 体逐字取自旧 `scanScripts`）。
+func scanScriptsRoot(t *testing.T, root, sub string) map[string]bool {
+	base := filepath.Join(root, sub)
+	if _, serr := os.Stat(base); serr != nil {
+		return map[string]bool{}
+	}
 	out := map[string]bool{}
 	err := filepath.WalkDir(base, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -47,18 +62,30 @@ func scanScripts(t *testing.T, root string) map[string]bool {
 			return nil
 		}
 		name := d.Name()
-		isScript := strings.HasSuffix(name, ".sh") || strings.HasSuffix(name, ".py")
+		isScript := strings.HasSuffix(name, ".sh") || strings.HasSuffix(name, ".bash") || strings.HasSuffix(name, ".py")
+		// ★ 收件面与生产侧 `scriptInvScan` **同源同口径**（`GAP-20260926-91`）：除 `.sh`/`.bash`/`.py` 外，
+		//   无后缀档由**一格真源** `scriptInvTakesSuffixless` 决定（现读 = true ⇒ 收）；
+		//   收件条件同为「可执行 + 首行 `#!`」—— ✗ 别在这儿另写一套（两把尺会打架）。
 		if !isScript {
-			st, err := d.Info()
-			if err != nil || st.Mode()&0o111 == 0 {
+			// ★ 收件面须与生产侧 `scriptInvScan`（`family_script_inventory.go`）**同源同口径**（`GAP-20260926-91`）：
+			//   无后缀档由**一格真源** `scriptInvTakesSuffixless`（同件 :108 · 现读 = `true` ⇒ **收**）决定，
+			//   收件条件同为「**可执行 + 首行 `#!`**」。
+			//   ⚠ 测件在外部包（`package zerg_test`）⇒ 够不到该未导出常量，故此处逐字内联；
+			//   **改那一枚常量就必须同改此处**（台账里 `无后缀` 档的 `edit-assert` / `mutate-scan` / `zerg-hello` 即靠这条收进来）。
+			st, serr := d.Info()
+			if serr != nil || st.Mode()&0o111 == 0 {
 				return nil
 			}
-			// 无后缀但可执行：只有首行是 #! 才算脚本（与门禁的语法步同口径）
-			b, err := os.ReadFile(p)
-			if err != nil || !strings.HasPrefix(string(b), "#!") {
+			b, berr := os.ReadFile(p)
+			if berr != nil || !strings.HasPrefix(string(b), "#!") {
 				return nil
 			}
-			isScript = true
+			rel, rerr := filepath.Rel(root, p)
+			if rerr != nil {
+				return rerr
+			}
+			out[rel] = true
+			return nil
 		}
 		if isScript {
 			rel, err := filepath.Rel(root, p)

@@ -10172,7 +10172,7 @@
       "id": "gate/results#--json 不给字段（K2 · 乙档 闭集字段面）",
       "state_dependent": "`gate results --json` 的退码取决于**那一趟门跑的结果台账**（`results.tsv`）落没落盘：门跑**进行中**（本格正是门⑪ 自己跑它的时候）台账还没落盘 ⇒ 现跑退 **8**（CLI 自陈**不给结论**）；门跑完再跑同一条命令 ⇒ 退 0。⇒ 本格 `want_rc=0` 在「门内」这个上下文里**不可能为真**（时序依赖，且门⑪ 的绿不许依赖「本机前序跑过门禁」这一副产品）；对它判红 = 把「没账可对」当成「账盘不符」。登记口径见缺口 `GAP-20260928-34`：格级可选标记 `state_dependent` ⇒ T7 对该格判**判不了**（不计合、不判红；真值若漂成别的退码照旧判红点名到格）。",
       "want_rc": 0,
-      "why": "字段面 = 闭集七格 `step`/`status`/`rc`/`secs`/`log`/`worktree_fp`/`head`（`core/cmd/zerg/family_gate_results.go:54`）⇒ 不给字段 = 闭集全量 · 退 0（同上一格：只登记 `want_rc`；stdout 字节数随那一趟结果表变，不冻结）"
+      "why": "字段面 = 闭集九格 `step`/`status`/`rc`/`secs`/`log`/`worktree_fp`/`head`/`per_rule`/`examples`（`core/cmd/zerg/family_gate_results.go:62`）⇒ 不给字段 = 闭集全量 · 退 0（同上一格：只登记 `want_rc`；stdout 字节数随那一趟结果表变，不冻结）"
      }
     ],
     "判据落在": "`core/cmd/zerg/cli_gate_show_test.go` · `core/cmd/zerg/cli_gate_results_test.go`（进程内现跑：`rc=0` + 全量逐格对拍 —— 本块只是**档位声明**，判定口在那两件里）",

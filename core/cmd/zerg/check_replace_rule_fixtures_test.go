@@ -384,7 +384,7 @@ func TestCheckReplaceRuleFixturesGatePort(t *testing.T) {
 		if rc != 0 || !strings.Contains(out, "自检结论: 全过") {
 			t.Fatalf("自检应 rc=0 全过，得 rc=%d out=%s", rc, out)
 		}
-		if !strings.Contains(out, "断言 20 条 · 失败 0 条") {
+		if !strings.Contains(out, "断言 21 条 · 失败 0 条") {
 			t.Fatalf("自检断言计数不符 out=%s", out)
 		}
 	})

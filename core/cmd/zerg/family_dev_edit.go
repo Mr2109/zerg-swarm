@@ -10,7 +10,8 @@
 //	   真写要 D3 档齐 —— `--confirm=<本机名>`（值必须与本机名逐字相同）+ `--yes`。
 //	③ **逐条审计**（§九 M3 `C5`：一行一事件 · 追加只写 · **写失败即拒**）：审计行**先落盘**，
 //	   落不下就不改件（「写不进日志就不许执行」）。审计记：谁 / 何时 / 改哪件 / 前后 sha256 / 字节数。
-//	④ **可回滚**（§17.3 铁律③③）：件在 git 工作树里 ⇒ 回滚路径 = 提案的 `rollback_ref`（件级回滚见 `dev rollback`）。
+//	④ **可回滚**（§17.3 铁律③③）：件在 git 工作树里 ⇒ 回滚路径 = 提案的 `rollback_ref`（件级 `dev rollback` **本版未开放**；
+//	   真退法 = 提案退点件 `cp -p <退点件> <件>` 回写 + 判据 `shasum -a 256 <件>` 逐字 == `before_sha256`）。
 //
 // ③-a（2026-09-21 本枚）**真写要一枚人签批准件**（§17.3 铁律④③ · §九 M18 `C4`② 的落点）：
 //
@@ -197,9 +198,19 @@ func devEditNote(stderr io.Writer, inv *invocation, format string, a ...any) {
 
 // replacePair —— `--replace <件>` 里的一枚替换（JSON 数组的一格）。
 // 形态：`[{"old":"…","new":"…"}, …]` —— **精确、唯一命中**才许改（模糊替换会静默改错地方）。
+//
+//	★ GAP-20260927-386：**锚点插入**形态 —— `{"anchor":"…","insert":"…","pos":"after|before"}`
+//	（`pos` 缺省 `after`）＝ `old`/`new` 的**糖**：`anchor` 走**同一把尺**（必须在件里**恰好命中 1 次**），
+//	落点 = 在命中处**之后 / 之前**原样拼上 `insert`。用途：一件要插多处（如各函数体首）时，
+//	✗ 不必把 anchor 行原文再抄进 `new`（本批 14 件 15 处因手抄漏字造成「命中 0 次」）。
+//	「插入到函数体首」= `{"anchor":"func Foo() {\n","insert":"\t…\n"}`（after）—— ✗ 不单立 head 语义。
 type replacePair struct {
 	Old string `json:"old"`
 	New string `json:"new"`
+	// 锚点插入（可选 · 与 `old` 互斥）：anchor 唯一命中 ⇒ New 位置拼 Insert。
+	Anchor string `json:"anchor,omitempty"`
+	Insert string `json:"insert,omitempty"`
+	Pos    string `json:"pos,omitempty"`
 }
 
 // editAuditLine —— 审计的一行（一行一事件 · 追加只写）。
@@ -395,8 +406,8 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 				progName, siblingName, siblingRoot)
 			return exitBlocked
 		}
-		fmt.Fprintf(stderr, "%s: ★ **显式开闸**（`--allow-sibling-repo %s`）—— 目标件换仓：相对路径按同级仓根 %s 解析（同级仓名与根进审计行 · GAP-20261001-07）\n",
-			progName, siblingName, siblingRoot)
+		devEditNote(stderr, inv, "★ **显式开闸**（`--allow-sibling-repo %s`）—— 目标件换仓：相对路径按同级仓根 %s 解析（同级仓名与根进审计行 · GAP-20261001-07）",
+			siblingName, siblingRoot)
 	}
 	outPath := filepath.Join(root, filepath.FromSlash(fileRel))
 	if siblingGiven {
@@ -440,7 +451,7 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 	if m := proposalAuditMismatch(); m != "" {
 		if allowCrossGiven {
 			allowCrossUsed = true
-			fmt.Fprintf(stderr, "%s: ★ **显式放行**（`--allow-cross-root`）—— %s；理由：%s（放行标志与理由进审计行 · GAP-20260928-79）\n", progName, m, allowCrossReason)
+			devEditNote(stderr, inv, "★ **显式放行**（`--allow-cross-root`）—— %s；理由：%s（放行标志与理由进审计行 · GAP-20260928-79）", m, allowCrossReason)
 		} else if proposalAuditRefuse(inv) {
 			// **在任何真写动作之前**拒执（退码 2 · 用法/配置错档，不取 8）：零写入、零审计。
 			inv.setErr("usage", "proposal_audit_root_mismatch", m)
@@ -908,7 +919,7 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 	// （到点 ⇒ `wallclockRestoreAll` 逐件还原；写前不在盘 ⇒ 到点删残留）。
 	// 登记失败不当失败（它只是「到点时多做一件事」的那一格 —— 与 `impact_digest` 取不到同口径：照实不拦）。
 	if werr := wallclockRecordPreImage(outPath); werr != nil {
-		fmt.Fprintf(stderr, "%s: 写面前像登记不上（%v）⇒ 本件到点时复原不了，照实记一行\n", progName, werr)
+		devEditNote(stderr, inv, "写面前像登记不上（%v）⇒ 本件到点时复原不了，照实记一行", werr)
 	}
 	if err := os.WriteFile(outPath, after, 0o644); err != nil {
 		inv.setErr("failed", "write_failed", err.Error())
@@ -943,8 +954,8 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 	//   （新行为在进程内真跑得了、`./bin/zerg` 却还是旧的）。此处**只出声、不改退码**（零行为改动）：
 	//   点名「制品可能已过期」，把「源码 ↔ 制品」对拍可读面的最小一格补上。
 	if strings.HasSuffix(fileRel, ".go") {
-		fmt.Fprintf(stderr, "%s: ★ 制品对拍：本件是 Go 源码 —— `dev edit` 只写源码、不触发重编 ⇒ `bin/%s` 可能仍是旧制品（新行为要重编后才在 `./bin/%s` 生效）\n",
-			progName, progName, progName)
+		devEditNote(stderr, inv, "★ 制品对拍：本件是 Go 源码 —— `dev edit` 只写源码、不触发重编 ⇒ `bin/%s` 可能仍是旧制品（新行为要重编后才在 `./bin/%s` 生效）",
+			progName, progName)
 	}
 	// ★ `GAP-20261009-01`：真写回执的退点槽也带**可用性标记**（与干跑档同一枚 `devEditReturnPointOf` ——
 	//   同一个算法、不另写第二份；不可退时才在那一行缀上标记，可退时那一行逐字不变）。
@@ -953,7 +964,7 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 	if rpT.Verdict() == "不可退" {
 		rbMark = fmt.Sprintf(" · **不可退（档 %d：%s）**", rpT.Tier, rpT.Why)
 	}
-	fmt.Fprintf(stderr, "回滚路径：提案 %s 的退点 = %s（件级回滚见 `%s dev rollback`）%s\n", proposalID, orDash(prop.Rollback), progName, rbMark)
+	fmt.Fprintf(stderr, "回滚路径：提案 %s 的退点 = %s（件级 `%s dev rollback` **本版未开放** · 真退法见上一条退建议）%s\n", proposalID, orDash(prop.Rollback), progName, rbMark)
 	return exitOK
 }
 
@@ -1099,7 +1110,14 @@ func emitDevEditPlan(stdout, stderr io.Writer, row map[string]string, prop *prop
 	}
 	fmt.Fprintf(stdout, "  语法自检 : %s%s\n", row["syntax"], ifStr(row["syntax"] == "不过", " —— **真写会被拒**（`.py`=ast.parse / `.sh`=bash -n / `.json`·`.yaml`=Go 侧解析；先改内容）", ""))
 	fmt.Fprintf(stdout, "  影响面钩子: %s（类=%s · §4.3 分档 —— 判据见 stderr 的 `impact_hook` 那两行）\n", hook.Tier, hook.Class)
-	fmt.Fprintf(stdout, "  回滚路径 : %s（提案的退点件 —— **退建议见 stderr 那一块**：判据 = 回到 before_sha256；`git revert` 不算退点）\n", orDash(prop.Rollback))
+	// ★ GAP-20261009-01 残余：干跑人面这一行此前**不带可用性标记**（真写档那一行带）⇒ 两态不一致 ——
+	//   取值与机器面**同源**（同一枚 `row` 的 `rollback_verdict/tier/why`，见上方 `rp` 那三格 · ✗ 不另算）；
+	//   可退时这一行**逐字不变**（只在不可退时缀标记）。
+	rbMarkPlan := ""
+	if row["rollback_verdict"] == "不可退" {
+		rbMarkPlan = fmt.Sprintf(" · **不可退（档 %s：%s）**", row["rollback_tier"], row["rollback_why"])
+	}
+	fmt.Fprintf(stdout, "  回滚路径 : %s（提案的退点件 —— **退建议见 stderr 那一块**：判据 = 回到 before_sha256；`git revert` 不算退点）%s\n", orDash(prop.Rollback), rbMarkPlan)
 	if blocked {
 		fmt.Fprintf(stdout, "  未执行   : D3 档确认不齐 —— 要 `--confirm=<本机名> --yes` 同时到（fail-closed：从不提问）\n")
 	} else if hook.Tier == impactHookTierBlock {
@@ -1265,10 +1283,32 @@ func applyReplacements(before []byte, replacePath string) ([]byte, error) {
 	}
 	var pairs []replacePair
 	if err := json.Unmarshal(body, &pairs); err != nil {
-		return nil, fmt.Errorf("替换件 %s 不是 `[{\"old\":…,\"new\":…}]` 形态：%v", replacePath, err)
+		return nil, fmt.Errorf("替换件 %s 不是 `[{\"old\":…,\"new\":…}]`（或锚点形态 `[{\"anchor\":…,\"insert\":…}]`）形态：%v", replacePath, err)
 	}
 	if len(pairs) == 0 {
 		return nil, fmt.Errorf("替换件 %s 是空数组 —— 空替换 = 什么也不改 ⇒ 拒执（不给结论）", replacePath)
+	}
+	// ★ GAP-20260927-386：锚点插入 = `old`/`new` 的**糖** —— 先原样展开成 `old`/`new`，
+	//   再走下面**同一条**「恰好命中 1 次」循环（✗ 不新造第二把尺、✗ 不另立 head 语义）。
+	for i := range pairs {
+		p := &pairs[i]
+		if p.Anchor == "" {
+			continue
+		}
+		if p.Old != "" {
+			return nil, fmt.Errorf("第 %d 格同时给了 `old` 与 `anchor` ⇒ 拒执（只许给一种：`anchor` 是 `old`/`new` 的糖）", i+1)
+		}
+		if p.Insert == "" {
+			return nil, fmt.Errorf("第 %d 格给了 `anchor` 却没给 `insert`（要插入的文本）⇒ 拒执", i+1)
+		}
+		switch p.Pos {
+		case "", "after":
+			p.Old, p.New = p.Anchor, p.Anchor+p.Insert
+		case "before":
+			p.Old, p.New = p.Anchor, p.Insert+p.Anchor
+		default:
+			return nil, fmt.Errorf("第 %d 格的 `pos` = %q 不认（只收 `after` / `before`，缺省 after）⇒ 拒执", i+1, p.Pos)
+		}
 	}
 	cur := string(before)
 	for i, p := range pairs {

@@ -1286,7 +1286,7 @@ func (h *Handlers) ModelsHandler(w http.ResponseWriter, r *http.Request) {
 				"backend":  c.Backend,
 				"file":     c.File,
 				"mem_gb":   c.MemGb,
-				"modality": "text",
+				"modality": c.Modality,
 			}
 			if idmap != nil {
 				if rid, ok := idmap.RegistryIDForFleet(name); ok {
