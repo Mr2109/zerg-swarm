@@ -188,7 +188,6 @@ func (g *Gateway) forwardToBackend(
 	}
 
 	// v2.5.4.9 reasoning 兜底：思考模型（Nemotron/Qwen3.8）content 空时拼 reasoning_content
-	// CA 调研发现: reasoning_fallback 标记位无人消费——这里真实现
 	// 读 body → content 空 → 用 reasoning_content 填充 → 重新构造 resp
 	resp = g.applyReasoningFallback(resp)
 	if resp == nil {

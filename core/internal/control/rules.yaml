@@ -34,6 +34,15 @@ rules:
     # 「terminal」：危险参数命中即拦（args_deny 优先级高于 action）；其余情况 require_approval
     #   —— **没有审批通道时按拒处理**（网关与 CA 的 bash 侧逐字同口径：「需要审批且无审批通道 ⇒
     #   本轮不执行」），绝不当放行。
+    # ★ 2026-10-12（缺口 `GAP-20261010-17` 随动 · Hermes 工具注册面新增两枚）：
+    #   `setup_choose` / `start_chat` 属「动界面/开新会话」类 ⇒ 与同族一致给 `block`
+    #   （默认档 block 之下必须显式列全，否则它们没被逐条拦 ⇒ fail-open 面）。
+    - name: "setup_choose"
+      action: block
+      message: "模型禁动初始化选装界面（动界面类 ⇒ 显式 block）"
+    - name: "start_chat"
+      action: block
+      message: "模型禁开新会话界面（动界面类 ⇒ 显式 block）"
     - name: "terminal"
       # ★ 2026-09-24 Mr2109 点头：由 `require_approval` 降为 `allow` —— 子代理要用它干开发活
       #   （跑测试/编译/git 现读）；「无审批通道按拒」这条对本场景等于禁死。牙不减：args_deny 四条原样保留。
@@ -284,6 +293,20 @@ rules:
     - name: "bash"
       action: allow
       args_deny:
+        # ★ 凭据类命令（GAP-20261010-17 · 照 chat_gate.go 的 credentialCmdRules 体例）：
+        # 模型不可读/搬凭据件（.env 族 / SSH 私钥 / token 文件 / 内联私钥块）——命中即拦（args_deny 优先于 action）。
+        - ".env"
+        - ".netrc"
+        - ".pgpass"
+        - "id_rsa"
+        - "id_ed25519"
+        - "id_ecdsa"
+        - "id_dsa"
+        - "auth.json"
+        - "credentials.json"
+        - ".zerg/token"
+        - ".aws/credentials"
+        - "PRIVATE KEY"
         - "rm -rf /"
         - "rm -fr /"
         - "git push --force"
@@ -307,9 +330,38 @@ rules:
         - "approvals/terminal.json"
     - name: "read"
       action: allow
+      args_deny:
+        # ★ 凭据类命令（GAP-20261010-17 · 照 chat_gate.go 的 credentialCmdRules 体例）：
+        # 模型不可读/搬凭据件（.env 族 / SSH 私钥 / token 文件 / 内联私钥块）——命中即拦（args_deny 优先于 action）。
+        - ".env"
+        - ".netrc"
+        - ".pgpass"
+        - "id_rsa"
+        - "id_ed25519"
+        - "id_ecdsa"
+        - "id_dsa"
+        - "auth.json"
+        - "credentials.json"
+        - ".zerg/token"
+        - ".aws/credentials"
+        - "PRIVATE KEY"
     - name: "write"
       action: allow
       args_deny:
+        # ★ 凭据类命令（GAP-20261010-17 · 照 chat_gate.go 的 credentialCmdRules 体例）：
+        # 模型不可读/搬凭据件（.env 族 / SSH 私钥 / token 文件 / 内联私钥块）——命中即拦（args_deny 优先于 action）。
+        - ".env"
+        - ".netrc"
+        - ".pgpass"
+        - "id_rsa"
+        - "id_ed25519"
+        - "id_ecdsa"
+        - "id_dsa"
+        - "auth.json"
+        - "credentials.json"
+        - ".zerg/token"
+        - ".aws/credentials"
+        - "PRIVATE KEY"
         - "fleet.yaml"
         - "rules.yaml"
         - "scoring"
@@ -325,6 +377,20 @@ rules:
     - name: "edit"
       action: allow
       args_deny:
+        # ★ 凭据类命令（GAP-20261010-17 · 照 chat_gate.go 的 credentialCmdRules 体例）：
+        # 模型不可读/搬凭据件（.env 族 / SSH 私钥 / token 文件 / 内联私钥块）——命中即拦（args_deny 优先于 action）。
+        - ".env"
+        - ".netrc"
+        - ".pgpass"
+        - "id_rsa"
+        - "id_ed25519"
+        - "id_ecdsa"
+        - "id_dsa"
+        - "auth.json"
+        - "credentials.json"
+        - ".zerg/token"
+        - ".aws/credentials"
+        - "PRIVATE KEY"
         - "fleet.yaml"
         - "rules.yaml"
         - "scoring"
@@ -340,6 +406,20 @@ rules:
     - name: "apply_patch"
       action: allow
       args_deny:
+        # ★ 凭据类命令（GAP-20261010-17 · 照 chat_gate.go 的 credentialCmdRules 体例）：
+        # 模型不可读/搬凭据件（.env 族 / SSH 私钥 / token 文件 / 内联私钥块）——命中即拦（args_deny 优先于 action）。
+        - ".env"
+        - ".netrc"
+        - ".pgpass"
+        - "id_rsa"
+        - "id_ed25519"
+        - "id_ecdsa"
+        - "id_dsa"
+        - "auth.json"
+        - "credentials.json"
+        - ".zerg/token"
+        - ".aws/credentials"
+        - "PRIVATE KEY"
         - "fleet.yaml"
         - "rules.yaml"
         - "scoring"

@@ -60,9 +60,6 @@ func TestQwen38_Execute(t *testing.T) {
 	if res["model"] != "Qwen3.8-27B" {
 		t.Errorf("model 错——实际 %v", res["model"])
 	}
-	if res["reasoning_fallback"] != true {
-		t.Error("应标记 reasoning_fallback")
-	}
 	if res["multimodal"] != true {
 		t.Error("应标记 multimodal")
 	}

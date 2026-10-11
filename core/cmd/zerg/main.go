@@ -1069,6 +1069,10 @@ func init() {
 			fields:   []string{"machine", "healthy", "code_version", "code_sha", "cpu_pct", "gpu_pct", "mem_available_gb", "mem_total_gb", "models", "model", "backend_state", "active_requests", "gpu_used_gb", "backend_rss_gb", "gpu_temp_c", "last_seen"},
 			endpoint: "GET /api/fleet/status",
 			run:      cmdAgentShow,
+			// ★ 缺口 `GAP-20261010-16`：`recent_requests` 走**可选字段层**（`optFields`，与 `code find` 的
+			//   `count` 同一体例）—— 登在出口白名单里、`--json` 点得出来，却**不进** `fields` 那份
+			//   文档/帮助导出面的冻结表 ⇒ 随动面为零（✗ 不重生成命令页）。
+			optFields: []string{"recent_requests"},
 		},
 		{
 			path:     []string{"agent", "models"},
@@ -3357,15 +3361,31 @@ func init() {
 		//   只读面（不登记 `danger` ⇒ 按只读幂等档列）· 点名面复用同族 `gapTargetOne`（**账内没有这个 id ⇒ 2**，
 		//   与 `set-state` / `note` 同一口径）· 读不到真源 ⇒ 8。实现件 = `family_gap.go:cmdGapShow`。
 		{
-			path:     []string{"gap", "show"},
-			kind:     "GapShow",
-			summary:  "取一条缺口的**完整正文**（只读面 · 一字不截）：正文 / 手搓记录 / 复现 / 判据 / 已解证据 / 口径注全量出 —— `gap ls` 那一行只印摘要前 40 显示宽、`--json` 全量直出又会被读方截断（缺口账 `GAP-20260927-243`）· 账内没有这个 id ⇒ 用法错 2（同族口径 · 不跨族抄 `dev proposal show` 的 1）· 读不到真源 ⇒ 8",
-			usage:    "zerg gap show <GAP id|件路径> [--json <字段>]（位置参数给一条件路径 = 按件反查：该件在账里被点到的条目逐条列出 · 件不在仓里 ⇒ 2 · 仓根取不到 ⇒ 8）",
-			arity:    "any",
-			args:     []string{"缺口 id（**恰好一条** —— 本面只取一条）"},
-			fields:   gapShowFields,
+			path:      []string{"gap", "show"},
+			kind:      "GapShow",
+			summary:   "取一条缺口的**完整正文**（只读面 · 一字不截）：正文 / 手搓记录 / 复现 / 判据 / 已解证据 / 口径注全量出 —— `gap ls` 那一行只印摘要前 40 显示宽、`--json` 全量直出又会被读方截断（缺口账 `GAP-20260927-243`）· 账内没有这个 id ⇒ 用法错 2（同族口径 · 不跨族抄 `dev proposal show` 的 1）· 读不到真源 ⇒ 8",
+			usage:     "zerg gap show <GAP id|件路径> [--json <字段>]（位置参数给一条件路径 = 按件反查：该件在账里被点到的条目逐条列出 · 件不在仓里 ⇒ 2 · 仓根取不到 ⇒ 8）",
+			arity:     "any",
+			args:      []string{"缺口 id（**恰好一条** —— 本面只取一条）"},
+			fields:    gapShowFields,
+			optFields: []string{"hints"},
+			endpoint:  "",
+			run:       cmdGapShow,
+		},
+		// ★ `gap hints` —— **正门提示面**（只读 · 2026-10-10 · 缺口 `GAP-20261010-26` ＝ 父
+		//   `GAP-20260929-09` 的第二形态「正门 gap/contract 子命令出口」）。逐条给「怎么核 /
+		//   怎么复现 / 下一步」的落点提示；真源 = 账内既有 `verify_cmd`/`repro_cmd`（✗ 不新增
+		//   真源键）。只读面（不登记 `danger`）· 读不到真源 ⇒ 8。实现件 = `family_gap.go:cmdGapHints`。
+		{
+			path:     []string{"gap", "hints"},
+			kind:     "GapHints",
+			summary:  "缺口**正门提示面**（只读面 · 一字不写真源、不写审计）：逐条给「怎么核 / 怎么复现 / 下一步」的落点提示（真源 = 账内既有 `verify_cmd`/`repro_cmd`，✗ 不新增真源键）· `gap show <id> --json hints` 给同一条的同一份提示（走可选字段层）· 读不到真源 ⇒ 8",
+			usage:    "zerg gap hints [--json <字段>]",
+			arity:    "none",
+			args:     []string{"（无位置参数：范围 = 整账 —— 要收窄走 `gap ls`）"},
+			fields:   gapHintsFields,
 			endpoint: "",
-			run:      cmdGapShow,
+			run:      cmdGapHints,
 		},
 		{
 			path:     []string{"gap", "add"},

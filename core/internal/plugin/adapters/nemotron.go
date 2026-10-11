@@ -118,9 +118,7 @@ func (a *NemotronAdapter) Execute(input plugin.PluginInput) (plugin.PluginOutput
 			"max_tokens":  a.config.MaxTokens,
 			"ctx_window":  a.config.CtxWindow,
 			"temperature": a.config.Temperature,
-			// 特性标记——网关路由/适配层用
-			"reasoning_fallback": true, // content空时用reasoning_content兜底
-			"lang":               "en", // 英文强——中文弱
+			"lang":        "en", // 英文强——中文弱
 		},
 	}, nil
 }

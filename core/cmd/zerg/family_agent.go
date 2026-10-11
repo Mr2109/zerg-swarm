@@ -92,7 +92,7 @@ func cmdAgentShow(inv *invocation, stdout, stderr io.Writer) int {
 		return rc
 	}
 	fields := []string{"machine", "healthy", "code_version", "code_sha", "cpu_pct", "gpu_pct",
-		"mem_available_gb", "mem_total_gb", "models", "model", "backend_state", "active_requests", "gpu_used_gb", "backend_rss_gb", "gpu_temp_c", "last_seen"}
+		"mem_available_gb", "mem_total_gb", "models", "model", "backend_state", "active_requests", "gpu_used_gb", "backend_rss_gb", "gpu_temp_c", "last_seen", "recent_requests"}
 	row := project(o, fields)
 	row["machine"] = machine
 	// GPU 两格的「不可得示 n/a」= 单一真源助手（`agent ls` / `agent show` 同一口径）——
@@ -101,7 +101,7 @@ func cmdAgentShow(inv *invocation, stdout, stderr io.Writer) int {
 	agentMarkUnknownGPU(o, row)
 	// 「命令有什么能力」不另造词汇：字段名逐字取自载荷（§4.3 U2）。
 	return listCmd(inv, stdout, stderr, []string{"machine", "healthy", "code_version", "code_sha",
-		"cpu_pct", "gpu_pct", "mem_available_gb", "mem_total_gb", "models", "model", "backend_state", "active_requests", "gpu_used_gb", "backend_rss_gb", "gpu_temp_c", "last_seen"},
+		"cpu_pct", "gpu_pct", "mem_available_gb", "mem_total_gb", "models", "model", "backend_state", "active_requests", "gpu_used_gb", "backend_rss_gb", "gpu_temp_c", "last_seen", "recent_requests"},
 		[]map[string]string{row})
 }
 

@@ -10106,6 +10106,43 @@
    "want_rc": 2,
    "want_stdout_bytes": 0,
    "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "gap/hints#未知旗标",
+   "command": "gap hints",
+   "argv": [
+    "gap",
+    "hints",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "gap/hints#不认的契约主号",
+   "command": "gap hints",
+   "argv": [
+    "gap",
+    "hints",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "gap/hints#--json 不给字段",
+   "command": "gap hints",
+   "argv": [
+    "gap",
+    "hints",
+    "--json"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 336,
+   "why": "给了 --json 不给字段 ⇒ 2 + stdout 336 字节（§4.1 K2 甲档 · 码**取自退码表** `usage`；`--json` 面恒印包封 JSON + error 块 ⇒ 同族 `gap show`/`gap ls` 均 335）"
   }
  ],
  "tiers": {

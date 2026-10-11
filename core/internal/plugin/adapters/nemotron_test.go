@@ -57,7 +57,4 @@ func TestNemotron_Execute(t *testing.T) {
 	if res["model"] != "Nemotron-3.5-Lightning" {
 		t.Errorf("model 应正确——实际 %v", res["model"])
 	}
-	if res["reasoning_fallback"] != true {
-		t.Error("应标记 reasoning_fallback（content空时兜底）")
-	}
 }

@@ -1136,8 +1136,8 @@ type chsFaceBl struct {
 type chsBaselineSet map[string]chsFaceBl
 
 var chsBaseline = chsBaselineSet{
-	"help --all":     {HasLines: true, Lines: 409, HasBytes: true, Bytes: 309811},
-	"help":           {HasLines: true, Lines: 295, HasBytes: true, Bytes: 82225, HasLast: true, Last: "      非交互用 `--token-stdin`；详见 `zerg help credentials`）。"},
+	"help --all":     {HasLines: true, Lines: 411, HasBytes: true, Bytes: 310528},
+	"help":           {HasLines: true, Lines: 297, HasBytes: true, Bytes: 82942, HasLast: true, Last: "      非交互用 `--token-stdin`；详见 `zerg help credentials`）。"},
 	"help dangerous": {HasLines: true, Lines: 116, HasBytes: true, Bytes: 40847, HasRows: true, Rows: 105, HasTail: true, Tail: "上表 105 条：**已开放 89 条**（确认档齐就真执行 —— 逐条见上行标记）；**未开放 16 条**（真跑一律**拒执**、退码 2 = 不给结论，只有 `--dry-run` 出计划件 = 退码 0）。", ConfirmNotInUsage: []string{"agent reap", "itask start"}, ConfirmValueMismatch: [][]string{}},
 	"help config":    {HasLines: true, Lines: 21, HasBytes: true, Bytes: 1748},
 }
@@ -1534,6 +1534,7 @@ var chsCaseNames = []string{
 	"负控③b：裸 `help` 末行改写 ⇒ 必红",
 	"负控④：清单漏一族 ⇒ 必红",
 	"对界：命令树多一族 ⇒ 必红",
+	"负控⑭：抹掉一条危险档行的**逐条标记**（行还在 · 标记没了）⇒ S4b 必红",
 }
 
 // chsCase —— py `self_test` 内 `case(...)` 的复刻。
@@ -1584,7 +1585,7 @@ func chsCase(out io.Writer, total, failed *int, name string, wantRed bool, bad [
 	}
 }
 
-// chsSelfTest —— py `self_test(out)` 的复刻（23 格 · 正控 + 负控 + 对界 + A 档取数口）。
+// chsSelfTest —— py `self_test(out)` 的复刻（24 格 · 正控 + 负控 + 对界 + A 档取数口）。
 func chsSelfTest(out io.Writer) bool {
 	total, failed := 0, 0
 	allT, bareT, dangT, cfgT := chsFixTexts()
@@ -1640,6 +1641,7 @@ func chsSelfTest(out io.Writer) bool {
 	c(18, true, chsJudge(strings.ReplaceAll(allT, "watch", "watchx"), bareT, dangT, chsFixCmds, bl, nil), "", "")
 	cmdsMore := append(append([]string{}, chsFixCmds...), "zzz ls")
 	c(19, true, chsJudge(allT, bareT, dangT, cmdsMore, bl, nil), "", "")
+	c(20, true, chsJudge(allT, bareT, strings.Replace(dangT, chsDangerOpenMark, "", 1), chsFixCmds, bl, nil), "S4b", "")
 
 	// ── A 档取数口（`GAP-20261001-47` · 拆档）：读落盘 help 面制品 ──────────────
 	artDir, aerr := os.MkdirTemp("", "hshape-artifact-")

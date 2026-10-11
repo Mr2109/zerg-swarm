@@ -41,27 +41,24 @@
 //	  普查过的其余 JSON 取值点 null 时 py **本就不崩**（有默认值/相等比较兜住）⇒ 逐字保留既有行为：
 //	  `baseline.schema/::count/::head` · `cli-contract-baseline.{commands,mustfail_cases}` · case 级
 //	  `command/id/why` 与数组元素级 null。（`want_rc: null` 归件头已自陈的「`int()` 不可转」档，见上一条。）
-//	· 面⑩/面⑪ 取数面（本版补 · 缺口 `GAP-20261003-18`）：本件现跑兄弟判据件（`check-help-shape.py` /
-//	  `check-public-face-commands.py`）取数 —— 解释器走 **PATH 上的 `python3`**（py 用 `sys.executable`）；
-//	  「跑不起来」那一支的 `why` 正文**不逐字复刻**（py 印 `Command … timed out after 180 seconds` /
-//	  `[Errno …]` 一类，本件印 Go 的 ctx/exec 错误串）⇒ 只保「rc=None ⇒ 不适用」这一档**语义方向**。
-//	  「取数面不在场（件相对路径）」那一支逐字同。★ 该两条腿依赖运行期 `python3` 在场（与 py 半同）；不在场
-//	  ⇒ 该面「不适用」（不误红）。
+//	· 面⑩/面⑪ 取数面（本版改 · 缺口 `GAP-20261011-04`）：原两条腿现跑**已退役的 py 探针**（两件均不在盘）
+//	  ⇒ 面⑩/面⑪ 结构性恒判「不适用」、不判力。本版改走 **Go 真身 in-proc 调用**
+//	  （`checkHelpShapeGateMain` / `checkPublicFaceCommandsGateMain`；路径常量 `cnfHelpShapeRel` /
+//	  `cnfCpfcRel` 同步改 `core/cmd/zerg/…`）⇒ 两条腿恢复判力。`argv` 与原 py 半逐字同
+//	  （`--repo-root R --json` / `--root R --json counts`）。★ 口径差（照实）：in-proc 无 `exec` 超时档 ⇒
+//	  原「跑不起来（rc=None）」那一支只剩「件不在场」；件不在场 ⇒ 该面「不适用」（不误红），语义方向不变。
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 	"unicode/utf8"
 )
 
@@ -81,17 +78,20 @@ var (
 	cnfExitcodesRel     = cnfPyJoin("core", "cmd", "zerg", "exitcodes.go")
 	cnfNamespacesRel    = cnfPyJoin("core", "internal", "contract", "exitcode-namespaces.json")
 	cnfDocsRels         = []string{cnfPyJoin("docs", "zh", "参考-命令行.md"), cnfPyJoin("docs", "en", "参考-命令行.md")}
-	// 面⑩ / 面⑪ 取数面（缺口 `GAP-20261003-18`）——两个**只读**兄弟判据件的件路径（照 py `FACE_PROBE_*`）。
-	cnfHelpShapeRel = cnfPyJoin("scripts", "gates", "check-help-shape.py")
-	cnfCpfcRel      = cnfPyJoin("scripts", "gates", "check-public-face-commands.py")
+	// 面⑩ / 面⑪ 取数面（缺口 `GAP-20261011-04`）——两个**只读**兄弟判据件的 **Go 真身**件路径
+	// （✗ 不再指已退役的 py 探针；`cnfProbeEntry` 按此路径派发 in-proc 调用）。
+	cnfHelpShapeRel = cnfPyJoin("core", "cmd", "zerg", "check_help_shape.go")
+	cnfCpfcRel      = cnfPyJoin("core", "cmd", "zerg", "check_public_face_commands.go")
 )
 
 const cnfSchema = "newcmd-followup-baseline/1"
 
-// 面⑩/面⑪ 取数面：现跑兄弟判据件的超时（照 py `FACE_PROBE_TIMEOUT = 180`）与解释器。
-// ★ py 用 `sys.executable`；Go 体无该语境 ⇒ 走 PATH 上的 `python3`（见件头「未覆盖面」）。
-const cnfFaceProbeTimeout = 180
-const cnfPythonExe = "python3"
+// cnfProbeEntry —— 面⑩/面⑪ 两条腿的 **Go 真身入口**（in-proc · 只读 · 缺口 `GAP-20261011-04`）。
+// ★ 键 = 件相对路径（`cnfHelpShapeRel` / `cnfCpfcRel`）；✗ 不再 exec 任何 py 件、✗ 无解释器依赖。
+var cnfProbeEntry = map[string]func(stdout, stderr io.Writer, argv []string) int{
+	cnfHelpShapeRel: checkHelpShapeGateMain,
+	cnfCpfcRel:      checkPublicFaceCommandsGateMain,
+}
 
 // py `\s`（str）= 显式 Unicode 空白类：\t\n\v\f\r + 空格 + \x1c-\x1f + \x85 + \xa0 + …
 // ★ 与 Go RE2 默认 ASCII `\s` 不同 ⇒ 逐处展开。
@@ -966,28 +966,14 @@ func cnfProbeGate(root, rel string, argv []string) (*int, interface{}, string) {
 	if !cnfIsFile(fp) {
 		return nil, nil, fmt.Sprintf("取数面不在场（%s）", rel)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(cnfFaceProbeTimeout)*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, cnfPythonExe, append([]string{fp}, argv...)...)
-	cmd.Stdin = nil // py 的 stdin=subprocess.DEVNULL
-	var outb, errb strings.Builder
-	cmd.Stdout = &outb
-	cmd.Stderr = &errb
-	err := cmd.Run()
-	if err != nil {
-		if ctx.Err() != nil {
-			// 超时/取消 ⇒ 取数面跑不起来（py 的 TimeoutExpired 档）
-			return nil, nil, fmt.Sprintf("跑不起来（%s）", ctx.Err())
-		}
-		if ee, ok := err.(*exec.ExitError); ok {
-			rc := ee.ExitCode()
-			return &rc, cnfLastJSONLine(outb.String()), ""
-		}
-		// exec 层跑不起来（解释器找不到 / 件不可执行）⇒ 取数面跑不起来（py 的 OSError 档）
-		return nil, nil, fmt.Sprintf("跑不起来（%s）", err)
+	entry, ok := cnfProbeEntry[rel]
+	if !ok {
+		return nil, nil, fmt.Sprintf("取数面未接线（%s）", rel)
 	}
-	rc := 0
-	return &rc, cnfLastJSONLine(outb.String()), ""
+	var outb strings.Builder
+	rc := entry(&outb, io.Discard, argv)
+	r := rc
+	return &r, cnfLastJSONLine(outb.String()), ""
 }
 
 // cnfProbeHelpShapeBaseline = py `probe_help_shape_baseline`（面⑩ · 门69 口径）。
@@ -1764,10 +1750,21 @@ var (
 	cnfSelfSetErr  = "\nfunc x(){ set" + "Err(\"ghost_kind\", 1, \"x\") }\n"
 	cnfSelfExit99  = "\nfunc y(){ os." + "Exit(99) }\n"
 	cnfSelfExit14  = "\nfunc y(){ os." + "Exit(14) }\n"
-	// 面⑩/面⑪ 取数面自检用的**仓外合成 stub**（逐字同 py 侧那一串 · `sys.exit` 拼串落）
-	cnfSelfHelpShapeStub = "import sys\nprint(\"{\\\"gate\\\": \\\"stub\\\"}\")\nsys." + "exit(1)\n"
-	cnfSelfHelpShapeOK   = "import sys\nprint(\"{\\\"gate\\\": \\\"stub\\\"}\")\nsys." + "exit(0)\n"
-	cnfSelfCpfcCountsOK  = "import sys\nprint(\"{\\\"counts\\\": {\\\"commands\\\": 3}}\")\nsys." + "exit(0)\n"
+	// 面⑩/面⑪ 取数面自检用的**仓外合成 stub**（✗ 不写盘替身：Go 真身编在二进制里，写盘件替不掉它）
+	cnfSelfHelpShapeStub = func(w io.Writer, _ io.Writer, _ []string) int {
+		fmt.Fprintln(w, "{\"gate\": \"stub\"}")
+		return 1
+	}
+	cnfSelfHelpShapeOK = func(w io.Writer, _ io.Writer, _ []string) int {
+		fmt.Fprintln(w, "{\"gate\": \"stub\"}")
+		return 0
+	}
+	cnfSelfCpfcCountsOK = func(w io.Writer, _ io.Writer, _ []string) int {
+		fmt.Fprintln(w, "{\"counts\": {\"commands\": 3}}")
+		return 0
+	}
+	// cnfSelfProbeBody —— 夹具侧「取数面在场」用的**空壳替身件**（件内容不参与判据）。
+	cnfSelfProbeBody = "// 取数面替身（in-proc 真身编在二进制里 · 本件内容不参与判据）\n"
 )
 
 func cnfMiniRoot(dst string, nExtraCmd, extraHasMatrix, countDrift bool, extraUsage string, extraFlags []string) {
@@ -1894,6 +1891,10 @@ func cnfAnyContainsAll(lines []string, subs ...string) bool {
 
 func cnfSelfTest(stdout io.Writer) int {
 	fails := []string{}
+	defer func() { // ★ 自检把 `cnfProbeEntry` 两条腿换成 stub ⇒ 退出前还原成 Go 真身（✗ 不把 stub 留在包里）
+		cnfProbeEntry[cnfHelpShapeRel] = checkHelpShapeGateMain
+		cnfProbeEntry[cnfCpfcRel] = checkPublicFaceCommandsGateMain
+	}()
 	tmp, err := os.MkdirTemp("", "newcmd-followup-selftest-")
 	if err != nil {
 		fmt.Fprintln(stdout, "自检不过：")
@@ -2038,8 +2039,8 @@ func cnfSelfTest(stdout io.Writer) int {
 
 	q := cnfPyJoin(tmp, "q")
 	cnfMiniRoot(q, true, true, false, "zerg nu", nil)
-	_ = os.MkdirAll(cnfPyJoin(q, "scripts", "gates"), 0o755)
-	cnfWrite(cnfPyJoin(q, cnfHelpShapeRel), cnfSelfHelpShapeStub)
+	cnfWrite(cnfPyJoin(q, cnfHelpShapeRel), cnfSelfProbeBody)
+	cnfProbeEntry[cnfHelpShapeRel] = cnfSelfHelpShapeStub
 	if rc, lines := cnfAnalyse(q, 20, disc); rc != 1 {
 		fails = append(fails, fmt.Sprintf("⑰ 门69 取数面判红期望 rc=1，实得 %d", rc))
 	} else if !cnfAnyContainsAll(lines, "面⑩", "缺") {
@@ -2048,8 +2049,10 @@ func cnfSelfTest(stdout io.Writer) int {
 
 	r := cnfPyJoin(tmp, "r")
 	cnfMiniRoot(r, true, true, false, "zerg nu", nil)
-	cnfWrite(cnfPyJoin(r, cnfHelpShapeRel), cnfSelfHelpShapeOK)
-	cnfWrite(cnfPyJoin(r, cnfCpfcRel), cnfSelfCpfcCountsOK)
+	cnfWrite(cnfPyJoin(r, cnfHelpShapeRel), cnfSelfProbeBody)
+	cnfWrite(cnfPyJoin(r, cnfCpfcRel), cnfSelfProbeBody)
+	cnfProbeEntry[cnfHelpShapeRel] = cnfSelfHelpShapeOK
+	cnfProbeEntry[cnfCpfcRel] = cnfSelfCpfcCountsOK
 	if rc, lines := cnfAnalyse(r, 20, disc); rc != 0 {
 		fails = append(fails, fmt.Sprintf("⑱ 取数面判绿期望 rc=0，实得 %d", rc))
 	} else if !cnfAnyContainsAll(lines, "面⑩", "齐") || !cnfAnyContainsAll(lines, "面⑪", "齐") {
