@@ -1028,7 +1028,7 @@ func init() {
 			path:          []string{"watch"},
 			kind:          "Watch",
 			summary:       "订阅事件流（单端点 + Accept 协商 · 唯一名字）",
-			usage:         "zerg watch [<id>] [--accept <媒体类型>] [--exit-on <kind>] [--follow]",
+			usage:         "zerg watch [<id>] [--accept <媒体类型>] [--follow]",
 			arity:         "any",
 			args:          []string{"对象 id（可省：跟全群）"},
 			endpoint:      "GET /api/events（**主控面今天没有** ⇒ 本版不给结论）",
@@ -4895,14 +4895,10 @@ func valueFlagName(a string) string {
 	//   是**形态不统一**（门73 判据丙）。现在与 `--count`/`--files-only` 同一种形态
 	//   （解析面布尔 case + 写进 `inv.kv`）⇒ 两处登记面**同名同形态**。
 	//   ★ 2026-10-05（缺口 `GAP-20261005-68`）：`--no-fallback` 已**整体摘牌**（命令树用法串 + 解析面 case 双处移除）—— 本段仅记历史形态；真给该旗标今退 2「未知旗标」。
-	// 事件面旗标（§九 M1 · `W11` · 缺口 `GAP-20260928-128` · 本枚）：`zerg watch` 的用法串写着
-	//   `[--exit-on <kind>]`（跟到某个事件就退），而本表此前**没有**它 ⇒ 照用法串真给就退 2
-	//   「未知旗标」= **承诺与解析面不符**。本排只补「认得」这一件（§九 M1 `W11` 的语义仍归
-	//   事件面：主控面今天没有 `/api/events` ⇒ `zerg watch` 照旧出声明面 + 不给结论，退码 8）。
-	switch a {
-	case "--exit-on":
-		return a
-	}
+	// ★ 2026-10-11（本枚）：`--exit-on` 已**整体摘牌**（命令树用法串 + 解析面 case 双处移除）
+	//   —— 该旗标全库**零消费者**（`cmdWatch` 从不读它），此前只「认得」不生效。摘牌依据＝
+	//   明文口径「零消费者 ⇒ 摘牌」的先例（同族 `ask --no-fallback`）。本段仅记历史形态；
+	//   真给该旗标今退 2「未知旗标」。
 	// 度量与排序面旗标（组1 序12 · `zerg metrics`）：读数档的落点。
 	// 与上面几排同一口径：值照收，语义在命令里判（本命令只把它当一个**只读**的件路径）。
 	switch a {
