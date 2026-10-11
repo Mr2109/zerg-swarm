@@ -400,6 +400,13 @@ func run(args []string, stdout, stderr io.Writer) int {
 	if inv.hasFlag("--literal-text") && !usageDeclaresFlag(cmd, "--literal-text") {
 		inv.unknown = append(inv.unknown, "--literal-text")
 	}
+	// ★ 同一条数据驱动收口（本单 · 缺口 GAP-20260927-355）：`--dist` 在解析面刚上户口（布尔 case）
+	//   ⇒ **全族共用**；若不在此收口，别族（usage 未列它的命令）真给它会从「未知旗标 2」
+	//   退化成**静默吞**（硬约束⑤：既有命令的退码与输出一字不动）。形状逐字照拄上面
+	//   `--literal-text` 那条；`dev build` 的 usage 已列它 ⇒ 归它。
+	if inv.hasFlag("--dist") && !usageDeclaresFlag(cmd, "--dist") {
+		inv.unknown = append(inv.unknown, "--dist")
+	}
 	// ★ 同一条数据驱动收口（本单 · 缺口 GAP-20260928-139）：`--build-info` 在解析面刚上户口（布尔 case）⇒ **全族共用**；
 	//   若不在此收口，别族（usage 未列它的命令）真给它会从「未知旗标 2」退化成**静默吞**（硬约束⑤：既有命令的退码与输出一字不动）。
 	//   形状逐字照拄上面 `--literal-text` 那条：把不归本命令的那一枚补回 `inv.unknown` ⇒ 由下面**同一条**判词 + 同一个退码 2 收口。`version` 的 usage 已列它 ⇒ 归它。
@@ -4663,6 +4670,18 @@ func parseInvocation(args []string) (*invocation, error) {
 		case a == "--emit":
 			inv.kvSet(a, "true")
 		case a == "--expect-no-changes":
+			inv.kvSet(a, "true")
+		// ★ 本单（缺口账 `GAP-20260927-355` · 本枚）：`dev build --dist` —— 用法串**逐字承诺**
+		//   （`main.go:2737` `… [--scope go|rust|ui|all] [--dist] [--yes] [--dry-run]`）而解析面**没上户口**
+		//   ⇒ 真给该旗标即落下面「未知旗标」兜底退 2 = **「承诺即拒收」**
+		//   （本函数上段 `--out` 那条注释逐字：「用法串里写着的旗标必须真能被解析，
+		//   否则命令等于不可用」）。同一条 usage 行的兄弟 `--scope` 早已在
+		//   `valueFlagName` 登记 ⇒ 本枚是按同一口径补齐。
+		//   语义是**布尔档**（用法串写裸形 `[--dist]`）⇒ 与 `--build-info`/`--list-selfcases` 同一种形态：
+		//   写进 `inv.kv`（`kvSet`）⇒ dispatch 的数据驱动收口看得见（usage 未列它的命令 ⇒ 真给即退 2「未知旗标」）。
+		//   ★ **✗ 不进 `valueFlagName`**：那张表是**取值**旗标名表，布尔名登进去会让门73 判据丙「形态」判红。
+		//   ★ 必须在下面「未知旗标」兜底**之前**上户口，否则 `dev build --dist` 一律退 2。
+		case a == "--dist":
 			inv.kvSet(a, "true")
 		case strings.HasPrefix(a, "-") && a != "-":
 			// 未知旗标：**先记下**（透传型命令要把它逐字交给脚本）；非透传命令在 dispatch 里硬判。
