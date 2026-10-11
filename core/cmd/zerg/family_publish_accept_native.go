@@ -187,6 +187,17 @@ func publishAcceptRun(inv *invocation, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 
+	// ★ 2026-10-12（GAP-20261012-01）：`--json` 不给字段 ⇒ 执行前判（退码取自退码表 usage = 2）。
+	//   病址：本件原先无此判 ⇒ `publish accept --json` 先把 8 条重步跑完（首条「验-1」
+	//   真起子进程跑两器 · 正常 ~344s）才在末尾判缺字段 —— 与「must-fail 格应执行前判」相违，
+	//   只是白跑全套、退码与 stdout 一字不变。体例照兄弟先例 family_archive.go 的同形前判。
+	//   位置：紧跟上面 `--out`/`--json` 冲突前判之后 ⇒ 两旗标同给仍先撞冲突（判序不变）。
+	if inv.jsonGiven {
+		if rc := requireFields(inv, stderr); rc != exitOK {
+			return rc
+		}
+	}
+
 	// ── 跑 8 条（逐条 rc AND · 每一格标出判据来自 ㈤v2 哪一条）──
 	results := make([]paccResult, 0, len(publishAcceptSteps))
 	rcs := make([]int, 0, len(publishAcceptSteps))

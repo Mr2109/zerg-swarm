@@ -979,6 +979,17 @@ func init() {
 			run:      cmdGateReap,
 		},
 		{
+			path:     []string{"gate", "ps"},
+			kind:     "GatePS",
+			summary:  "只读：门进程 + 门锁的现读快照（进程段复用 gateReapScan · 锁段读 <锁目录>/gate-run.lock）· 立即返回",
+			usage:    "zerg gate ps [--json <字段>]",
+			arity:    "none",
+			args:     []string{"（不收位置参数）"},
+			fields:   gatePSFields,
+			endpoint: "",
+			run:      cmdGatePS,
+		},
+		{
 			path:     []string{"gate", "progress"},
 			kind:     "GateProgress",
 			summary:  "**只读快照**：看正在跑那一趟门禁的活进度（八格：趟号步数/正跑哪步/已耗时/静默秒/四数/是否在跑/趟归属/advancing）· 纯只读 · 立即返回 · 绝不阻塞（设计-门进度可查-v0.3 §三/§十） · 判活**只判第 3 层**（当前步日志 mtime 推进 ＋ 谱系 pcpu>0）：快照不做长采样，**完整三层取或**只在有时间窗口的 `gate wait` 落（缺口 `GAP-20261002-16`）",
