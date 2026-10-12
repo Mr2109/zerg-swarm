@@ -230,6 +230,12 @@ func Build(opts BuildOptions) (*BuildResult, error) {
 			if err := cargoBuildUI(filepath.Join(opts.Source, "ui"), out, logw); err != nil {
 				return nil, fmt.Errorf("构建 UI 失败：%w", err)
 			}
+		case CompWall:
+			out := filepath.Join(opts.Staging, ArtifactName(CompWall, plat))
+			fmt.Fprintf(logw, "→ 构建茧壁 zerg-wall（cargo release）\n")
+			if err := cargoBuildWall(filepath.Join(opts.Source, "wall"), out, logw); err != nil {
+				return nil, fmt.Errorf("构建 zerg-wall 失败：%w", err)
+			}
 		}
 	}
 
@@ -333,6 +339,47 @@ func cargoBuildUI(dir, out string, logw io.Writer) error {
 	in, err := os.Open(src)
 	if err != nil {
 		return fmt.Errorf("cargo 未产出 %s：%w", src, err)
+	}
+	defer in.Close()
+	dst, err := os.OpenFile(out, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(dst, in); err != nil {
+		dst.Close()
+		return err
+	}
+	return dst.Close()
+}
+
+// cargoBuildWall —— 构建茧壁 zerg-wall（Rust · cargo release）并拷成制品。
+//
+// GAP-20261013-06：wall 早已是合法组件（DefaultComponents / NodeComponents 都带它、
+// NormalizeComponents 也收），但 Build 的组件 switch 从未给它分支 ⇒ 构建循环静默跳过，
+// 随后「构建后无产物」收集循环 stat 失败（组件 wall 构建后无产物）⇒ 本机步（controller / node）
+// 恒失败（fail-closed：未换装）。此处补上与 pack_release.go / scripts/build/cmd/zerg-build 同口径的一支：
+// 在 wall/ 跑 cargo build --release，制品落 wall/target/release/zerg-wall（备选名 wall）。
+func cargoBuildWall(dir, out string, logw io.Writer) error {
+	if _, err := exec.LookPath("cargo"); err != nil {
+		return fmt.Errorf("本机没有 cargo（rust 工具链）⇒ 编不出茧壁（%s）", dir)
+	}
+	cmd := exec.Command("cargo", "build", "--release")
+	cmd.Dir = dir
+	cmd.Stdout, cmd.Stderr = logw, logw
+	if err := cmd.Run(); err != nil {
+		return err
+	}
+	src := filepath.Join(dir, "target", "release", "zerg-wall")
+	if _, err := os.Stat(src); err != nil {
+		alt := filepath.Join(dir, "target", "release", "wall")
+		if _, err2 := os.Stat(alt); err2 != nil {
+			return fmt.Errorf("cargo 未产出 %s（也未找见 %s）：%w", src, alt, err)
+		}
+		src = alt
+	}
+	in, err := os.Open(src)
+	if err != nil {
+		return err
 	}
 	defer in.Close()
 	dst, err := os.OpenFile(out, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)

@@ -1,6 +1,7 @@
 package selfupdate
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -308,6 +309,21 @@ func Run(o Options) int {
 
 	switch cmp.Status {
 	case StatusUpToDate:
+		// GAP-20261013-05：检出持平**不等于**已装件就是这一版。
+		// 病（2026-10-13 实测 mini-node-2）：节点机的检出 HEAD 已被推到镜像 tip，而在跑的守护
+		// （zerg-agentd）仍是旧版 ⇒ 若只看检出就会回「✅ 无需更新」，该机**永不换装**。
+		// 为什么不能用检出 HEAD 代替已装件：检出 HEAD 只说明**源码树**落在哪一版；本机真正
+		// 在跑/已装的是 `$PREFIX` 下的**制品**（六阶段内核换装的正是它们）——两者是两条
+		// 独立的轴：检出被拉新而制品没换，正是这里要治的病。⇒ 另比一对：已装件自报的 commit。
+		if comps, cerr := componentsForRole(o.Role, o.Components); cerr == nil {
+			if o.NoUI {
+				comps = dropUI(comps)
+			}
+			if need, why := installedUpdateVerdict(o.Prefix, comps, remoteSHA); need {
+				o.say("⬆️  %s", why)
+				break // 已装件落后/判不了 ⇒ 继续构建换装（不是 rc=2）；真正两端都齐才回「无需更新」
+			}
+		}
 		o.say("✅ 无需更新：%s", cmp.Message)
 		return ExitNoUpdate
 	case StatusLocalAhead:
@@ -514,4 +530,125 @@ func dropUI(components []string) []string {
 		}
 	}
 	return out
+}
+
+// ── GAP-20261013-05：已装件自报 commit（「是否已是最新」的第二根判据）───────────
+//
+// 病（2026-10-13 实测 mini-node-2）：`zerg update` 原来只拿**检出 HEAD** 比「是否已是最新」。
+// 节点机的检出 HEAD 已被推到镜像 tip（clone/relay 造成），而在跑的 `zerg-agentd` 仍是
+// 2.5.13 ⇒ 该机回「已是最新」、**不构建不换装**，从此永远升不了（矩阵仍报旧 sha）。
+//
+// 为什么不能用检出 HEAD 代替已装件：检出 HEAD 只说明**源码树**落在哪一版，与本机
+// **已装/在跑的制品**是哪一版是两条独立的轴。六阶段内核换装换的是 `$PREFIX` 下的制品、
+// 重启的是进程；检出被拉新而制品没换，正是这里要治的病。⇒ 在判定「无需更新」**之前**，
+// 另比一对：已装件自报的 commit（跑 `<件> --version` 解析其代码身份那一格）。
+//
+// 判定口径（三态，保留既有语义）：
+// ① 有件自报的 commit ≠ 目标 ⇒ 已装件落后 ⇒ 需要更新，继续构建换装（不是 rc=2）；
+// ② 能读到的件全部 == 目标 ⇒ 真正两端都齐 ⇒ 允许 rc=2「无需更新」；
+// ③ 一件都读不到（未安装 / 不自报 commit / 格式不认识）⇒ 判不了 ⇒ 不能宣布「无需更新」
+// （真正两端都齐才 rc=2）⇒ 按需更新处理。
+// ★ 单件读不到（如茧壁 `zerg-wall 2.5.15` 本就不带 commit 格）只是跳过该件、不单独
+// 触发更新——否则永远带茧壁的主控机会永远换装。
+const installedVersionTimeout = 5 * time.Second
+
+// installedUpdateVerdict —— 检出已持平之后，判「是否真的无需更新」（needUpdate=false 才允许 rc=2）。
+// components 传该机组件集；target 传本次比对的目标 commit（Run 里的 remoteSHA）。
+func installedUpdateVerdict(prefix string, components []string, target string) (needUpdate bool, reason string) {
+	known := false
+	for _, c := range components {
+		name := "zerg-" + c
+		commit, ok := installedCommitOf(filepath.Join(prefix, name))
+		if !ok {
+			continue // 该件判不了（缺失 / 不自报 commit / 格式不认识）—— 跳过，不单独改变既有行为
+		}
+		known = true
+		if !commitMatches(commit, target) {
+			return true, fmt.Sprintf("已装件落后 ⇒ 需要更新：检出虽已持平，但 %s 自报 %s ≠ 目标 %s", name, commit, short(target))
+		}
+	}
+	if !known {
+		return true, "已装件判不了 ⇒ 需要更新：读不到任何已装制品的自报 commit，无法证明本机已是目标版"
+	}
+	// 能读到的件全部 == 目标 ⇒ 两端都齐，可 rc=2。
+	return false, ""
+}
+
+// installedCommitOf —— 跑一枚已装件自报其 commit（`<件> --version` 的第一行）；判不了 ⇒ ("", false)。
+// 带超时：老版本二进制可能不认 `--version`、会把它当配置文件路径而卡住（与内核 `ver_of` 同理）。
+func installedCommitOf(binPath string) (string, bool) {
+	if st, err := os.Stat(binPath); err != nil || st.IsDir() {
+		return "", false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), installedVersionTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, binPath, "--version")
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	out, err := cmd.Output()
+	if err != nil {
+		return "", false
+	}
+	return parseSelfReportedCommit(string(out))
+}
+
+// parseSelfReportedCommit —— 从 `<件> --version` 的输出解析代码身份里的 commit。
+// 兼容两种真机形态（2026-10-13 现读）：空格分隔的 `zerg-core 2.5.15 <sha> <时间>`（core/agent/
+// agentd/zerg）；以及 key=value 的 `[zerg-ui] version=... commit=<sha>+dirty build=...`（ui）。
+// 茧壁 `zerg-wall 2.5.15` 不带 commit 格 ⇒ 返回 ("", false)（判不了）。
+func parseSelfReportedCommit(out string) (string, bool) {
+	line := strings.TrimSpace(out)
+	if i := strings.IndexByte(line, '\n'); i >= 0 {
+		line = strings.TrimSpace(line[:i])
+	}
+	if line == "" {
+		return "", false
+	}
+	fields := strings.Fields(line)
+	for _, f := range fields { // 形态一：commit=<hex>（ui）
+		if strings.HasPrefix(f, "commit=") {
+			if c := cleanCommit(strings.TrimPrefix(f, "commit=")); c != "" {
+				return c, true
+			}
+		}
+	}
+	for _, f := range fields { // 形态二：纯十六进制格（core/agent/agentd）
+		if c := cleanCommit(f); c != "" {
+			return c, true
+		}
+	}
+	return "", false
+}
+
+// cleanCommit —— 只认「像 commit 的十六进制串」（7–40 位，允许 `+dirty` 尾标）；否则空串。
+// 版本号（含 `.`）、组件名（含 `-`）、时间戳（含 `-:`）都会被拒。
+func cleanCommit(tok string) string {
+	if i := strings.IndexByte(tok, '+'); i >= 0 {
+		tok = tok[:i] // 去掉 `+dirty` 一类尾标
+	}
+	if len(tok) < 7 || len(tok) > 40 {
+		return ""
+	}
+	for _, r := range tok {
+		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
+			return ""
+		}
+	}
+	return strings.ToLower(tok)
+}
+
+// commitMatches —— 已装件自报 commit（常为 8 位短 sha）与目标（40 位）比对：按较短者取前缀判等。
+func commitMatches(installed, target string) bool {
+	installed = strings.ToLower(strings.TrimSpace(installed))
+	target = strings.ToLower(strings.TrimSpace(target))
+	if installed == "" || target == "" {
+		return false
+	}
+	n := len(installed)
+	if len(target) < n {
+		n = len(target)
+	}
+	if n < 7 {
+		return false
+	}
+	return installed[:n] == target[:n]
 }

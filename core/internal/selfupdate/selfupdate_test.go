@@ -376,6 +376,72 @@ func TestCheck_MirrorTipMapsBackToLocalUpToDate(t *testing.T) {
 	}
 }
 
+// ── GAP-20261013-05：已装件自报 commit 的判定（检出持平之后的第二比）─────────────
+
+// fakeBin —— 造一枚假的已装制品：`<name> --version` 回一行 <line>；置为可执行。
+func fakeBin(t *testing.T, dir, name, line string) {
+	t.Helper()
+	p := filepath.Join(dir, name)
+	if err := os.WriteFile(p, []byte("#!/bin/sh\necho \""+line+"\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// 态 a：检出已持平，但已装件仍在旧版 ⇒ 判需更新（否则就是真病：节点机永不换装）。
+func TestInstalledUpdateVerdict_CheckoutTiedInstalledOld_NeedUpdate(t *testing.T) {
+	target := "ea8871b3c0ffee00000000000000000000000000" // 目标（镜像 tip，40 位）
+	prefix := t.TempDir()
+	// 已装件自报旧 commit（8 位短 sha —— 实测 mini-node-2 形态：在跑 2.5.13 / e830584b）
+	fakeBin(t, prefix, "zerg-core", "zerg-core 2.5.13 e830584b 2026-09-24T00:00:00Z")
+	need, why := installedUpdateVerdict(prefix, []string{"core", "agentd"}, target)
+	if !need {
+		t.Fatalf("检出持平但已装件旧 ⇒ 必须判需更新（真病：永不换装）；why=%q", why)
+	}
+	if !strings.Contains(why, "已装件落后") {
+		t.Fatalf("判需更新时应点明「已装件落后」：%q", why)
+	}
+}
+
+// 态 b：两端都新（检出持平 + 已装件自报 commit == 目标）⇒ 仍 rc=2「无需更新」。
+func TestInstalledUpdateVerdict_BothNew_StillUpToDate(t *testing.T) {
+	target := "1a6b02fc11223344556677889900112233445566"
+	prefix := t.TempDir()
+	fakeBin(t, prefix, "zerg-core", "zerg-core 2.5.15 1a6b02fc 2026-10-12T14:03:29Z")
+	fakeBin(t, prefix, "zerg-agentd", "zerg-agentd 2.5.15 1a6b02fc 2026-10-12T14:03:29Z")
+	need, why := installedUpdateVerdict(prefix, []string{"core", "agentd"}, target)
+	if need {
+		t.Fatalf("两端都新 ⇒ 不得判需更新（应 rc=2）；why=%q", why)
+	}
+}
+
+// ui 的 key=value 形态（commit=<sha>+dirty）也要能解析并与目标相等。
+func TestInstalledUpdateVerdict_UIKeyValueFormat(t *testing.T) {
+	target := "1a6b02fc11223344556677889900112233445566"
+	prefix := t.TempDir()
+	fakeBin(t, prefix, "zerg-ui", "[zerg-ui] version=2.5.15 commit=1a6b02fc+dirty build=2026-10-12T14:04:28Z")
+	if need, why := installedUpdateVerdict(prefix, []string{"ui"}, target); need {
+		t.Fatalf("ui 的 key=value 形态应能解析并与目标相等 ⇒ 不判需更新；why=%q", why)
+	}
+}
+
+// 一件都读不到（未安装）⇒ 判不了 ⇒ 按需更新（不能证明已装件达标 ⇒ 不宣布「无需更新」）。
+func TestInstalledUpdateVerdict_Unreadable_NeedUpdate(t *testing.T) {
+	if need, why := installedUpdateVerdict(t.TempDir(), []string{"core"}, "1a6b02fc1122"); !need {
+		t.Fatalf("读不到任何已装件自报 commit ⇒ 不得宣布无需更新；why=%q", why)
+	}
+}
+
+// 单件读不到（茧壁不带 commit 格）只是跳过该件、不单独触发更新；能报的件达标即真无需更新。
+func TestInstalledUpdateVerdict_NonReportingComponentSkipped(t *testing.T) {
+	target := "1a6b02fc11223344556677889900112233445566"
+	prefix := t.TempDir()
+	fakeBin(t, prefix, "zerg-wall", "zerg-wall 2.5.15")
+	fakeBin(t, prefix, "zerg-core", "zerg-core 2.5.15 1a6b02fc 2026-10-12T14:03:29Z")
+	if need, why := installedUpdateVerdict(prefix, []string{"core", "wall"}, target); need {
+		t.Fatalf("不自报 commit 的件应被跳过而非触发更新；why=%q", why)
+	}
+}
+
 func TestCheck_MirrorTipMapsBackToDescendantIsBehind(t *testing.T) {
 	priv := t.TempDir()
 	gitRun(t, priv, "init", "-q", "-b", "main")

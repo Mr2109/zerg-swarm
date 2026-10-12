@@ -1,16 +1,16 @@
 {
   "generator": "publish/mirror-public.sh",
-  "last_mirrored_private_sha": "3b04f6abd8c0407cb85463cdb89c67f2a1e625c3",
-  "mirror_parent_sha": "4fb03e66b8a2472d9fb3f1e1816ddaafdebe0fd5",
-  "mirrored_commits": 1632,
+  "last_mirrored_private_sha": "31fd45e11d19966713de8f50334f99bff4af9e20",
+  "mirror_parent_sha": "ca565e92706196efb9d61910aa3fdfbdf9c8a775",
+  "mirrored_commits": 1633,
   "note": "本仓为私有权威仓的过滤镜像：每笔提交与私有提交一一对应（trailer GitOrigin-RevId）。本文件记录镜像到哪一笔私有提交，不含任何私有内容；内容确定性、无时间戳。",
-  "replace_rules_fingerprint": "c1d769e69547d852057ee90f0dd8e45962da008834106a18b213a556572f0846",
+  "replace_rules_fingerprint": "3d39888f5a73f3153d3aad7425bcb0b3da9119f79dc3302714fc417831c37a4d",
   "replace_rules_fingerprint_assets": {
-    "publish/excludes.txt": "09ed8a1bcd5893fa0ac85733d195ed24058c042beb4c94aaec9c7e13742ef298",
+    "publish/excludes.txt": "38909a2bf4f70c29c45e6a0027cc22068c29f8c2b05ab8e17d8acab477c555a7",
     "publish/private-paths.txt": "6406c67b3e15c0fc19353909398492d3dd8094b808b821cea92e6e4aeb49a7c4",
     "publish/replace-rules.tsv": "bc4b56171e65620e61da95ceeb69022adbca58026d82e23824edeabc632ae07a",
     "publish/whitelist.txt": "18f6c8ec6fd8666aee577ed8262c3b9a4efba5bbc881116ef3cc365433db9f4a",
-    "scripts/公开标记.tsv": "89cc02377baad816fe09bed7bc9cb09779b489a7629e884cbb739778c81dc73e"
+    "scripts/公开标记.tsv": "2605601209f0c11bdcad9f0b951b07f4da4fb3705e0d63e8539b1e853db455e4"
   },
   "replace_rules_fingerprint_scope": "publish/replace-rules.tsv · publish/whitelist.txt · publish/private-paths.txt · publish/excludes.txt · scripts/公开标记.tsv",
   "schema": 1
