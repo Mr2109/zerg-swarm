@@ -24,6 +24,13 @@ on:
     tags: ['v*']
   workflow_dispatch:
 
+# ★ 公开树物料化快照：本工作流**就在**公开树里跑 ⇒ 显式声明「以此树为仓根」。
+# 不声明时 `zerg` 按 `isMaterializedPublicTree_r42`（快照识别）判「这不是真仓根」⇒ 门禁直通取不到
+# 仓根 ⇒ 版本门禁 rc=2、发布流水线恒红于第一步（与 ci.yml 同源）。声明后仅在**本工作流**内放行，
+# 私有面默认行为一字不改（防呆保留）。旋钮真身：core/cmd/zerg/root.go。
+env:
+  ZERG_PUBLIC_TREE_ROOT: "1"
+
 # 权限：**最小权限起步**（S35 官方口径：`GITHUB_TOKEN` 默认只读，再在单个 job 内按需提权）——
 #   顶层只给 `contents: read`；**真需要写权限的 job 单独提**（本文件只有 `release` 那一个 job 要 `contents: write`，
 #   因为要建 Release；`gate`/`go`/`ui` 三个 job 只读源码 + 上传 artifact，artifact 走 `ACTIONS_RUNTIME_TOKEN`，
