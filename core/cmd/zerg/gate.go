@@ -85,6 +85,24 @@ func gateLSRejectFlags(tail []string, stderr io.Writer) int {
 	return exitUsage
 }
 
+// gateActionNeedsScript —— 本动作是否**要 exec** `scripts/gates/precommit-gates.sh`（= 是否受「最小入口」硬错约束）。
+//
+// 为什么要有这一枚：`gate` 族里两类动作**不 exec 脚本** —— 它们在 `switch action` 里就 `return` 了，
+// 根本走不到下面那条 `exec.Command("bash", script, …)`：
+//
+//	· `check`   —— 判据转发壳（Go 半自足；判据名 ⇒ 件的解析见 `family_gate_check.go`）
+//	· `results` —— 读现成产物出四数（**只读** · 不跑步骤 · 不写日志）
+//
+// 这两类在**自举件缺席**的树里（如公开面：`scripts/gates/**` 被有意排除）也必须能跑，故不过
+// 「最小入口」前置。其余动作（`ls`/`run`/`show`/`find`/`self-test` 等真要脚本的）行为**一字不改**。
+func gateActionNeedsScript(action string) bool {
+	switch action {
+	case "check", "results":
+		return false
+	}
+	return true
+}
+
 func cmdGate(inv *invocation, stdout, stderr io.Writer) int {
 	root := repoRoot()
 	if root == "" {
@@ -93,14 +111,21 @@ func cmdGate(inv *invocation, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 	script := filepath.Join(root, gateScriptRel)
-	if _, err := os.Stat(script); err != nil {
-		fmt.Fprintf(stderr, "%s: 门禁最小入口不在（%s）—— 它是自举件，就地缺席即硬错\n", progName, gateScriptRel)
-		return exitUsage
-	}
 
+	// ★ 动作解析**提前**到「最小入口」检查之前：`check` / `results` 一类**不 exec 脚本**的动作
+	//   （Go 半自足 · 见下方 `case "check"` 的转发壳）在自举件缺席的树里也必须能跑 —— 公开面
+	//   把 `scripts/gates/**` 有意排除（排除表逐条登记），而公开仓 CI 正是用这些动作跑公开面判据。
+	//   旧行为（本函数初版）：无条件先判自举件在场 ⇒ 连不碰脚本的动作也一并硬错（rc=2）。
 	action := ""
 	if len(inv.path) > 1 {
 		action = inv.path[1]
+	}
+
+	if gateActionNeedsScript(action) {
+		if _, err := os.Stat(script); err != nil {
+			fmt.Fprintf(stderr, "%s: 门禁最小入口不在（%s）—— 它是自举件，就地缺席即硬错\n", progName, gateScriptRel)
+			return exitUsage
+		}
 	}
 	// 透传面：把用户敲在 `zerg gate <动作>` 之后的**一切**原样交给脚本（含旗标与它们的值）。
 	tail := []string{}

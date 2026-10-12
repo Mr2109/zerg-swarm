@@ -9,6 +9,13 @@ on:
     branches: [main]
   pull_request:
 
+# ★ 公开树物料化快照：本工作流**就在**公开树里跑 ⇒ 显式声明「以此树为仓根」。
+# 不声明时 `zerg` 按 `isMaterializedPublicTree_r42`（快照识别）判「这不是真仓根」⇒ 门禁直通
+# 取不到仓根 ⇒ 6 个 job 全 rc=2/8（公开仓 CI 恒红）。声明后仅在**本工作流**内放行，
+# 私有面默认行为一字不改（防呆保留）。旋钮真身：core/cmd/zerg/root.go。
+env:
+  ZERG_PUBLIC_TREE_ROOT: "1"
+
 jobs:
   core:
     name: 主控 + 子端（Go）

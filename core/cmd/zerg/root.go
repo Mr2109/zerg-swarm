@@ -73,6 +73,12 @@ func findRoot(dir string) string {
 //
 // ★ 只认**根**相对路径（真仓里的 `publish/install.sh` 一类不受影响）。
 func isMaterializedPublicTree_r42(dir string) bool {
+	// ★ 显式声明「本树即仓根」（`ZERG_PUBLIC_TREE_ROOT=1`）：公开仓 CI 在物料化快照里跑门禁时置位。
+	// 默认（未设）⇒ 一行不改，快照识别与 fail-closed 行为原样保留（缺口 GAP-20261006-08 防呆不动）。
+	// 为何要这一枚：公开树里 `zerg` 认不出仓根 ⇒ 门禁直通 rc=2/8（公开仓 CI 6 门恒红）。
+	if os.Getenv("ZERG_PUBLIC_TREE_ROOT") == "1" {
+		return false
+	}
 	for _, rel := range []string{
 		"install.sh",
 		".gitleaks.toml",
