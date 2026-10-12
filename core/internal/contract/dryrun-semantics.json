@@ -1259,6 +1259,20 @@
    "语义": "dryrun.v1",
    "零副作用判据": "本件 `TestCwgEmit` 成对负控：`cwgRun(\"--root\", fx, \"--emit\", \"--dry-run\")` ⇒ rc=0 且跑前跑后台账 `os.ReadFile(lp)` 字节逐字不变（sha 逐字同）；同档另验 `--dry-run` 单给（无 `--emit`）⇒ rc=2 用法错。",
    "备注": "登记依据 = 门⑩ `R1 未登记件`（现读命中即红）：本件现读 7 处命中 —— 只出现在被断言的干跑档里，属既有 `dryrun.v1` 一套语义，**不是第五套语义**。"
+  },
+  {
+   "file": "core/cmd/zerg/wall_mutate.go",
+   "类": "命令面三态（`wall mutate` 的 Go 壳 · `--dry-run` / 缺 `--yes`(D2) / `--yes` 真转发 → `scripts/wall/*-mutate.py` · 与 family_build.go 同一套语义）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "`--dry-run` ⇒ 只出计划件、**一个脚本都不起**、不设任何前置（裸 `zerg wall mutate --dry-run` 也退 0）；`--dry-run` 与 `--yes` 同给 ⇒ 经 `dryRunYesConflict` 拒（退 2）",
+   "备注": "登记依据 = 门⑩ `R1 未登记件`：2026-10-12 本版开 `wall mutate`（原为未开放占位）时同批登记，属既有 `dryrun.v1` 一套语义。"
+  },
+  {
+   "file": "core/cmd/zerg/family_publish_verify_native.go",
+   "类": "命令面实现件：**字样引用**（不是干跑语义站点 —— 全件唯一命中 = 件内注释 `:657` 提到「与 `--dry-run` 计划件同口径」；本件不解析 `--dry-run`、不据它行事）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "本件不实现干跑档：取不到时不改退码（照实打印「取不到」并 `return 0` · 无结论 ≠ 红）· 与 `--dry-run` 计划件同口径",
+   "备注": "登记依据 = 门⑩ `R1 未登记件`：2026-10-12 本版加 `publish verify` 的 `mirror_origin` 只读格时同批登记。"
   }
 
  ]

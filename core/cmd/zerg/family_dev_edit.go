@@ -2096,6 +2096,8 @@ func devEditLandReturnPoint(outPath, fileRel string, before []byte, beforeSHA st
 	sb.WriteString("echo \"  ① 制品       bin/zerg                                 ⇒ zerg build all --only cli\"\n")
 	sb.WriteString("echo \"  ② 命令页 zh  docs/zh/参考-命令行.md                   ⇒ zerg gate check gen-cli-reference --emit\"\n")
 	sb.WriteString("echo \"  ③ 命令页 en  docs/en/参考-命令行.md                   ⇒ 同上（--emit 同刷 zh/en）\"\n")
+	sb.WriteString("echo \"  ③b 公开页 zh  publish/docs/CLI.zh-CN.md          ⇒ zerg gate check gen-cli-reference --emit（无参即四件同刷：正式面 zh/en ＋ 公开面 CLI.zh-CN/en）\"\n")
+	sb.WriteString("echo \"  ③c 公开页 en  publish/docs/CLI.en.md             ⇒ 同上\"\n")
 	sb.WriteString("echo \"  ④ 帮助快照   zerg help export --dry-run --out <目录>  ⇒ zerg gate check check-help-snapshot --runtime-artifact <目录>\"\n")
 	sb.WriteString("echo \"  ⑤ 契约矩阵   core/cmd/zerg/testdata/cli-matrix.json   ⇒ zerg gate check check-cli-contract --emit-matrix\"\n")
 	sb.WriteString("echo \"  ⑥ 契约基线   scripts/gates/cli-contract-baseline.json ⇒ 随 ⑤ 同批重冻\"\n")

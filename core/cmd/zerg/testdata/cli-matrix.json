@@ -2737,57 +2737,6 @@
   },
   {
    "argv": [
-    "egg",
-    "retire",
-    "--nosuchflag-zz"
-   ],
-   "command": "egg retire",
-   "id": "egg/retire#未知旗标",
-   "want_rc": 2,
-   "want_stdout_bytes": 0,
-   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
-  },
-  {
-   "argv": [
-    "egg",
-    "retire",
-    "--schema",
-    "zerg/v9"
-   ],
-   "command": "egg retire",
-   "id": "egg/retire#不认的契约主号",
-   "want_rc": 2,
-   "want_stdout_bytes": 0,
-   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
-  },
-  {
-   "argv": [
-    "egg",
-    "retire",
-    "x"
-   ],
-   "command": "egg retire",
-   "id": "egg/retire#缺 --confirm（D3）",
-   "want_rc": 2,
-   "want_stdout_bytes": 0,
-   "why": "D3 不可逆：缺确认 ⇒ fail-closed 2（§九 M3 C2 · §十二 P-014）"
-  },
-  {
-   "argv": [
-    "egg",
-    "retire",
-    "x",
-    "--confirm=不匹配-zz",
-    "--yes"
-   ],
-   "command": "egg retire",
-   "id": "egg/retire#--confirm 值不匹配",
-   "want_rc": 2,
-   "want_stdout_bytes": 0,
-   "why": "确认值必须与目标逐字相同 —— 给错值一律拒绝（§4.1 K7）"
-  },
-  {
-   "argv": [
     "dev",
     "release",
     "--nosuchflag-zz"
@@ -3107,57 +3056,6 @@
    "want_rc": 2,
    "want_stdout_bytes": 0,
    "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
-  },
-  {
-   "argv": [
-    "script",
-    "run",
-    "--nosuchflag-zz"
-   ],
-   "command": "script run",
-   "id": "script/run#未知旗标",
-   "want_rc": 2,
-   "want_stdout_bytes": 0,
-   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
-  },
-  {
-   "argv": [
-    "script",
-    "run",
-    "--schema",
-    "zerg/v9"
-   ],
-   "command": "script run",
-   "id": "script/run#不认的契约主号",
-   "want_rc": 2,
-   "want_stdout_bytes": 0,
-   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
-  },
-  {
-   "argv": [
-    "script",
-    "run",
-    "x"
-   ],
-   "command": "script run",
-   "id": "script/run#缺 --confirm（D3）",
-   "want_rc": 2,
-   "want_stdout_bytes": 0,
-   "why": "D3 不可逆：缺确认 ⇒ fail-closed 2（§九 M3 C2 · §十二 P-014）"
-  },
-  {
-   "argv": [
-    "script",
-    "run",
-    "x",
-    "--confirm=不匹配-zz",
-    "--yes"
-   ],
-   "command": "script run",
-   "id": "script/run#--confirm 值不匹配",
-   "want_rc": 2,
-   "want_stdout_bytes": 0,
-   "why": "确认值必须与目标逐字相同 —— 给错值一律拒绝（§4.1 K7）"
   },
   {
    "argv": [
@@ -6234,6 +6132,42 @@
   },
   {
    "argv": [
+    "publish",
+    "mirror",
+    "--schema",
+    "zerg/v9"
+   ],
+   "command": "publish mirror",
+   "id": "publish/mirror#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判，不碰任何目标（同族先例 publish/verify#不认的契约主号）。读数 = 2026-10-12 重编后实测"
+  },
+  {
+   "argv": [
+    "publish",
+    "mirror"
+   ],
+   "command": "publish mirror",
+   "id": "publish/mirror#缺确认（D3）",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "`publish mirror` 是**危险档 D3（写本地镜像树）**⇒ 缺确认不执行（同族先例 publish/run）。读数 = 2026-10-12 重编后实测"
+  },
+  {
+   "argv": [
+    "publish",
+    "mirror",
+    "--push"
+   ],
+   "command": "publish mirror",
+   "id": "publish/mirror#--push 不上命令面",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "族纪律：推远端**不在命令面**（镜像器只出本地镜像树 · 推送另行发话）⇒ 给 `--push` 即拒。★ 本条钉住该纪律 · 读数 = 2026-10-12 重编后实测"
+  },
+  {
+   "argv": [
     "gap",
     "export",
     "--nosuchflag-zz"
@@ -6718,20 +6652,6 @@
   },
   {
    "argv": [
-    "egg",
-    "retire",
-    "x",
-    "--dry-run",
-    "--yes"
-   ],
-   "command": "egg retire",
-   "id": "egg/retire#--dry-run 与 --yes 同给",
-   "want_rc": 2,
-   "want_stdout_bytes": 0,
-   "why": "「`--dry-run`（只出计划件）与 `--yes`（真写）**同给**」= 两道确认档自相矛盾 ⇒ 用法错 2（不给结论）：唯一共享判定 `dryRunYesConflict`（`core/cmd/zerg/guard.go:292` · 逐命令在自己的**唯一写盘点之前**调用）· 本格现跑两遍 rc/stdout 逐字同值（rc=2 · stdout 0 字节）· ★ 本 why 不记绝对字节数（手写时点读数会烂）"
-  },
-  {
-   "argv": [
     "agent",
     "bootstrap",
     "local",
@@ -7100,21 +7020,6 @@
    ],
    "command": "route unpin",
    "id": "route/unpin#--dry-run 与 --yes 同给",
-   "want_rc": 2,
-   "want_stdout_bytes": 0,
-   "why": "「`--dry-run`（只出计划件）与 `--yes`（真写）**同给**」= 两道确认档自相矛盾 ⇒ 用法错 2（不给结论）：唯一共享判定 `dryRunYesConflict`（`core/cmd/zerg/guard.go:292` · 逐命令在自己的**唯一写盘点之前**调用）· 本格现跑两遍 rc/stdout 逐字同值（rc=2 · stdout 0 字节）· ★ 本 why 不记绝对字节数（手写时点读数会烂）"
-  },
-  {
-   "argv": [
-    "script",
-    "run",
-    "zz",
-    "--confirm=zz",
-    "--dry-run",
-    "--yes"
-   ],
-   "command": "script run",
-   "id": "script/run#--dry-run 与 --yes 同给",
    "want_rc": 2,
    "want_stdout_bytes": 0,
    "why": "「`--dry-run`（只出计划件）与 `--yes`（真写）**同给**」= 两道确认档自相矛盾 ⇒ 用法错 2（不给结论）：唯一共享判定 `dryRunYesConflict`（`core/cmd/zerg/guard.go:292` · 逐命令在自己的**唯一写盘点之前**调用）· 本格现跑两遍 rc/stdout 逐字同值（rc=2 · stdout 0 字节）· ★ 本 why 不记绝对字节数（手写时点读数会烂）"
@@ -9202,30 +9107,6 @@
   {
    "argv": [
     "fleet",
-    "ls"
-   ],
-   "command": "fleet ls",
-   "id": "fleet/ls#未接",
-   "want_rc": 2,
-   "want_stdout_bytes": 0,
-   "why": "L1 骨架新族 `fleet` 的占位动作：**未接**（本族只立骨架、未填业务）⇒ fail-closed 退 2「未接」· stdout 0 字节"
-  },
-  {
-   "argv": [
-    "fleet",
-    "ls",
-    "--schema",
-    "zerg/v9"
-   ],
-   "command": "fleet ls",
-   "id": "fleet/ls#不认的契约主号",
-   "want_rc": 2,
-   "want_stdout_bytes": 0,
-   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
-  },
-  {
-   "argv": [
-    "fleet",
     "logs",
     "--schema",
     "zerg/v9"
@@ -9337,13 +9218,14 @@
     "wall",
     "mutate",
     "bridge",
+    "--dry-run",
     "--yes"
    ],
    "command": "wall mutate",
-   "id": "wall/mutate#未开放（确认档齐）",
+   "id": "wall/mutate#--dry-run 与 --yes 同给",
    "want_rc": 2,
    "want_stdout_bytes": 0,
-   "why": "确认档齐了（--yes 已给）但 `wall mutate` **本版未开放**（run=cmdGuarded · 危险档↔执行门对账闸要求未开放危险档一律走 cmdGuarded）⇒ 不给结论退 2、stdout 0 字节"
+   "why": "`--dry-run`（只出计划件）与 `--yes`（真写）**不许同给** ⇒ 两道确认档自相矛盾 ⇒ 用法错 2、stdout 0 字节（判在 exec 之前 · 不碰任何目标件）。★ 本格由原「wall/mutate#未开放（确认档齐）」随本单把 `wall mutate` 开为已开放（opened:false→true · run cmdGuarded→cmdWallMutate）重派生 —— 原 argv `wall mutate bridge --yes` 现已真跑（够不着 must-fail），改换「同给」这一道命令面自判的前置拒执格（dry_run_yes_conflict · `guard.go:dryRunYesConflict`）⇒ **保 4 格 / 总数不变**"
   },
   {
    "argv": [

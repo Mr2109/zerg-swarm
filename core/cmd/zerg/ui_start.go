@@ -797,6 +797,146 @@ func cmdPublishVerifyFamily(inv *invocation, stdout, stderr io.Writer) int {
 	return cmdPublishVerify(inv, stdout, stderr)
 }
 
+// ── 片3（本单 · C12 接线）：`zerg publish mirror` 的**宿主桥** ────────────────────────────────
+//
+// 真身 = `family_mirror_public_native.go:mirrorPublicNative`（旧壳 `publish/mirror-public.sh` 的
+// Go 真身 · 428 行 · 编排五段 + 内嵌引擎 `publish/mirror-public-lib.py` · 见该件头声明）。
+//
+// ★ 为什么桥在本件（同 `cmdPublishVerifyFamily` 那条理由）：门78 `check-newcmd-followup` **面④**
+//
+//	要求「新增 path 的实现件**已在** `scripts/公开标记.tsv`」—— 真身件**不在**该表；本件是
+//	**已登记**（`public=yes` · `scripts/公开标记.tsv:158`）的宿主 ⇒ `main.go` 的 `run:` 指向本桥，
+//	**零新表行**（✗ 不登记真身件）。
+//
+// 本桥**只做三件事**（✗ 不重写真身任何一段 · ✗ 不改真身退码口径）：
+//
+//	① **命令面旗标收口**：`--dry-run`（命令面）⇒ 真身 `--list-only`（真·零写盘/零联网/零推送）；
+//	② **`--push` 拒**：真身自带 `--push`（推远端），但**不上命令面**（族纪律「推远端不在命令面」·
+//	   C12 §5.3②）⇒ 命令面见到它一律 rc=2（fail-closed），把「推」继续挡在命令面之外；
+//	③ **D3 三态**（照 `publish run` `family_publish_run.go:207-233`）：真跑（出**本地**镜像树）
+//	   缺 `--confirm=<主机名>` 或 `--yes` ⇒ 2；只读档（`--dry-run`/`--list-only`/`--check`）免确认。
+//
+// 形状 = **透传**（`main.go` 该条 `passthrough: true` · 同 `doc kb-sync`）：除上面三件事外旗标
+// **逐字**交真身自己的 argv 解析面（真身自带 `--out`/`--range`/`--report`/`--allow`/`--verbose` 表，
+// 命令面**不复刻**第二份旗标表）。
+func cmdPublishMirror(inv *invocation, stdout, stderr io.Writer) int {
+	root := repoRoot()
+	if root == "" {
+		inv.setErr("blocked", "repo_root_absent", "解析不到仓根")
+		fmt.Fprintf(stderr, "%s: 解析不到仓根 ⇒ 跑不动镜像器（不给结论 · 退码 8）\n", progName)
+		return exitBlocked
+	}
+	argv, listOnly, rc := publishMirrorArgv(inv, stderr)
+	if rc != exitOK {
+		return rc
+	}
+	// 只读档（`--dry-run`/`--list-only`/`--check`）：真身零写盘/零联网/零推送 ⇒ 免确认直接跑。
+	if listOnly {
+		return mirrorPublicNative(root, stdout, stderr, argv)
+	}
+	// ── D3 三态（真跑出**本地**镜像树）：照 `publish run` 的确认门（缺 ⇒ 2 fail-closed）──
+	host := planHost()
+	if !inv.confirmGiven {
+		msg := "`publish mirror` 真跑会写**本地**镜像树 ⇒ 按 D3 档：**缺确认 ⇒ 不执行**"
+		inv.setErr("usage", "confirm_required", msg)
+		guardMarkDecision(inv, guardDecisionApproval)
+		fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
+		fmt.Fprintf(stderr, "要执行得给：--confirm=%s --yes\n", host)
+		fmt.Fprintf(stderr, "先看只读预演：%s publish mirror --dry-run\n", progName)
+		return exitUsage
+	}
+	if !devEditHostAccept(inv.confirm) {
+		msg := fmt.Sprintf("确认值不匹配目标（--confirm 给的是 %q，本机主机名是 %q）⇒ 不执行", inv.confirm, host)
+		inv.setErr("usage", "confirm_mismatch", msg)
+		guardMarkDecision(inv, guardDecisionBlock)
+		fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
+		return exitUsage
+	}
+	if !inv.yes {
+		msg := "`publish mirror` 是 D3 档 —— **缺 --yes ⇒ 不执行**"
+		inv.setErr("usage", "yes_required", msg)
+		guardMarkDecision(inv, guardDecisionApproval)
+		fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
+		return exitUsage
+	}
+	return mirrorPublicNative(root, stdout, stderr, argv)
+}
+
+// publishMirrorValueSkip / publishMirrorBoolSkip —— **命令面解析器已消费**、真身**不认**的全局旗标：
+// 它们归命令面（D3 三态读 `--confirm`/`--yes`、包封面读 `--json`…）⇒ **不**进真身 argv（否则真身按
+// 「未知参数 ⇒ 2」拒）。值形（带 `--k=v`）与空格形（`--k v`）都要丢。
+// ★ 真身自己的旗标（`--out`/`--range`/`--report`/`--allow`/`--verbose`/`--list-only`…）**不在此列**
+// ⇒ 逐字透传（命令面不复刻真身的旗标表）。
+var (
+	publishMirrorValueSkip = map[string]bool{
+		"--json": true, "--schema": true, "--confirm": true, "--timeout": true, "--idempotency-key": true,
+	}
+	publishMirrorBoolSkip = map[string]bool{
+		"--plain": true, "--yes": true, "--token-stdin": true,
+	}
+)
+
+// publishMirrorArgv —— 把命令面实参（`publish mirror` 之后段）整成真身 argv（`mirrorPublicNative`
+// 的 argv · ✗ 不含程序名）。返回 (argv, 是否只读档, rc)；rc≠exitOK ⇒ 调用方直接返回该 rc（用法错 2）。
+//
+//	· `--dry-run` ⇒ `--list-only`（命令面 → 真身：真·只读预演）；`--list-only`/`--check` 原样（只读档）；
+//	· `--push[=…]` ⇒ **拒**（rc=2 · 不上命令面）；
+//	· 命令面已消费的全局旗标（上两张表）⇒ 丢（含空格形的值）；
+//	· 其余 ⇒ 逐字透传。
+func publishMirrorArgv(inv *invocation, stderr io.Writer) ([]string, bool, int) {
+	tail := publishMirrorTail(inv)
+	out := make([]string, 0, len(tail))
+	listOnly := inv.dryRun
+	for i := 0; i < len(tail); i++ {
+		a := tail[i]
+		switch {
+		case a == "--push" || strings.HasPrefix(a, "--push="):
+			inv.setErr("usage", "push_not_on_command_face", "--push 不上命令面")
+			fmt.Fprintf(stderr, "%s: `--push` **不上命令面**（族纪律：推远端不在命令面 —— 镜像器只出**本地**镜像树；推送另行发话）\n", progName)
+			fmt.Fprintf(stderr, "See '%s publish mirror --help'。\n", progName)
+			return nil, false, exitUsage
+		case a == "--dry-run":
+			out = append(out, "--list-only")
+		case a == "--list-only" || a == "--check":
+			listOnly = true
+			out = append(out, a)
+		case publishMirrorValueSkip[a]:
+			if i+1 < len(tail) && !strings.HasPrefix(tail[i+1], "-") {
+				i++ // 空格形值 ⇒ 一起丢
+			}
+		case strings.HasPrefix(a, "--") && publishMirrorValueSkip[strings.SplitN(a, "=", 2)[0]]:
+			// `--k=v` 形 ⇒ 一枚即够
+		case publishMirrorBoolSkip[a]:
+			// 命令面布尔 ⇒ 丢
+		default:
+			out = append(out, a)
+		}
+	}
+	return out, listOnly, exitOK
+}
+
+// publishMirrorTail —— 命令面**路径之后**的实参（`publish mirror` 之后段 · 原样 · 含未知旗标）。
+// 在 `inv.orig` 里**定位**路径子段（✗ 不用 `len(inv.path)` 硬切：路径**前**可能有全局旗标）。
+func publishMirrorTail(inv *invocation) []string {
+	if inv == nil {
+		return nil
+	}
+	n := len(inv.path)
+	for i := 0; i+n <= len(inv.orig); i++ {
+		match := true
+		for j := 0; j < n; j++ {
+			if inv.orig[i+j] != inv.path[j] {
+				match = false
+				break
+			}
+		}
+		if match {
+			return append([]string{}, inv.orig[i+n:]...)
+		}
+	}
+	return nil
+}
+
 // cmdFleetLogs —— `zerg fleet logs [<透传实参…>]`：把 `fleet logs` 之后的实参**原样**交给
 // `fleetLogsGateMain`（inproc 口径：argv **不含程序名** —— 与 `zerg gate check` 走该键时同形）。
 func cmdFleetLogs(inv *invocation, stdout, stderr io.Writer) int {

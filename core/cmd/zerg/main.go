@@ -1984,6 +1984,33 @@ func init() {
 			run:      cmdPublishAccept,
 		},
 		{
+			// ── 片3（本单 · C12 接线）：`zerg publish mirror` —— 逐提交镜像器入命令面 ───────────
+			// 真身 = `family_mirror_public_native.go:mirrorPublicNative`（旧壳 `publish/mirror-public.sh`
+			// 的 Go 真身 · 编排五段 · 引擎 `publish/mirror-public-lib.py` 逐字节内嵌）。原状
+			// 「真身在盘、命令树**无**入口」⇒ `zerg publish mirror` 一律 rc=2（B2/R1 病根）。
+			// ★ **B 式宿主桥**（C12 §模板B · **零新表行**）：真身件**不在** `scripts/公开标记.tsv`
+			//   （门78 `check-newcmd-followup` 面④ 要求「新增 path 的实现件已在标记表」）⇒ `run:`
+			//   指向**已登记宿主** `ui_start.go`（该表 `:158` `public=yes`）的桥 `cmdPublishMirror`
+			//   —— 与同族 `publish verify`（`run: cmdPublishVerifyFamily`）**同一条形状**。
+			// ★ **命令面只缴 `--dry-run`** ⇒ 桥映射到真身 `--list-only`（真·零写盘/零联网/零推送的
+			//   只读预演）；真跑（出**本地**镜像树）按 **D3** 三态（照 `publish run`：缺
+			//   `--confirm=<主机名>` 或 `--yes` ⇒ 2 fail-closed）。
+			// ★ **`--push` 不上命令面**（族纪律「推远端不在命令面」· C12 §5.3②）—— 桥里**拒**该旗标。
+			// ★ `passthrough: true`：除上面两枚外旗标逐字交真身自己的 argv 解析面（与 `doc kb-sync`
+			//   同一种「透传型」形态：真身自带解析，命令面不复刻第二套旗标表）。
+			path:        []string{"publish", "mirror"},
+			kind:        "PublishMirror",
+			summary:     "逐提交镜像（**本地** · 出镜像树 · 不出网、不推送 · 真身 `family_mirror_public_native.go:mirrorPublicNative`）；命令面只缴 `--dry-run` ⇒ 真身 `--list-only` 只读预演（零写盘）· `--push` 不上命令面",
+			usage:       "zerg publish mirror [--dry-run | --confirm=<主机名> --yes]",
+			arity:       "any",
+			args:        []string{"（无位置参数：`--dry-run`（= 真身 `--list-only`）为只读预演；其余旗标逐字透传真身）"},
+			endpoint:    "",
+			danger:      &dangerSpec{dangerD3, "主机名", "出**本地**逐提交镜像树（真跑按 D3 三态：缺 `--confirm=<主机名>`/`--yes` ⇒ 2）—— **不出网、不推送**（`--push` 不上命令面）", "C12 §5.3② · 同族先例 publish run（D3）· 族纪律「推远端不在命令面」", true},
+			opened:      true,
+			passthrough: true,
+			run:         cmdPublishMirror,
+		},
+		{
 			// 组4 §二.4 `W-51`（`研-禁:134` `R-21` 归绿核心）· 任务单序133 · 与组3 `Q-025` 同条：
 			// 归绿判据逐字「指定 commit 的必需检查集合全部 `success`、且没有一个 `skipped`」，
 			// 读数带 `head_sha` —— 「**人贴屏不算判据**」⇒ 本命令是那张图的**只读**机器面
@@ -2354,9 +2381,8 @@ func init() {
 			machine: machineHostName,
 			danger:  &dangerSpec{dangerD3, "主机名", "打包发布件（清单档 `--manifest-only` 只写 dist/<版本>/release/；**换件档真跑未开放** · 底层 Go 真身 scripts/build/cmd/zerg-build-all/main.go）", "GAP-20261005-39 · family_build.go:279 自印「危险档：D3」· §17.2 ③ 建环", true},
 			opened:  true,
-			summary: "打包发布件（**计划面已开放**：`--dry-run` 出计划件；**清单档 `--manifest-only` 已开放** —— 只重写 `dist/<版本>/release/` 的清单与逐件 sha256，不编译、不重打包、不碰在跑件；换件档真跑本版未开放 · 拒执退码 2）",
+			summary: "打包发布件（**计划面已开放**：`--dry-run` 出计划件；**清单档 `--manifest-only` 已开放** —— 只重写 `dist/<版本>/release/` 的清单与逐件 sha256，不编译、不重打包、不碰在跑件；**换件档真跑已开放（2026-10-10 · Mr2109 拍）** —— 内含全量构建、会覆盖 `bin/` 里的在跑制品）",
 			usage:   "zerg build release [--manifest-only] [--dry-run | --confirm=<主机名> --yes]",
-			refuses: true, // 真跑拒执（**换件档**）：`cmdBuildPassthrough` 的 `openForExec` 只对 `build all --only cli` 与 `build release --manifest-only`（缺口 `Q-226` · 只写 `dist/<版本>/release/` 一个目录）为真 ⇒ 其余非 dry-run 一律 `not_opened` 退 2
 			run:     cmdBuildPassthrough,
 		},
 		// ---- 危险动作：**未开放的那批只登记形状，不开放执行**（§6.2 批 1 零写操作）；
@@ -2588,15 +2614,6 @@ func init() {
 			run:     cmdGuarded,
 		},
 		{
-			path:    []string{"egg", "retire"},
-			summary: "退役一枚卵（危险 D3 · 本版未开放）",
-			usage:   "zerg egg retire <卵 id> --confirm=<卵 id> --yes [--dry-run]",
-			arity:   "any",
-			args:    []string{"卵 id"},
-			danger:  &dangerSpec{dangerD3, "卵 id", "把该卵从名册与盘上退掉（**不可逆**；档 ③ 件永不自动）", "§十五.2 档③ · 开工单 T-54", true},
-			run:     cmdGuarded,
-		},
-		{
 			path:    []string{"dev", "release"},
 			summary: "发布候选件（危险 D3 · 本版未开放）",
 			usage:   "zerg dev release --candidate <候选 id> --confirm=<候选 id> --yes [--dry-run]",
@@ -2795,17 +2812,6 @@ func init() {
 			fields:   proposalFields,
 			endpoint: "",
 			run:      cmdProposeLs,
-		},
-		{
-			path:    []string{"script", "run"},
-			summary: "跑一件脚本（危险 D3 · 本版未开放）",
-			usage:   "zerg script run <脚本> --confirm=<脚本> --yes [--dry-run]",
-			arity:   "any",
-			args:    []string{"脚本"},
-			danger: &dangerSpec{dangerD3, "脚本",
-				"按调用者权限执行脚本（**退码原样透传**；核心名硬占位）",
-				"§6.3 S6 · §九 M18 C5 · 开工单 T-50", true},
-			run: cmdGuarded,
 		},
 		{
 			path:     []string{"plugin", "ls"},
@@ -3833,11 +3839,12 @@ func init() {
 		//     真跑 cargo+verify ⇒ 非纯 Go 可化）：命令面只做入口 ＋ 转发，✗ 不重写脚本任何一段。
 		//     实现体宿主 = `ui_start.go`（门78 面④ 要求实现件已在 `scripts/公开标记.tsv` ⇒ 复用**已登记**件
 		//     作宿主 · 本单铁律禁碰该表 —— 同 `cmdSandboxProbe` 那条理由）。
-		//   · `wall mutate <bridge|macos>` = **危险档 D2（写仓）· 本版未接**：两个变异器**真改仓内件**
-		//     （改坏 Rust/Go ⇒ 门必须红 ⇒ 还原）⇒ 依 P5 入危险档，✗ **不得默认裸跑** —— `run: cmdGuarded`
-		//     未开放档：缺确认档 fail-closed 退 2、`--dry-run` 只出计划件（危险档↔执行门对账闸要求未开放
-		//     危险档一律走 `cmdGuarded`）。★ **还原台账纪律**（跑前落备份 · 跑后逐件核 sha · 回执报
-		//     「变异期间碰过哪些件、怎么复原」）随 `dangerSpec.Effect` 逐字登记，接线时随真实现落地。
+		//   · `wall mutate <bridge|macos>` = **危险档 D2（写仓）· 本版已开放**：两个变异器**真改仓内件**
+		//     （改坏 Rust/Go ⇒ 门必须红 ⇒ 还原）⇒ 依 P5 入危险档，✗ **不得默认裸跑** —— `run: cmdWallMutate`
+		//     （`wall_mutate.go` · **壳转账**：`--dry-run` 出计划件退 0 / 缺 --yes fail-closed 退 2 / 确认档齐
+		//     转发 `scripts/wall/{wall-bridge,wall-macos}-mutate.py` 真跑 · 脚本退码原样转出）。★ **还原台账
+		//     纪律**（跑前落备份 · 跑后逐件核 sha · 回执报「变异期间碰过哪些件、怎么复原」）随
+		//     `dangerSpec.Effect` 逐字登记，由脚本内 `scripts/docs/inplace-window.py` 落地。
 		{
 			path:        []string{"wall", "evidence"},
 			kind:        "WallEvidence",
@@ -3855,21 +3862,12 @@ func init() {
 			kind:    "WallMutate",
 			layer:   "host",
 			danger:  &dangerSpec{dangerD2, "变异目标（bridge / macos）", "真改仓内件做变异验证（改坏 wall/src/**.rs 与迁移桥两侧 ⇒ 门必须红 ⇒ 还原）；**还原台账纪律**：跑前落备份（`scripts/docs/inplace-window.py` arm）、跑后逐件核 sha、回执报「变异期间碰过哪些件、怎么复原」", "待拍清单 P5（茧壁变异器入危险档 D2/写仓）· 同族先例 gate check（D3）· 两个变异器件头（inplace-window 复原口径）", false},
-			opened:  false,
-			summary: "茧壁变异验证（bridge / macos · **危险档 D2/写仓 · 本版未开放**：真改仓内件 ⇒ 缺 --yes fail-closed 退 2；`--dry-run` 只出计划件）",
+			opened:  true,
+			summary: "茧壁变异验证（bridge / macos · **危险档 D2/写仓 · 本版已开放**：真改仓内件 ⇒ 缺 --yes fail-closed 退 2；`--dry-run` 只出计划件）",
 			usage:   "zerg wall mutate <bridge|macos> [--dry-run | --yes]",
 			arity:   "any",
 			args:    []string{"子动作名（逐字 · bridge / macos）", "确认档：`--dry-run` 出计划件 / `--yes` 才执行（缺 ⇒ fail-closed 退 2）"},
-			run:     cmdGuarded,
-		},
-		{
-			path:    []string{"fleet", "ls"},
-			kind:    "FleetLs",
-			layer:   "host",
-			summary: "机群族骨架（**未接**：本族只立骨架 —— 日志聚合 / 中继待各路接线）",
-			usage:   "zerg fleet ls",
-			refuses: true,
-			run:     cmdFamilyNotWired,
+			run:     cmdWallMutate,
 		},
 		// ── 命令树登记批（2026-10-09）：`zerg fleet logs` 入口（原占位只到 `fleet ls`）──────
 		// 真身 = `fleet_logs.go` 的 `fleetLogsGateMain`（`gateway/scripts/fleet_logs.py` 的 Go 真搬 ·
@@ -4192,6 +4190,10 @@ type invocation struct {
 	dryRun bool
 	all    bool // `build show --all`
 	fast   bool // `gate bench --fast`
+	// `--no-fast`（缺口 `GAP-20260927-41` ③ · 2026-10-12）：`repo commit` 的**全量档出口** —— 与
+	// `--fast` **相反**（提交面默认只跑快档）：给它 = **强制走全量档**（同一条门禁命令不带 `--fast`）。
+	// 与上面几枚同一形态：全局布尔、谁用谁读 —— 不用的命令静默忽略。
+	noFast bool
 	// `--full`（缺口 `GAP-20260927-09` · 2026-09-27 父代理现场补）：`code find`/`code show` 的
 	// **不截断**档 —— 此前 `truncateDisplay(…, 200)` 把长行尾巴在**人面与机器面一起**切掉。
 	full bool
@@ -4466,6 +4468,11 @@ func parseInvocation(args []string) (*invocation, error) {
 			inv.all = true
 		case a == "--fast":
 			inv.fast = true
+		// `--no-fast`（缺口 `GAP-20260927-41` ③ · 本枚）：`repo commit` 的**全量档出口** —— 与
+		// `--fast` **相反**。与上面几枚同一形态：全局布尔、谁用谁读 —— 不用的命令静默忽略。
+		// ★ **✗ 不进 `valueFlagName`**（那张表是**取值**旗标名表）：布尔 case 即登记（门73 面③）。
+		case a == "--no-fast":
+			inv.noFast = true
 		// `--full`（缺口 `GAP-20260927-09`）：长行**不截断**。与上面几枚同一种形态 —— 全局布尔、
 		// 谁用谁读，不用的命令静默忽略；★ 它必须在本表「上户口」，否则派单里写着 `--full` 会
 		// 一律退 2「未知旗标」= 命令等于不可用（`:2508` 那条教训的原话）。

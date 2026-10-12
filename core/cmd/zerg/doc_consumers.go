@@ -9,7 +9,8 @@
 //	· zerg_overview  ⇒ `chat.OverviewCurrentVersionDir()`（同源包装 currentVersionDir()：无 `现行` 指针 ⇒ 回退 latestVersionDir()）
 //	· help export    ⇒ `devDocsCurrentVersionDir("")`（export.go 的同一处取源）
 //	· doc meta fill  ⇒ `devDocsCurrentVersionDir("")`（family_doc.go 的 docFillRoot 同一处取源）
-//	· doc_search     ⇒ `version.Tag`（chat_tool_docsearch.go 的编译期「当前版」标注）
+//	· doc_search     ⇒ `chat.OverviewCurrentVersionDir()`（chat_tool_docsearch.go 的 fail-closed 判据同源：
+//	                     现行指针优先 → 缺则含发布件最高版；✗ 不再钉 `version.Tag` —— 旧钉法在收版中间态必判不了）
 //
 // 三条硬口径：
 //
@@ -27,7 +28,6 @@ import (
 
 	"github.com/Mr2109/zerg-swarm/core/internal/chat"
 	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
-	"github.com/Mr2109/zerg-swarm/core/internal/version"
 )
 
 // dcVStarRE —— 版本目录基名的形态判据（`^v[0-9.]+$`）。
@@ -73,7 +73,7 @@ func dcResolve() (map[string][2]string, string) {
 		return nil, statepath.DocsBaseMissingNote()
 	}
 	heDir, heWhy := devDocsConsumablePinnedDir("")
-	dsDir, dsWhy := devDocsConsumable(filepath.Join(base, version.Tag), "")
+	dsDir, dsWhy := devDocsConsumable(chat.OverviewCurrentVersionDir(), "") // 同源 chat_tool_docsearch.go 的 fail-closed 判据
 	return map[string][2]string{
 		"zerg_overview": {chat.OverviewCurrentVersionDir(), ""},
 		"help export":   {heDir, heWhy},

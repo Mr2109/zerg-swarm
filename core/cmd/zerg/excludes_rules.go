@@ -64,3 +64,23 @@ func loadExcludesTable(path string) ([]string, error) {
 	}
 	return parseExcludesRules(strings.Split(string(b), "\n"), excludesRuleStrip), nil
 }
+
+// excludesRulesRemove —— 从行式排除表原文里**摘掉**恰等于 `<target>` 的那一行（行口径同
+// `parseExcludesRules`：strip 后逐字相等；目录条不带尾 `/`）。返回 (新原文, 摘掉行数)。
+// ✗ 只摘**数据行**（注释行一律留）；`target` 空 / 不在表内 ⇒ 原文 + 0（逐字节不变）。
+func excludesRulesRemove(raw, target string) (string, int) {
+	t := excludesRuleStrip(target)
+	if t == "" {
+		return raw, 0
+	}
+	var kept []string
+	removed := 0
+	for _, line := range strings.Split(raw, "\n") {
+		if excludesRuleStrip(line) == t {
+			removed++
+			continue
+		}
+		kept = append(kept, line)
+	}
+	return strings.Join(kept, "\n"), removed
+}

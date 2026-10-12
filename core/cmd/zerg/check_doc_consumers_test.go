@@ -81,12 +81,13 @@ func TestDocConsumersSelfTest(t *testing.T) {
 }
 
 // TestDocConsumersDivergenceReported — 跨消费者不一致必须**报**（✗ 不静默）。
-// ★ 两目录均**真源无关**地构造：老版（含发布件 ⇒ zerg_overview 定格它）⟷ 当前真源版
-// （无发布件 ⇒ 另三名定格它）—— 换版不会让两边撞成同一目录而假绿。
+// ★ 四消费者同源收敛后（doc_search 亦经 currentVersionDir()）不再靠 version.Tag 分叉，故分叉由
+// 「**现行指针指向无发布件目录**」造：zerg_overview 取现行指针**不看发布件**（定格该目录）；
+// help export / doc meta fill / doc_search 经 devDocsConsumable 要求含发布件 ⇒ 判不了 ⇒ 必报分叉。
 func TestDocConsumersDivergenceReported(t *testing.T) {
 	alt := filepath.Join(t.TempDir(), "Zerg-内部文档")
 	base := filepath.Join(alt, "项目文档")
-	// v1.0.0 含发布件（→ zerg_overview 定格它）；version.Tag 无发布件（→ 另三名定格它）。
+	// 「现行」指针所指 = version.Tag 目录（**无发布件**）；另造一枚含发布件的 v1.0.0 作旁证（均非分叉源）。
 	dOld := filepath.Join(base, "v1.0.0")
 	dCur := filepath.Join(base, version.Tag)
 	for _, d := range []string{dOld, dCur} {
@@ -96,6 +97,10 @@ func TestDocConsumersDivergenceReported(t *testing.T) {
 		_ = os.WriteFile(filepath.Join(d, "INDEX.md"), []byte("x\n"), 0o644)
 	}
 	_ = os.WriteFile(filepath.Join(dOld, "使用-虫族指南-20260902.md"), []byte("g\n"), 0o644)
+	// ★ 现行指针（文本件首行 = 目录名）⇒ currentVersionDir() 定格 version.Tag（无发布件）。
+	if err := os.WriteFile(filepath.Join(base, "现行"), []byte(version.Tag+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("ZERG_DOCS_ALT", alt)
 
 	div, seq := dcDiverge(dcMustRead(t))

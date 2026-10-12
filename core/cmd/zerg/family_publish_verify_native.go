@@ -613,6 +613,14 @@ func publishVerifyRun(stdout, stderr io.Writer) int {
 		ok("11 两器日志无「已推送」成功行、无双保险放行（只打印了推送命令提示，未执行）")
 	}
 
+	// ── 12 镜像来源（`mirror_origin` · **只读出口** · ✗ 不改退码）─────────────────────────────
+	// 片3 的 O2 格：给本已登记的**只读**命令补一格「镜像来源」——把镜像产出树 `mirDir` 的**来源身份**
+	// 现读出来（镜像 tip ⟷ 私有来源 rev）。真源口径 = `publish/mirror-public-lib.py:origin_map()`
+	// （镜像每笔 → 其私有**来源**提交 · 尾注 `GitOrigin-RevId` · 与片4「私有 HEAD → 镜像 tip」同一份）。
+	// ★ 纯只读 · ✗ 不改本命令任何退码（取不到 ⇒ 照实印「取不到」并继续）。
+	head1("12 镜像来源（mirror_origin · 只读）")
+	ppvMirrorOrigin(root, mirDir, stdout, stderr)
+
 	// ── 小结 ──
 	head1("小结")
 	fmt.Fprintf(stdout, "  通过 %d 项 · 失败 %d 项 · 工作区 %s\n", pass, fail, base)
@@ -633,4 +641,68 @@ func lineMatch(re *regexp.Regexp, s string) bool {
 		}
 	}
 	return false
+}
+
+// ppvMirrorOrigin —— `mirror_origin` 格（片3 O2 · **只读出口**）：把镜像产出树的**来源身份**现读成
+// 一行机器面（`mirror_dir` / `mirror_tip` / `mirror_commits` / `origin_rev` / `origin_present`）。
+//
+// 真源口径 = `publish/mirror-public-lib.py:origin_map()`（镜像每笔提交 → 其私有**来源**提交）：
+// 镜像提交带 `GitOrigin-RevId` 尾注（与压平器同形 · 见 `publish/mirror-public.sh` 编排）。本格取镜像
+// `refs/heads/main` 的**末笔**：`rev-parse` / `rev-list --count` / `log -1 --format=%(trailers:…)` 取其
+// 尾注 ⇒ 再在**私有仓**里 `cat-file -e` 核这枚来源 rev 成不成在（`origin_present`）。
+//
+// ★ 三条纪律（与同族只读读数同一条）：
+//
+//	· **纯只读**：只跑 `git rev-parse` / `rev-list --count` / `log` / `cat-file -e` —— 不建件、不写盘、不联网；
+//	· **✗ 不改退码**：本格取不到 ⇒ 照实打印「取不到」并 `return 0`（无结论 ≠ 红 · 与 `--dry-run` 计划件同口径）；
+//	· **口径随读数一起出**（「答案缺身份 ⇒ 宁可不答」）：末行印本格的取数口径与工具面。
+//
+// 返回恒 0（只读格 · 供调用方忽略）。
+func ppvMirrorOrigin(root, mirDir string, stdout, stderr io.Writer) int {
+	fi, err := os.Stat(mirDir)
+	if err != nil || !fi.IsDir() {
+		fmt.Fprintf(stdout, "  mirror_origin: 镜像产出树**不在场**（%s）⇒ 取不到来源身份（只读格 · ✗ 不改退码）\n", mirDir)
+		return 0
+	}
+	if _, err := os.Stat(filepath.Join(mirDir, ".git")); err != nil {
+		fmt.Fprintf(stdout, "  mirror_origin: 产出目录**不是 git 仓**（%s）⇒ 取不到来源身份（只读格 · ✗ 不改退码）\n", mirDir)
+		return 0
+	}
+	// 镜像 tip / 笔数（只读 · `refs/heads/main`；缺这枚 ref ⇒ 空树 ⇒ 照实印「取不到」）。
+	_, tip := ppvGitOut(mirDir, stderr, "rev-parse", "refs/heads/main")
+	tip = strings.TrimSpace(tip)
+	if tip == "" {
+		fmt.Fprintf(stdout, "  mirror_origin: 镜像产出树读不到 `refs/heads/main` ⇒ 取不到来源身份（只读格 · ✗ 不改退码）\n")
+		return 0
+	}
+	_, cnt := ppvGitOut(mirDir, stderr, "rev-list", "--count", "refs/heads/main")
+	cnt = strings.TrimSpace(cnt)
+	if cnt == "" {
+		cnt = "?"
+	}
+	// 私有**来源** rev = 镜像末笔的 `GitOrigin-RevId` 尾注（真源 `origin_map()` 同一口径）。
+	// ★ 旧壳对同一取值点写 `2>/dev/null`（丢诊断）⇒ 此处 `stderrW=nil`（与旧壳同）。
+	_, origin := ppvGitOut(mirDir, nil, "log", "-1", "--format=%(trailers:key=GitOrigin-RevId,valueonly)", "refs/heads/main")
+	origin = strings.TrimSpace(origin)
+	originDisp, present := "（镜像末笔**无** `GitOrigin-RevId` 尾注）", "判不了（无来源 rev 可核）"
+	if origin != "" {
+		originDisp = ppvShort12(origin)
+		if rc, _ := ppvGitOut(root, nil, "cat-file", "-e", origin); rc == 0 {
+			present = "成在（私有仓有这枚提交）"
+		} else {
+			present = "不在私有仓（该 rev 现读不认）"
+		}
+	}
+	fmt.Fprintf(stdout, "  mirror_origin: mirror_dir=%s · mirror_tip=%s · mirror_commits=%s · origin_rev=%s · origin_present=%s\n",
+		mirDir, ppvShort12(tip), cnt, originDisp, present)
+	fmt.Fprintln(stdout, "    口径: 真源 `publish/mirror-public-lib.py:origin_map()`（镜像每笔 → 私有来源提交 · 尾注 `GitOrigin-RevId`）· 只读（`rev-parse`/`rev-list`/`log`/`cat-file -e`）· ✗ 不改本命令退码")
+	return 0
+}
+
+// ppvShort12 —— 前 12 字节（与 `family_mirror_public_native.go:mpFirst12` 同形 · 人面短 sha）。
+func ppvShort12(s string) string {
+	if len(s) > 12 {
+		return s[:12]
+	}
+	return s
 }

@@ -45,7 +45,7 @@ func devDocsBase() string { return statepath.DocsBase() }
 
 // devDocsCurrentVersionDir —— 当前版目录（**版本无关**：现算，源码里 0 个版本号字面量）。
 //
-//	pinVersion == ""  ⇒ 钉到 `v<当前发布版>`（版本真源 = `version.Version`，**不**扫盘取「版本号最大」的那个目录）；
+//	pinVersion == ""  ⇒ **与 `zerg_overview` 同源**：「现行」指针优先，缺则回退「含发布件的最高版」；两者皆无 ⇒ 退回 `v<当前发布版>`（版本真源 = `version.Version`）；
 //	pinVersion != ""  ⇒ 钉到 `v<pinVersion>`（显式旗标，兼容旧行为）；不存在 ⇒ 报出来（不给结论）。
 //
 // ★ 版本真源 = `version.Version`：未钉版时**钉到 `v<当前发布版>`**（读 `core/internal/version/version.go`
@@ -58,9 +58,16 @@ func devDocsCurrentVersionDir(pinVersion string) (dir, why string) {
 	if base == "" {
 		return "", statepath.DocsBaseMissingNote()
 	}
-	// 版本真源（只读 version.Version）：未钉版 ⇒ 钉到 `v<当前发布版>`；钉版 ⇒ 用 `--docs-ver` 的值。
+	// 钉版（`--docs-ver`）⇒ 用它的值；未钉版 ⇒ 见下（默认档与 `zerg_overview` 同源）。
 	pinned := strings.TrimPrefix(strings.TrimSpace(pinVersion), "v")
 	if pinned == "" {
+		// ★ 缺口 GAP-20260927-121：默认档与 `zerg_overview` **同源** —— 「现行」指针优先
+		// （chat.currentVersionDir），缺则回退「含发布件的最高版」（chat.latestVersionDir）；
+		// 两者皆无（无指针 ∧ 盘上无已发布版）⇒ 退回旧档 v<version.Version>
+		// （兼容空壳/夹具环境 —— 已签判据 devdocs_test.go 逐字钉住这一档）。
+		if d := chat.OverviewCurrentVersionDir(); d != "" {
+			return d, ""
+		}
 		pinned = version.Version
 	}
 	p := filepath.Join(base, "v"+pinned)

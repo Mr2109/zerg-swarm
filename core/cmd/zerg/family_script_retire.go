@@ -488,6 +488,123 @@ func scriptRetireAppendToArray(text, key, elemRendered string) (string, error) {
 	return text[:pos] + ",\n" + elemRendered + text[pos:], nil
 }
 
+// ── 登记面随动（P3①）：退一件 ⇒ **同批**摘掉它在另三处登记里的行/条目 ──────────────────────
+//
+// 三处落点：`publish/excludes.txt`（行式表）· `scripts/gates/lang-freeze-baseline.json`（`entries[]`）
+// · 本真源 `retire_exceptions`（随账本**同一次**原子写落）。此前三处全手工 ⇒ 此处一步到位。
+//
+// ★★ 次序铁律（✗ 别反着做）：本门 ✗ **不调 `clfEmit`** —— `check_lang_freeze.go` 的 `--emit` 是
+// **现读整份重建**（走盘）：件仍在盘时重生成会把它又加回快照（= 摘不掉）。正确次序 =
+// `retire`（改登记 · 本处）→ 物理删件 → `gate check check-lang-freeze --emit`（重生成快照）。
+const (
+	// scriptRetireExcludesRel —— 行式排除表真源（B8 单一真源；唯一 Go 解析件 = `excludes_rules.go`）。
+	scriptRetireExcludesRel = "publish/excludes.txt"
+	// scriptRetireLFKey / scriptRetireLFField —— 语言冻结快照（`clfSnapshotRel`）的数组键与对象字段。
+	scriptRetireLFKey   = "entries"
+	scriptRetireLFField = "path"
+)
+
+// scriptRetireArrayRemoveEntry —— 文本级：从 `<key>` 数组里**摘掉** `<field> == target` 的那一枚
+// 元素（连同相邻一个逗号 · ✗ 不整份重排 ⇒ 保人维护体例）。返回 (新原文, 摘掉枚数)。
+// 形状不认识 / 摘后 JSON 不合法 ⇒ err（fail-closed · ✗ 不猜）；找不到该件 ⇒ (原文, 0, nil)。
+func scriptRetireArrayRemoveEntry(text, key, field, target string) (string, int, error) {
+	elems, err := scriptRetireExcElements(text, key)
+	if err != nil {
+		return text, 0, err
+	}
+	// 逐枚元素在原文里的字节跨度（`Text` 是原文切片 ⇒ 按序遍历定位，✗ 不用行号换算）。
+	type span struct{ s, e int }
+	spans := make([]span, 0, len(elems))
+	for pos := 0; ; {
+		if len(spans) == len(elems) {
+			break
+		}
+		el := elems[len(spans)]
+		i := strings.Index(text[pos:], el.Text)
+		if i < 0 {
+			return text, 0, fmt.Errorf("%q 块元素定位失联（形状不认识 ⇒ 拒改）", key)
+		}
+		spans = append(spans, span{pos + i, pos + i + len(el.Text)})
+		pos += i + len(el.Text)
+	}
+	for m, el := range elems {
+		var got map[string]any
+		_ = json.Unmarshal([]byte(el.Text), &got)
+		if s, _ := got[field].(string); strings.TrimSpace(s) != strings.TrimSpace(target) {
+			continue
+		}
+		lo, hi := spans[m].s, spans[m].e
+		if m < len(spans)-1 {
+			hi = spans[m+1].s // 连其后逗号/缩进摘 ⇒ 下一枚接上前导缩进
+		} else if m > 0 {
+			lo = spans[m-1].e // 末枚：连其前导逗号一并摘
+		}
+		nt := text[:lo] + text[hi:]
+		if !json.Valid([]byte(nt)) {
+			return text, 0, fmt.Errorf("摘掉 %q 后 JSON 不再合法（形状不认识 ⇒ 拒改）", key)
+		}
+		return nt, 1, nil
+	}
+	return text, 0, nil
+}
+
+// scriptRetireDropEntry —— 文件级摘一枚：件不在盘 ⇒ 跳过（无物可摘）；读不了 / 形状不认识 ⇒ err。
+// 返回 (是否真摘, 摘掉枚数, 落盘字节数, err)。
+func scriptRetireDropEntry(rel, key, field, target string) (bool, int, int, error) {
+	b, err := os.ReadFile(rel)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, 0, 0, nil
+		}
+		return false, 0, 0, err
+	}
+	nt, n, err := scriptRetireArrayRemoveEntry(string(b), key, field, target)
+	if err != nil || n == 0 {
+		return false, n, len(b), err
+	}
+	return true, n, len(nt), scriptInvWriteAtomic(rel, []byte(nt))
+}
+
+// scriptRetireTouchRegistrationFaces —— 同批摘除**两处独立**登记面（行式排除表 ＋ 语言冻结快照）。
+// `retire_exceptions`（本真源内）不在此 —— 它随账本**同一次原子写**落（见真写段）。✗ 不调 `clfEmit`。
+func scriptRetireTouchRegistrationFaces(root, target string) ([]string, error) {
+	var lines []string
+	var firstErr error
+	// ① 行式排除表：摘该件那一行
+	if excl := filepath.Join(root, scriptRetireExcludesRel); excl != "" {
+		if b, err := os.ReadFile(excl); err == nil {
+			nt, n := excludesRulesRemove(string(b), target)
+			switch {
+			case n == 0:
+				lines = append(lines, fmt.Sprintf("  登记面 %-25s — 无物可摘（%d 字节 · 未动）", scriptRetireExcludesRel, len(b)))
+			case scriptInvWriteAtomic(excl, []byte(nt)) != nil:
+				lines = append(lines, fmt.Sprintf("  登记面 %-25s ✗ 未摘", scriptRetireExcludesRel))
+				firstErr = fmt.Errorf("行式排除表写不进")
+			default:
+				lines = append(lines, fmt.Sprintf("  登记面 %-25s ✓ 摘 %d 行 ⇒ 剩 %d 字节", scriptRetireExcludesRel, n, len(nt)))
+			}
+		} else if !os.IsNotExist(err) {
+			firstErr = err
+		}
+	}
+	// ② 语言冻结快照：摘 `path == 该件` 那一枚
+	lfRel := clfSnapshotRel
+	ok, n, size, err := scriptRetireDropEntry(filepath.Join(root, filepath.FromSlash(lfRel)),
+		scriptRetireLFKey, scriptRetireLFField, target)
+	switch {
+	case err != nil:
+		lines = append(lines, fmt.Sprintf("  登记面 %-25s ✗ 未摘：%v", lfRel, err))
+		if firstErr == nil {
+			firstErr = err
+		}
+	case ok:
+		lines = append(lines, fmt.Sprintf("  登记面 %-25s ✓ 摘 %d 枚 ⇒ 剩 %d 字节", lfRel, n, size))
+	default:
+		lines = append(lines, fmt.Sprintf("  登记面 %-25s — 无物可摘（该件不在快照 / 件不在盘）", lfRel))
+	}
+	return lines, firstErr
+}
+
 // scriptRetireAudit —— 审计行（落同一件 `<状态目录>/edit_audit.jsonl` · **自己的事件名 + 自己的字段名**）。
 type scriptRetireAudit struct {
 	At      string `json:"at"`
@@ -575,6 +692,8 @@ func scriptRetirePrintPlan(out, stderr io.Writer, title, target, state, truthPat
 		scriptRetireQuote(target), scriptRetireQuote(state), scriptRetireQuote(orDashList(evidence)))
 	fmt.Fprintf(out, "  落 state : %s\n", state)
 	fmt.Fprintf(out, "  --by     : %s\n", by)
+	fmt.Fprintf(out, "  登记面随动 : 同批摘掉该件行 —— %s · %s · 本真源 `%s`（✗ 不调 `clfEmit`）\n",
+		scriptRetireExcludesRel, clfSnapshotRel, scriptRetireExceptionKey)
 	fmt.Fprintln(out, scriptRetireResidualTemplate(target, orDashList(evidence)))
 	fmt.Fprintln(out, scriptRetireChangeLine(target, state, orDashList(evidence)))
 	fmt.Fprintf(out, "  写前 sha : %s\n", beforeSHA)
@@ -699,6 +818,17 @@ func cmdScriptRetire(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s: %v ⇒ **拒写**（退码 2 · 形状不认识时不猜）\n", progName, err)
 		return exitUsage
 	}
+
+	// ★ 同批第三处登记：本真源 `retire_exceptions` 摘掉该件那枚（正常**空摘** —— 例外类件本会被
+	//   上面那道闸拒退 · 留作防御/口径一致）。与上面那次账本写**同一次原子落**（✗ 不另开写面）。
+	excRemoved := 0
+	if nt3, n3, err3 := scriptRetireArrayRemoveEntry(newText, scriptRetireExceptionKey, "object", target); err3 != nil {
+		inv.setErr("usage", "roster_shape_unknown", "退场真源 `retire_exceptions` 形状不认识 ⇒ 拒写")
+		fmt.Fprintf(stderr, "%s: %v ⇒ **拒写**（退码 2 · 形状不认识时不猜）\n", progName, err3)
+		return exitUsage
+	} else {
+		newText, excRemoved = nt3, n3
+	}
 	beforeSHA := scriptRetireSHA(old)
 	afterSHA := scriptRetireSHA([]byte(newText))
 	backupPath := scriptRetireBackupPath()
@@ -783,6 +913,18 @@ func cmdScriptRetire(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s: 写后读回对拍不等（现算 %s ≠ 期望 %s）⇒ 逐字节写回\n", progName, back, afterSHA)
 		_ = scriptInvWriteAtomic(truthPath, old)
 		inv.setErr("failed", "readback_mismatch", "写后读回对拍不等 ⇒ 已回滚")
+		return exitFail
+	}
+	// ── 登记面随动（P3① · 同批）：另两处独立面（行式排除表 ＋ 语言冻结快照 · ✗ 不调 `clfEmit`）────
+	faceLines, faceErr := scriptRetireTouchRegistrationFaces(root, target)
+	for _, fl := range faceLines {
+		fmt.Fprintln(stdout, fl)
+	}
+	fmt.Fprintf(stdout, "  登记面 %-25s 摘 %d 枚（`%s` · 随账本同一次原子写落）\n",
+		scriptRetireTruthRel, excRemoved, scriptRetireExceptionKey)
+	if faceErr != nil {
+		inv.setErr("failed", "regface_remove_failed", "登记面摘除未全落")
+		fmt.Fprintf(stderr, "%s: 登记面摘除未全落：%v ⇒ 账本已落（上面逐行读核；✗ 不回退账本）\n", progName, faceErr)
 		return exitFail
 	}
 	fmt.Fprintf(stdout, "已登记退场 %s ⇒ %s\n", target, state)

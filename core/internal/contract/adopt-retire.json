@@ -1492,8 +1492,8 @@
   {
    "object": "docs/site/export-and-build.sh",
    "category": "物理不可化",
-   "reason": "OS胶水：文档站导出+构建——真跑站点工具链（OS/外部工具链胶水·无法干净真 Go 化）；Go 壳 core/cmd/zerg/doc_site_build.go 仅 exec bash 本件 ⇒ 本件是其唯一真源，删＝阉割正门 `zerg doc site build`",
-   "keep_cost": "本件是真源·Go 侧只能 exec 调它 ⇒ 无迁移路径；保留代价＝随其外部工具链（站点构建链）版本查核",
+   "reason": "OS胶水：文档站导出+构建编排（真跑站点工具链 = `mkdocs`/`pip`/`venv` 等外部工具）；2026-10-08 已**真搬**进 `core/cmd/zerg/doc_site_build.go`（命令面 `zerg doc site build` 真跑**不再 exec 本件** · 只那几支外部工具仍以子进程直调）—— 本件保留为**真搬原脚本／两态逐字对拍参照**（且仍被 `scripts/gates/lang-freeze-baseline.json` 等登记面引用）",
+   "keep_cost": "真搬后不再是正门唯一真源 ⇒ 保留代价＝随站点工具链（`mkdocs` 那一系）版本查核；本件只在人读面与登记面引",
    "review_date": "2026-10-08"
   },
   {

@@ -33,10 +33,11 @@ const exportSchemaRel = "../../internal/contract/export.schema.json"
 // 「命令树条数」「--json 抬头计数」**逐数相等**对拍 —— 若结构被静默删小、对拍两侧同步变小，
 // 则"相等"照样成立 ⇒ 判据失牙。⇒ 钉死下界（只许增不许降），低于即判红。
 // 取值 = 2026-10-11 门128 现跑当次读数（`len(catalog())` = 237 · 命令清单 = 132 · 危险动作 = 105）。
+// ★ 2026-10-12 随动下调 105 → 104：同批下架三件（`fleet ls`/`egg retire`/`script run`）使危险动作表少 1 行 ⇒ 棘轮下界随读数落。
 const (
 	exportSchemaCatalogFloor = 237
 	exportSchemaOpenFloor    = 132
-	exportSchemaDangerFloor  = 105
+	exportSchemaDangerFloor  = 104
 )
 
 type exportJSONSchema struct {

@@ -1489,7 +1489,7 @@ func cnfAnalyse(root string, maxExamples int, stderr io.Writer) (int, []string) 
 			if *crc == 0 {
 				add("   Cpfc rc=0：公开面命令页 ⟷ 命令树一致 ⇒ 齐")
 			} else if *crc == 1 {
-				add("   门⑪ Cpfc 组会红 ⇒ **缺**：公开面命令页未与新命令对齐" +
+				add("   面⑪ Cpfc 组会红 ⇒ **缺**：公开面命令页未与新命令对齐" +
 					"（core go test 的 CpfcS01/S11/S12）")
 				bad++
 			} else {

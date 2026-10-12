@@ -51,6 +51,9 @@ func cmdRepoCommit(inv *invocation, stdout, stderr io.Writer) int {
 	removed := trimAll(inv.flagVals("--removed"))
 	message := strings.TrimSpace(inv.flagVal("--message"))
 
+	// ★ 档位（缺口 `GAP-20260927-41` ③ · 2026-10-12）：默认走**快速档**；`--no-fast` ⇒ 三种模式一律**全量档**。
+	fast := !inv.noFast
+
 	// ① 用法面（在任何盘面动作之前）
 	if message == "" {
 		inv.setErr("usage", "missing_message", "缺提交信息")
@@ -140,11 +143,11 @@ func cmdRepoCommit(inv *invocation, stdout, stderr io.Writer) int {
 	// ② 干跑（默认按三态；`--dry-run` 或确认档不齐都只出计划件）
 	if inv.dryRun || !inv.yes {
 		fmt.Fprintln(stdout, "计划件（--dry-run · 零副作用 —— 未暂存、未提交、未跑门禁）")
-		fmt.Fprintf(stdout, "  动作     : %s repo commit（按文件名暂存 + **过快速档才放行**）\n", progName)
+		fmt.Fprintf(stdout, "  动作     : %s repo commit（按文件名暂存 + **过%s才放行**）\n", progName, gateFace(fast))
 		fmt.Fprintf(stdout, "  仓       : %s\n", root)
 		fmt.Fprintf(stdout, "  件清单   : %s\n", strings.Join(files, " · "))
 		fmt.Fprintf(stdout, "  暂存方式 : git add -- <逐件>（**禁 `git add -A`**）· 暂存后复核 `git diff --cached --name-only` 与清单逐件相同\n")
-		fmt.Fprintf(stdout, "  门禁     : bash scripts/gates/precommit-gates.sh --fast --outdir %s（**退码直通**：0 才继续）\n", logDirPattern)
+		fmt.Fprintf(stdout, "  门禁     : bash scripts/gates/precommit-gates.sh%s --outdir %s（**退码直通**：0 才继续）\n", gateFastFlag(fast), logDirPattern)
 		fmt.Fprintf(stdout, "  提交信息 :\n")
 		for _, ln := range strings.Split(strings.TrimRight(msg, "\n"), "\n") {
 			fmt.Fprintf(stdout, "    | %s\n", ln)
@@ -257,7 +260,7 @@ func cmdRepoCommit(inv *invocation, stdout, stderr io.Writer) int {
 		return exitBlocked
 	}
 	setActiveMatRoot(matRoot)
-	gtRC, err := runFastGate(root, matRoot, logDir, stderr)
+	gtRC, err := runFastGate(root, matRoot, logDir, fast, stderr)
 	defer removeActiveMaterialized()
 	if err != nil {
 		inv.setErr("failed", "gate_run_failed", err.Error())
@@ -557,14 +560,35 @@ func resetStagedPaths(root string, paths []string, stderr io.Writer) int {
 	return exitOK
 }
 
-// runFastGate —— 跑快速档（**退码直通**：不翻译、不吞输出）。
+// gateFace —— 人面档名（缺口 `GAP-20260927-41` ③）：`true` = 快速档 · `false` = **全量档**。
+func gateFace(fast bool) string {
+	if fast {
+		return "快速档"
+	}
+	return "全量档"
+}
+
+// gateFastFlag —— 门禁命令里的档位旗标文本：走快速档 = `" --fast"`；**全量档 = 空串**（同一条命令不带 `--fast`）。
+func gateFastFlag(fast bool) string {
+	if fast {
+		return " --fast"
+	}
+	return ""
+}
+
+// runFastGate —— 跑门禁（**退码直通**：不翻译、不吞输出）。
 // `matRoot` = 物化索引树（缺口 `GAP-20260927-79`）：闸取**索引面**而非工作树。
-func runFastGate(root, matRoot, logDir string, stderr io.Writer) (int, error) {
+// `fast` = 走快速档（`--fast`）；`false` = 走**全量档**（缺口 `GAP-20260927-41` ③ 的命令面全量档出口）。
+func runFastGate(root, matRoot, logDir string, fast bool, stderr io.Writer) (int, error) {
 	script := filepath.Join(root, "scripts/gates/precommit-gates.sh")
 	if _, err := os.Stat(script); err != nil {
 		return exitBlocked, fmt.Errorf("门禁最小入口不在（%s）", script)
 	}
-	cmd := armChildGroup(exec.Command("bash", script, "--fast", "--outdir", logDir))
+	gateArgs := []string{script, "--outdir", logDir}
+	if fast {
+		gateArgs = []string{script, "--fast", "--outdir", logDir}
+	}
+	cmd := armChildGroup(exec.Command("bash", gateArgs...))
 	runningChild = cmd
 	defer func() { runningChild = nil }()
 	cmd.Dir = root
@@ -924,7 +948,7 @@ func repoCommitOnly(inv *invocation, stdout, stderr io.Writer, paths []string, m
 				len(untracked), strings.Join(untracked, " · "))
 		}
 		fmt.Fprintf(stdout, "  别人的暂存: %s\n", commitExcludedNote(excluded))
-		fmt.Fprintf(stdout, "  门禁     : bash scripts/gates/precommit-gates.sh --fast --outdir %s（**退码直通**）\n", logDirPattern)
+		fmt.Fprintf(stdout, "  门禁     : bash scripts/gates/precommit-gates.sh%s --outdir %s（**退码直通**）\n", gateFastFlag(!inv.noFast), logDirPattern)
 		if len(waive) > 0 {
 			fmt.Fprintf(stdout, "  例外旗标 : --waive %s --reason %s（**进审计**；需要 --yes）\n", strings.Join(waive, " · "), reason)
 		}
@@ -989,7 +1013,7 @@ func repoCommitOnly(inv *invocation, stdout, stderr io.Writer, paths []string, m
 		return exitBlocked
 	}
 	setActiveMatRoot(matRoot)
-	gtRC, gtOut, err := runFastGateCapture(root, matRoot, logDir)
+	gtRC, gtOut, err := runFastGateCapture(root, matRoot, logDir, !inv.noFast)
 	defer removeActiveMaterialized()
 	if err != nil {
 		inv.setErr("failed", "gate_run_failed", err.Error())
@@ -1293,7 +1317,7 @@ func repoCommitRemoved(inv *invocation, stdout, stderr io.Writer, paths []string
 		fmt.Fprintf(stdout, "  撤跟踪件 : %d 件 —— %s（件**留盘**，只从跟踪面摘掉）\n", len(paths), strings.Join(paths, " · "))
 		fmt.Fprintf(stdout, "  进提交的路: 临时索引 = HEAD ＋ 点名件删除态 ⇒ git commit -F <临时件>（**不动真索引** ⇒ 别人的暂存原样保留）\n")
 		fmt.Fprintf(stdout, "  别人的暂存: %s\n", commitExcludedNote(excluded))
-		fmt.Fprintf(stdout, "  门禁     : bash scripts/gates/precommit-gates.sh --fast --outdir %s（**退码直通**）\n", logDirPattern)
+		fmt.Fprintf(stdout, "  门禁     : bash scripts/gates/precommit-gates.sh%s --outdir %s（**退码直通**）\n", gateFastFlag(!inv.noFast), logDirPattern)
 		fmt.Fprintf(stdout, "  提交信息 :\n")
 		for _, ln := range strings.Split(strings.TrimRight(msg, "\n"), "\n") {
 			fmt.Fprintf(stdout, "    | %s\n", ln)
@@ -1349,7 +1373,7 @@ func repoCommitRemoved(inv *invocation, stdout, stderr io.Writer, paths []string
 		return exitBlocked
 	}
 	setActiveMatRoot(matRoot)
-	gtRC, err := runFastGate(root, matRoot, logDir, stderr)
+	gtRC, err := runFastGate(root, matRoot, logDir, !inv.noFast, stderr)
 	defer removeActiveMaterialized()
 	if err != nil {
 		inv.setErr("failed", "gate_run_failed", err.Error())
@@ -1536,15 +1560,20 @@ func commitExcludedNote(excluded []string) string {
 	return fmt.Sprintf("经手未提交（他人暂存，原样保留）：%d 件", len(excluded))
 }
 
-// runFastGateCapture 跑快速档并**捕获输出**（照实打回；退码直通不翻译）。
+// runFastGateCapture 跑门禁并**捕获输出**（照实打回；退码直通不翻译）。
 // 与 `runFastGate` 同一份口径（同一条命令、同一个 `logDir`），差别只在把 stdout/stderr 收回来判归因。
 // `matRoot` = 物化索引树（缺口 `GAP-20260927-79`）：闸取**索引面**而非工作树。
-func runFastGateCapture(root, matRoot, logDir string) (int, string, error) {
+// `fast` = 走快速档（`--fast`）；`false` = 走**全量档**（缺口 `GAP-20260927-41` ③ 的命令面全量档出口）。
+func runFastGateCapture(root, matRoot, logDir string, fast bool) (int, string, error) {
 	script := filepath.Join(root, "scripts/gates/precommit-gates.sh")
 	if _, err := os.Stat(script); err != nil {
 		return exitBlocked, "", fmt.Errorf("门禁最小入口不在（%s）", script)
 	}
-	cmd := armChildGroup(exec.Command("bash", script, "--fast", "--outdir", logDir))
+	gateArgs := []string{script, "--outdir", logDir}
+	if fast {
+		gateArgs = []string{script, "--fast", "--outdir", logDir}
+	}
+	cmd := armChildGroup(exec.Command("bash", gateArgs...))
 	runningChild = cmd
 	defer func() { runningChild = nil }()
 	cmd.Dir = root

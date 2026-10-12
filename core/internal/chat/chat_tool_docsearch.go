@@ -49,17 +49,20 @@ func docSearch(args map[string]any, workDir string) (string, error) {
 		return "", fmt.Errorf("doc_search 取源根缺失，判据不可判（不给「无命中」）：%s；常青目录 %s 也不在盘上",
 			statepath.DocsBaseMissingNote(), evergreen)
 	}
-	// ★ 缺口 GAP-20260927-115（与 chat_tool_overview.go:132 同口径）：文档检索面本就走全扫 roots
-	//   （版本目录不影响「读到哪些件」），故此处**只**把「当前版」这一**判定**钉到 version.Tag
-	//   编译期真源 —— ✗ 不取 latestVersionDir() 扫出的目录名（发布件多在旧版 ⇒ 会把上一版标成当前版）。
-	curBase := version.Tag // 当前版真源 = 编译期常量（形如 "v2.5.13"）——与 overview 一致
+	// ★ 缺口 GAP-20260927-115（与 chat_tool_overview.go 同口径）：文档检索面本就走全扫 roots
+	//   （版本目录不影响「读到哪些件」），故「★当前版」这一**标注判定**仍钉 version.Tag 编译期真源
+	//   —— ✗ 不取扫盘结果的目录名（发布件多在旧版 ⇒ 会把上一版标成当前版）。与 overview 同源分工：
+	//   `verName := version.Tag`（标注）＋ `verDir := currentVersionDir()`（取哪份档案）。
+	curBase := version.Tag // 「当前版」标注真源 = 编译期常量（形如 "v2.5.13"）——与 overview 一致
 
-	// ★ GAP-20260927-121（fail-closed 明报）：本消费者的「当前版目录」= `<取源根>/<curBase>`。
-	//   该目录**无发布件**（只在途设计稿 / 收版中间态）⇒ 本消费者取不到 —— **不给结论**（同族既有档位 =
-	//   返回错误）并**逐字明报**，✗ 不静默指到无发布件的目录（旧码照走全扫、把「★当前版」标注悄悄丢掉）。
+	// ★ GAP-20260927-121（fail-closed 明报 · 与 chat_tool_overview.go **同源**）：本消费者「取不到的判据」
+	//   按 overview 同一处选取（`currentVersionDir()`：现行指针优先 → 缺则含发布件最高版）——
+	//   ✗ 不再钉 `<取源根>/<curBase = version.Tag>`：收版中间态（`version.Tag` 目录 = 在途设计稿、无发布件）
+	//   下旧钉法必判不了 ⇒ 与同批其余三路（overview / help export / doc meta fill）分叉。
+	//   取不到（无取源根 ∧ 无含发布件的已发布版）⇒ **不给结论**（同族既有档位 = 返回错误）并**逐字明报**。
 	if base := zergDocsBase(); base != "" {
-		curDir := filepath.Join(base, curBase)
-		if !hasReleaseArtifact(curDir) {
+		curDir := currentVersionDir() // 同源 chat_tool_overview.go：现行指针优先 → 缺则含发布件最高版
+		if curDir == "" || !hasReleaseArtifact(curDir) {
 			return "", fmt.Errorf("当前版目录 %s 无发布件，故本消费者取不到（缺发布件 %s）", curDir, releaseArtifactGlob)
 		}
 	}
