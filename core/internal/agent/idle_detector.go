@@ -59,12 +59,12 @@ var (
 // internalTaskDefs 首次访问时一次性构造清单（见上「为什么惰性」）。
 func internalTaskDefs() []InternalTask {
 	internalTaskDefsOnce.Do(func() {
-		edge-node := x3SSHInvocation()
+		sshTarget := x3SSHInvocation()
 		internalTaskDefsCache = []InternalTask{
 			{
 				ID:          "health-check",
 				Description: "系统健康巡检——残留进程/内存/模型驻留（防瘫——凌晨教训）",
-				Template:    "检查系统健康。工作区=项目core。要求: 1. 查X3残留llama-server进程(" + edge-node + " ps aux|grep llama-server——超过1个=残留) 2. 查X3内存(free -g——used超过90%=告警) 3. 查模型驻留(加新卸老——违反=告警) 4. 发现异常→记录到 internal-health-report.md 5. 贴输出。注意: 工作区=项目core——相对路径——真查真记录。有异常才处理——正常就报告健康",
+				Template:    "检查系统健康。工作区=项目core。要求: 1. 查X3残留llama-server进程(" + sshTarget + " ps aux|grep llama-server——超过1个=残留) 2. 查X3内存(free -g——used超过90%=告警) 3. 查模型驻留(加新卸老——违反=告警) 4. 发现异常→记录到 internal-health-report.md 5. 贴输出。注意: 工作区=项目core——相对路径——真查真记录。有异常才处理——正常就报告健康",
 				Cooldown:    6 * time.Hour, // 健康巡检高频（防瘫）
 			},
 			{
@@ -89,13 +89,13 @@ func internalTaskDefs() []InternalTask {
 			{
 				ID:          "proc-cleanup",
 				Description: "残留进程自动清理——X" + "3 llama-server 残留（防瘫）",
-				Template:    "清理X3残留进程。工作区=项目core。要求: 1. " + edge-node + " ps aux|grep llama-server 2. 超过1个=残留——启动时间早于agent重启=残留(防PID复用) 3. 残留→SIGTERM等5s→仍活SIGKILL 4. 记录到 internal-task-report.md 5. 贴输出。注意: 不误杀正在跑的(agent刚启动的=在用)——只清残留",
+				Template:    "清理X3残留进程。工作区=项目core。要求: 1. " + sshTarget + " ps aux|grep llama-server 2. 超过1个=残留——启动时间早于agent重启=残留(防PID复用) 3. 残留→SIGTERM等5s→仍活SIGKILL 4. 记录到 internal-task-report.md 5. 贴输出。注意: 不误杀正在跑的(agent刚启动的=在用)——只清残留",
 				Cooldown:    6 * time.Hour,
 			},
 			{
 				ID:          "mem-disk-alert",
 				Description: "内存/磁盘告警自动处理",
-				Template:    "检查X3和本机内存磁盘。工作区=项目core。要求: 1. 查X3内存(" + edge-node + " free -g——used>90%=告警) 2. 查本机内存(free -g) 3. 查X3磁盘(df -h /data——>90%=告警) 4. 告警→清理(日志/tmp/模型缓存) 5. 记录到 internal-task-report.md 6. 贴输出。注意: 真查真处理——正常就报告健康",
+				Template:    "检查X3和本机内存磁盘。工作区=项目core。要求: 1. 查X3内存(" + sshTarget + " free -g——used>90%=告警) 2. 查本机内存(free -g) 3. 查X3磁盘(df -h /data——>90%=告警) 4. 告警→清理(日志/tmp/模型缓存) 5. 记录到 internal-task-report.md 6. 贴输出。注意: 真查真处理——正常就报告健康",
 				Cooldown:    6 * time.Hour,
 			},
 			{
