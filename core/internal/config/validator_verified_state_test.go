@@ -17,6 +17,7 @@
 package config
 
 import (
+	"os"
 	"testing"
 )
 
@@ -27,6 +28,12 @@ func vsFleet(vline string) string {
 
 // TestValidate_VerifiedStateAdditive —— 四态（正控 / OK / A / B / C）。
 func TestValidate_VerifiedStateAdditive(t *testing.T) {
+	// ★ 公开面（`ZERG_PUBLIC_TREE_ROOT=1`，如公开仓 CI）跳过：本用例断言「机型名 ∈ 名册」，
+	//   用的是**私有机器型名**（`edge-node`，夹具与名册两侧同源）；脱敏后两侧被改成不同值 ⇒ 必红。
+	//   前提（私有机型名册）在公开面不存在，不是判据失效。私有面行为一字不改。
+	if os.Getenv("ZERG_PUBLIC_TREE_ROOT") == "1" {
+		t.Skip("公开面：用例依赖私有机型名与名册一致 ⇒ 脱敏后前提不成立")
+	}
 	cases := []struct {
 		name      string
 		vline     string
