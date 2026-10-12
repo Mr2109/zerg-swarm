@@ -699,6 +699,50 @@ func cpfsEvaluate(repo string, paths cpfsPaths) (int, []string) {
 			len(marksCand), len(noMarks), len(marksCand)))
 	}
 
+	// ⑨ 双向的**反向腿**（★ C20 · 缺口 `GAP-20261013-08`）：排除面 ∩ 应公开面 = ∅ —— 命中即红，点出**行**与**件**。
+	//   判据① 是**正向腿**：镜像器丢弃（DROP_EXACT/DROP_PREFIX）⊆ 旧器排除（EXCLUDES）—— 判「该排除的都排除了」。
+	//   本判据补**反向腿**：凡落在**排除面**（EXCLUDES ∪ DROP_EXACT ∪ DROP_PREFIX）上的条目，若同时落在
+	//   **公开候选面**（`cl.cand`：白名单命中 ∧ 非 `publish/` ∧ 已跟踪）且该件在标记表里逐字 `public=yes`
+	//   ⇒ 红：镜像器会**真剔**它 ⇒ 公开面**静默丢件**（改前：判据① 单向 + 判据⑥ 只扫 `no` 行 ⇒ 三道门全绿的假绿）。
+	//   二腿合成「双向」：排除面与镜像器丢弃面在「应公开件」上不得相交。
+	//   ✗ 不许放宽本判据来凑绿；处置只有两条：把该件从排除/丢弃面**摘出**，或**改表**（public=no）。
+	pubYes := map[string]bool{}
+	for _, r := range cl.marks {
+		if r.pub == "yes" {
+			pubYes[r.rel] = true
+		}
+	}
+	type cpfsRevViol struct{ table, entry, file string }
+	var revViol []cpfsRevViol
+	for _, tab := range []struct {
+		name    string
+		entries []string
+	}{{"EXCLUDES", cl.excludes}, {"DROP_EXACT", cl.dropExact}, {"DROP_PREFIX", cl.dropPrefix}} {
+		for _, e := range tab.entries {
+			if e == "" {
+				continue
+			}
+			pre := strings.TrimSuffix(e, "/") + "/"
+			for _, p := range cl.cand {
+				if !pubYes[p] || !(p == e || strings.HasPrefix(p, pre)) {
+					continue
+				}
+				revViol = append(revViol, cpfsRevViol{tab.name, e, p})
+			}
+		}
+	}
+	if len(revViol) > 0 {
+		bad = 1
+		lines = append(lines, fmt.Sprintf("  ✗ 判据⑨ 排除面 ∩ 应公开面 = %d 条 —— 标记表 `public=yes` 的件被写进排除/丢弃面"+
+			"（镜像器会真剔 ⇒ 公开面静默丢件）：", len(revViol)))
+		for _, v := range revViol[:cpfsLim(len(revViol))] {
+			lines = append(lines, fmt.Sprintf("      %s ← 排除行（%s）：%s", cpfsPad(v.file, 60), v.table, v.entry))
+		}
+		lines = append(lines, "      ⇒ 处置只有两条：把该件从排除面**摘出**，或**改表**（public=no）；**不许**放宽本判据来凑绿 ✗")
+	} else {
+		lines = append(lines, "  ✅ 判据⑨ 排除面 ∩ 应公开面：0 条（标记表 `yes` 的候选件无一落在排除/丢弃面）")
+	}
+
 	// ⑦ 面内 vs 盘上 关系式 + 面外非空（且一入库即红）即降档 rc=2（只降档不报红 · ★ GAP-20260927-160）：
 	//   面内 = 候选集 · 面外 = 未入索引的白名单件 · 关系式 = 面内 + 面外 == 盘上件数。
 	//   降档口径：面外件逐条按判据①/②/⑥ 的有效判定预演，凡「一 git add 即红」⇒ rc=2（不进 bad）；
@@ -710,7 +754,8 @@ func cpfsEvaluate(repo string, paths cpfsPaths) (int, []string) {
 		priv := cpfsPrivateHit(rel, cl.pdirs, cl.pfiles, cl.privAllowed)
 		wouldRed := (droppedHit && !excl) ||
 			(priv != "" && !excl && !droppedHit) ||
-			(noSet[rel] && !excl)
+			(noSet[rel] && !excl) ||
+			(pubYes[rel] && (excl || droppedHit)) // ★ C20 判据⑨ 反向腿：public=yes 落进排除/丢弃面 ⇒ 一入库即红
 		if wouldRed {
 			outerViol = append(outerViol, rel)
 		}
@@ -747,7 +792,8 @@ func cpfsEvaluate(repo string, paths cpfsPaths) (int, []string) {
 		priv := cpfsPrivateHit(rel, cl.pdirs, cl.pfiles, cl.privAllowed)
 		wouldRed := (droppedHit && !excl) ||
 			(priv != "" && !excl && !droppedHit) ||
-			(noSet[rel] && !excl)
+			(noSet[rel] && !excl) ||
+			(pubYes[rel] && (excl || droppedHit)) // ★ C20 判据⑨ 反向腿（同判据⑦ 口径）
 		if wouldRed {
 			headViol = append(headViol, rel)
 		}
@@ -784,7 +830,7 @@ func cpfsPad(s string, w int) string {
 	return s + strings.Repeat(" ", w-n)
 }
 
-// ── 自检夹具（18 条 · 逐字照 py FIXTURES/self_test）──────────────────────────────────
+// ── 自检夹具（20 条 · 逐字照 py FIXTURES/self_test；末 2 格 = ★ C20 判据⑨ 的正负控）─────
 
 const cpfsFixtureLibTmpl = `# 夹具用的最小 mirror lib（只提供本门禁读的三个名字）
 DROP_PREFIX = ()
@@ -864,6 +910,15 @@ var cpfsFixtures = []cpfsFx{
 			"scripts/outer_viol.py\tno\t夹具：面外件（未入索引）· 一 git add 即红（判据⑥）\n", nil},
 	{"outer-clean-no-downgrade", []string{"scripts/", "wall/"}, []string{"scripts/mech.py"},
 		[]string{"scripts/mech.py"}, []string{"scripts/mech.py"}, 0, false, false, false, "", "", nil},
+	// 判据⑨（★ C20 · 缺口 `GAP-20261013-08`）两格：`public=yes` 的件写进 excludes ⇒ 排除面 ∩ 应公开面 ≠ ∅ ⇒ 红（负控）；
+	// 同一张排除表、只把该件的标记表改 `no` ⇒ 绿（正控 · 证判据键在 `public=yes`，✗ 不是「凡在 excludes 即红」）。
+	{"rev-public-yes-in-excludes", []string{"scripts/", "wall/"}, []string{"scripts/mech.py"},
+		[]string{"scripts/mech.py", "scripts/keep.py"}, []string{"scripts/mech.py"}, 1, false, false, false, "", "", nil},
+	{"rev-same-excludes-marked-no", []string{"scripts/", "wall/"}, []string{"scripts/mech.py"},
+		[]string{"scripts/mech.py", "scripts/keep.py"}, []string{"scripts/mech.py"}, 0, false, false, false, "",
+		"文件	public	理由\n" +
+			"scripts/mech.py	no	夹具：B 类（合成 · 判据⑥ 的被判对象）\n" +
+			"scripts/keep.py	no	夹具：A 类件（同一排除表 · 只改标记为 no ⇒ 判据⑨ 不得红）\n", nil},
 }
 
 // cpfsFxUntracked —— 判据⑦ 的夹具面外件（键 = 夹具名；写完**不** add ⇒ 落 `git ls-files --others`）。

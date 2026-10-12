@@ -51,6 +51,11 @@ type GateDecision struct {
 // Gate 控制层门卫
 type Gate struct {
 	rules RulesBody
+	// guardSink —— 守卫拦截事件落点（缺口 `GAP-20260928-174` · 2026-10-13）：判定为拦截时
+	// 把一条事件追加到这里（best-effort —— 见 `guardlog.go` 口径③）。空串 = 不记录。
+	// 由 `NewGateFromFile`（从**件**装载 = 生产态）武装；`NewGateFromYAML`（合成夹具/测试）
+	// **不武装** —— 测试不许往真状态目录写事件。
+	guardSink string
 }
 
 // NewGateFromFile 从 YAML 文件加载规则
@@ -59,7 +64,18 @@ func NewGateFromFile(path string) (*Gate, error) {
 	if err != nil {
 		return nil, fmt.Errorf("读取规则文件失败: %w", err)
 	}
-	return NewGateFromYAML(data)
+	g, err := NewGateFromYAML(data)
+	if err != nil {
+		return nil, err
+	}
+	// ★ 缺口 `GAP-20260928-174`（守卫拦截接候选池 · 落 control 层）：**从件装载 = 生产态**
+	// ⇒ 武装守卫入池（回收面 `zerg gap idea sweep --source guard`）。关闸：`ZERG_GAP_GUARD_INTAKE=0`
+	// （照同族先例「门判红 ⇒ 候选池」钩子的 `ZERG_GAP_INTAKE=0` 纪律）。合成 YAML（`NewGateFromYAML`）
+	// 一律**不武装** ⇒ 夹具/单测不会往真状态目录写事件。
+	if strings.TrimSpace(os.Getenv("ZERG_GAP_GUARD_INTAKE")) != "0" {
+		g.EnableGuardIntake(GuardEventPath())
+	}
+	return g, nil
 }
 
 // NewGateFromYAML 从 YAML 字节加载规则
@@ -108,7 +124,19 @@ func matchRuleName(pattern, toolName string) bool {
 
 // Check 三态决策：工具名 + 参数 + agent
 // 返回决策——allow 放行 / block 拦截 / require_approval 需审批
+//
+// ★ 缺口 `GAP-20260928-174`（守卫拦截接候选池 · 落 control 层 · 2026-10-13）：本函数是
+// 守卫**拦截判定的唯一落点**（网关侧 `gateway.go` 与 CA/对话侧 `AgentGate` 都走它）⇒
+// 判定为拦截（`block` / `require_approval`）时**追加一条守卫事件**（`noteGuardInterception` ·
+// best-effort —— 只写事件、**绝不改判定与退码**）。判定体原样搬进 `check`（一字未改）。
 func (g *Gate) Check(toolName, args, agent string) GateDecision {
+	d := g.check(toolName, args, agent)
+	g.noteGuardInterception(toolName, agent, d)
+	return d
+}
+
+// check —— `Check` 的判定体（原样 · 不含「记录事件」这一步）。
+func (g *Gate) check(toolName, args, agent string) GateDecision {
 	// 1. 精确匹配规则（**优先**：精确条目永远压过通配条目）
 	if d, ok := g.checkAgainst(toolName, args, agent, true); ok {
 		return d

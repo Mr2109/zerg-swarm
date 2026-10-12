@@ -790,7 +790,7 @@ func init() {
 			kind:     "Machine",
 			summary:  "子端（机器）清单（投影 /api/fleet/status）",
 			usage:    "zerg agent ls [--json <字段>]",
-			fields:   []string{"machine", "healthy", "code_version", "code_sha", "cpu_pct", "gpu_pct", "mem_available_gb", "mem_total_gb", "models", "model", "backend_state", "active_requests", "gpu_used_gb", "backend_rss_gb", "gpu_temp_c", "last_seen"},
+			fields:   []string{"machine", "healthy", "code_version", "code_sha", "origin_sha", "same_origin", "cpu_pct", "gpu_pct", "mem_available_gb", "mem_total_gb", "models", "model", "backend_state", "active_requests", "gpu_used_gb", "backend_rss_gb", "gpu_temp_c", "last_seen"},
 			endpoint: "GET /api/fleet/status",
 			run:      cmdAgentLs,
 		},
@@ -1066,7 +1066,7 @@ func init() {
 			usage:    "zerg agent show <机器名> [--json <字段>]",
 			arity:    "any",
 			args:     []string{"机器名"},
-			fields:   []string{"machine", "healthy", "code_version", "code_sha", "cpu_pct", "gpu_pct", "mem_available_gb", "mem_total_gb", "models", "model", "backend_state", "active_requests", "gpu_used_gb", "backend_rss_gb", "gpu_temp_c", "last_seen"},
+			fields:   []string{"machine", "healthy", "code_version", "code_sha", "origin_sha", "same_origin", "cpu_pct", "gpu_pct", "mem_available_gb", "mem_total_gb", "models", "model", "backend_state", "active_requests", "gpu_used_gb", "backend_rss_gb", "gpu_temp_c", "last_seen"},
 			endpoint: "GET /api/fleet/status",
 			run:      cmdAgentShow,
 			// ★ 缺口 `GAP-20261010-16`：`recent_requests` 走**可选字段层**（`optFields`，与 `code find` 的
@@ -1521,7 +1521,7 @@ func init() {
 			endpoint: "",
 			run:      cmdScriptInventorySync,
 		},
-		// ---- 退场正门（设计稿 `设计-退场正门-retire-20261006.md` ＋ 拍板 决-01/02/03/09 · 2026-10-07）----
+		// ---- 退场正门（设计稿 `Zerg-内部文档/01-设计/设计-退场正门-retire-20261006.md` ＋ 拍板 决-01/02/03/09 · 2026-10-07）----
 		// 定位：**只管登记面退场**，✗ **不代管物理删除**（`git rm`）——真删交 git 历史＋提案审计（决-01）。
 		// 真源**沿用** `core/internal/contract/adopt-retire.json` 的 `retire_ledger`（✗ 不另起第二真源 · 决-02）；
 		// 目标件闭集 = **自研面全体 py/sh（全仓 − `vendor/**` − `tools/ocr/venv/**`）**（决-12 · ★ 描述串与 `scriptRetireClosedSetDesc` 同源）；
@@ -1543,7 +1543,7 @@ func init() {
 				"ledger_entries_before", "ledger_entries_after", "ledger_before_sha256", "ledger_after_sha256", "audit_path"},
 			danger: &dangerSpec{dangerD2, "登记面（`retire_ledger`）",
 				"把一件自研面件登记为「已登记退场」（可逆：写前 `cp -p` 备份 + 写后读回，复查不过逐字节写回）；**只登记 · ✗ 不代管 `git rm`**（真删交 git 历史＋提案审计）",
-				"设计-退场正门-retire-20261006.md §一/§二/§三 · 拍板落定-所有稿-20261007.md 决-01/02/03/09", true},
+				"Zerg-内部文档/01-设计/设计-退场正门-retire-20261006.md §一/§二/§三 · 拍板落定-所有稿-20261007.md 决-01/02/03/09", true},
 			opened:   true,
 			endpoint: "",
 			run:      cmdScriptRetire,
@@ -3757,6 +3757,22 @@ func init() {
 			opened:   true,
 			endpoint: "",
 			run:      cmdGapIdeaStats,
+		},
+		// ★ 批2 第三片（2-3 守卫腿 · 2026-10-13）：守卫拦截**回收面**。口径已拍（缺口
+		//   `GAP-20260928-174`）：**落点定 control 层**（`core/internal/control/guardlog.go` 记事件）
+		//   · **回收面走 `gap idea sweep --source guard`**（拦截点不内联写池）。实现件 = `cmdGapIdeaSweep`。
+		{
+			path:     []string{"gap", "idea", "sweep"},
+			kind:     "GapIdeaSweep",
+			summary:  "把**守卫拦截事件**（控制层 `<状态目录>/zerg-cli-gap-guard-events.jsonl`）回收成候选池条目（写面 · `--dry-run` 恒 0 · 缺 `--yes` fail-closed 2）：逐事件造一行 `source=guard` / `status=pending`（幂等靠池内 `fp` —— 同 source 同 fp ⇒ 不新增）· `--source` 只认 `guard`（闭集外 ⇒ 2 并点名；gate 腿由门禁脚本直写入池 · egg/human 腿走 `gap idea add`）· 拦截点**不内联写池**（落点见 `core/internal/control/guardlog.go`）· **真源一字不动** · 顺带做七日归档 · 没事件 ⇒ 1（零命中）· 池件写不进 ⇒ 8",
+			usage:    "zerg gap idea sweep [--source <guard>] [--dry-run | --yes] [--json <字段>]",
+			arity:    "none",
+			args:     []string{"（无位置参数：全部走旗标）"},
+			fields:   gapIdeaSweepFields,
+			danger:   &dangerSpec{dangerD2, "候选池件（`<状态目录>/zerg-cli-gap-candidates.jsonl`）", "往**候选池**追加「池里还没有的」守卫拦截候选（可逆：删那些行）+ 顺带把落池超七天的条目搬进同目录归档件；**真源 `zerg-cli-gaps.jsonl` 与守卫事件件一个字节都不动**（本面只读事件件；入账仍走 `gap add`）", "`设计-缺口账与自进化-v2.0-20260928.md` §11.3「三类入口」之二（守卫拦）· 缺口 `GAP-20260928-174`（已拍：落点定 control 层 · 回收面走本命令）· 同族写面先例 `gap idea add`（`H-10`：`--yes` 是命令行确认档，不是批准件）", false},
+			opened:   true,
+			endpoint: "",
+			run:      cmdGapIdeaSweep,
 		},
 		// ---- 度量与排序面（组1 序12 · `承接自-v2.5.11/承接-度量与排序面-20260921.md:40-42` · 2026-09-24）----
 		// 与 `impact`（变更影响面）**配对用、不合并成一条**：前者回答「改这一处会牵动谁」（别改坏），

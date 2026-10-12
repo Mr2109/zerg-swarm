@@ -58,6 +58,10 @@ import (
 	// ★ 批1 第一片：件面三键的「入库件清单」**只经既有 A1 出口**取（`gitpaths.List` · FaceTracked）；
 	// 本文件不另写一套 `git ls-files` 的 argv（族件已有该口子 ⇒ 复用，见 `gapTrackedFiles`）。
 	"github.com/Mr2109/zerg-swarm/core/internal/gitpaths"
+
+	// ★ 批2 第三片（2-3 守卫腿 · 2026-10-13）：守卫拦截**回收面**的读口 —— 事件件真源在
+	// `core/internal/control`（缺口 `GAP-20260928-174` 已拍：落点定 control 层）。
+	"github.com/Mr2109/zerg-swarm/core/internal/control"
 )
 
 const (
@@ -4899,6 +4903,270 @@ func mustReadGapPoolQuiet() gapPool {
 		return gapPool{}
 	}
 	return pb
+}
+
+// ── 批2 第三片（2-3 守卫腿 · 2026-10-13）：守卫拦截回收面 `gap idea sweep` ──────────────────────
+//
+// 设计出处（唯一真源）：`设计-缺口账与自进化-v2.0-20260928.md` §11.3「三类入口」之一「守卫拦」；
+// 口径已拍（缺口 `GAP-20260928-174`）：**落点定 control 层 · 回收面走 `gap idea sweep --source guard`**。
+//
+// 口径（逐条照已拍口径，不自造）：
+//
+//	① **落点 = control 层**：守卫（M3 集中控制层的工具门）拦截时由**控制层自己**把一条事件追加进
+//	   `<状态目录>/zerg-cli-gap-guard-events.jsonl`（实现见 `core/internal/control/guardlog.go`
+//	   + `control/gate.go:Check`）。本命令**只读**那个事件件 —— 拦截点内联写候选池是被明确
+//	   否掉的形态（`GAP-20260928-174` 的「接入面」结论）。
+//	② **回收面**：把「池里还没有的」拦截事件落成 `source=guard` / `status=pending` 的候选；
+//	   幂等靠池内 `fp`（同 source 同 fp ⇒ 不新增 · 设计稿 §3.A3）。`raw` / `fp` 的取法与
+//	   `gap idea add` **同一套**（`control.GuardSymptom` + `sha256Of(source\x00raw)[:12]`）。
+//	③ **只收 `guard`**：`--source` 缺省 `guard`；其余取值 ⇒ 退 2 并点名（gate 腿由门禁脚本
+//	   直写入池 · egg 腿 `gap idea add --source egg` · human 腿 `gap idea add`）⇒ ✗ 不静默忽略。
+//	④ 三态照本族写面：`--dry-run` 恒 0（零副作用）· 缺 `--yes` fail-closed 2 · `--yes` 才写；
+//	   池件写不进 ⇒ 8。★ 用法面（`--source` 越界）与 D2 确认档（缺 `--yes`）**排在**
+//	   「事件件 / 池件读不出来」那两条前置**之前**（同族次序纪律 `GAP-20260928-175`：
+//	   用法错不许被退 8 抢吞）。
+//	⑤ **真源一字不动**（`gap add` 仍是唯一入账）：本面只读事件件、只写候选池。
+//
+// 退码：0 有可回收事件（新增 n / 幂等 m）· 1 零命中（**没有**可回收的拦截事件）·
+//       2 用法错（`--source` 越界 / 缺 `--yes`）· 8 事件件读不出 · 池件读不出或写不进。
+
+// gapSweepSourceClosed —— `gap idea sweep` 的 `--source` 闭集（本面只有**一个**可回收来源）。
+var gapSweepSourceClosed = []string{"guard"}
+
+// gapIdeaSweepFields —— `gap idea sweep` 的 `--json` 可取字段（与同族 `gap idea add` 同形）。
+var gapIdeaSweepFields = []string{"source", "guard_events", "recoverable", "inserted", "idempotent",
+	"archived", "pool_before", "pool_after", "guard_path", "ledger_lines", "cids"}
+
+// gapSweepCand —— 一条待回收的守卫候选（`raw` + `fp` 一次算好 ⇒ 人面/机器面/干跑三面同口径）。
+type gapSweepCand struct {
+	raw string
+	fp  string
+}
+
+// gapSweepPlan —— 现读的「待回收」那批：`want` = 事件去重后的全集 · `fresh` = 池里还没有的那批 ·
+// `nIdem` = 已在池的条数。事件内部去重与池内去重都按 `source\x00fp`（与 `gap idea add` 同键）。
+func gapSweepPlan(pb gapPool, events []control.GuardEvent, source string) (want, fresh []gapSweepCand, nIdem int) {
+	seen := map[string]bool{}
+	for _, ev := range events {
+		raw := control.GuardSymptom(ev.Tool, ev.Action, ev.Rule)
+		fp := sha256Of([]byte(source + "\x00" + raw))[:12]
+		key := source + "\x00" + fp
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		want = append(want, gapSweepCand{raw: raw, fp: fp})
+	}
+	have := map[string]bool{}
+	for _, c := range pb.Cands {
+		have[c.Source+"\x00"+c.FP] = true
+	}
+	for _, w := range want {
+		if have[source+"\x00"+w.fp] {
+			nIdem++
+			continue
+		}
+		fresh = append(fresh, w)
+	}
+	return want, fresh, nIdem
+}
+
+// gapSweepAssignCIDs —— 按池内现序为待回收那批逐条取号（与真写路**同一枚** `gapPoolNextCID`）。
+func gapSweepAssignCIDs(base []gapCandidate, fresh []gapSweepCand, day string) []string {
+	out := make([]string, 0, len(fresh))
+	cur := append([]gapCandidate{}, base...)
+	for _, w := range fresh {
+		cid := gapPoolNextCID(cur, day)
+		cur = append(cur, gapCandidate{CID: cid, FP: w.fp})
+		out = append(out, cid)
+	}
+	return out
+}
+
+// cmdGapIdeaSweep —— `zerg gap idea sweep [--source guard]`：守卫拦截事件 ⇒ 候选池（回收面）。
+func cmdGapIdeaSweep(inv *invocation, stdout, stderr io.Writer) int {
+	if inv.jsonGiven && len(inv.fields) == 0 {
+		inv.setErr("usage", "json_fields_required", "--json 不给字段")
+		fmt.Fprintf(stderr, "%s: `--json` 要给逗号分隔的字段（本族口径 = 用法错 2）\n", progName)
+		fmt.Fprintf(stderr, "可选字段: %s\n", strings.Join(gapIdeaSweepFields, ","))
+		return exitUsage
+	}
+	source := strings.TrimSpace(inv.flagVal("--source"))
+	if source == "" {
+		source = "guard" // 本面唯一可回收来源 ⇒ 缺省档
+	}
+	if !gapIn(gapSweepSourceClosed, source) {
+		inv.setErr("usage", "bad_source", "sweep 的 source 不在闭集里")
+		fmt.Fprintf(stderr, "%s: `--source %s` 不在闭集里 —— 本面只认 %s\n", progName, source, gapClosedText(gapSweepSourceClosed))
+		fmt.Fprintf(stderr, "  其余来源各有其入口：gate 腿由门禁脚本直写入池 · egg 腿 `zerg gap idea add --source egg` · human 腿 `zerg gap idea add`\n")
+		return exitUsage
+	}
+	eventsPath := control.GuardEventPath()
+	poolPath := gapPoolPath()
+
+	// ① 缺 `--yes`（且非 `--dry-run`）：fail-closed rc=2，计划件走 stderr（同族写面口径）；
+	//    次序排在两条「读不出来」前置**之前**（同族 `GAP-20260928-175`）。
+	if !inv.dryRun && !inv.yes {
+		pbq, _ := readGapPool()
+		evq, _ := control.ReadGuardEvents(eventsPath)
+		_, freshQ, idemQ := gapSweepPlan(pbq, evq, source)
+		fmt.Fprintf(stderr, "%s: 缺 `--yes`（D2 档 · 本族写面口径）—— 池面一个字节不写\n", progName)
+		fmt.Fprintf(stderr, "  事件件   : %s（拦截事件 %d 条）\n", eventsPath, len(evq))
+		fmt.Fprintf(stderr, "  候选池   : %s（%s）\n", poolPath, gapPoolCountText(pbq))
+		fmt.Fprintf(stderr, "  可回收   : 新增 %d 条 · 幂等跳过 %d 条（source=%s · status=pending · ttl_days=%d）\n",
+			len(freshQ), idemQ, source, gapPoolTTLDays)
+		fmt.Fprintf(stderr, "  真源     : %s（**本面不碰**）\n", gapLedgerPath())
+		fmt.Fprintf(stderr, "  未执行   : 缺 `--yes` ⇒ 不执行（fail-closed：从不提问）\n")
+		fmt.Fprintf(stderr, "  ⚠ `--yes` 是**命令行确认档**，不是 `approve` 件（同族 `gap idea add` 的 `H-10` 口径）\n")
+		inv.setErr("usage", "yes_required", "缺 --yes")
+		return exitUsage
+	}
+
+	// ② 读事件件：**件不在**（从没有过拦截）⇒ 空 + 无错 ⇒ 走「零命中」那一支。
+	events, rerr := control.ReadGuardEvents(eventsPath)
+	if rerr != nil {
+		gapLedgerErr(inv, gapReasonPrecondition, rerr.Error(), eventsPath)
+		gapLedgerErrFirstLine(stderr, gapReasonPrecondition)
+		fmt.Fprintf(stderr, "%s: 守卫事件件读不出来：%v\n", progName, rerr)
+		fmt.Fprintf(stderr, "  事件件 = %s；「读不出来」不许当「没有」（退码 8）\n", eventsPath)
+		return exitBlocked
+	}
+
+	// ③ 读池件。
+	pb, perr := readGapPool()
+	if perr != nil {
+		gapLedgerErr(inv, gapReasonPrecondition, perr.Error(), poolPath)
+		gapLedgerErrFirstLine(stderr, gapReasonPrecondition)
+		fmt.Fprintf(stderr, "%s: %v\n", progName, perr)
+		fmt.Fprintf(stderr, "  池件 = %s；「读不到」不许当「没有」（退码 8）\n", poolPath)
+		return exitBlocked
+	}
+
+	want, fresh, nIdem := gapSweepPlan(pb, events, source)
+	if len(want) == 0 {
+		// 零命中：事件件不在盘 / 空 ⇒ **没有**可回收的拦截事件 ⇒ 退 1
+		// （「没有」不是「失败」，也不是绿 —— 同族 `gap idea ls` 的零命中口径）。
+		// ★ 与「有事件但都已在池」**分开**：后者走 0 那一支（幂等 · 与 `gap idea add` 同档）。
+		inv.changed = boolPtr(false)
+		inv.setErr("failed", "no_match", "零命中")
+		fmt.Fprintf(stderr, "零命中：没有可回收的守卫拦截事件（退码 1 —— 「没有」不是「失败」，也不是绿）\n")
+		fmt.Fprintf(stderr, "  事件件   : %s（拦截事件 %d 条）\n", eventsPath, len(events))
+		fmt.Fprintf(stderr, "  候选池   : %s（%s）\n", poolPath, gapPoolCountText(pb))
+		fmt.Fprintf(stderr, "  守卫拦由控制层自动记录（`%s`）；人随手记走 `zerg gap idea add --symptom <一句> --yes`\n",
+			control.GuardEventFile)
+		return exitFail
+	}
+	now := time.Now()
+	day := now.Format("20060102")
+	before := len(pb.Cands)
+	planCids := gapSweepAssignCIDs(pb.Cands, fresh, day)
+	_, _, nArchPlan := gapPoolSweep(pb, now)
+	ledgerLines := gapLedgerLineCount(gapLedgerPath())
+
+	// ④ `--dry-run`：只出计划件（stdout · rc=0 · 零副作用）。
+	if inv.dryRun {
+		afterPlan := before - nArchPlan + len(fresh)
+		if inv.jsonGiven {
+			inv.changed = boolPtr(false)
+			return selectJSON(stdout, stderr, inv, inv.path, inv.fields, map[string]string{
+				"source": source, "guard_events": strconv.Itoa(len(events)),
+				"recoverable": strconv.Itoa(len(fresh)), "inserted": "0", "idempotent": strconv.Itoa(nIdem),
+				"archived": strconv.Itoa(nArchPlan), "pool_before": strconv.Itoa(before),
+				"pool_after": strconv.Itoa(afterPlan), "guard_path": eventsPath,
+				"ledger_lines": strconv.Itoa(ledgerLines), "cids": strings.Join(planCids, ","),
+			})
+		}
+		fmt.Fprintf(stdout, "（--dry-run 计划件 · 零副作用）\n")
+		fmt.Fprintf(stdout, "  事件件   : %s（拦截事件 %d 条 · 可回收 %d 条 · 幂等跳过 %d 条）\n",
+			eventsPath, len(events), len(fresh), nIdem)
+		fmt.Fprintf(stdout, "  将落池   : source=%s · status=pending · ttl_days=%d · %d 条\n", source, gapPoolTTLDays, len(fresh))
+		for _, cid := range planCids {
+			fmt.Fprintf(stdout, "    %s\n", cid)
+		}
+		fmt.Fprintf(stdout, "  候选池   : %s（现有 %d 条 → %d 条）\n", poolPath, before, afterPlan)
+		fmt.Fprintf(stdout, "  七日归档 : 超期 %d 条 ⇒ %s（真跑才搬）\n", nArchPlan, gapPoolArchivePath(day))
+		fmt.Fprintf(stdout, "  真源     : %s（**本面不碰** · 现有 %d 行）\n", gapLedgerPath(), ledgerLines)
+		fmt.Fprintf(stderr, "（--dry-run：只出计划件 · 零副作用 —— 未落池、未归档、真源一字未动）\n")
+		return exitOK
+	}
+
+	// ⑤ 字段面前置判定（`GAP-20261005-26`：坏字段在同 kind 同退码下**一个字节不落**）。
+	if rc := gapFrontJSONFields(inv, stderr, gapIdeaSweepFields); rc != exitOK {
+		return rc
+	}
+
+	// ⑥ 真写：池写唯一收口 `gapPoolApply`（取排他锁 + 锁内现读池为新基线 + 按 fp 幂等重放 +
+	//    原子落盘 + 读回对拍）—— 与 `gap idea add` 走**同一枚**收口（缺口 `GAP-20261005-43`）。
+	insertedCIDs := []string{}
+	nArch, werr := gapPoolApply(func(freshPool gapPool) (mainL, archL, newL []string, err error) {
+		_, f2, _ := gapSweepPlan(freshPool, events, source)
+		if len(f2) == 0 {
+			return nil, nil, nil, nil
+		}
+		cur := append([]gapCandidate{}, freshPool.Cands...)
+		for _, w := range f2 {
+			c := gapCandidate{Source: source, Raw: w.raw, CreatedAt: gapNow(),
+				TTLDays: gapPoolTTLDays, Status: "pending", FP: w.fp}
+			c.CID = gapPoolNextCID(cur, day)
+			cur = append(cur, c)
+			b, merr := json.Marshal(c)
+			if merr != nil {
+				return nil, nil, nil, merr
+			}
+			newL = append(newL, string(b))
+			insertedCIDs = append(insertedCIDs, c.CID)
+		}
+		keep, arch, _ := gapPoolSweep(freshPool, now)
+		if len(arch) == 0 {
+			return nil, nil, newL, nil // 纯追加（不动既有行 · 与 add 同路）
+		}
+		if keep == nil {
+			keep = []string{}
+		}
+		return keep, arch, newL, nil
+	})
+	if werr != nil {
+		inv.setErr("blocked", "pool_unwritable", werr.Error())
+		fmt.Fprintf(stderr, "%s: 池件写不进（退码 8）：%v\n", progName, werr)
+		return exitBlocked
+	}
+	inserted := len(insertedCIDs)
+	idemAfter := len(want) - inserted
+	inv.changed = boolPtr(inserted > 0)
+	after := before - nArch + inserted
+	if inv.jsonGiven {
+		return selectJSON(stdout, stderr, inv, inv.path, inv.fields, map[string]string{
+			"source": source, "guard_events": strconv.Itoa(len(events)),
+			"recoverable": strconv.Itoa(len(want)), "inserted": strconv.Itoa(inserted),
+			"idempotent": strconv.Itoa(idemAfter), "archived": strconv.Itoa(nArch),
+			"pool_before": strconv.Itoa(before), "pool_after": strconv.Itoa(after),
+			"guard_path": eventsPath, "ledger_lines": strconv.Itoa(ledgerLines),
+			"cids": strings.Join(insertedCIDs, ","),
+		})
+	}
+	if inserted == 0 {
+		fmt.Fprintf(stdout, "已在池：本次新增 0 条（同 source 同 fp ⇒ 幂等 · 设计稿 §3.A3）\n")
+		fmt.Fprintf(stdout, "  事件件   : %s（拦截事件 %d 条 · 可回收 %d 条 · 幂等跳过 %d 条）\n",
+			eventsPath, len(events), len(want), idemAfter)
+		fmt.Fprintf(stdout, "  候选池   : %s（%s）\n", poolPath, gapPoolCountText(mustReadGapPoolQuiet()))
+		return exitOK
+	}
+	fmt.Fprintf(stdout, "已回收 %d 条守卫拦截 ⇒ 候选池（source=%s · status=pending · fp %s…）\n",
+		inserted, source, shortSHA(fresh[0].fp))
+	fmt.Fprintf(stdout, "  事件件   : %s（拦截事件 %d 条 · 可回收 %d 条 · 幂等跳过 %d 条）\n",
+		eventsPath, len(events), len(want), idemAfter)
+	fmt.Fprintf(stdout, "  候选池   : %s（%d → %d 条%s）\n", poolPath, before, after,
+		func() string {
+			if nArch > 0 {
+				return fmt.Sprintf(" · 七日归档 %d 条 ⇒ %s", nArch, gapPoolArchivePath(day))
+			}
+			return ""
+		}())
+	for _, cid := range insertedCIDs {
+		fmt.Fprintf(stdout, "    %s\n", cid)
+	}
+	fmt.Fprintf(stdout, "  真源     : %s（**一字未动** · %d 行 · 本面只读不写）\n", gapLedgerPath(), ledgerLines)
+	return exitOK
 }
 
 // ── 二.5 候选池**出口面**（批2 第二片 · 2026-09-28）──────────────────────────────────────────

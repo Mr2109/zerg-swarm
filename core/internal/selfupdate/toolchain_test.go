@@ -229,3 +229,137 @@ func TestBuild_DeterministicSameInputsSameSHA(t *testing.T) {
 		t.Fatal("unreachable")
 	}
 }
+
+// ── GAP-20261013-06：本机步默认组件含 wall ⇒ Build 必须真走茧壁构建支 ──────────
+//
+// 背景：wall 早已是合法组件（DefaultComponents / NodeComponents / NormalizeComponents 都收它），
+// 但 Build 的组件 switch 一度没有茧壁那一支 ⇒ 组件循环**静默跳过**，随后「构建后无产物」收集循环
+// stat 失败（组件 wall 构建后无产物）⇒ 本机步（controller / node）恒失败（fail-closed · 未换装）。
+// 本节三格分别钉：① 组件集含 wall ⇒ **必走**茧壁构建支（✗ 不得静默跳过）② 茧壁「构建成功但无产物」
+// ⇒ **必须报错**（不得把空产物当成功、不得写清单）③ 不含 wall 的组件集不受影响（不回归）。
+// 变异实证：仓外副本去掉茧壁那一支 ⇒ 三格全红。
+
+// wallTree —— 造一棵最小可构建的树，且带 wall/ 目录（茧壁构建支的落点）。
+func wallTree(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "core", "go.mod"), "module toy/core\n\ngo 1.21\n")
+	writeFile(t, filepath.Join(root, "core", "internal", "version", "version.go"),
+		"package version\n\nconst Version = \"0.0.9\"\n\nvar Commit = \"unknown\"\nvar BuildTime = \"unknown\"\n\nfunc Line() string { return Version + \" \" + Commit + \" \" + BuildTime }\n")
+	writeFile(t, filepath.Join(root, "wall", "Cargo.toml"),
+		"[package]\nname = \"zerg-wall\"\nversion = \"0.0.9\"\nedition = \"2021\"\n")
+	return root
+}
+
+// fakeCargoOnPath —— 把一枚假 cargo 前置进 PATH（脚本体由调用方给），返回它所在目录。
+// 只前置、不清空 PATH：Build 的前置步要真调 `go version`（VerifyToolchain），清空会把 `go` 一起挡掉。
+func fakeCargoOnPath(t *testing.T, script string) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "cargo"), []byte("#!/bin/sh\n"+script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return dir
+}
+
+// ① 组件集含 wall ⇒ 必须**真走到**茧壁构建支（✗ 不得静默跳过）。
+// 两处证据：日志里出现茧壁支自己那一行 ＋ 报错话术来自茧壁支（构建 zerg-wall 失败）。
+// 静默跳过时两处都没有——失败话术只剩收集循环的「组件 wall 构建后无产物」，那正是本缺口原貌。
+func TestBuild_WallComponentRunsWallBranch(t *testing.T) {
+	fakeCargoOnPath(t, "echo 'fake-cargo: boom' >&2\nexit 9\n")
+	root := wallTree(t)
+	staging := t.TempDir()
+	var log strings.Builder
+	res, err := Build(BuildOptions{Source: root, Staging: staging, Commit: "abc",
+		Components: []string{CompWall}, LogWriter: &log})
+	if err == nil {
+		t.Fatal("茧壁构建失败时必须报错（不得静默成功）")
+	}
+	if !strings.Contains(log.String(), "构建茧壁 zerg-wall") {
+		t.Fatalf("组件集含 wall 却没走到茧壁构建支（日志里没有茧壁那一行）⇒ 静默跳过：\n%s", log.String())
+	}
+	if !strings.Contains(err.Error(), "构建 zerg-wall 失败") {
+		t.Fatalf("报错应来自茧壁构建支（「构建 zerg-wall 失败：…」），得：%v", err)
+	}
+	if res != nil {
+		t.Fatalf("失败时不得返回结果，得 %+v", res)
+	}
+	if _, e := os.Stat(filepath.Join(staging, ArtifactName(CompWall, Platform()))); e == nil {
+		t.Fatal("茧壁构建失败却在 staging 里出现了茧壁产物")
+	}
+}
+
+// ② 茧壁「构建成功但无产物」⇒ 必须报错（fail-closed：不得把空产物当成功、不得写清单）。
+// 假 cargo 退 0 而什么都不产出——这正是要防的形态：命令成功、制品缺席。
+func TestBuild_WallBuiltWithoutArtifactFails(t *testing.T) {
+	fakeCargoOnPath(t, "exit 0\n")
+	root := wallTree(t)
+	staging := t.TempDir()
+	res, err := Build(BuildOptions{Source: root, Staging: staging, Commit: "abc",
+		Components: []string{CompWall}})
+	if err == nil {
+		t.Fatal("茧壁构建成功但没有产物时必须报错（否则本机步会带着空 staging 往下走）")
+	}
+	if !strings.Contains(err.Error(), "cargo 未产出") {
+		t.Fatalf("报错应点明茧壁产物缺席（「cargo 未产出 …」），得：%v", err)
+	}
+	if res != nil {
+		t.Fatalf("失败时不得返回结果，得 %+v", res)
+	}
+	if _, e := os.Stat(filepath.Join(staging, "manifest.json")); e == nil {
+		t.Fatal("茧壁无产物却写了 manifest.json（空集冒充成功）")
+	}
+}
+
+// ③ 正控（与②成对）：茧壁真产出 ⇒ 构建成功、产物落 staging、清单登记 wall。
+func TestBuild_WallSuccessLandsArtifact(t *testing.T) {
+	fakeCargoOnPath(t, "mkdir -p target/release\nprintf 'wall-binary' > target/release/zerg-wall\n")
+	root := wallTree(t)
+	staging := t.TempDir()
+	res, err := Build(BuildOptions{Source: root, Staging: staging, Commit: "abc",
+		Components: []string{CompWall}, BuildTime: "2026-10-13T00:00:00Z"})
+	if err != nil {
+		t.Fatalf("茧壁产出齐备时应构建成功，得：%v", err)
+	}
+	name := ArtifactName(CompWall, Platform())
+	if _, err := os.Stat(filepath.Join(staging, name)); err != nil {
+		t.Fatalf("茧壁产物未落 staging（%s）：%v", name, err)
+	}
+	if len(res.Artifacts) != 1 || res.Artifacts[0].Name != name || res.Artifacts[0].Size == 0 {
+		t.Fatalf("清单应登记茧壁一件 %q（含字节数），得 %+v", name, res.Artifacts)
+	}
+	b, err := os.ReadFile(filepath.Join(staging, "manifest.json"))
+	if err != nil || !strings.Contains(string(b), "\"wall\"") {
+		t.Fatalf("manifest.json 未登记 wall 组件：%v %s", err, b)
+	}
+}
+
+// ④ 不回归：**不含 wall** 的组件集不受影响（wall/ 在不在盘、cargo 好不好使，都不该碰它）。
+// PATH 前置一枚「一调就炸」的 cargo：核心件若误走茧壁支，本格必红。
+func TestBuild_NonWallComponentSetUnaffected(t *testing.T) {
+	fakeCargoOnPath(t, "echo 'fake-cargo: should not be called' >&2\nexit 3\n")
+	root := toyTree(t)
+	writeFile(t, filepath.Join(root, "wall", "Cargo.toml"), "[package]\nname = \"zerg-wall\"\n")
+	staging := t.TempDir()
+	var log strings.Builder
+	res, err := Build(BuildOptions{Source: root, Staging: staging, Commit: "abc",
+		Components: []string{CompCore}, LogWriter: &log})
+	if err != nil {
+		t.Fatalf("不含 wall 的组件集应照常构建成功，得：%v\n%s", err, log.String())
+	}
+	if strings.Contains(log.String(), "茧壁") || strings.Contains(log.String(), "cargo") {
+		t.Fatalf("不含 wall 的组件集不得碰茧壁构建支：\n%s", log.String())
+	}
+	for _, c := range res.Components {
+		if c == CompWall {
+			t.Fatalf("组件集里不该出现 wall：%v", res.Components)
+		}
+	}
+	if len(res.Artifacts) != 1 || res.Artifacts[0].Name != ArtifactName(CompCore, Platform()) {
+		t.Fatalf("只应登记 core 一件，得 %+v", res.Artifacts)
+	}
+	if _, e := os.Stat(filepath.Join(staging, ArtifactName(CompWall, Platform()))); e == nil {
+		t.Fatal("不含 wall 的构建却产出了茧壁制品")
+	}
+}

@@ -164,3 +164,78 @@ func TestStatusHandler_SameVersionNotMixed(t *testing.T) {
 		t.Errorf("全员同版且健康 ⇒ unhealthy_count=0，得到 %v", resp["unhealthy_count"])
 	}
 }
+
+// ── 「双源矩阵同源判定」三态（GAP-20261013-09 · 候选 c）──────────────────────────
+//
+// 病灶：主控那行报**私有提交 sha**、节点那行报**镜像 tip sha** —— 两套 git 命名空间的字符串，
+// 矩阵里没有可比键 ⇒ 三台其实同源也看不出（「全绿也可能是混版」）。
+// 治法：比**源提交**（`origin_sha`）并把判决印在三态格上；★ 缺映射/trailer 缺 ⇒ `unknown`（缺 ≠ 一致）。
+
+// TestMachineOriginVerdict_ThreeStates —— 纯函数三态 + 缺项各格（含好件那一格，免得只留反例）。
+func TestMachineOriginVerdict_ThreeStates(t *testing.T) {
+	cases := []struct {
+		name    string
+		master  string
+		machine string
+		want    string
+	}{
+		{"好件：同一笔源提交 ⇒ same", "3b04f6ab", "3b04f6ab", OriginSame},
+		{"反例：源提交不同 ⇒ mixed（真混版）", "3b04f6ab", "1a6b02fc", OriginMixed},
+		// ✗ 下面四格就是「防假绿」那颗牙：判不了必须报 unknown，绝不折叠成 same。
+		{"缺映射：该机没带 origin_sha ⇒ unknown（缺 ≠ 一致）", "3b04f6ab", "", OriginUnknown},
+		{"缺映射：trailer 缺的旧哨兵字面量 ⇒ unknown", "3b04f6ab", "unknown", OriginUnknown},
+		{"判不了：主控自己没带源提交 ⇒ unknown（没有基准就没有判决）", "", "3b04f6ab", OriginUnknown},
+		{"判不了：两侧都没带 ⇒ unknown（✗ 绝不因两个空串相等而判 same）", "", "", OriginUnknown},
+	}
+	for _, c := range cases {
+		if got := MachineOriginVerdict(c.master, c.machine); got != c.want {
+			t.Errorf("%s：MachineOriginVerdict(%q,%q) = %q，want %q", c.name, c.master, c.machine, got, c.want)
+		}
+	}
+}
+
+// TestStatusHandler_SameOriginThreeStates —— HTTP 层同形状复跑：三台一次打出三态 + 基准随响应。
+//
+// 三台 `code_version` 全都相同（= 现有版本裁决一律判「不混版」），唯一差别是**源提交** ——
+// 这正是本缺口的形态：旧字段全绿，而『到底同不同源』这一句没人答。本用例要它答出来。
+func TestStatusHandler_SameOriginThreeStates(t *testing.T) {
+	// 主控基准的真源是 `version.Origin`（构建期注入）；未注入时是空串 ⇒ 全表 unknown。
+	// 本用例要证的是**判决**与**下发**，故把基准钉住（用完即还原，不留包级残留）。
+	old := version.Origin
+	version.Origin = "3b04f6abcd"
+	t.Cleanup(func() { version.Origin = old })
+
+	h := newTestHandlers()
+	// ① 同源：源提交与主控基准逐字相同（模拟「镜像 tip 的 GitOrigin-RevId = 主控的私有提交」）
+	postHeartbeat(t, h, store.HeartbeatRequest{Machine: "Mr2109", Healthy: true, CodeVersion: version.Version,
+		CodeSHA: "3b04f6abcd+dirty", OriginSHA: "3b04f6abcd"})
+	// ② 真混版：拿的是另一笔源提交
+	postHeartbeat(t, h, store.HeartbeatRequest{Machine: "edge-node", Healthy: true, CodeVersion: version.Version,
+		CodeSHA: "ca565e92706196efb9d61910aa3fdfbdf9c8a775", OriginSHA: "1a6b02fc"})
+	// ③ 判不了：该机没带源提交（trailer 缺 / 未注入）—— 版本号相同也✗ 不许判 same
+	postHeartbeat(t, h, store.HeartbeatRequest{Machine: "mini-node-2", Healthy: true, CodeVersion: version.Version,
+		CodeSHA: "ca565e92706196efb9d61910aa3fdfbdf9c8a775"})
+
+	resp := statusOf(t, h)
+	if got := resp["master_origin_sha"]; got != "3b04f6abcd" {
+		t.Fatalf("master_origin_sha 应随响应报出判决基准（否则「同源」不可复核），实得 %v", got)
+	}
+	machines, _ := resp["machines"].(map[string]interface{})
+	want := map[string]string{"Mr2109": OriginSame, "edge-node": OriginMixed, "mini-node-2": OriginUnknown}
+	for m, w := range want {
+		row, _ := machines[m].(map[string]interface{})
+		if row == nil {
+			t.Fatalf("machines 里没有 %s", m)
+		}
+		if got, _ := row["same_origin"].(string); got != w {
+			t.Errorf("%s 的 same_origin = %q，want %q（三台 code_version 全相同，差别只在源提交）", m, got, w)
+		}
+	}
+	// 旧字段不删（旧消费者零改动）：三台同版本号 ⇒ 版本裁决照旧「不混版」
+	if mv, _ := resp["mixed_version"].(bool); mv {
+		t.Errorf("三台 code_version 全同 ⇒ mixed_version 必须仍为 false，实得 %v", resp["mixed_machines"])
+	}
+	if hc, _ := resp["healthy_count"].(float64); hc != 3 {
+		t.Errorf("healthy_count 应仍为 3（同源判定不得动健康计数），实得 %v", hc)
+	}
+}

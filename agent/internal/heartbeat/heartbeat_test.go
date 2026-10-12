@@ -7,6 +7,7 @@ import (
 
 	"github.com/Mr2109/zerg-swarm/agent/internal/backend"
 	"github.com/Mr2109/zerg-swarm/agent/internal/monitor"
+	"github.com/Mr2109/zerg-swarm/agent/internal/version"
 )
 
 // ── 假实现（注入用） ──────────────────────────────────────────────
@@ -312,5 +313,43 @@ func TestBuildBody_EngineLive_JSONRoundTrip(t *testing.T) {
 	}
 	if len(back.Engines) != 1 || back.Engines[0].EggID != "e1" || back.Engines[0].Verdict != "stuck_cpu_stalled" {
 		t.Fatalf("engines JSON 往返不全: %+v", back.Engines)
+	}
+}
+
+// ── 同源判定（GAP-20261013-09 · 候选 c）───────────────────────────
+// 心跳必须带上本机二进制的**源提交**：它与 code_sha（镜像 tip）分属两套 git 命名空间，
+// 是主控把「同源/混版/判不了」判出来唯一的可比键。
+
+// TestBuildBody_CarriesOriginSHA —— 注入了源提交 ⇒ 心跳体逐字带上它（且不与 code_sha 混同）。
+func TestBuildBody_CarriesOriginSHA(t *testing.T) {
+	old := version.Origin
+	version.Origin = "3b04f6abcd"
+	t.Cleanup(func() { version.Origin = old })
+
+	body := newTestRunner(baseBackend(), fakeVram{known: false}, &fakeActive{}).buildBody()
+	if got := body["origin_sha"]; got != "3b04f6abcd" {
+		t.Fatalf("心跳体必须带上注入的源提交，实得 %v（code_sha=%v）", got, body["code_sha"])
+	}
+	if body["origin_sha"] == body["code_sha"] {
+		t.Fatalf("origin_sha 与 code_sha 是两套命名空间，不得互相顶替: %v", body)
+	}
+}
+
+// TestBuildBody_OriginAbsentStaysEmpty —— 未注入 ⇒ **恒在**且为空串 = 判不了；✗ 不回落成 code_sha。
+func TestBuildBody_OriginAbsentStaysEmpty(t *testing.T) {
+	old := version.Origin
+	version.Origin = ""
+	t.Cleanup(func() { version.Origin = old })
+
+	body := newTestRunner(baseBackend(), fakeVram{known: false}, &fakeActive{}).buildBody()
+	v, ok := body["origin_sha"]
+	if !ok {
+		t.Fatalf("origin_sha 必须**恒在**（空串 = 判不了；缺席会让主控分不清「没报」与「判不了」）: %v", body)
+	}
+	if v != "" {
+		t.Fatalf("未注入时应如实带空串，实得 %q", v)
+	}
+	if v == body["code_sha"] {
+		t.Fatalf("未注入时 ✗ 不许拿 code_sha 顶上: %v", body["code_sha"])
 	}
 }

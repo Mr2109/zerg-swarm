@@ -308,6 +308,11 @@ func Run(o Options) int {
 	cmp.Message = messageFor(cmp, version.Version)
 
 	switch cmp.Status {
+	case StatusBehind:
+		// ★ GAP-20261013-12：显式分支 —— 原先**无 case StatusBehind**，behind 落空直落构建换装；
+		// 而 bug（run() 丢退码）把「非祖先」也伪装成 behind ⇒ 误降级无人拦。此处只承接**确证的**
+		// behind（本地是远端祖先）⇒ 正常升级，继续往下构建换装。
+		o.say("⬆️  %s", cmp.Message)
 	case StatusUpToDate:
 		// GAP-20261013-05：检出持平**不等于**已装件就是这一版。
 		// 病（2026-10-13 实测 mini-node-2）：节点机的检出 HEAD 已被推到镜像 tip，而在跑的守护
@@ -336,10 +341,26 @@ func Run(o Options) int {
 		o.warn("❌ %s", cmp.Message)
 		return ExitFail
 	case StatusDiverged:
+		// ★ GAP-20261013-12：真分叉必须**显式拦下** —— 原先因 ①②③（run 丢退码 ⇒ IsAncestor
+		// 判不出非祖先 ⇒ StatusDiverged 死代码）该分支永不可达 ⇒ 非祖先落空进构建换装。
 		if !o.Force && strings.TrimSpace(o.To) == "" {
+			o.warn("   两边历史无共同祖先（或各自分叉、互不为祖先）—— 直接更新可能把本机换成更旧的版本。")
+			o.warn("   确要换装请显式指定 --to <ref>（或 --force），回执会留痕。")
 			o.warn("⛔ %s", cmp.Message)
 			return ExitRefused
 		}
+	}
+
+	// ★ GAP-20261013-01：内核脚本缺失 ⇒ fail-closed 早退（构建之前）。
+	// 病（2026-10-13 edge-node 实测）：缺件时仍先 fetch→本机构建（白干），直到最后 spawnKernel
+	// 的 os.Stat 才死 —— 判定在构建之后，代价已付出。内核件由**主控播种**且**不在公开
+	// 镜像面**（publish/excludes.txt 有意排除）⇒ 节点无从自取，缺件即拒，不构建、不换装。
+	if _, err := os.Stat(o.Kernel); err != nil {
+		o.warn("⛔ 本机缺内核脚本：%s", o.Kernel)
+		o.warn("   该件由主控播种、不在公开面（publish/excludes.txt 有意排除）——节点无从自取。")
+		o.warn("   建议动作：让操作者在主控跑 relay 播种 —— bash scripts/svc/fleet-relay.sh。")
+		o.warn("   播种完成前本机不构建、不换装（fail-closed 早退）。")
+		return ExitFail
 	}
 
 	o.say("🏷  目标：%s（%s）", ref, short(remoteSHA))

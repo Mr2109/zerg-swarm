@@ -38,6 +38,10 @@ func repoRoot(t *testing.T) string {
 
 // TestRealRulesYaml_DefaultIsBlockAndListsEveryCATool —— 判据①的机检 + 「显式列全」棘轮。
 func TestRealRulesYaml_DefaultIsBlockAndListsEveryCATool(t *testing.T) {
+	// ★ 缺口 `GAP-20260928-174`（守卫入池 · 落 control 层 · 2026-10-13）：本测试**从件装载**真规则表
+	// 并逐条问门 ⇒ 若不关闸，`NewGateFromFile` 武装的守卫入池会往**真状态目录**写拦截事件
+	// （合成夹具不许污染真状态目录）⇒ 照同族先例显式关闸。
+	t.Setenv("ZERG_GAP_GUARD_INTAKE", "0")
 	root := repoRoot(t)
 	path := filepath.Join(root, "core", "internal", "control", "rules.yaml")
 	g, err := NewGateFromFile(path)
@@ -177,6 +181,8 @@ func scanGateCheckCallSites(t *testing.T, root string) []gateCheckCallSite {
 // 静默拦掉（工具当场不可用，且不报错）；或者更糟 —— 反过来「名字登记了、调用点没写」
 // 时，谁也说不清这个闸门到底有没有接电。两个方向都得有真源上的答案。
 func TestEveryGateCheckCallSiteIsRegistered(t *testing.T) {
+	// ★ 同 `TestRealRulesYaml_…`：从件装载真规则表 ⇒ 关守卫入池（不往真状态目录写事件）。
+	t.Setenv("ZERG_GAP_GUARD_INTAKE", "0")
 	root := repoRoot(t)
 	path := filepath.Join(root, "core", "internal", "control", "rules.yaml")
 	g, err := NewGateFromFile(path)
@@ -219,6 +225,8 @@ func TestEveryGateCheckCallSiteIsRegistered(t *testing.T) {
 // 没有这两件，它们在调用点**直接执行**。上面那条判据只保证「有调用点 ⇒ 在册」，
 // 管不住「调用点被删掉」这个方向；本条的 (a) 补上这个方向。
 func TestDangerousChatToolsAreGated(t *testing.T) {
+	// ★ 同 `TestRealRulesYaml_…`：从件装载真规则表 ⇒ 关守卫入池（不往真状态目录写事件）。
+	t.Setenv("ZERG_GAP_GUARD_INTAKE", "0")
 	root := repoRoot(t)
 	g, err := NewGateFromFile(filepath.Join(root, "core", "internal", "control", "rules.yaml"))
 	if err != nil {
@@ -256,6 +264,8 @@ func TestDangerousChatToolsAreGated(t *testing.T) {
 // 所以判两层：① **表里有模式**（字面在）+ 问门真判 block；② **成对负控** —— 把模式从表文本里抠掉，
 // 同一条问门必须变成 allow（证明拦它的正是这条模式，不是别的东西顺手拦的）。
 func TestApprovalsDirIsOutOfReachForModelTools(t *testing.T) {
+	// ★ 同 `TestRealRulesYaml_…`：从件装载真规则表 ⇒ 关守卫入池（不往真状态目录写事件）。
+	t.Setenv("ZERG_GAP_GUARD_INTAKE", "0")
 	root := repoRoot(t)
 	path := filepath.Join(root, "core", "internal", "control", "rules.yaml")
 	body, err := os.ReadFile(path)

@@ -15,6 +15,12 @@ var (
 	Version   = "unknown"
 	Commit    = "unknown"
 	BuildTime = "unknown"
+	// Origin —— 构建期注入的**源提交**（同源判定的可比键 · GAP-20261013-09 · 候选 c）：
+	// 本机二进制所编那棵树的 HEAD 若带 `GitOrigin-RevId` trailer（镜像树逐笔都带）则取 trailer 值
+	// （= 私有图源提交）；没有 trailer（私有权威树）则取 HEAD 本身。
+	// ✗ 未注入时保持**空串 = 判不了**（主控把本机那一行判成 `unknown`）—— ✗ 绝不回落成 `Commit`：
+	// 节点 `Commit` 是**镜像 tip**、与主控的私有提交不同名，回落即把两套命名空间混成一句假判决。
+	Origin = ""
 )
 
 // Line 机器可读单行身份（与核心侧同形）：zerg-daemon 2.5.9 abc1234 2026-09-11T07:00:00Z

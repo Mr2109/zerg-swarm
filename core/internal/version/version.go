@@ -23,6 +23,12 @@ const Tag = "v" + Version
 var (
 	Commit    = "unknown"
 	BuildTime = "unknown"
+	// Origin —— 构建期注入的**源提交**（同源判定的可比键 · GAP-20261013-09 · 候选 c）。
+	// 口径：所编那棵树的 HEAD **带** `GitOrigin-RevId` trailer（镜像/中继树逐笔都带）⇒ 取 trailer 值
+	// （= 私有图里的源提交）；**不带**（私有权威树）⇒ 取 HEAD 本身。
+	// ✗ 未注入时保持**空串 = 判不了** —— 绝不回落成 `Commit`：主控 `Commit` 是私有提交、节点 `Commit`
+	// 是镜像 tip，回落会把「同源」判成 `mixed`（假红），也会把镜像 tip 冒充成源提交。
+	Origin = ""
 )
 
 // Line —— 机器可读的单行身份（升级器/安装器比对用，纯 ASCII 空格分隔）：

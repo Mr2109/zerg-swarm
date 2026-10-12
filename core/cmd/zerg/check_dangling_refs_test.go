@@ -3,9 +3,9 @@
 //
 // 口径（照 skill「成对负控 · ✗ 禁恒绿」）：
 //
-//	① **正控**：`--self-test` 必须绿（十五格成对负控 —— 必红×2 / 豁免×1 / 拼接×1 / 前缀×1 /
+//	① **正控**：`--self-test` 必须绿（十八格成对负控 —— 必红×2 / 豁免×1 / 拼接×1 / 前缀×1 /
 //	   无输入×1 / 登记表×1 / 整件豁免×1 / 前缀越界×1 / 缺语料×1 / 跨仓×1 / GAP悬空×1 /
-//	   GAP全在账×1 / GAP负控×1 / GAP账缺×1）。
+//	   GAP全在账×1 / GAP负控×1 / GAP账缺×1 / 棘轮×1 / 省略号截断×1 / 省略号成对×1）。
 //	② **成对**：每一格判据都配一枚反例（哑化本件任一判据 ⇒ 本测试件必 FAIL）。
 //	③ **自回收**：`--self-test` 跑完，`TMPDIR` 里 `cdr-selftest-*` 目录数增量必须 = 0
 //	   （py 原件 `mkdtemp` 从不回收 = 真口子；本件自回收，此处把该性质钉成用例）。
@@ -40,19 +40,20 @@ func cdrCountSelfTestDirs() int {
 func cdrQ(s string) string { return "\"" + s + "\"" }
 
 func TestCheckDanglingRefsGatePort(t *testing.T) {
-	t.Run("自检十五格绿", func(t *testing.T) {
+	t.Run("自检十八格绿", func(t *testing.T) {
 		var out, errb bytes.Buffer
 		rc := checkDanglingRefsGateMain(&out, &errb, []string{"--self-test"})
 		if rc != 0 {
 			t.Fatalf("`--self-test` rc=%d（期望 0）\nstdout:\n%s\nstderr:\n%s", rc, out.String(), errb.String())
 		}
 		if !strings.Contains(out.String(), "自检：通过 ✓") {
-			t.Fatalf("`--self-test` 未报「通过 ✓」（十格里有格不过）：\n%s", out.String())
+			t.Fatalf("`--self-test` 未报「通过 ✓」（十八格里有格不过）：\n%s", out.String())
 		}
 		// 成对负控：十格的名必须都在（少跑即失效 —— py 有 `assert cases == 10`）。
 		for _, want := range []string{"[必红夹具]", "[必红夹具·有落点]", "[豁免夹具]", "[拼接夹具]",
 			"[前缀夹具]", "[无输入夹具]", "[登记表夹具]", "[整件豁免夹具]", "[前缀登记夹具]", "[缺语料夹具]",
-			"[跨仓夹具]", "[GAP悬空夹具]", "[GAP全在账夹具]", "[GAP负控夹具]", "[GAP账缺夹具]", "[棘轮夹具]"} {
+			"[跨仓夹具]", "[GAP悬空夹具]", "[GAP全在账夹具]", "[GAP负控夹具]", "[GAP账缺夹具]", "[棘轮夹具]",
+			"[省略号截断夹具]", "[省略号成对夹具]"} {
 			if !strings.Contains(out.String(), want) {
 				t.Fatalf("`--self-test` 少跑一格：缺 %s\n%s", want, out.String())
 			}

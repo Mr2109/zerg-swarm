@@ -11,7 +11,9 @@ package main
 
 import (
 	"encoding/base64"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -143,5 +145,68 @@ func TestCpm机读面正负控(t *testing.T) {
 	rc, _, errs := run("--root", root, "--json", "nope")
 	if rc != 2 || !strings.Contains(errs, "不认的字段名") {
 		t.Fatalf("--json nope：期望 rc=2 ＋「不认的字段名」，实得 rc=%d stderr=%q", rc, errs)
+	}
+}
+
+// ── ★ C19（GAP-20261013-07）：空指判定并入**祖先历史面** —— 成对负控 ─────────────────────────
+//
+// 负控（有牙 · 改前必失守）：造一条「历史向保险行」—— 曾在 HEAD、后被删（今不在盘、也不在索引）
+// ⇒ `cpmdEntryHits` 必须命中（否则它会被误报成「空指」，按它清到 0 = 拆掉历史守卫）。
+// 正控（反射）：从未存在过的路径 ⇒ **必须仍判空指**（判定被放宽到「历史里可能有过」即失守）。
+// 第三格：目录级条目（尾 `/`）走 `histDirs`（历史里出现过的目录也算命中，与镜像器 `hist_dirs` 同口径）。
+func TestCpmdEntryHits_HistoricFace(t *testing.T) {
+	root := t.TempDir()
+	env := append(os.Environ(),
+		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@e",
+		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@e")
+	git := func(args ...string) {
+		cmd := exec.Command("git", append([]string{"-C", root}, args...)...)
+		cmd.Env = env
+		cmd.Stdout, cmd.Stderr = io.Discard, io.Discard
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("git %v 失败：%v", args, err)
+		}
+	}
+	git("init", "-q", "-b", "main")
+	for _, rel := range []string{"gone.txt", "sub/keep.md"} {
+		p := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("x\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	git("add", "-A")
+	git("commit", "-q", "--no-gpg-sign", "-m", "fx: 加入")
+	if err := os.Remove(filepath.Join(root, "gone.txt")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(filepath.Join(root, "sub")); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "-A")
+	git("commit", "-q", "--no-gpg-sign", "-m", "fx: 删除")
+
+	// 前置：既不在盘、也不在索引（否则本用例判的是别的东西）
+	if cptpExists(filepath.Join(root, "gone.txt")) {
+		t.Fatal("夹具坏：gone.txt 还在盘上")
+	}
+	hist, histDirs := cpmdHistoricPaths(root)
+	if len(hist) == 0 {
+		t.Fatal("祖先历史面为空（git rev-list --all --objects 没接上）")
+	}
+	tracked := map[string]bool{}
+	if !cpmdEntryHits("gone.txt", root, tracked, hist, histDirs) {
+		t.Errorf("C19 负控失守：历史向保险行 `gone.txt` 仍被判空指（祖先历史面没接上）")
+	}
+	if cpmdEntryHits("never_existed.txt", root, tracked, hist, histDirs) {
+		t.Errorf("C19 正控失守：从未存在的路径被误判为命中（真空指判定被放宽了）")
+	}
+	if !cpmdEntryHits("sub/", root, tracked, hist, histDirs) {
+		t.Errorf("C19 目录级条目失守：`sub/`（历史里出现过、今不在盘）应命中 histDirs")
+	}
+	if cpmdEntryHits("nosuchdir/", root, tracked, hist, histDirs) {
+		t.Errorf("C19 目录级条目正控失守：`nosuchdir/` 从不历史存在 ⇒ 仍须判空指")
 	}
 }

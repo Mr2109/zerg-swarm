@@ -15,7 +15,8 @@
 #   ④ 安装     换装到前缀（默认 <树>/bin）：.new → mv 原子换装，旧件留 .prev（照抄升级器纪律）
 #   ⑤ 服务     controller ⇒ launchd plist（macOS；KeepAlive/RunAtLoad/ThrottleInterval +
 #              .env/PATH 由仓库自带的 scripts/svc/zerg-core-daemon.sh 承载）
-#              node       ⇒ systemd unit（管 zerg-agentd）
+#              darwin 上**也为 agent 写用户域 LaunchAgent**（作业名 `com.zerg.agent-<机名>`）
+#              node       ⇒ systemd unit（管 zerg-agentd；单元名 = 该机 `<机名>-agent`）
 #              两者都幂等：已存在则**重写并 reload/kickstart**
 #   ⑥ 验证     读**运行进程自报的身份**与安装件对账（controller 读 /api/capabilities 的 code_sha；
 #              node 读 zerg-agentd --version）；对不上即非零退出（不假装装好了）
@@ -36,7 +37,7 @@
 # 环境变量（与命令行等价；命令行优先）：
 #   ZERG_SETUP_DIR ZERG_SETUP_REPO ZERG_SETUP_REF ZERG_SETUP_ROLE ZERG_SETUP_COMPONENTS
 #   ZERG_PREFIX ZERG_API_BASE ZERG_SETUP_CONTROLLER ZERG_SETUP_NODE_NAME
-#   ZERG_SETUP_LAUNCHCTL ZERG_SETUP_LAUNCHD_DIR ZERG_SETUP_CORE_LABEL
+#   ZERG_SETUP_LAUNCHCTL ZERG_SETUP_LAUNCHD_DIR ZERG_SETUP_CORE_LABEL ZERG_SETUP_AGENTD_LABEL
 #   ZERG_SETUP_SYSTEMCTL ZERG_SETUP_UNIT_DIR ZERG_SETUP_AGENTD_UNIT ZERG_SETUP_WAIT_S
 #
 # 测试接缝（沙箱隔离真机用；生产别动）：
@@ -80,7 +81,8 @@ LAUNCHD_DIR="${ZERG_SETUP_LAUNCHD_DIR:-$HOME/Library/LaunchAgents}"
 CORE_LABEL="${ZERG_SETUP_CORE_LABEL:-com.zerg.core}"
 SYSTEMCTL="${ZERG_SETUP_SYSTEMCTL:-systemctl}"
 UNIT_DIR="${ZERG_SETUP_UNIT_DIR:-/etc/systemd/system}"
-AGENTD_UNIT="${ZERG_SETUP_AGENTD_UNIT:-zerg-agentd}"
+AGENTD_UNIT="${ZERG_SETUP_AGENTD_UNIT:-}"        # 空 ⇒ 参数面解析后按真源推导（见下「单元/作业名推导」）
+AGENTD_LABEL="${ZERG_SETUP_AGENTD_LABEL:-}"      # 同上（darwin 用户域 LaunchAgent 的作业名）
 WAIT="${ZERG_SETUP_WAIT_S:-30}"
 SYSTEMCTL_EXPLICIT=0
 [ -n "${ZERG_SETUP_SYSTEMCTL:-}" ] && SYSTEMCTL_EXPLICIT=1
@@ -164,6 +166,16 @@ case "$ROLE" in
 esac
 COMP_LIST="$(resolve_components)"
 [ -n "$PREFIX" ] || PREFIX="$TREE/bin"
+
+# ── 守护单元 / 作业名的**同一真源推导**（放在参数面之后 ⇒ `--node-name` 也随动）────────
+#   现读真源（✗ 不另创口径）：Linux systemd 单元 = 该机自己的 `<机名>-agent.service`
+#   （scripts/build/zerg-upgrade.sh:68/:161 · deploy/scripts/zerg-deploy-agent.sh:12/:22 ·
+#    gateway/deploy_x3.sh:192 · deploy/polkit/50-zerg-x3-agent-restart.rules · deploy/服务声明.tsv:19）；
+#   macOS LaunchAgent 作业 = `com.zerg.agent-<机名>`（deploy/com.zerg.agent-<机名>.plist:9 ·
+#   deploy/服务声明.tsv:27 · core/cmd/zerg/family_agent_ops.go:1460 · core/cmd/zerg/swap_agent.go:91/:130）。
+#   `<机名>` = 本脚本的 NODE_NAME —— 与 `--machine ${NODE_NAME}` 同一枚值（服务名与心跳机名同源）。
+[ -n "$AGENTD_UNIT" ]  || AGENTD_UNIT="${NODE_NAME}-agent"
+[ -n "$AGENTD_LABEL" ] || AGENTD_LABEL="com.zerg.agent-${NODE_NAME}"
 
 # ── 服务前置检查（在动手之前就说清楚，别装完才发现服务起不来）───────────────
 if [ "$NO_SERVICE" != 1 ]; then
@@ -345,6 +357,49 @@ PLIST
     say "   🚀 已安装并启动托管（${CORE_LABEL}）"
   fi
 }
+# darwin 子端：写**用户域** LaunchAgent（与 write_core_plist 同形；✗ 系统域 LaunchDaemon）
+# 作业名 / plist 落点与实况同源：`com.zerg.agent-<机名>` · ~/Library/LaunchAgents/<作业名>.plist
+# （deploy/com.zerg.agent-<机名>.plist · deploy/服务声明.tsv:27 · family_agent_bootstrap.go:263 明文「用户域」）
+write_agent_plist() {
+  local plist="$LAUNCHD_DIR/${AGENTD_LABEL}.plist" dom
+  mkdir -p "$LAUNCHD_DIR"
+  cat > "$plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key><string>${AGENTD_LABEL}</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>${PREFIX}/zerg-agentd</string>
+		<string>--controller</string><string>${CONTROLLER_URL}</string>
+		<string>--machine</string><string>${NODE_NAME}</string>
+	</array>
+	<key>WorkingDirectory</key><string>${TREE}</string>
+	<key>KeepAlive</key><true/>
+	<key>RunAtLoad</key><true/>
+	<key>ThrottleInterval</key><integer>10</integer>
+	<key>StandardOutPath</key><string>/tmp/zerg-agent.log</string>
+	<key>StandardErrorPath</key><string>/tmp/zerg-agent.log</string>
+	<key>EnvironmentVariables</key>
+	<dict><key>PATH</key><string>/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string></dict>
+</dict>
+</plist>
+PLIST
+  if command -v plutil >/dev/null 2>&1; then
+    plutil -lint "$plist" >/dev/null 2>&1 || die "生成的 plist 语法错误：${plist}" 5
+  fi
+  dom="gui/$(id -u)"
+  if "$LAUNCHCTL" print "${dom}/${AGENTD_LABEL}" >/dev/null 2>&1; then
+    "$LAUNCHCTL" kickstart -k "${dom}/${AGENTD_LABEL}" >/dev/null 2>&1 || warn 'kickstart 失败（子端可能仍是旧进程）'
+    say "   🔄 已重写 plist 并重启托管（kickstart -k ${AGENTD_LABEL}）"
+  else
+    "$LAUNCHCTL" bootstrap "$dom" "$plist" >/dev/null 2>&1 \
+      || "$LAUNCHCTL" load -w "$plist" >/dev/null 2>&1 \
+      || warn 'launchctl bootstrap/load 失败——请手工检查'
+    say "   🚀 已安装并启动托管（${AGENTD_LABEL}）"
+  fi
+}
 write_agentd_unit() {
   local unit="$UNIT_DIR/${AGENTD_UNIT}.service"
   mkdir -p "$UNIT_DIR"
@@ -456,6 +511,9 @@ if [ "$DRY" = 1 ]; then
   elif [ "$ROLE" = controller ]; then
     say "   服务     : 写 ${LAUNCHD_DIR}/${CORE_LABEL}.plist（KeepAlive/RunAtLoad/ThrottleInterval）"
     say "              再 bootstrap 或 kickstart -k（已存在则重写并重启）"
+    if [ "$TARGET_OS" = darwin ]; then
+      say "               ＋ ${LAUNCHD_DIR}/${AGENTD_LABEL}.plist（子端 agent 用户域 LaunchAgent）"
+    fi
   else
     say "   服务     : 写 ${UNIT_DIR}/${AGENTD_UNIT}.service（ExecStart=${PREFIX}/zerg-agentd）"
     say "              再 daemon-reload + enable --now（已存在则重写并重启）"
@@ -495,7 +553,12 @@ if [ "$NO_SERVICE" = 1 ]; then
   say '⑤ 服务：跳过（--no-service）'
 else
   say '⑤ 服务注册'
-  if [ "$ROLE" = controller ]; then write_core_plist; else write_agentd_unit; fi
+  if [ "$ROLE" = controller ]; then
+    write_core_plist
+    if [ "$TARGET_OS" = darwin ]; then write_agent_plist; fi
+  else
+    write_agentd_unit
+  fi
 fi
 say ''
 say '⑥ 身份对账（运行进程自报 vs 安装件 vs 代码树）'

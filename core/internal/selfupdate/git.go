@@ -62,10 +62,14 @@ func (g Git) run(network bool, args ...string) (string, error) {
 	cmd.Stderr = &errb
 	if err := cmd.Run(); err != nil {
 		msg := strings.TrimSpace(errb.String())
+		// ★ GAP-20261013-12：**保住退码** —— 用 %w 包住原 err（*exec.ExitError），
+		// ✗ 别用 %s 把它压成字符串：否则 IsAncestor 里 errors.As 永不命中 ⇒ 退出码 1
+		// （确证「不是祖先」）被当成「判不出」⇒ Compare 出不了 StatusDiverged ⇒ 非祖先
+		// （真分叉 / 公开↔私有混态）一律落 fallback 当 behind ⇒ 误降级放行。
 		if msg == "" {
-			msg = err.Error()
+			return strings.TrimSpace(out.String()), fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
 		}
-		return strings.TrimSpace(out.String()), fmt.Errorf("git %s: %s", strings.Join(args, " "), msg)
+		return strings.TrimSpace(out.String()), fmt.Errorf("git %s: %s: %w", strings.Join(args, " "), msg, err)
 	}
 	return strings.TrimSpace(out.String()), nil
 }

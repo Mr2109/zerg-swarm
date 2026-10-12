@@ -1230,6 +1230,11 @@ func (h *Handlers) StatusHandler(w http.ResponseWriter, r *http.Request) {
 	// 「混版不许当健康」。旧字段 `healthy`（子端自报）一个字不动，旧消费者零改动。
 	fh := CountFleetHealth(MasterCodeVersion(), snapshots)
 
+	// 同源判定的基准键（GAP-20261013-09 · 候选 c）：主控自身二进制的**源提交**。
+	// 与版本裁决同一趟算出来，并随响应报出（`master_origin_sha`）—— 「同源」这句判决必须可复核，
+	// 否则消费方只能相信它。未注入 ⇒ 空串 ⇒ 全表 `same_origin=unknown`（fail-closed，见 MasterOriginSHA）。
+	masterOrigin := MasterOriginSHA()
+
 	totalMemAvailable := 0.0
 	totalMemTotal := 0.0
 	totalGPUUsed := 0.0
@@ -1246,20 +1251,22 @@ func (h *Handlers) StatusHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response := map[string]interface{}{
-		"total_machines":         len(snapshots),
-		"healthy_count":          fh.Healthy,
-		"unhealthy_count":        fh.Unhealthy,
-		"version_unknown_count":  fh.VersionUnknown,
-		"mixed_version":          fh.Mixed(),
-		"mixed_machines":         fh.MixedMachines,
-		"master_code_version":    fh.MasterCodeVersion,
+		"total_machines":        len(snapshots),
+		"healthy_count":         fh.Healthy,
+		"unhealthy_count":       fh.Unhealthy,
+		"version_unknown_count": fh.VersionUnknown,
+		"mixed_version":         fh.Mixed(),
+		"mixed_machines":        fh.MixedMachines,
+		"master_code_version":   fh.MasterCodeVersion,
+		// 同源判定的基准（GAP-20261013-09）：每行的 `same_origin` 就是拿它跟该行 `origin_sha` 比的。
+		"master_origin_sha":      masterOrigin,
 		"total_models":           len(models),
 		"available_models":       models,
 		"total_mem_available_gb": totalMemAvailable,
 		"total_mem_total_gb":     totalMemTotal,
 		"total_gpu_used_gb":      totalGPUUsed,
 		"total_active_requests":  totalActive,
-		"machines":               h.projectStatusMachines(AnnotateVersionMismatch(fh.MasterCodeVersion, snapshots)),
+		"machines":               h.projectStatusMachines(AnnotateIdentityVerdicts(fh.MasterCodeVersion, masterOrigin, snapshots)),
 	}
 
 	writeJSON(w, http.StatusOK, response)

@@ -7507,6 +7507,60 @@
   {
    "argv": [
     "gap",
+    "idea",
+    "sweep",
+    "--nosuchflag-zz"
+   ],
+   "command": "gap idea sweep",
+   "id": "gap/idea/sweep#未知旗标",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "argv": [
+    "gap",
+    "idea",
+    "sweep",
+    "--schema",
+    "zerg/v9"
+   ],
+   "command": "gap idea sweep",
+   "id": "gap/idea/sweep#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "argv": [
+    "gap",
+    "idea",
+    "sweep",
+    "--source",
+    "bogus",
+    "--yes"
+   ],
+   "command": "gap idea sweep",
+   "id": "gap/idea/sweep#--source 越界",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "sweep 的 --source 是闭集 {guard} ⇒ 越界 = 用法错 2（✗ 不静默忽略 · 执行前判，不碰任何目标）"
+  },
+  {
+   "argv": [
+    "gap",
+    "idea",
+    "sweep"
+   ],
+   "command": "gap idea sweep",
+   "id": "gap/idea/sweep#缺 --yes（D2）",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "D2 缺 --yes ⇒ fail-closed 2（§九 M3 C2）· 计划件走 stderr（stdout 0 字节）"
+  },
+  {
+   "argv": [
+    "gap",
     "assign",
     "--nosuchflag-zz"
    ],

@@ -4,9 +4,9 @@
 // 病（缺口逐字 · 前提已现读坐实）：门禁里凡「**解析别件结构再数数**」的判据点，读法稍变就出不同的数，
 // 而**没有任何一层**察觉读数与结构不符。步骤表 `add_step` 就是活标本 —— 同一份件被三种读法读成三数：
 //
-//	naive `add_step [a-z]* "`（不锚）           = 257
-//	有锚声明行 `^\s*add_step\s`（**权威**）      = 251
-//	`add_step` 全 token（连注释/函数/夹具一起）  = 313
+//	naive `add_step [a-z]* "`（不锚）           = 259
+//	有锚声明行 `^\s*add_step\s`（**权威**）      = 253
+//	`add_step` 全 token（连注释/函数/夹具一起）  = 315
 //
 // 差 6 = `clear_steps; add_step self "…"` 那 6 行自检夹具（不在行首 ⇒ 有锚读法不收）。三读数并存，
 // 存量判据点里**无一格**对它们做过「抽到 N 条印出来 + N 有下界 + 有负控 + 抽空 fail-closed」四件事。
@@ -52,7 +52,7 @@
 //	③ **本件自指**：本件在 `core/cmd/zerg/` ⇒ 落 GO 扫描面 ⇒ **自排除**（✗ 不把本件自己算进判据点）。
 //	④ **权威读数的真源只此一处**：`cscaCountReadings` 现读 `precommit-gates.sh` 的 `^\s*add_step\s`
 //	   行数（**有锚声明行** = 权威）⇒ 与 naive / 全 token 两对照读数一并印出（读者一眼看出读数是否相符）。
-//	   ★ 三读法**自排除本门自己那一步**（本门不数自己 ⇒ 加本门的前/后三读法同值 · 权威读数稳在 251）。
+//	   ★ 三读法**自排除本门自己那一步**（本门不数自己 ⇒ 加本门的前/后三读法同值 · 权威读数稳在 253）。
 package main
 
 import (
@@ -77,7 +77,7 @@ const (
 	// cscaAuthoritativeBaseline —— 权威读数（有锚声明行）的**冻结下界**（棘轮 · 只许降）。
 	// 本门对自己的权威读数执行属性 ②：现读 < 此值 ⇒ rc=1（结构静默变小必红）。
 	// 取值点 = 本批（门128）**加步前**的现读复算值（有锚声明行读法）。
-	cscaAuthoritativeBaseline = 251
+	cscaAuthoritativeBaseline = 253
 
 	// cscaSelfStepKey —— 本门那一步的键（三读法**自排除**：本门不数自己那一步 ⇒ 加门前/后三读法同值）。
 	cscaSelfStepKey = "check-structured-count-assert"
@@ -355,7 +355,7 @@ func cscaCountReadings(text string) cscaReading {
 			r.naive++
 		}
 		if strings.Contains(ln, "add_step") {
-			r.token += strings.Count(ln, "add_step") // 全 token = **出现次数**（同触发读法 313）
+			r.token += strings.Count(ln, "add_step") // 全 token = **出现次数**（同触发读法 315）
 		}
 	}
 	return r
@@ -597,7 +597,7 @@ func cscaSelfTest(stdout, stderr io.Writer) int {
 	chk(rc3 == cscaRCblock, fmt.Sprintf("负控：扫描面件取不到 ⇒ rc=2（实得 %d）", rc3))
 
 	// 格8：棘轮负控 —— 权威读数 < 冻结下界 ⇒ rc=1（造大量声明行不可行 ⇒ 直接验读数函数 + 下界比较语义）。
-	chk(rd.anchor < cscaAuthoritativeBaseline, "对照：小夹具的权威读数 < 冻结下界 251（棘轮判据按此比较 ⇒ 真仓低于基线必红）")
+	chk(rd.anchor < cscaAuthoritativeBaseline, "对照：小夹具的权威读数 < 冻结下界 253（棘轮判据按此比较 ⇒ 真仓低于基线必红）")
 
 	// 格9：自排除 —— 本件与其回归牙名已声明（真仓扫描面不含它们）。
 	chk(cscaSelfRelName == "check_structured_count_assert.go" &&

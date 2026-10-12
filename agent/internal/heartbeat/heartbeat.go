@@ -173,6 +173,9 @@ func (r *Runner) send() {
 // 字段口径：
 //   - 旧字段语义不变：machine/backend_state/model/mem_*/load/models/uptime/
 //     backend_rss_gb/healthy/error/cpu_pct/gpu_pct/code_version/code_sha。
+//   - origin_sha：本机二进制**源提交**（构建期注入的 `GitOrigin-RevId` · GAP-20261013-09）——
+//     与 code_sha（镜像 tip）分属两套 git 命名空间，本格是主控「同源判定」唯一的可比键；
+//     未注入 ⇒ 空串 = 如实报「判不了」（✗ 不拿 code_sha 顶上冒充）。
 //   - active_requests：真实在飞计数（有来源才出现）。
 //   - gpu_used_gb：真实显存（拿得到才出现）；配套 vram_known/vram_used_gb/vram_total_gb/vram_free_gb。
 //   - resident[]：驻留明细（托管项 managed=true；探测到的未托管项 managed=false）。
@@ -198,6 +201,11 @@ func (r *Runner) buildBody() map[string]interface{} {
 		// L3 自动升级：子端自报代码身份（版本矩阵的数据来源）
 		"code_version": version.Version,
 		"code_sha":     version.Commit,
+		// 同源判定（GAP-20261013-09 · 候选 c）：本机二进制**源提交** —— 构建期注入的
+		// `GitOrigin-RevId` trailer（镜像树）或 HEAD（私有树）。它与 code_sha 分属两套 git
+		// 命名空间（私有提交 ⟷ 镜像 tip），本格是主控拼「同源/混版/判不了」唯一的可比键。
+		// 未注入 ⇒ 空串 = 判不了（✗ 不回落成 code_sha —— 两套命名空间混成一句就是假判决）。
+		"origin_sha": version.Origin,
 	}
 
 	// active_requests：真实在飞请求计数。没有来源就不出现——绝不写死 0（旧行为已修）。

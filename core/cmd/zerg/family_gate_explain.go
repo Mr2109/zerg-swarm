@@ -48,7 +48,14 @@ type gateStepDecl struct {
 //	—— 逐对吃转义，等同 bash 双引号内的解析规则；捕获的是**源文形态**，故 `parseAddSteps`
 //	捕获后按 `\"`→`"`、`\\`→`\` 单遍 unescape（**只认这两个**：bash 双引号里 `\n` 原样保留
 //	两字符，不许一并吃掉 —— 那才是另一处静默改字）。
-var addStepRE = regexp.MustCompile(`add_step\s+(\S+)\s+"([^"]*)"\s+(\S+)\s+"([^"]*)"\s+"((?:[^"\\]|\\.)*)"`)
+//
+// ★ 尾部可选格：`add_step` 的签名自带**一个可选的 `<环境前缀>`**（`precommit-gates.sh` 的
+//
+//	`add_step() {  # add_step <scope> <名> <模式> <工作目录> <命令> [<环境前缀>] }` · 危险档 4 步给
+//	`ZERG_TRUSTED_RUNNER=1`）⇒ 正则尾部**必须**吃下这**一个**可选引号串（且只吃一个）。
+//	不吃 ⇒ 合法 6 格声明的尾巴非空 ⇒ 「匹配没走到行尾」那颗牙把**合法声明**误报成解析不确定。
+//	★ 牙未松：第 7 个及以后的非空白尾（多出来的 token）仍落在匹配之外 ⇒ 照样报（见 parseAddStepsStrict ③）。
+var addStepRE = regexp.MustCompile(`add_step\s+(\S+)\s+"([^"]*)"\s+(\S+)\s+"([^"]*)"\s+"((?:[^"\\]|\\.)*)"(?:\s+"(?:[^"\\]|\\.)*")?`)
 
 // addStepLineRE —— 「行首看起来就是一条 add_step 声明」的**粗筛**（比 addStepRE 松得多）。
 // 用途只有一处：addStepRE 吃不下、而粗筛说「这本该是一条声明」的行 ⇒ **解析不确定**，
@@ -145,6 +152,8 @@ func cmdGateExplain(inv *invocation, stdout, stderr io.Writer) int {
 //	② 粗筛说「这是一条声明」而 addStepRE 吃不下 ⇒ 进「解析不确定」清单，**不许静默跳过**；
 //	③ 吃下了、但匹配**没走到行尾**（尾巴还有非空白字符 —— 说明捕获串与真源不符）⇒ 同样进清单：
 //	   宁可报「解析不确定」，不许拿一条截断的命令串当真源（旧形态在这里是静默的，本批量修的第二处）。
+//	   ★ 行尾判据**先容掉可选的第 `<环境前缀>` 格**（`add_step` 签名的第 6 参 · 见 `addStepRE`）——
+//	   合法 6 格声明的尾巴为空、✗ 不报；那颗牙只咬「**多出来的**非空白尾」（截断 / 多余 token 仍报）。
 func parseAddStepsStrict(src string) ([]gateStepDecl, []gateStepUncertain) {
 	out := []gateStepDecl{}
 	unc := []gateStepUncertain{}

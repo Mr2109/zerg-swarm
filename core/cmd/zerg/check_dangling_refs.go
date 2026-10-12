@@ -868,7 +868,9 @@ func cdrXRepoRefs(line string, st *cdrStats) []cdrRef {
 						j += sz
 					}
 					ref := line[i:j]
-					if cdrLooksLikeXref(ref) {
+					if cdrEllipsisAfter(line, j) {
+						st.refsProseSkipped++
+					} else if cdrLooksLikeXref(ref) {
 						out = append(out, cdrRef{ref, "跨仓直书", ""})
 					} else {
 						st.refsProseSkipped++
@@ -907,6 +909,16 @@ func cdrLooksLikeRef(ref string) bool {
 	return strings.ContainsAny(segs[0], "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
 }
 
+// cdrEllipsisAfter —— 抽取到的引用**紧跟省略号**（U+2026）⇒ 那是「被省略号截断的占位路径」，
+// 本来就不是一条可解析的引用 ⇒ 与「散文误吞」同路处置（认出来 ⇒ 计数不判 · 不静默）。
+func cdrEllipsisAfter(line string, j int) bool {
+	if j >= len(line) {
+		return false
+	}
+	r, _ := utf8.DecodeRuneInString(line[j:])
+	return r == '\u2026'
+}
+
 // ── 抽取 ─────────────────────────────────────────────────────────────────────────────
 func cdrDirectRefs(line string, st *cdrStats) []cdrRef {
 	var out []cdrRef
@@ -925,7 +937,9 @@ func cdrDirectRefs(line string, st *cdrStats) []cdrRef {
 					j += sz
 				}
 				ref := line[i:j]
-				if cdrLooksLikeRef(ref) {
+				if cdrEllipsisAfter(line, j) {
+					st.refsProseSkipped++
+				} else if cdrLooksLikeRef(ref) {
 					out = append(out, cdrRef{ref, "直书", ""})
 				} else {
 					st.refsProseSkipped++
@@ -1620,16 +1634,47 @@ func cdrSelftest(stdout, stderr io.Writer) bool {
 	fmt.Fprintf(stdout, "  %s [棘轮夹具] 超基线⇒超额 %s · 存量≤基线⇒不超额 %s（期望 True / True —— 成对负控）\n",
 		cdrMark(good), cdrPyBool(ovOver), cdrPyBool(!ovIn))
 
-	if cases != 16 {
-		fmt.Fprintf(stdout, "  自检用例数必须为 16，实际 %d（少跑即失效）\n", cases)
+	// ⑰⑱ 省略号截断（`…` · 2026-10-13 · `GAP-20260926-191`）：抽取到的引用**紧跟 U+2026** ⇒
+	// 与「散文误吞」同路（认出来 ⇒ 计数不判 · 不 emit · 不静默）；成对负控 = 同一处不带省略号 ⇒ 照判。
+	fg5 := cdrMkFile(repo, "scripts/gates/g17.py", "# 依据：docs"+"/项目文档/…\n")
+	st17, hits17 := run([]string{fg5}, nil, repo, docs, nil)
+	ell := 0
+	for _, h := range hits17 {
+		if strings.HasPrefix(h.ref, "docs"+"/项目文档/") {
+			ell++
+		}
+	}
+	cases++
+	good = ell == 0 && st17.refsProseSkipped >= 1
+	ok = ok && good
+	fmt.Fprintf(stdout, "  %s [省略号截断夹具] 截断点紧跟 … ⇒ 报出 %d 处 · 散文误吞 %d（期望 0 / ≥1 —— 计数不判 · 不静默）\n",
+		cdrMark(good), ell, st17.refsProseSkipped)
+
+	fg6 := cdrMkFile(repo, "scripts/gates/g18.py", "# 依据：docs"+"/项目文档/不存在x.md\n")
+	_, hits18 := run([]string{fg6}, nil, repo, docs, nil)
+	real := 0
+	for _, h := range hits18 {
+		if h.ref == "docs"+"/项目文档/不存在x.md" {
+			real++
+		}
+	}
+	cases++
+	good = real == 1
+	ok = ok && good
+	fmt.Fprintf(stdout, "  %s [省略号成对夹具] 不带省略号 ⇒ 报出 %d 处（期望 1 —— 成对负控：省略号之外照判）\n",
+		cdrMark(good), real)
+
+	if cases != 18 {
+		fmt.Fprintf(stdout, "  自检用例数必须为 18，实际 %d（少跑即失效）\n", cases)
 		ok = false
 	}
 	verdict := "**失败** ✗"
 	if ok {
 		verdict = "通过 ✓"
 	}
-	fmt.Fprintf(stdout, "  自检：%s（16 格：必红×2 · 豁免×1 · 拼接×1 · 前缀×1 · 无输入×1 · 登记表×1 · 整件豁免×1 ·"+
-		" 前缀越界×1 · 缺语料×1 · 跨仓×1 · GAP悬空×1 · GAP全在账×1 · GAP负控×1 · GAP账缺×1 · 棘轮×1）\n", verdict)
+	fmt.Fprintf(stdout, "  自检：%s（18 格：必红×2 · 豁免×1 · 拼接×1 · 前缀×1 · 无输入×1 · 登记表×1 · 整件豁免×1 ·"+
+		" 前缀越界×1 · 缺语料×1 · 跨仓×1 · GAP悬空×1 · GAP全在账×1 · GAP负控×1 · GAP账缺×1 · 棘轮×1 ·"+
+		" 省略号截断×1 · 省略号成对×1）\n", verdict)
 	return ok
 }
 
@@ -1749,6 +1794,8 @@ var cdrRules = []string{
 	"\n【已覆盖形态】直书 `docs" + "/…`（含反引号/注释/字符串/frontmatter）·",
 	"              `filepath.Join(\"docs\", …)` / `path.Join(…)` 拼接式 · .py 里 `\"docs" + "/\" + x` 前缀形态 ·",
 	"              **跨仓直书** `Zerg-内部文档" + "/<rel>` 与裸 `项目文档" + "/<rel>`（2026-10-05 · GAP-20261005-18）",
+	"\n【省略号截断（2026-10-13 · GAP-20260926-191）】抽取到的引用**紧跟省略号**（U+2026）⇒ 是「被省略号截断的占位路径」，",
+	"             本来就不是一条可解析的引用 ⇒ 与「散文误吞」同路（**认出来 ⇒ 计数不判 · 不静默**：读数行「另滤掉散文误吞 N 处」含它）",
 	"【未覆盖形态（明说 · 不假装全覆盖）】",
 	"  · 纯 URL（`https://…/docs" + "/…`）—— 不是仓内相对引用，本门不判",
 	"  · 变量拼进中段/后缀：`\"docs" + "/\" + lang + \"/x.md\"` —— 只判到前缀目录那一层",

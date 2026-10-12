@@ -23,10 +23,16 @@
 //	   **绝不把「没报」判成混版、也绝不判成一致**。
 //	③ **判决只此一处** —— `StatusHandler` 与任何别的消费方都调本文件的 `CountFleetHealth`，
 //	   不许各自再写一份 `snap.Healthy` 的加减（两份实现就会漂，漂的形态就是本条这次的事故）。
+//	④ **同源判定另立一格**（GAP-20261013-09 · 候选 c）—— `same_origin`：`same`/`mixed`/`unknown`。
+//	   它比的**不是**版本号、也**不是** `code_sha`，而是**源提交**（`origin_sha` ＝ 镜像 tip 的
+//	   `GitOrigin-RevId` trailer ＝ 私有图源提交）：主控那行报私有 sha、节点那行报镜像 tip，
+//	   两套 git 命名空间不同名 ⇒ 矩阵里「全绿也可能是混版」。✗ 判不了（缺映射/trailer 缺/没报）
+//	   一律 `unknown` —— **缺 ≠ 一致**，绝不折叠成 `same`。
 package api
 
 import (
 	"sort"
+	"strings"
 
 	"github.com/Mr2109/zerg-swarm/core/internal/store"
 	"github.com/Mr2109/zerg-swarm/core/internal/version"
@@ -37,6 +43,21 @@ const (
 	VersionSame    = "same"    // 与主控同版本号
 	VersionMixed   = "mixed"   // 版本号与主控不同 ⇒ 混版（按设计稿 = 不健康）
 	VersionUnknown = "unknown" // 子端没自报版本号 ⇒ 不判（缺 = 未知）
+)
+
+// 「同源判定」的三个取值（闭集 · 机器可读 · GAP-20261013-09 · 候选 c）。
+//
+// 病灶：主控那行报**私有提交 sha**、节点那行报**镜像 tip sha** —— 两个 git 命名空间里的字符串，
+// 矩阵里没有可比键 ⇒ 三台其实同源也看不出（「全绿也可能是混版」）。
+// 治法：把各行的身份折成**规范键**（`origin_sha` ＝ 镜像 tip 的 `GitOrigin-RevId` trailer），
+// 逐行与主控基准比，把判决**印在行上**。
+//
+// ★ 三态里 **`unknown` 必须保留（缺 ≠ 一致）**：映射缺 / trailer 缺 / 该机没带该格 ⇒ 一律 `unknown`，
+// ✗ 绝不折叠成 `same` —— 那正是「防假绿」这一条要挡的形态。
+const (
+	OriginSame    = "same"    // 与主控同源（同一笔源提交）
+	OriginMixed   = "mixed"   // 源提交与主控不同 ⇒ 真混版
+	OriginUnknown = "unknown" // 判不了（主控或该机没带可比键）—— 缺 ≠ 一致
 )
 
 // MasterCodeVersion 返回主控自身的版本号（唯一真源：`core/internal/version`）。
@@ -59,6 +80,41 @@ func MachineVersionVerdict(masterVersion, machineVersion string) string {
 	default:
 		return VersionMixed
 	}
+}
+
+// MasterOriginSHA 返回主控自身的**源提交**（同源判定的基准键 · GAP-20261013-09）。
+//
+// 真源与 `MasterCodeVersion` 同一条：只有 `core/internal/version.Origin`（构建期 -ldflags 注入）。
+// ★ 未注入 ⇒ 空串 = **判不了** ⇒ 全表 `same_origin` 一律 `unknown`（fail-closed）：✗ 绝不在本函数
+// 里回落成 `version.Commit` —— 主控 `Commit` 是私有提交、节点 `Commit` 是镜像 tip，拿它当基准会把
+// 「同源」判成 `mixed`（假红）。宁可报判不了，也不给一句看着像结论的假判决。
+func MasterOriginSHA() string {
+	return version.Origin
+}
+
+// MachineOriginVerdict 单台机器的**同源裁决**（纯函数 · 无副作用 · GAP-20261013-09）。
+//
+//	· 主控基准不可用（空串 / "unknown"）⇒ `unknown`（**判不了**：没有基准就没有判决）
+//	· 该机不可用（空串 / "unknown" ＝ 没带源提交 / trailer 缺）⇒ `unknown`（缺 ≠ 一致）
+//	· 两者逐字相同 ⇒ `same`
+//	· 其余 ⇒ `mixed`（真混版）
+//
+// ★ 顺序不可颠倒：**先判两侧缺、再判等** —— 否则两个空串会「相等」⇒ 把「都没报」判成「同源」，
+// 那正是「缺 ≠ 一致」要挡的假绿。`unknown` 这个字面量也当缺（`Commit` 未注入时的旧哨兵同形）。
+func MachineOriginVerdict(masterOrigin, machineOrigin string) string {
+	if !originUsable(masterOrigin) || !originUsable(machineOrigin) {
+		return OriginUnknown
+	}
+	if machineOrigin == masterOrigin {
+		return OriginSame
+	}
+	return OriginMixed
+}
+
+// originUsable 判一个源提交值是否**可用于比对**：空串与 "unknown"（未注入的旧哨兵）都不算。
+func originUsable(origin string) bool {
+	o := strings.TrimSpace(origin)
+	return o != "" && o != "unknown"
 }
 
 // FleetHealth 是一次计数的全部结果（**计数面唯一出口**）。
@@ -100,11 +156,18 @@ func CountFleetHealth(masterVersion string, snaps map[string]*store.FleetSnapsho
 	return res
 }
 
-// AnnotateVersionMismatch 把每台的版本裁决写进返回给调用方的**副本**上（`version_mismatch` 字段）。
+// AnnotateIdentityVerdicts 把每台的两个身份裁决**一次拷贝**写进返回给调用方的**副本**上
+// （`version_mismatch` 版本裁决 ＋ `same_origin` 同源裁决三态 · GAP-20261013-09）。
 //
 // 为什么走副本：`store.GetAllSnapshots` 返回的是**共享指针**（同一台机器被两个请求同时读），
 // 就地改字段 = 数据竞争。副本只有 map 与结构体两层的浅拷贝，字段少、代价可忽略。
-func AnnotateVersionMismatch(masterVersion string, snaps map[string]*store.FleetSnapshot) map[string]*store.FleetSnapshot {
+//
+// 为什么两个裁决走**同一趟拷贝**：分两趟会让后一趟把前一趟写的字段抹掉（同一条响应里只剩一个
+// 判决）；本仓「判决只此一处」的口径下，拷贝这件事也只该有一处。
+//
+// ★ 同名旧函数 `AnnotateVersionMismatch` 已并入本函数（改名 ＋ 多一个入参）：全仓调用点只有
+// `handlers.go` 的 `StatusHandler` 一处（现读逐条核过），✗ 不留两份拷贝实现。
+func AnnotateIdentityVerdicts(masterVersion, masterOrigin string, snaps map[string]*store.FleetSnapshot) map[string]*store.FleetSnapshot {
 	out := make(map[string]*store.FleetSnapshot, len(snaps))
 	for name, snap := range snaps {
 		if snap == nil {
@@ -112,6 +175,8 @@ func AnnotateVersionMismatch(masterVersion string, snaps map[string]*store.Fleet
 		}
 		cp := *snap
 		cp.VersionMismatch = MachineVersionVerdict(masterVersion, cp.CodeVersion) == VersionMixed
+		// 同源裁决：比 `OriginSHA`（规范键），✗ 不比 `CodeSHA`（两套 git 命名空间，比不出结论）。
+		cp.SameOrigin = MachineOriginVerdict(masterOrigin, cp.OriginSHA)
 		out[name] = &cp
 	}
 	return out

@@ -442,6 +442,103 @@ func TestInstalledUpdateVerdict_NonReportingComponentSkipped(t *testing.T) {
 	}
 }
 
+// ── GAP-20261013-12：降级守卫 Go 侧（run() 丢退码 ⇒ IsAncestor 判不出非祖先 ⇒ StatusDiverged 死代码）──
+
+// divergedRepos —— 造一对「真分叉」的 本地检出 / 裸远端：共同祖先 c1；本地在 c1 上加一笔 c2；
+// 远端侧另起一棵树在 c1 上加一笔 c3 并推回。⇒ 各有独占提交、互不为祖先
+// （＝公开↔私有混态在 sha 图上的形态；真仓实测：main tip 7542de85 与本仓 HEAD 两向 --is-ancestor 皆 rc=1）。
+func divergedRepos(t *testing.T) (local, remote string) {
+	t.Helper()
+	local, remote = seedAndClone(t, 1) // 共同祖先 c1；本地 HEAD = 远端 tip = c1
+	commitFile(t, local, "local.txt", "L", "local-only")
+	other := filepath.Join(t.TempDir(), "other")
+	gitRun(t, filepath.Dir(other), "clone", "-q", "-b", "main", remote, other)
+	commitFile(t, other, "remote.txt", "R", "remote-only")
+	gitRun(t, other, "push", "-q", "origin", "HEAD:refs/heads/main")
+	return local, remote
+}
+
+// 态①「确证非祖先 ⇒ 可判」：真分叉下两支互不为祖先 ⇒ IsAncestor 两向都必须回 (false,true)
+// （确证），✗ 不是 (false,false)（判不出）—— 改前 run() 丢退码 ⇒ errors.As 永不中 ⇒ 恒 (false,false)。
+func TestIsAncestor_ConclusiveNonAncestor(t *testing.T) {
+	local, remote := divergedRepos(t)
+	g := Git{Dir: local}
+	remoteSHA, err := g.FetchTarget(remote, "main")
+	if err != nil {
+		t.Fatalf("fetch 失败：%v", err)
+	}
+	headSHA, err := g.HeadSHA()
+	if err != nil {
+		t.Fatalf("读 HEAD 失败：%v", err)
+	}
+	if is, ok := g.IsAncestor(remoteSHA, headSHA); !ok || is {
+		t.Fatalf("真分叉：is-ancestor(远端, 本地) 必须 (false,true)（确证非祖先）；got (%v,%v)", is, ok)
+	}
+	if is, ok := g.IsAncestor(headSHA, remoteSHA); !ok || is {
+		t.Fatalf("真分叉：is-ancestor(本地, 远端) 必须 (false,true)；got (%v,%v)", is, ok)
+	}
+}
+
+// 态②「祖先 ⇒ 仍正常」：本地是远端祖先（少一笔）⇒ IsAncestor (true,true)，Compare 仍判 StatusBehind。
+func TestIsAncestor_TrueAncestor(t *testing.T) {
+	local, remote := seedAndClone(t, 2)
+	g := Git{Dir: local}
+	gitRun(t, local, "reset", "-q", "--hard", "HEAD~1") // 本地退回一笔 ⇒ 本地成为远端祖先
+	headSHA, _ := g.HeadSHA()
+	remoteSHA, err := g.FetchTarget(remote, "main")
+	if err != nil {
+		t.Fatalf("fetch 失败：%v", err)
+	}
+	if is, ok := g.IsAncestor(headSHA, remoteSHA); !ok || !is {
+		t.Fatalf("本地是远端祖先 ⇒ 必须 (true,true)；got (%v,%v)", is, ok)
+	}
+	if r := Compare(headSHA, remoteSHA, g.IsAncestor, 0); r.Status != StatusBehind || !r.Updatable() {
+		t.Fatalf("本地是远端祖先 ⇒ 必须仍判 StatusBehind（正常升级）；got %+v", r)
+	}
+}
+
+// 态③「真分叉 ⇒ 非 behind」：真分叉下 Compare 必须判 StatusDiverged —— ✗ 不是 behind
+// （改前落 fallback 当 behind ⇒ Run() 的 switch 无 case 落空 ⇒ 误降级放行）。
+func TestCompare_RealDivergeIsNotBehind(t *testing.T) {
+	local, remote := divergedRepos(t)
+	g := Git{Dir: local}
+	remoteSHA, err := g.FetchTarget(remote, "main")
+	if err != nil {
+		t.Fatalf("fetch 失败：%v", err)
+	}
+	headSHA, _ := g.HeadSHA()
+	r := Compare(headSHA, remoteSHA, g.IsAncestor, 0)
+	if r.Status != StatusDiverged {
+		t.Fatalf("真分叉（互不为祖先）⇒ 必须 StatusDiverged，✗ 不是 %s；got %+v", StatusBehind, r)
+	}
+}
+
+// 端到端：真分叉下 Run() 必须**拦下**（rc=3 且不构建换装），并说清「两边历史无共同祖先」。
+func TestRun_DivergedRefused(t *testing.T) {
+	local, remote := divergedRepos(t)
+	var out, errb strings.Builder
+	o := Options{
+		RepoDir: local, Remote: remote, Ref: "main",
+		Prefix:    t.TempDir(),
+		Kernel:    filepath.Join(t.TempDir(), "no-such-kernel.sh"),
+		StateDir:  t.TempDir(),
+		Receipts:  t.TempDir(),
+		FleetYAML: filepath.Join(t.TempDir(), "fleet.yaml"),
+		Role:      RoleController,
+		Stdout:    &out, Stderr: &errb,
+	}
+	if rc := Run(o); rc != ExitRefused {
+		t.Fatalf("真分叉必须拦下（rc=%d，且不构建换装）；got rc=%d\nstdout=%s\nstderr=%s",
+			ExitRefused, rc, out.String(), errb.String())
+	}
+	if !strings.Contains(errb.String(), "无共同祖先") {
+		t.Fatalf("拦下时应说清「两边历史无共同祖先」；stderr=%q", errb.String())
+	}
+	if strings.Contains(out.String(), "目标：") {
+		t.Fatalf("拦下后不得再打「🏷 目标」进入构建；stdout=%q", out.String())
+	}
+}
+
 func TestCheck_MirrorTipMapsBackToDescendantIsBehind(t *testing.T) {
 	priv := t.TempDir()
 	gitRun(t, priv, "init", "-q", "-b", "main")

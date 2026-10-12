@@ -42,9 +42,11 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"regexp"
 	"sort"
 	"strings"
@@ -130,8 +132,14 @@ func cpmdCovered(s, e int, ruleSpans [][2]int) bool {
 
 // ── 出树面（接既有 Go 半 `cptp*` 件族 · ✗ 不自创第二实现）────────────────────────────
 
-// cpmdEntryHits —— 排除表条目是否命中（镜像器 `_entry_hits_anything` 同构：盘上存在 或 索引里有同件/子件）。
-func cpmdEntryHits(entry, root string, tracked map[string]bool) bool {
+// cpmdEntryHits —— 排除表条目是否命中（镜像器 `_entry_hits_anything` 同构：盘上存在 · 索引里有同件/子件 ·
+// **或祖先历史里出现过**）。
+//
+// ★ C19（`GAP-20261013-07`）：原只查「工作树 ＋ HEAD 索引」⇒ 结构性把「历史向保险行」（曾存在、今不在盘、
+// 也不在 HEAD 的守卫行）误报成「空指」。本笔并入**祖先历史面**（`cpmdHistoricPaths` · 只读
+// `git rev-list --all --objects`）。✗ 不放宽「真空指」判定：**三面**（工作树 / HEAD 索引 / 祖先历史）
+// 全无才算空指 —— 路径写残那类（历史里也没有）照旧判空指。
+func cpmdEntryHits(entry, root string, tracked, hist, histDirs map[string]bool) bool {
 	if cptpExists(cptpPyJoin(root, entry)) {
 		return true
 	}
@@ -142,7 +150,42 @@ func cpmdEntryHits(entry, root string, tracked map[string]bool) bool {
 			return true
 		}
 	}
+	if hist[e] || histDirs[e] {
+		return true
+	}
 	return false
+}
+
+// cpmdHistoricPaths —— 祖先历史面（只读）：`git -C repo rev-list --all --objects` ⇒ `(路径集, 目录集)`。
+// 目录集 = 每条历史路径的**全部祖先目录**（含中间层）⇒ 目录级条目也能 O(1) 命中。
+//
+// ★ 取不到历史（无 HEAD / git 失败 / 空仓）⇒ 返回**空集**：退化到本笔之前的「工作树 ＋ 索引」两面口径
+// ＝**更严**的一侧（把「读不到历史」当「历史里有」会造假绿 ⇒ ✗）。本面只喂「空指」计数，不进命中面。
+func cpmdHistoricPaths(repo string) (map[string]bool, map[string]bool) {
+	paths, dirs := map[string]bool{}, map[string]bool{}
+	cmd := exec.Command("git", "-C", repo, "-c", "core.quotepath=false", "rev-list", "--all", "--objects")
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = io.Discard
+	if err := cmd.Run(); err != nil {
+		return paths, dirs
+	}
+	for _, line := range strings.Split(out.String(), "\n") {
+		i := strings.IndexByte(line, ' ')
+		if i < 0 {
+			continue
+		}
+		p := line[i+1:]
+		if p == "" {
+			continue
+		}
+		paths[p] = true
+		parts := strings.Split(p, "/")
+		for k := 1; k < len(parts); k++ {
+			dirs[strings.Join(parts[:k], "/")] = true
+		}
+	}
+	return paths, dirs
 }
 
 // cpmdComputeFace —— 真实出树面（private workspace 里会出树的件 · 仓相对路径排序）。
@@ -200,10 +243,12 @@ func cpmdComputeFace(root string) ([]string, int, int, int, string) {
 		face = append(face, rel)
 	}
 	sort.Strings(face)
-	// 排除表空指（镜像器对账面口径：盘上无此件、索引里也无同件/子件）—— 只报数，不进命中。
+	// 排除表空指（镜像器对账面口径：盘上无此件、索引里也无同件/子件、**祖先历史里也没有**）——
+	// 只报数，不进命中。★ C19（`GAP-20261013-07`）：判定并入祖先历史面（只读 `rev-list --all --objects`）。
+	hist, histDirs := cpmdHistoricPaths(root)
 	empty := 0
 	for _, e := range excludes {
-		if !cpmdEntryHits(e, root, tracked) {
+		if !cpmdEntryHits(e, root, tracked, hist, histDirs) {
 			empty++
 		}
 	}

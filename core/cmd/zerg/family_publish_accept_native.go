@@ -56,14 +56,14 @@ import (
 
 // paccGatesTotalFrozen —— 验-5② 的 `gates_total` **冻结初值**（棘轮式：≠ 此值 ⇒ 红）。
 //
-// ★ 冻结值取值点 = 本单现跑 `bash scripts/gates/precommit-gates.sh --list --json` 的顶层格（211）。
+// ★ 冻结值取值点 = 本单现跑 `bash scripts/gates/precommit-gates.sh --list --json` 的顶层格（213）。 ★ 2026-10-13 现读校准：`GAP-20261013-11`（本机步取源牙）＋ `check-agentd-unit-default` 两步**同批挂门** ⇒ 步数 211 → 213（两路各 +1 · 现读 `--list` 逐字 213）同批重冻。
 // ★★ 本值**只许按拍-C 现跑校准**（挂门使步数 +1 ⇒ 必须**同批重冻** —— 照 `newcmd-paths-baseline.json`
 // 的「冻结值 + 同批重冻」体例 · ✗ 不用 down-only 棘轮：挂门是**有意 +1**，不是只降）。
 // ★ 落点说明（照实报）：设计稿 §3.4 主张落 `scripts/gates/publish-accept-baseline.json`，但本单
 // **另一路〔第94〕正在改 `scripts/gates/**`** ⇒ 目录冲突 ⇒ 改落本件 **Go 常量**（照 `cscaAuthoritativeBaseline`
 // 先例 · `check_structured_count_assert.go:67-70`）；「迁回 `scripts/gates/publish-accept-baseline.json`」
 // **列为收口随动**（另一路入场后再迁移）。
-const paccGatesTotalFrozen = 211
+const paccGatesTotalFrozen = 213
 
 // paccRCBlocked —— 编排件「判不了 / 缺件」档的**聚合退码**（fail-closed · 与 `exitUsage` 同值）。
 const paccRCBlocked = 2

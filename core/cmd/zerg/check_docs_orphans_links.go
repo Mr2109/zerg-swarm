@@ -289,6 +289,14 @@ func coanIsExternal(target string) string {
 	return ""
 }
 
+// coanEllipsisTgt —— 遮蔽（抽取前置一步 · 不是判据）：目标里带省略号（`…` / `...`）
+// ⇒ 是**被省略号截断的占位路径**，本来就不是一条可解析的链接（与围栏块/行内码同属遮蔽面）
+// ⇒ 不进任何一格。口径照 `check-doc-freshness` 的「省略号目标（不判）」一类。
+func coanEllipsisTgt(target string) bool {
+	t := coanPyStrip(target)
+	return strings.Contains(t, "\u2026") || strings.Contains(t, "...")
+}
+
 // ── 遮蔽（不是判据：挡的是「本来就不是链接的文本」）─────────────────────────────────────
 func coanBlank(line string) string {
 	return strings.Repeat(" ", utf8.RuneCountInString(line))
@@ -573,7 +581,7 @@ func coanLocalBrokenDetail(root string) (int, bool, []coanHit, []coanHit, []stri
 		for _, lk := range coanLinksOf(*text) {
 			lineno := lk[0].(int)
 			rawtgt := lk[1].(string)
-			if coanIsExternal(rawtgt) != "" {
+			if coanIsExternal(rawtgt) != "" || coanEllipsisTgt(rawtgt) {
 				continue
 			}
 			tgt := coanRlink(rawtgt)
@@ -651,7 +659,7 @@ func coanOrphans(tree string) (int, bool, []coanHit, string) {
 		}
 		for _, lk := range coanLinksOf(string(b)) {
 			raw := lk[1].(string)
-			if coanIsExternal(raw) != "" {
+			if coanIsExternal(raw) != "" || coanEllipsisTgt(raw) {
 				continue
 			}
 			tgt := coanRlink(raw)
@@ -1129,6 +1137,27 @@ func coanSelfTest(out io.Writer) bool {
 	n12e, _, _, _, _, _ := coanLocalBrokenDetail(t12e)
 	caseFn("⑲ 空树（成对）：有 .md 且真有断链 => 照报（件数 1）", "1", strconv.Itoa(n12e))
 
+	// ⑳㉑ 遮蔽：省略号占位目标（`…` / `...` · 2026-10-13 · `GAP-20260926-191`）
+	t13 := filepath.Join(tmp, "t13")
+	_ = os.MkdirAll(t13, 0o755)
+	write(filepath.Join(t13, "a.md"), "# a\n\n见 [目录](docs/项目文档/…) 与 [盘](../../…) 两处\n")
+	n13a, ok13a, _, _, _, _ := coanLocalBrokenDetail(t13)
+	g13a := "None"
+	if ok13a {
+		g13a = strconv.Itoa(n13a)
+	}
+	caseFn("⑳ 遮蔽·省略号占位目标（`…` / `...`）⇒ **不进任何一格**（被截断的占位路径 · 不是链接）", "0", g13a)
+	write(filepath.Join(t13, "a.md"), "# a\n\n见 [目录](docs/项目文档/…) 与 [真坏](gone.md)\n")
+	n13, ok13, h13, _, _, _ := coanLocalBrokenDetail(t13)
+	if !ok13 {
+		n13 = -1
+	}
+	raws13 := []string{}
+	for _, h := range h13 {
+		raws13 = append(raws13, h.Raw)
+	}
+	caseFn("㉑ 遮蔽（成对）：省略号之外的真断链**照报**（件数 1 · 只报真断链那处）",
+		coanPyReprTupleIntStrList(1, []string{"gone.md"}), coanPyReprTupleIntStrList(n13, raws13))
 	fmt.Fprintf(out, "  自检 %d 格 · 失败 %d 格\n", total, failed)
 	return failed == 0
 }
@@ -1159,6 +1188,8 @@ const coanListRules = "判据（两格 · 只报不拦）\n" +
 	"  · **围栏代码块**（` ``` ` / `~~~` 起止）**整块** + **行内码 span**（反引号成对 · 支持多反引号定界）\n" +
 	"    ⇒ 抽取前换成**等长空白**（保行号/列偏移）⇒ 块内的 `[字](目标)` **不进**\n" +
 	"    （那两处是**被引用的文本**：别仓坏链原话 / 链接语法示例 / 修法脚本里的字符串字面量）\n" +
+	"  · **省略号占位目标**（目标里带 `…` / `...` ⇒ **被省略号截断的占位路径** · 与围栏块/行内码同属「本来就不是链接的文本」）\n" +
+	"    ⇒ 抽取前置遮蔽 · **不进任何一格** · 成对负控见自检 ⑳㉑（本仓现读：主仓 0 处 · 第二棵树 3 处 / 2 件 ⇒ 该格 6 件 → 4 件）\n" +
 	"  · 遮蔽**之外**的同一段坏文本照旧判 —— 成对负控钉住：**块内不报 ∧ 块外必报**（本仓现读：19 处 = 围栏 8 + 行内码 11，全假红）\n" +
 	"  · 口径与 `check-zh-en.py` 的 `strip_noncode` 同族（先剥引用/代码，再判正文）—— **复用已有管线**、不加新机制\n" +
 	"\n" +

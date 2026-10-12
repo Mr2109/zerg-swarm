@@ -46,3 +46,51 @@ func TestReceiveHeartbeatKeepsIdentity(t *testing.T) {
 		t.Fatalf("身份未随心跳更新: version=%q sha=%q", got.CodeVersion, got.CodeSHA)
 	}
 }
+
+// 同源判定（GAP-20261013-09 · 候选 c）：心跳带上**源提交**，主控快照必须记住它；
+// ★ 空串（该机没带）必须**原样为空** —— ✗ 不许拿 code_sha 顶上冒充源提交（两套 git 命名空间）。
+func TestHeartbeatOriginRoundTrip(t *testing.T) {
+	raw := []byte(`{"machine":"edge-node","code_sha":"ca565e92","origin_sha":"3b04f6ab"}`)
+	var req HeartbeatRequest
+	if err := json.Unmarshal(raw, &req); err != nil {
+		t.Fatalf("解析失败: %v", err)
+	}
+	if req.OriginSHA != "3b04f6ab" {
+		t.Fatalf("origin_sha 未解析: %q", req.OriginSHA)
+	}
+	out, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("序列化失败: %v", err)
+	}
+	var back map[string]any
+	if err := json.Unmarshal(out, &back); err != nil {
+		t.Fatalf("回读失败: %v", err)
+	}
+	if back["origin_sha"] != "3b04f6ab" {
+		t.Fatalf("JSON 键名不符（线上契约）: %v", back)
+	}
+	if back["code_sha"] != "ca565e92" {
+		t.Fatalf("code_sha 必须与 origin_sha 各归各: %v", back)
+	}
+}
+
+// 快照侧：带上就记住（且不顶替 code_sha）；下一次**不带** ⇒ 必须回到空串（判不了），✗ 不残留旧值。
+func TestReceiveHeartbeatKeepsOrigin(t *testing.T) {
+	s := NewStore()
+	s.ReceiveHeartbeat(HeartbeatRequest{Machine: "edge-node", Healthy: true, CodeVersion: "2.5.15",
+		CodeSHA: "ca565e92", OriginSHA: "3b04f6ab"})
+	snap := s.GetSnapshot("edge-node")
+	if snap == nil {
+		t.Fatal("快照未创建")
+	}
+	if snap.OriginSHA != "3b04f6ab" {
+		t.Fatalf("源提交未落库: %q", snap.OriginSHA)
+	}
+	if snap.CodeSHA != "ca565e92" {
+		t.Fatalf("origin_sha 不得顶替 code_sha（两套命名空间各归各）: %q", snap.CodeSHA)
+	}
+	s.ReceiveHeartbeat(HeartbeatRequest{Machine: "edge-node", Healthy: true, CodeVersion: "2.6.0"})
+	if got := s.GetSnapshot("edge-node").OriginSHA; got != "" {
+		t.Fatalf("没带源提交时必须如实留空（缺 ≠ 一致），实得 %q", got)
+	}
+}

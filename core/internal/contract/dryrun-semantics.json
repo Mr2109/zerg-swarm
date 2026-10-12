@@ -1273,6 +1273,13 @@
    "语义": "dryrun.v1",
    "零副作用判据": "本件不实现干跑档：取不到时不改退码（照实打印「取不到」并 `return 0` · 无结论 ≠ 红）· 与 `--dry-run` 计划件同口径",
    "备注": "登记依据 = 门⑩ `R1 未登记件`：2026-10-12 本版加 `publish verify` 的 `mirror_origin` 只读格时同批登记。"
+  },
+  {
+   "file": "core/cmd/zerg/cli_gap_sweep_test.go",
+   "类": "命令面测试件（`gap idea sweep --source guard` 回收面三态的**消费者 / 对拍件**：① 有拦截事件 ⇒ 能回收候选 + 再跑幂等 ② 无事件 ⇒ rc=1 零命中、不建池件 ③ 非法 `--source` ⇒ rc=2 点名闭集；本件 `--dry-run` 那一档断言零副作用） —— 测试面，非干跑语义站点（本件只把 `--dry-run` 原样交给 CLI 并断言，自身一行干跑逻辑都没有）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "本件是**消费者 / 对拍件**：现跑把 `gap idea sweep --source guard --dry-run` 当**数据**调用，判「干跑那一档 rc=0 且零副作用」（跑前跑后池件 `zerg-cli-gap-candidates.jsonl` 与守卫事件件字节逐字比）。它自己不写真件：用例跑在 `t.TempDir()`（`ZERG_STATE_DIR`）的合成状态目录上；不落盘 / 不删 / 不推 / 不造目录 / 不改 git 状态。",
+   "备注": "登记依据 = 门⑩ `R1 未登记件`（现跑命中即红）。DEV-2704 新增 `gap idea sweep`（缺口 `GAP-20260928-174`）带出本测试件 ⇒ 命中行带 `--dry-run` 字面进扫描面。同 `cli_gap_state_test.go` / `cli_gap_test.go` / `cli_route_test.go` 的「判据件 / 消费者」处置 —— 它不声明语义，只是**判**那一档（回收面三态）。"
   }
 
  ]

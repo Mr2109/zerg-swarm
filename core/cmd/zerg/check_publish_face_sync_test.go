@@ -99,15 +99,61 @@ func TestCpfsEvaluate_CleanIsGreen(t *testing.T) {
 	}
 }
 
-// ── 入口面：自检 18 条必须全过（自回收 delta=0 由 os.RemoveAll 的 defer 保）──────────
+// ── 入口面：自检 20 条必须全过（自回收 delta=0 由 os.RemoveAll 的 defer 保）──────────
 func TestCpfsSelfTest_AllPass(t *testing.T) {
 	var out bytes.Buffer
 	rc := cpfsSelfTest(&out)
 	if rc != 0 {
 		t.Fatalf("自检 rc = %d，期望 0\n%s", rc, out.String())
 	}
-	if !strings.Contains(out.String(), "自检：18 过 / 0 红（18 条用例）") {
+	if !strings.Contains(out.String(), "自检：20 过 / 0 红（20 条用例）") {
 		t.Errorf("自检汇总行不符：\n%s", out.String())
+	}
+}
+
+// ── ★ C20（GAP-20261013-08）双向判据的反向腿：`public=yes` 的件写进 excludes ⇒ 判据⑨ 必须红（rc=1）──
+// 改前：判据① 单向（镜像器丢弃 ⊆ 旧器排除）+ 判据⑥ 只扫 `public=no` 行 ⇒ **三道门全绿**而镜像器会真剔（假绿）。
+func TestCpfsEvaluate_PublicYesInExcludesIsRed(t *testing.T) {
+	root := t.TempDir()
+	cpfsMakeFixture(root, cpfsFx{
+		name: "rev-public-yes", wl: []string{"scripts/", "wall/"},
+		priv: []string{"scripts/mech.py"}, excl: []string{"scripts/mech.py", "scripts/keep.py"},
+		drop: []string{"scripts/mech.py"}, want: 1,
+	})
+	rc, lines := cpfsEvaluate(root, cpfsPathsFor(root))
+	joined := strings.Join(lines, "\n")
+	if rc != 1 {
+		t.Fatalf("`public=yes` 落进 excludes：rc = %d，期望 1（判据⑨ 反向腿无牙）\n%s", rc, joined)
+	}
+	if !strings.Contains(joined, "判据⑨ 排除面 ∩ 应公开面 = 1 条") {
+		t.Errorf("判据⑨ 未点名命中数：\n%s", joined)
+	}
+	// 「点出行与件」两样都要有：件名（左）＋ 命中它的排除行所属表与条目（右）。
+	if !strings.Contains(joined, "← 排除行（EXCLUDES）：scripts/keep.py") ||
+		!strings.Contains(joined, "scripts/keep.py  ") {
+		t.Errorf("判据⑨ 未同时点出件与行：\n%s", joined)
+	}
+}
+
+// 正控（判据⑨ 的反面）：**同一张排除表**、只把该件的标记表改 `no` ⇒ 判据⑨ 不得红（rc=0）。
+// 这一格证明判据键在「标记表 public=yes」，✗ 不是「凡出现在 excludes 即红」（否则会误伤合法排除）。
+func TestCpfsEvaluate_SameExcludesMarkedNoIsGreen(t *testing.T) {
+	root := t.TempDir()
+	cpfsMakeFixture(root, cpfsFx{
+		name: "rev-marked-no", wl: []string{"scripts/", "wall/"},
+		priv: []string{"scripts/mech.py"}, excl: []string{"scripts/mech.py", "scripts/keep.py"},
+		drop: []string{"scripts/mech.py"}, want: 0,
+		marksText: "文件	public	理由\n" +
+			"scripts/mech.py	no	夹具：B 类（合成 · 判据⑥ 的被判对象）\n" +
+			"scripts/keep.py	no	夹具：同一排除表 · 只改标 no ⇒ 判据⑨ 不得红\n",
+	})
+	rc, lines := cpfsEvaluate(root, cpfsPathsFor(root))
+	joined := strings.Join(lines, "\n")
+	if rc != 0 {
+		t.Fatalf("同一排除表 · 标记表说 no：rc = %d，期望 0（判据⑨ 误伤合法排除）\n%s", rc, joined)
+	}
+	if !strings.Contains(joined, "✅ 判据⑨ 排除面 ∩ 应公开面：0 条") {
+		t.Errorf("判据⑨ 正控行不符：\n%s", joined)
 	}
 }
 

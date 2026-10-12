@@ -34,6 +34,9 @@ type HeartbeatRequest struct {
 	// 代码身份（自动升级 L3）：子端自报版本+提交——"混版机群=不健康"必须看得见（设计稿 §3）
 	CodeVersion string `json:"code_version"` // 子端版本号（如 2.5.9）
 	CodeSHA     string `json:"code_sha"`     // 子端二进制提交（-ldflags 注入）
+	// OriginSHA —— 子端自报的**源提交**（GAP-20261013-09 · 候选 c）：与 CodeSHA 分属两套 git
+	// 命名空间（镜像 tip ⟷ 私有提交），本格才是「同源判定」的可比键。空串 = 该子端没带 ⇒ 判不了。
+	OriginSHA string `json:"origin_sha"`
 
 	// ── 资源账本新增（《设计-资源管理器》§3.1/§3.4；全部可选，缺省=该机器未提供，旧读者忽略）──
 	VramKnown   bool    `json:"vram_known"`              // 子端能否拿到真实显存；false 时 gpu_used_gb 视为未知
@@ -85,9 +88,21 @@ type FleetSnapshot struct {
 	// StatusHandler 在**响应副本**上写，不改仓里存的那份（共享指针就地改 = 数据竞争）。
 	// 不带 omitempty：false 是**有意义的值**（同 vram_known 那条既有口径——被吞掉就分不清
 	// 「同版」与「没判」）。
-	VersionMismatch bool      `json:"version_mismatch"`
-	Error           *string   `json:"error,omitempty"`
-	LastSeen        time.Time `json:"last_seen"` // 最后心跳时间
+	VersionMismatch bool `json:"version_mismatch"`
+	// OriginSHA / SameOrigin —— 「双源矩阵同源判定」（GAP-20261013-09 · 候选 c）：
+	// 主控那行报**私有提交 sha**、节点那行报**镜像 tip sha** —— 两个 git 命名空间的字符串，
+	// 矩阵里本没有可比键 ⇒ 三台其实同源也看不出（「全绿也可能是混版」）。这两格把它翻成
+	// **一根可比键 + 一句判决**：
+	//   · OriginSHA：本机二进制自报的**源提交**（构建期注入的 `GitOrigin-RevId` trailer）；
+	//     空 = 该机没带 ⇒ 判不了（✗ 不拿 CodeSHA 顶上冒充）。
+	//   · SameOrigin：三态 `same`/`mixed`/`unknown`（口径与算法在
+	//     `core/internal/api/fleet_health.go`，**唯一实现处**；由 StatusHandler 在**响应副本**上写）。
+	// ✗ 不带 omitempty —— 三态都是**有意义的值**（`unknown` ≠ `same`：缺映射/trailer 缺一律 unknown，
+	// 防的正是「全绿却混版」这条假绿）。
+	OriginSHA  string    `json:"origin_sha,omitempty"`
+	SameOrigin string    `json:"same_origin"`
+	Error      *string   `json:"error,omitempty"`
+	LastSeen   time.Time `json:"last_seen"` // 最后心跳时间
 
 	// ── 资源账本新增（《设计-资源管理器》§3.1/§3.4）──
 	// ⚠ 两个布尔**绝不能带 omitempty**（2026-09-16 修，实测踩过）：false 是**有意义的值** ——
@@ -168,6 +183,7 @@ func (s *Store) ReceiveHeartbeat(req HeartbeatRequest) *HeartbeatResponse {
 	snap.GpuPct = req.GpuPct
 	snap.CodeVersion = req.CodeVersion // L3：记住子端自报身份
 	snap.CodeSHA = req.CodeSHA
+	snap.OriginSHA = req.OriginSHA // 同源判定可比键（GAP-20261013-09）：逐字透传（缺就留空）
 	// 资源账本新增字段（§3.1）：逐项透传，旧字段不动
 	snap.VramKnown = req.VramKnown
 	snap.VramUnified = req.VramUnified

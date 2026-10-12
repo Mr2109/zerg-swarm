@@ -3,10 +3,10 @@
 // 覆盖五面：
 //
 //	① `--self-test` 真跑 rc=0（报格数）；
-//	② 真仓普查：rc ∈ {0,1} · 输出含权威读数行（**有锚声明行** 现读复算）与参考基线 251；
+//	② 真仓普查：rc ∈ {0,1} · 输出含权威读数行（**有锚声明行** 现读复算）与参考基线 253；
 //	③ 扫描面缺件 ⇒ rc=2 且明说「不给结论」（fail-closed · 属性 ④）；
 //	④ 未知旗标 ⇒ rc=2（用法错）；
-//	⑤ 权威读数下界（棘轮）冻结常量 = 251（本批加本门步前现读复算值 · 只许降）。
+//	⑤ 权威读数下界（棘轮）冻结常量 = 253（本批加本门步前现读复算值 · 只许降）。
 package main
 
 import (
@@ -32,7 +32,7 @@ func TestCscaSelfTestRC0(t *testing.T) {
 	}
 }
 
-// ② 真仓普查：rc ∈ {0,1} · 权威读数行在 · 参考基线 251 在。
+// ② 真仓普查：rc ∈ {0,1} · 权威读数行在 · 参考基线 253 在。
 func TestCscaRepoCensus(t *testing.T) {
 	root := filepath.Join("..", "..", "..")
 	rc, so, _ := cscaInvoke("--root", root)
@@ -42,8 +42,8 @@ func TestCscaRepoCensus(t *testing.T) {
 	if !strings.Contains(so, "权威读数（有锚声明行 `add_step`）") {
 		t.Fatalf("输出缺「权威读数」行：%q", so)
 	}
-	if !strings.Contains(so, "＝ **251**") {
-		t.Fatalf("权威读数应现读复算为 251（有锚声明行 · 自排除本门那一步）：%q", so)
+	if !strings.Contains(so, "＝ **253**") {
+		t.Fatalf("权威读数应现读复算为 253（有锚声明行 · 自排除本门那一步）：%q", so)
 	}
 	if !strings.Contains(so, "对照读法：naive") {
 		t.Fatalf("输出缺三读法对照行：%q", so)
@@ -68,7 +68,7 @@ func TestCscaUnknownFlagBlocked(t *testing.T) {
 
 // ⑤ 权威读数下界（棘轮）冻结常量。
 func TestCscaBaselineFrozen(t *testing.T) {
-	if cscaAuthoritativeBaseline != 251 {
-		t.Fatalf("权威读数下界冻结值应 251（有锚声明行读法 · 本批加本门步前现读复算），得 %d", cscaAuthoritativeBaseline)
+	if cscaAuthoritativeBaseline != 253 {
+		t.Fatalf("权威读数下界冻结值应 253（有锚声明行读法 · 本批加本门步前现读复算），得 %d", cscaAuthoritativeBaseline)
 	}
 }
