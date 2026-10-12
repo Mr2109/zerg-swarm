@@ -172,6 +172,12 @@ func (m *mockStoreReader) MachineSnapshot(machine string) *FleetSnapshotLite {
 
 // TestPingModel_SnapshotFastPath 第1级: 快照 healthy + 已加载模型 → 0ms 通过（不发请求）
 func TestPingModel_SnapshotFastPath(t *testing.T) {
+	// ★ 公开面（`ZERG_PUBLIC_TREE_ROOT=1`，如公开仓 CI）跳过：本用例的快照键是**本机名** `Mr2109`，
+	//   而脱敏规则会改主机名（且只改一侧）⇒ 公开树里键对不上、必红。这不是判据失效，是本用例的
+	//   前提（本机身份）在公开面不存在。私有面行为一字不改。
+	if os.Getenv("ZERG_PUBLIC_TREE_ROOT") == "1" {
+		t.Skip("公开面：用例依赖本机主机名（Mr2109）与快照键一致 ⇒ 脱敏后前提不成立")
+	}
 	// 待修补 #35: 切临时 tasksFile——构造期不读真机 /tmp/zerg-tasks.json
 	isolateTasksFile(t)
 	isolateTaskRoot(t)
