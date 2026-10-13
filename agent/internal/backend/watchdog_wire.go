@@ -16,6 +16,8 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Mr2109/zerg-swarm/agent/internal/monitor"
@@ -117,6 +119,56 @@ func asBackendBusy(err error) (*BackendBusyError, bool) {
 		return bbe, true
 	}
 	return nil, false
+}
+
+// ── ★ 判卡后的两级动作与「有界」封顶（J5 · `GAP-20261014-61`）────────────────────
+
+// stopGraceFromEnv SIGTERM ⇒ SIGKILL 之间的宽限（**可配**：env `ZERG_STOP_GRACE_S`，默认 5 s）。
+//
+// ★ 这一条是 J5 三条牙之③「底下不许有不可配的硬 timeout」的落地：
+// 任何一层硬窗口都要能**显式抬**（改 env）或**豁免**（置 0 走默认、或直接关看门狗一键回退），
+// 且豁免要在观测面留痕（`WatchdogObservation.Waived` / `ZERG_WATCHDOG_WAIVE`）。
+func stopGraceFromEnv() time.Duration {
+	if v := strings.TrimSpace(watchdogEnv("ZERG_STOP_GRACE_S")); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil && f > 0 {
+			return time.Duration(f * float64(time.Second))
+		}
+	}
+	return 5 * time.Second
+}
+
+// recordStaleKill 记一次判卡（重连）并判**封顶**（J5「有界」那一牙）。返回 (已用次数, 是否已封顶)。
+//
+// 封顶后该卵置 `abandoned`：`ensureReady` 直接拒、✗ 不再重置熔断/重连 —— 否则"无上限的进度重置会变死循环"。
+func (m *Manager) recordStaleKill(sp *subproc, max int) (int, bool) {
+	if max <= 0 {
+		max = DefaultMaxStaleKills
+	}
+	if sp == nil {
+		return 0, false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	sp.staleKills++
+	if sp.staleKills > max {
+		sp.abandoned = true
+		sp.state = StateCrashed
+		log.Printf("[backend] ⚠ 重连封顶用尽（max_stale_kills=%d · 已 %d 次）⇒ abandoned：不再重置/重连 "+
+			"（✗ 无上限的进度重置会变死循环）model=%s", max, sp.staleKills, sp.model)
+		return sp.staleKills, true
+	}
+	return sp.staleKills, false
+}
+
+// hardStopStalled 判卡**第二级**：硬断（SIGKILL 语义）。
+//
+// 走 `stopSubproc`（内部 SIGTERM ⇒ 宽限 `ZERG_STOP_GRACE_S` ⇒ SIGKILL）；宽限可配 ⇒ 不是"不可配的硬 timeout"。
+func (m *Manager) hardStopStalled(sp *subproc) {
+	if sp == nil {
+		return
+	}
+	log.Printf("[backend] 看门狗两级动作·第二级：硬断（SIGKILL 语义）model=%s unit=%s", sp.model, sp.Unit)
+	m.stopSubproc(sp)
 }
 
 // ---------------------------------------------------------------------------

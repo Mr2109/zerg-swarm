@@ -48,14 +48,18 @@ const (
 
 // subproc 单个模型的后端进程状态。
 type subproc struct {
-	proc     *exec.Cmd
-	port     int
-	model    string
-	entry    *registry.ModelEntry
-	state    string    // ready / loading / crashed / sleeping / idle_armed(空窗计时中) / draining
-	failCnt  int       // 连续健康检查失败次数
-	lastUsed time.Time // 最近使用时间（LRU）；P2 起兼作「最后一次活动时间戳」（§7.7 修补 2）
-	reqCount int       // 活跃请求数（旧口径：InferForward 延迟减计数的观测面）
+	proc    *exec.Cmd
+	port    int
+	model   string
+	entry   *registry.ModelEntry
+	state   string // ready / loading / crashed / sleeping / idle_armed(空窗计时中) / draining
+	failCnt int    // 连续健康检查失败次数
+	// staleKills 判卡（重连）已用次数 —— 封顶 `max_stale_kills`（J5「有界」那一牙）。
+	staleKills int
+	// abandoned 重连封顶用尽 ⇒ **放弃**：不自动重置熔断、不重连（`ensureReady` 直接拒）。
+	abandoned bool
+	lastUsed  time.Time // 最近使用时间（LRU）；P2 起兼作「最后一次活动时间戳」（§7.7 修补 2）
+	reqCount  int       // 活跃请求数（旧口径：InferForward 延迟减计数的观测面）
 	// Unit 孵化单元的归属名（批 2，开关 ZERG_HATCH 开时由孵化器返回；开关关时**恒空**）。
 	// 收卵判据就是它：非空 ⇒ 调 Hatcher.Collect（幂等），空 ⇒ 走既有进程句柄路径。
 	// 它与 proc 是两种互斥形态：孵化路径没有本端进程句柄（proc 恒 nil），裸 exec 路径没有单元名。
@@ -671,6 +675,11 @@ func (m *Manager) InferForward(ctx context.Context, model string, path string, b
 		m.mu.Unlock()
 		return nil, fmt.Errorf("模型 %s 未驻留", model)
 	}
+	// ★ 重连封顶用尽的卵：**放弃**（✗ 不自动重置熔断、✗ 不重连）—— J5「有界」那一牙的落地。
+	if sp.abandoned {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("后端已放弃（重连封顶 max_stale_kills 用尽 · stale_kills=%d）⇒ 不再重连", sp.staleKills)
+	}
 	if sp.state == StateCrashed {
 		log.Printf("[backend] 检测到 crashed，自动重置熔断，准备重启后端")
 		sp.failCnt = 0
@@ -793,7 +802,13 @@ func (m *Manager) InferForward(ctx context.Context, model string, path string, b
 	if m.watchdogCPUFor != nil {
 		cpuFn = m.watchdogCPUFor(sp) // 单测注入（与 stopHook 同一风格）
 	}
-	wd := newRealWatchdog(wdCfg, cpuFn, nil)
+	// ★ progress 源（真实 chunk 计数 · 引擎侧已处理 token 计数差分）：与阶段二**同一个**证据源。
+	// `GAP-20261014-61`：判卡只看 progress ⇒ 阶段一也必须拿到它，否则"算得慢"与"真卡死"分不开。
+	progFn := m.eggProgressFunc(sp)
+	if m.watchdogProgressFor != nil {
+		progFn = m.watchdogProgressFor(sp)
+	}
+	wd := newRealWatchdog(wdCfg, cpuFn, nil, progFn)
 	done := make(chan struct{})
 	var resp *http.Response
 	var derr error
@@ -807,10 +822,32 @@ func (m *Manager) InferForward(ctx context.Context, model string, path string, b
 	m.setEggWatchdog(sp, wd.Observation())
 	switch verdict {
 	case WatchdogStuckCPUStalled, WatchdogStuckNoProgress:
-		cancelReq()
+		// ★ 判卡后的**两级**落地（J5）：先请求优雅退 ⇒ grace 到期仍无进展才**硬断**。
+		// ★ 有界：每次判卡计一次重连，封顶 `max_stale_kills`（超了 abandoned，✗ 不无上限重置）。
+		n, over := m.recordStaleKill(sp, wdCfg.MaxStaleKills)
+		if over {
+			cancelReq()
+			<-done
+			obs := wd.Observation()
+			obs.Action = WatchdogAbandoned
+			obs.StaleKills = n
+			m.setEggWatchdog(sp, obs)
+			return nil, &BackendBusyError{Verdict: WatchdogAbandoned,
+				Reason: reason + "；重连封顶用尽（max_stale_kills）⇒ 放弃，不再重置/重连", Obs: obs}
+		}
+		wd.SetStaleKills(n)
+		stage, sreason := wd.EscalateStall(StallPlan{
+			Graceful: cancelReq,                        // 第一级：请求优雅退（让引擎自己收尾）
+			Hard:     func() { m.hardStopStalled(sp) }, // 第二级：硬断（SIGKILL 语义）
+			Grace:    wdCfg.Grace,
+			Exited:   done,
+		})
 		<-done
-		m.noteWatchdogStuck(sp, verdict, reason)
-		return nil, &BackendBusyError{Verdict: verdict, Reason: reason, Obs: wd.Observation()}
+		obs := wd.Observation()
+		obs.Action = stage
+		m.setEggWatchdog(sp, obs)
+		m.noteWatchdogStuck(sp, verdict, reason+"；两级动作="+string(stage)+"："+sreason)
+		return nil, &BackendBusyError{Verdict: verdict, Reason: reason, Obs: obs}
 	case WatchdogDegraded:
 		// 读不到证据 ⇒ 回落固定超时（与旧口径一致；绝不因缺读数误杀）
 		select {
@@ -856,7 +893,14 @@ func (m *Manager) InferForward(ctx context.Context, model string, path string, b
 			prog = m.watchdogProgressFor(sp)
 		}
 		resp.Body = newProgressGuard(inner, wdCfg, prog, cpuFn, func(v WatchdogVerdict, reason string) {
-			cancelReq() // 掐掉请求：正文流随即中断（头已发出⇒改不了状态码，但判词会落日志+观测面）
+			// ★ 两级（J5）：第一阶段判卡 ⇒ **请求优雅退**（掐请求，让引擎自己收尾）；
+			// grace 到期仍无进展 ⇒ 第二阶段 ⇒ **硬断**（SIGKILL 语义）。
+			if v == WatchdogStalledHard {
+				m.hardStopStalled(sp)
+			} else {
+				cancelReq() // 掐掉请求：正文流随即中断（头已发出⇒改不了状态码，但判词会落日志+观测面）
+				m.recordStaleKill(sp, wdCfg.MaxStaleKills)
+			}
 			m.noteWatchdogStuck(sp, v, reason)
 			m.setEggWatchdog(sp, WatchdogObservation{Verdict: v, Reason: reason})
 		})
@@ -1166,8 +1210,8 @@ func (m *Manager) stopSubproc(sp *subproc) {
 		} else {
 			log.Printf("[backend] 进程已优雅退出")
 		}
-	case <-time.After(5 * time.Second):
-		log.Printf("[backend] 等待退出超时 (5s)，发送 SIGKILL")
+	case <-time.After(stopGraceFromEnv()):
+		log.Printf("[backend] 等待退出超时 (ZERG_STOP_GRACE_S=%s)，发送 SIGKILL", stopGraceFromEnv())
 		sp.proc.Process.Kill()
 		sp.proc.Wait()
 	}

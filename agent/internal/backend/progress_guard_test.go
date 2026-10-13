@@ -26,6 +26,11 @@ func phase2Env(t *testing.T) {
 	t.Setenv("ZERG_WATCHDOG_SAMPLE_S", "0.02")
 	t.Setenv("ZERG_WATCHDOG_MAX_WINDOWS", "2")
 	t.Setenv("ZERG_WATCHDOG_DEAD_FLAT", "2")
+	// ★ 2026-10-14（`GAP-20261014-61` 两把时钟）：正文阶段的判卡改成"progress 冻结超过预算"，
+	// 夹具必须把 `ZERG_WATCHDOG_NO_PROGRESS_S` 压到秒下（默认 45 min 会让用例挂住半小时）。
+	// 有内容在出的用例（②/⑥）不受影响：内容就是真实 chunk 计数，progress 一直在续。
+	t.Setenv("ZERG_WATCHDOG_NO_PROGRESS_S", "0.15")
+	t.Setenv("ZERG_WATCHDOG_GRACE_S", "0.05")
 }
 
 // sseEngine 假引擎：立刻回头（200 + SSE），随后按 contentFn 决定正文写什么。

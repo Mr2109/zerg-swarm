@@ -14,6 +14,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -40,10 +41,15 @@ func silentEngine(t *testing.T) *httptest.Server {
 	return srv
 }
 
-// ⚠ 注意：本构造函数**会覆写**看门狗环境变量（下方四个 t.Setenv）—— 调用方若要别的口径，
+// ⚠ 注意：本构造函数**会覆写**看门狗环境变量（下方几个 t.Setenv）—— 调用方若要别的口径，
 // **必须写在本函数返回之后**（写在调用之前会被无声覆盖：2026-09-16 第十四轮我在这里踩过一次，
 // 把提前判死门槛算成 250ms、实际生效的是 20ms）。窗口/采样压到几十毫秒是为了让用例跑得快，
 // 代价是"夹具分片节奏（10ms/片）"与"判死门槛"变得同量级 ⇒ 需要大余量的用例请自己覆写。
+//
+// ★ 2026-10-14（`GAP-20261014-61` 两把时钟换形）：阶段一（等头）现在**判卡只看 progress**，
+// 所以这里必须同时压小 `ZERG_WATCHDOG_NO_PROGRESS_S`（否则默认 45 min ⇒ 用例会挂住等半小时）。
+// 判据读法变了：本文件里的"无进展 ⇒ 判死"用例，夹具必须给一个**可读且冻结**的 progress 源
+// （`m.watchdogProgressFor`），否则走的是"读不到 ⇒ 不判卡"那条（那是 D 批的免误杀规矩）。
 func wireTestManager(t *testing.T, port int, cpu func(*subproc) func() (uint64, error)) (*Manager, *subproc, func()) {
 	mk := newEvictTestManager(1, map[string]*subproc{})
 	sp := &subproc{model: "m", port: port, state: StateReady, lastUsed: time.Now(), entry: inflightEntry()}
@@ -53,6 +59,8 @@ func wireTestManager(t *testing.T, port int, cpu func(*subproc) func() (uint64, 
 	t.Setenv("ZERG_WATCHDOG_WINDOW_S", "0.05")
 	t.Setenv("ZERG_WATCHDOG_SAMPLE_S", "0.01")
 	t.Setenv("ZERG_WATCHDOG_MAX_WINDOWS", "2")
+	t.Setenv("ZERG_WATCHDOG_NO_PROGRESS_S", "0.2")
+	t.Setenv("ZERG_WATCHDOG_GRACE_S", "0.05")
 	return mk, sp, func() {}
 }
 
@@ -89,25 +97,39 @@ func TestWatchdogWire_CPUStalledMarksCrashed(t *testing.T) {
 	}
 }
 
-// 判据 ②：工时一直涨但窗口用满 ⇒ stuck_no_progress。
+// 判据 ②：progress **可读且冻结**、liveness 在续（工时一直涨）⇒ 冻结超过预算即判卡（stuck_no_progress）。
+//
+// ★ 两把时钟口径（`GAP-20261014-61`）：本用例刻意让工时**一直涨**（liveness 活）——
+// 它证明的就是「判卡只看 progress，liveness 再密也不救」。**旧口径**是"工时一直涨但窗口用满"才判死；
+// 新口径是"progress 冻结超过按现读窗口/实测速率算出来的预算"。
 func TestWatchdogWire_NoProgressAfterMaxWindows(t *testing.T) {
 	srv := silentEngine(t)
 	var n uint64
 	m, _, done := wireTestManager(t, portOf17(t, srv.URL), func(*subproc) func() (uint64, error) {
-		return func() (uint64, error) { n += 1000; return n, nil } // 一直涨
+		return func() (uint64, error) { n += 1000; return n, nil } // 工时一直涨 ⇒ liveness 在续
 	})
 	defer done()
+	// 可读、**冻结**的真实 chunk 计数（42 恒定）—— 这才是"progress 真的没动"的证据。
+	m.watchdogProgressFor = func(*subproc) func() (uint64, error) {
+		return func() (uint64, error) { return 42, nil }
+	}
 
 	_, err := m.InferForward(context.Background(), "m", "/v1/chat/completions", []byte(`{"model":"m"}`))
 	var bbe *BackendBusyError
 	if !errors.As(err, &bbe) {
-		t.Fatalf("窗口用满 ⇒ 应判死（*BackendBusyError），实得 %T：%v", err, err)
+		t.Fatalf("progress 冻结超过预算 ⇒ 应判卡（*BackendBusyError），实得 %T：%v", err, err)
 	}
 	if bbe.Verdict != WatchdogStuckNoProgress {
 		t.Fatalf("判词应为 stuck_no_progress，实得 %s", bbe.Verdict)
 	}
-	if bbe.Obs.Extensions != 2 {
-		t.Fatalf("应重置满 2 次（环境变量压到 2），实得 %d", bbe.Obs.Extensions)
+	if bbe.Obs.ProgressBudgetS != 0.2 {
+		t.Fatalf("观测面要出**有效预算**（环境变量压到 0.2s），实得 %v", bbe.Obs.ProgressBudgetS)
+	}
+	if bbe.Obs.LastProgressAt == "" || bbe.Obs.LastHeartbeatAt == "" {
+		t.Fatalf("两把锁都要出（判卡只看 progress，但报告里两把都要能看见）：%+v", bbe.Obs)
+	}
+	if !strings.Contains(bbe.Obs.Reason, "progress 冻结") {
+		t.Fatalf("判词必须死在 progress 上：%s", bbe.Obs.Reason)
 	}
 }
 

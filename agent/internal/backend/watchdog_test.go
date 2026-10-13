@@ -93,36 +93,57 @@ func TestWatchdog_CPUProgressExtendsWindow(t *testing.T) {
 	}
 }
 
-// ③ 无输出 + 工时不动 ⇒ **提前判死**（只花一个窗口）。
+// ③ 无输出 + 工时不动 ⇒ **提前判死**（真停摆：两把钟双双冻结）。
+//
+// ★ 2026-10-14（`GAP-20261014-61` 两把时钟）：早杀口径从"一个窗口内 d2 == d1 就杀"
+// 收紧成"连续 `DeadFlatSamples` 次采样两把钟都不动才杀"（默认 2 ⇒ 免一次采样抖动就误杀）。
+// 因此读数是 **2 个窗口 / 4 次工时**（旧口径是 1 个窗口 / 2 次）—— 变的只是**多等一个采样**，
+// 仍远早于任何预算（预算默认 45 min）。断言按新口径核，不是放宽。
 func TestWatchdog_CPUStalledKillsEarly(t *testing.T) {
-	f := &fakeWD{done: make(chan struct{}), cpuVals: []uint64{777, 777}}
-	w := newWatchdog(wdCfg(5), f.deps())
+	f := &fakeWD{done: make(chan struct{}), cpuVals: []uint64{777, 777, 777, 777}}
+	cfg := wdCfg(5)
+	cfg.DeadFlatSamples = 2
+	w := newWatchdog(cfg, f.deps())
 	v, reason := w.Wait(f.done)
 	if v != WatchdogStuckCPUStalled {
-		t.Fatalf("工时不动 ⇒ 应 stuck_cpu_stalled，实得 %s", v)
+		t.Fatalf("两把钟双双冻结 ⇒ 应 stuck_cpu_stalled，实得 %s", v)
 	}
-	if f.calls != 2 {
-		t.Fatalf("提前判死只该读两次工时，实得 %d", f.calls)
+	if f.calls != 4 {
+		t.Fatalf("提前判死该只读 2 个窗口（4 次工时），实得 %d", f.calls)
 	}
-	if w.Observation().WindowIdx != 1 {
-		t.Fatalf("应停在第 1 个窗口，实得 %d", w.Observation().WindowIdx)
+	if w.Observation().WindowIdx != 2 {
+		t.Fatalf("应停在第 2 个窗口（DeadFlatSamples=2），实得 %d", w.Observation().WindowIdx)
 	}
 	if reason == "" {
 		t.Fatal("判死必须带人类可读理由（便于主控 failover 与复盘）")
 	}
 }
 
-// ④ 工时一直涨但窗口用满 ⇒ stuck_no_progress（兜住"瞎花力气不推进"）。
+// ④ ★ 判卡**只看 progress**：liveness 一直续（工时在涨）、progress 可读但**冻结**超过预算 ⇒ 判卡。
+//
+// 换形前后对照（`GAP-20261014-61`）：
+//
+//	旧口径：「工时一直涨 + 窗口用满（`MaxWindows×Window` = 450 s 硬上界）」⇒ 判死；
+//	新口径：「progress 冻结 ≥ 有效预算（默认 45 min / 按现读窗口算的 prefill 预算）」⇒ 判卡；
+//	        而**工时一直涨只续 liveness，救不回 progress**（这正是本用例在证的那一牙）。
+//
+// 用**虚拟时钟**驱动（真时钟要跑 45 min），判据精确到窗口数。
 func TestWatchdog_NoProgressAfterMaxWindows(t *testing.T) {
-	f := &fakeWD{done: make(chan struct{}), cpuVals: []uint64{1, 2, 3, 4, 5, 6, 7, 8}}
-	w := newWatchdog(wdCfg(3), f.deps())
-	v, _ := w.Wait(f.done)
-	if v != WatchdogStuckNoProgress {
-		t.Fatalf("3 个窗口都只有工时在涨 ⇒ 应 stuck_no_progress，实得 %s", v)
+	v := newVClock()
+	v.cpuStep = 1000                // 工时一直涨 ⇒ liveness 在续（旧的"忙等"那一形）
+	v.chunksPerCall = 0             // progress 冻结（真实 chunk 计数一动不动）
+	cfg := twoClockCfg(time.Minute) // 压缩到秒档（同一形态）
+
+	w := newWatchdog(cfg, v.deps())
+	verdict, obs := runUntil(t, v, w, 10*time.Minute)
+	if verdict != WatchdogStuckNoProgress {
+		t.Fatalf("progress 冻结超过预算 ⇒ 应判卡 stuck_no_progress，实得 %s（%s）", verdict, obs.Reason)
 	}
-	obs := w.Observation()
-	if obs.Extensions != 3 || obs.WindowIdx != 3 {
-		t.Fatalf("应重置满 3 次，实得 Extensions=%d WindowIdx=%d", obs.Extensions, obs.WindowIdx)
+	if obs.ProgressBudgetS != 60 {
+		t.Fatalf("预算应读出自配置（60 s），实得 %.0f", obs.ProgressBudgetS)
+	}
+	if obs.Extensions == 0 {
+		t.Fatal("liveness 应在续（Extensions 递增）—— 正因如此才证明它不救 progress")
 	}
 }
 
@@ -160,6 +181,11 @@ func TestWatchdogConfigFromEnv(t *testing.T) {
 	def := watchdogConfigFromEnv(func(string) string { return "" })
 	if def.Enabled || def.Window != 90*time.Second || def.MaxWindows != 5 || def.Sample != 5*time.Second {
 		t.Fatalf("默认口径应为 **关**/90s/5/5s（显式开同孵化先例），实得 %+v", def)
+	}
+	// ★ 两把时钟的默认档（设计 §十二 Q4 参数表）：no_progress 45 min · grace 30 s · 封顶 3。
+	if def.NoProgress != 45*time.Minute || def.Grace != 30*time.Second || def.MaxStaleKills != 3 ||
+		def.Heartbeat != 30*time.Second || def.HeartbeatTimeout != 90*time.Second {
+		t.Fatalf("两把时钟默认档不对（§十二 Q4）：%+v", def)
 	}
 	on := watchdogConfigFromEnv(func(k string) string {
 		if k == "ZERG_WATCHDOG" {

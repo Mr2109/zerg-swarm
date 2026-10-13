@@ -1,24 +1,30 @@
 package backend
 
-// 阶段二（T14）：正文停滞看门狗。
+// progress_guard.go —— 阶段二（T14）：响应体上的**两把正交时钟**（liveness ＋ progress）。
 //
 // 背景（A8 实测）：看门狗原先在"响应头到了"就退场，而流式下 llama-server **立刻**回响应头
 // （预填充期只发 SSE 保活注释 `:`），于是长预填充只剩"固定总超时"这一堵墙 ⇒ 30 万 token 的
 // 合法请求在第 5 分钟被掐断（回 200 + 9 条保活，既非答案也非报错）。
 //
-// 现在：看门狗**不在"头到了"退场**，继续守到"有推进"为止。
+// ★ 判据换形（`GAP-20261014-61` · 设计-虫族子代理-20261014 §七.3 J4/J5）：
 //
-// 判据（只看证据不看表，Mr2109 2026-09-15 拍板"尽量不用时间限制"）：
-//   · 有推进（引擎自报已处理 token 数在涨，或正文内容字节在涨） ⇒ 清空停滞计数，继续等；
-//   · 正文读完（EOF）/被关 ⇒ **立刻退场**：流结束之后「无推进」是必然的，不退场就会把已经
-//     正常完成的请求判成卡死（2026-09-16 第十四轮实测的假判死，见 Read 里的注释）；
-//   · 无推进，且本单元 CPU 工时也不动（连续 DeadFlat 次采样） ⇒ **立刻判死**（提前，不必等窗口用满）；
-//   · 无推进，但 CPU 在涨（"占着 CPU 在磨"） ⇒ 停滞窗口计数 +1，累计到 MaxStall ⇒ 判死；
-//   · 进度读数不可用 ⇒ 退化为只用 CPU：涨 = 继续等，不动 = 按上面两条处理（仍收敛，不会永远等）。
+//	liveness 时钟 —— **任何活动都续**：读到任何字节（含 SSE 保活注释）、本单元 CPU 工时在涨。
+//	                 它只回答「连接/引擎还活着吗」，**✗ 绝不**回答「有没有推进」。
+//	progress 时钟 —— **只由「真实 chunk 计数」续**：正文内容字节计数差分 ／ 引擎自报已处理
+//	                 token 计数差分（两者都是**计数**）。✗ 时间戳不算，✗ 保活注释不算
+//	                （它只是心跳，不是交付）。
+//
+//	**判卡只看 progress**（报告里两把锁都出）：CPU 在涨、保活不断，都救不回冻结的 progress。
+//
+//	预算 = `max(no_progress, est_ctx ÷ 实测 tok/s × 2)`；`no_progress: 0 ＝ 关`（只保留"彻底停摆"早杀）。
+//
+//	判卡后**两级**（J5）：先**请求优雅退** ⇒ grace（默认 30 s；批作业档 120–300 s）到期仍无进展才**硬断**。
+//	重连封顶 `max_stale_kills=3` 由调用方（manager）记，超了走 `abandoned`。
 //
 // 实测数据（2026-09-15，生产卵 :9400，Qwen3.8-27B，198,698 token 的提示）：
 // progress 0.87 时已耗时 1,566 s、125–136 tok/s、预计 ≈30 min；同期单元 CPU 5 s 涨 5,008,555 usec。
-// ⇒ 合法长预填充本身就要半小时，所以**任何按秒判死都会被误杀**，判据只能是"有没有推进"。
+// ⇒ 合法长预填充本身就要半小时（132K 档 ≈1380 s），所以**任何按"无输出时长"判死都会被误杀**：
+// 判据只能是「有没有真推进」（progress），而"算得慢"要由**按现读窗口/实测速率算出来的预算**兜着。
 
 import (
 	"io"
@@ -35,16 +41,21 @@ type progressGuard struct {
 	stop chan struct{}
 	once sync.Once
 
-	// content 已读到的**正文内容**字节数（排除 SSE 注释/保活行）。
+	// content 已读到的**正文内容**字节数（排除 SSE 注释/保活行）—— progress 的真实 chunk 计数之一。
 	content atomic.Uint64
-	lineBuf []byte
+	// heartbeatAt 已读到的**任何**字节（含保活注释）—— liveness 证据（用 atomic 存 UnixNano）。
+	heartbeatAt atomic.Int64
+	lineBuf     []byte
 }
 
 // newProgressGuard 包装 rc，并在后台跑阶段二状态机。
 //
-// progress：引擎自报进度读数（nil 或读失败 ⇒ 退化为只用 CPU 判据）。
-// cpu：本单元累计 CPU 工时读数（微秒）。
-// onStuck：判死动作（由调用方负责掐请求、记账；本函数只负责判）。
+// progress：引擎自报进度读数（nil 或读失败 ⇒ **不按预算判卡**，但仍保留"彻底停摆"早杀）。
+// cpu：本单元累计 CPU 工时读数（微秒）—— **liveness** 证据（✗ 不是 progress）。
+// onStuck：判卡/两级动作的通告（由调用方负责掐请求、硬断、记账；本函数只负责判与定时）。
+//
+// ★ `onStuck` 会被调**两次**（判卡第一级 `stuck_no_progress` ⇒ grace 内没退 ⇒ 第二级 `stalled_hard`）；
+// 两次之间若读数恢复推进或流结束（stop 关掉）⇒ **不调第二次**。
 func newProgressGuard(
 	rc io.ReadCloser,
 	cfg WatchdogConfig,
@@ -53,6 +64,7 @@ func newProgressGuard(
 	onStuck func(verdict WatchdogVerdict, reason string),
 ) *progressGuard {
 	g := &progressGuard{rc: rc, stop: make(chan struct{})}
+	g.heartbeatAt.Store(time.Now().UnixNano())
 	go g.run(cfg, progress, cpu, onStuck)
 	return g
 }
@@ -60,6 +72,8 @@ func newProgressGuard(
 func (g *progressGuard) Read(p []byte) (int, error) {
 	n, err := g.rc.Read(p)
 	if n > 0 {
+		// ★ 读到任何字节 ⇒ 续 **liveness**（保活注释也算"它还活着"）。
+		g.heartbeatAt.Store(time.Now().UnixNano())
 		g.countContent(p[:n])
 	}
 	if err != nil {
@@ -80,6 +94,9 @@ func (g *progressGuard) Close() error {
 }
 
 // countContent 行感知计数：SSE 注释行（保活，形如 `:`）不算内容，其余字节都算。
+//
+// ★ 这里就是「**真实 chunk 计数**」的那把尺 —— 它数的是**交付出去的字节**，
+// 与"时间过去多久"无关（✗ 时间戳不能续 progress）。
 func (g *progressGuard) countContent(b []byte) {
 	for len(b) > 0 {
 		i := indexByte(b, '\n')
@@ -111,7 +128,7 @@ func indexByte(b []byte, c byte) int {
 	return -1
 }
 
-// run 阶段二状态机：窗口 Window，窗口内每 Sample 采一次。
+// run 阶段二状态机：两把正交时钟 ＋ 两级判卡。
 func (g *progressGuard) run(
 	cfg WatchdogConfig,
 	progress func() (uint64, error),
@@ -126,22 +143,25 @@ func (g *progressGuard) run(
 	if sample <= 0 {
 		sample = 5 * time.Second
 	}
-	maxStall := cfg.MaxWindows
-	if maxStall <= 0 {
-		maxStall = 5
-	}
 	deadFlat := cfg.DeadFlatSamples
 	if deadFlat <= 0 {
 		deadFlat = 2
 	}
+	budget, budgetWhy := cfg.ProgressBudget()
+	grace := cfg.Grace
+	if grace <= 0 {
+		grace = DefaultGrace
+	}
 
-	lastProgress := g.progressValue(progress)
-	progressReadable := false
-	_ = progressReadable
+	// 两把锁的高水位：只有**单调增量**才算续钟。
+	lastContent := g.content.Load()
+	lastEngine, engineReadable := progressValue(progress)
+	lastHeartbeat := time.Now()
+	lastProgress := time.Now()
+	_, _ = lastContent, lastHeartbeat
 	lastCPU, _ := cpu()
-	flatCPU := 0
-	stalls := 0
 
+	flatBoth := 0
 	deadline := time.NewTimer(window)
 	defer deadline.Stop()
 	tick := time.NewTicker(sample)
@@ -152,78 +172,92 @@ func (g *progressGuard) run(
 		case <-g.stop:
 			return // 正文读完/被关 ⇒ 守卫退场（正常路径）
 		case <-tick.C:
-			cur, readable := g.progressValue2(progress)
-			curCPU, err := cpu()
-			if cur > lastProgress {
-				// 有推进 ⇒ 清空停滞计数（合法长 prefill 就靠这条活着）
-				lastProgress = cur
-				stalls, flatCPU = 0, 0
+			curCPU, cpuErr := cpu()
+			// ① liveness：读到任何字节 / **CPU 工时在涨** ⇒ 续 liveness（**绝不**续 progress）。
+			hb := time.Unix(0, g.heartbeatAt.Load())
+			heartbeatAdv := hb.After(lastHeartbeat)
+			if heartbeatAdv {
+				lastHeartbeat = hb
+			}
+			if cpuErr == nil && curCPU > lastCPU {
+				heartbeatAdv = true
+				lastCPU = curCPU
+			}
+			// ② progress：只认真实 chunk 计数（内容字节差分 ∪ 引擎计数器差分）。
+			content := g.content.Load()
+			engineNow, engineOK := progressValue(progress)
+			progressAdv := false
+			if content > lastContent || (engineOK && engineNow > lastEngine) {
+				progressAdv = true
+				if content > lastContent {
+					lastContent = content
+				}
+				if engineOK && engineNow > lastEngine {
+					lastEngine = engineNow
+				}
+				lastProgress = time.Now()
+			}
+			if engineOK {
+				engineReadable = true
+			}
+			// 进度读数是否"可读"：只要有**任一**真实源给过数（内容出过 或 引擎计数器读到过），
+			// 就说明"冻结"是真冻结；两者都没有 ⇒ 读不到 ⇒ **绝不按预算判卡**（读不到 ≠ 没推进）。
+			progressReadable := engineReadable || lastContent > 0
+
+			if progressAdv {
+				flatBoth = 0
 				continue
 			}
-			if err == nil && curCPU > lastCPU {
-				flatCPU = 0 // 还在花力气 ⇒ 不按"彻底不动"处理
+			// ③ 真停摆（提前判死）：两把钟**双双冻结**。
+			if !heartbeatAdv {
+				flatBoth++
+				if flatBoth >= deadFlat {
+					log.Printf("[看门狗] 正文阶段：连续 %d 次采样两把钟双双冻结（content=%dB 引擎读数=%d）⇒ 提前判死",
+						flatBoth, content, engineNow)
+					onStuck(WatchdogStuckCPUStalled, "正文阶段：liveness 与 progress 双双冻结（连续 "+itoa(flatBoth)+" 次采样）")
+					return
+				}
 			} else {
-				flatCPU++
-				if flatCPU >= deadFlat {
-					// 判死前的现场（供复盘假判死）：内容字节数 + 进度读数 + 采样口径。
-					// 这条日志是 2026-09-16 第十四轮抓 EOF 后假判死时缺的那块拼图 —— 判词里
-					// 只有「连续 N 次采样」，没有「当时读到多少字节」，分不清是"压根没出字"
-					// 还是"字早就出完了"。
-					log.Printf("[看门狗] 正文阶段：连续 %d 次采样无推进且 CPU 工时不动（content=%dB 进度读数=%d）⇒ 提前判死",
-						flatCPU, g.content.Load(), cur)
-					onStuck(WatchdogStuckCPUStalled, "正文阶段：无推进且本单元 CPU 工时不动（连续 "+itoa(flatCPU)+" 次采样）")
+				flatBoth = 0
+			}
+			// ④ 判卡**只看 progress**：冻结超过有效预算 ⇒ 判卡（两级）。
+			if budget > 0 && progressReadable {
+				el := time.Since(lastProgress)
+				if el >= budget {
+					log.Printf("[看门狗] 正文阶段：progress 冻结 %s ≥ 预算 %s（%s）⇒ 判卡",
+						el.Round(time.Second), budget.Round(time.Second), budgetWhy)
+					// 第一级：请求**优雅退**（由调用方掐请求、让引擎自己收尾）。
+					onStuck(WatchdogStuckNoProgress, "正文阶段：progress 冻结 "+el.Round(time.Second).String()+
+						" ≥ 预算 "+budget.Round(time.Second).String()+"（第一级：请求优雅退，grace="+grace.Round(time.Second).String()+"）")
+					// grace：它在这段时间里自己退了/流断了 ⇒ 收手，**不硬断**。
+					select {
+					case <-g.stop:
+						return
+					case <-time.After(grace):
+					}
+					// 第二级：**硬断**。
+					onStuck(WatchdogStalledHard, "正文阶段：grace（"+grace.Round(time.Second).String()+
+						"）到期仍无进展 ⇒ 硬断（SIGKILL 语义）")
 					return
 				}
 			}
-			lastCPU = curCPU
-			progressReadable = readable
 		case <-deadline.C:
-			curW, readableW := g.progressValue2(progress)
-			advanced := curW > lastProgress
-			// ⚠ 关键口径（沙箱批 D 抓到的假阳性）：**进度读数不可读时绝不能按窗口判死** ——
-			// 读不到 ≠ 没推进；否则一次 /slots 读取失败就会把合法的长预填充（实测 ≈30 min 那种）杀掉。
-			// 不可读时只保留"CPU 工时也不动"这条（那是真停摆的证据）。
-			if advanced {
-				lastProgress = curW
-				stalls, flatCPU = 0, 0
-			} else if !readableW && g.content.Load() == 0 {
-				log.Printf("[看门狗] 正文阶段窗口 %d：进度不可读且无内容 ⇒ 只按 CPU 判（不累计停滞）", stalls)
-			} else {
-				stalls++
-				log.Printf("[看门狗] 正文阶段窗口 %d/%d：无推进（进度可读=%v 内容=%dB CPU增量见上）",
-					stalls, maxStall, readableW, g.content.Load())
-				if stalls >= maxStall {
-					onStuck(WatchdogStuckNoProgress, "正文阶段：无推进已累计 "+itoa(stalls)+" 个窗口（上限 "+itoa(maxStall)+"）")
-					return
-				}
-			}
-			progressReadable = readableW
+			// 窗口只作**结算节奏**：真正的判卡在上面那条预算里（✗ 窗口本身不再是硬上界）。
 			deadline.Reset(window)
 		}
 	}
 }
 
-// progressValue2 返回 (进度值, 引擎侧读数是否可读)。不可读 ≠ 没推进 —— 见窗口结算处注释。
-func (g *progressGuard) progressValue2(progress func() (uint64, error)) (uint64, bool) {
-	total := g.content.Load()
-	readable := false
-	if progress != nil {
-		if v, err := progress(); err == nil {
-			total += v
-			readable = true
-		}
+// progressValue 取一次引擎侧进度读数（真实 chunk 计数之一）。读不到 ⇒ (0, false)。
+func progressValue(progress func() (uint64, error)) (uint64, bool) {
+	if progress == nil {
+		return 0, false
 	}
-	return total, readable
-}
-
-func (g *progressGuard) progressValue(progress func() (uint64, error)) uint64 {
-	total := g.content.Load()
-	if progress != nil {
-		if v, err := progress(); err == nil {
-			total += v // 引擎自报进度 + 客户端已见内容：任一在涨都算推进
-		}
+	v, err := progress()
+	if err != nil {
+		return 0, false
 	}
-	return total
+	return v, true
 }
 
 func itoa(n int) string {
