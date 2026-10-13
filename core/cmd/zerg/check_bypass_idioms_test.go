@@ -214,7 +214,7 @@ func TestCheckBypassIdiomsGatePort(t *testing.T) {
 		if !strings.Contains(out, `"unregistered_items": [{"file": "probe.sh", "line": 1, "forms": ["F01-DEVNULL", "F02-OR-TRUE", "F07-LSREMOTE-SWALLOW"]}]`) {
 			t.Fatalf("json：明细结构不符 out=%s", out)
 		}
-		if !strings.Contains(out, `"registry_ceiling": 555`) || !strings.Contains(out, `"forms": 12`) {
+		if !strings.Contains(out, `"registry_ceiling": 554`) || !strings.Contains(out, `"forms": 12`) {
 			t.Fatalf("json：常量位不符 out=%s", out)
 		}
 	})
@@ -223,7 +223,7 @@ func TestCheckBypassIdiomsGatePort(t *testing.T) {
 	t.Run("list_forms_rc0", func(t *testing.T) {
 		rc, out, _ := cbiTRun(t, "--list-forms")
 		if rc != 0 || !strings.Contains(out, "⑯ 元门 · 绕闸形态登记册") ||
-			!strings.Contains(out, "F12-JUDGE-FOLD") || !strings.Contains(out, "[F07-LSREMOTE-SWALLOW] publish/mirror-cn.sh") {
+			!strings.Contains(out, "F12-JUDGE-FOLD") || !strings.Contains(out, "[F06-NONEMPTY-GUARD] publish/mirror-cn.sh") {
 			t.Fatalf("list-forms 不符 rc=%d out=%s", rc, out)
 		}
 	})

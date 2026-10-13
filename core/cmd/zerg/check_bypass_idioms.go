@@ -122,7 +122,7 @@ const cbiProg = "check-bypass-idioms.py"
 // cbiSelfName —— py `SELF_NAME = os.path.basename(__file__)`：面内同名件自排除。
 const cbiSelfName = "check-bypass-idioms.py"
 
-const cbiRegistryCeiling = 555
+const cbiRegistryCeiling = 554
 
 // cbiScanSuffixes —— py `SCAN_SUFFIX = (".sh", ".py")`（str.endswith 元组口径）。
 var cbiScanSuffixes = []string{".sh", ".py"}
@@ -201,14 +201,6 @@ type cbiRegistryForm = map[string]any
 //	`cbiRegistryCeiling` 只登记本次入册后的条数，✗ 永不上调（抬上限充绿即违规）；
 //	治掉一处 ⇒ 该锚变 stale ⇒ 按提示**删此条并把上限减一**（棘轮只许下调）。
 var cbiRegistry = []cbiRegistryForm{
-	{"form": "F07-LSREMOTE-SWALLOW", "path": "publish/mirror-cn.sh",
-		"anchor": `git ls-remote "$REMOTE" refs/heads/main 2>/dev/null | cut -f1 || true`,
-		"reason": "GAP-133 ① 待修：远端读不到被折成 rc=0、快进判据整段不跑",
-		"source": "GAP-20260927-133", "gate": "本件（待接线）"},
-	{"form": "F05-MISSING-EXIT0", "path": "publish/mirror-cn-init.sh",
-		"anchor": "（无令牌 ⇒ 跳过 API 校验 ✓）",
-		"reason": "GAP-133 ② 待修：无令牌 = 未判，却 `exit 0`",
-		"source": "GAP-20260927-133", "gate": "本件（待接线）"},
 	// ── 历史存量（一次性入册 · 553 条 · 覆盖 577 处）────────────────────────
 	{"form": "F09-FORCE-FLAG", "path": "publish/install.sh",
 		"anchor": "    codesign -s - --force \"$PREFIX/bin/$name\" >/dev/null 2>&1 || say \"   ⚠️ 重签名失败：${name}（macOS 上未签名二进制会被秒杀）\"",
@@ -1055,7 +1047,7 @@ var cbiRegistry = []cbiRegistryForm{
 		"reason": "GAP-20260927-133 ⑤ 历史存量一次性入册（只许减 · 待治）",
 		"source": "GAP-20260927-133", "gate": "本件"},
 	{"form": "F01-DEVNULL", "path": "scripts/calib/calib-x3-model.sh",
-		"anchor": "    c=$(curl -s -o /dev/null -w '%{http_code}' -m 2 \"http://127.0.0.1:$PORT/health\" 2>/dev/null)",
+		"anchor": "c=$(curl -s -o /dev/null -w '%{http_code}' -m 2 \"http://127.0.0.1:$PORT$READY_PATH\" 2>/dev/null)",
 		"reason": "GAP-20260927-133 ⑤ 历史存量一次性入册（只许减 · 待治）",
 		"source": "GAP-20260927-133", "gate": "本件"},
 	{"form": "F01-DEVNULL", "path": "scripts/calib/calib-x3-model.sh",
@@ -1063,11 +1055,7 @@ var cbiRegistry = []cbiRegistryForm{
 		"reason": "GAP-20260927-133 ⑤ 历史存量一次性入册（只许减 · 待治）",
 		"source": "GAP-20260927-133", "gate": "本件"},
 	{"form": "F01-DEVNULL", "path": "scripts/calib/calib-x3-model.sh",
-		"anchor": "    pkill -f \"llama-server.*--port $PORT\" 2>/dev/null",
-		"reason": "GAP-20260927-133 ⑤ 历史存量一次性入册（只许减 · 待治）",
-		"source": "GAP-20260927-133", "gate": "本件"},
-	{"form": "F01-DEVNULL", "path": "scripts/calib/calib-x3-model.sh",
-		"anchor": "  pkill -f \"llama-server.*--port $PORT\" 2>/dev/null",
+		"anchor": "pkill -f \"$KILL_PAT\" 2>/dev/null",
 		"reason": "GAP-20260927-133 ⑤ 历史存量一次性入册（只许减 · 待治）",
 		"source": "GAP-20260927-133", "gate": "本件"},
 	{"form": "F01-DEVNULL", "path": "scripts/calib/calib-x3-model.sh",
@@ -1082,8 +1070,16 @@ var cbiRegistry = []cbiRegistryForm{
 		"anchor": "G0=$(gtt_used); [ -n \"${G0:-}\" ] || { echo \"!! 读不到 GTT 读数，不敢编数字 ⇒ 退出\"; exit 3; }",
 		"reason": "GAP-20260927-133 ⑤ 历史存量一次性入册（只许减 · 待治）",
 		"source": "GAP-20260927-133", "gate": "本件"},
+	{"form": "F11-EMPTY-DEFAULT", "path": "scripts/calib/calib-x3-model.sh",
+		"anchor": "if [ -n \"${_g:-}\" ] && [ \"$(( _g - G0 ))\" -gt \"$warm_max_b\" ]; then warm_max_b=$(( _g - G0 )); fi",
+		"reason": "GAP-20260927-133 ⑤ 历史存量一次性入册（只许减 · 待治）",
+		"source": "GAP-20260927-133", "gate": "本件"},
 	{"form": "F01-DEVNULL", "path": "scripts/calib/calib-x3-model.sh",
-		"anchor": "pkill -f \"llama-server.*--port $PORT\" 2>/dev/null",
+		"anchor": "if ! ss -ltnp 2>/dev/null | grep -F \"127.0.0.1:$PORT\" | grep -q \"pid=$pid,\"; then",
+		"reason": "GAP-20260927-133 ⑤ 历史存量一次性入册（只许减 · 待治）",
+		"source": "GAP-20260927-133", "gate": "本件"},
+	{"form": "F06-NONEMPTY-GUARD", "path": "scripts/calib/calib-x3-model.sh",
+		"anchor": "if [ -n \"$CACHE_GB\" ]; then echo \"cache_gb: $CACHE_GB\"; fi   # 缺口 GAP-20260926-19",
 		"reason": "GAP-20260927-133 ⑤ 历史存量一次性入册（只许减 · 待治）",
 		"source": "GAP-20260927-133", "gate": "本件"},
 	{"form": "F09-FORCE-FLAG", "path": "scripts/evals/_archive/v25_benchmark.py",
