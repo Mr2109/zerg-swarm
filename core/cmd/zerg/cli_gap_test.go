@@ -386,6 +386,56 @@ func TestGapFamily_BoilerplateRejected(t *testing.T) {
 	}
 }
 
+// ── 判据 ⑪ 写侧现跑预检闸（缺口 GAP-20261013-14 靶心）───────────────────────────────────────────
+//
+// 病（修前）：`--verify-cmd` 只有静态闸（样板值 ＋ 解析面）、**不真跑** ⇒ 「命令树里解析得到、
+// 真跑却恒退 2」的判据照样入库、且永远变不绿。治：写侧**真跑一次取 rc** —— rc=2 且错文点名
+// 未知旗标 / 未知字段 / 缺必填子命令 ⇒ 拒收；其余 rc（0 / 1 / 8 一类有鉴别力的读数）⇒ 收。
+//
+// 两态（拒收）：① 缺必填子命令（`zerg fleet logs` 真跑 rc=2 · `the following arguments are required: command`）
+// ② 未知 `--json` 字段（`zerg version --json nosuchfield-zz` 真跑 rc=2 · `未知字段 "nosuchfield-zz"`）
+// ⇒ 各 rc=2、点名「现跑预检」、真源不动。负控（放行）：真跑得动的判据（`zerg version --json name`
+// rc=0）⇒ rc=0 能进。判的是**进程退码**与其自己那档的拒绝理由（✗ 不卡死整句汉字）。
+func TestGapFamily_PreflightRejected(t *testing.T) {
+	_, ledger, _ := gapEnv(t)
+
+	base := func(symptom, verify string) []string {
+		return []string{"gap", "add", "--symptom", symptom, "--handmade", "手搓 h",
+			"--impact", "命令面", "--want-family", "gap", "--want-action", "ls",
+			"--repro-cmd", "go test ./... -run X", "--verify-cmd", verify, "--yes"}
+	}
+
+	// 态①：缺必填子命令（`zerg fleet logs` 真跑 rc=2）⇒ 2 并点名「现跑预检」
+	rc, _, errb := gapRun(t, base("现跑预检-缺子命令", "zerg fleet logs")...)
+	if rc != 2 {
+		t.Errorf("缺必填子命令 ⇒ 2，得到 %d · %s", rc, errb)
+	}
+	if !strings.Contains(errb, "现跑预检") || !strings.Contains(errb, "--verify-cmd") {
+		t.Errorf("拒收判词要点名「现跑预检」与 --verify-cmd，得到 %q", errb)
+	}
+	// 态②：未知 `--json` 字段（`zerg version --json nosuchfield-zz` 真跑 rc=2 · `未知字段`）⇒ 2
+	rc, _, errb = gapRun(t, base("现跑预检-未知字段", "zerg version --json nosuchfield-zz")...)
+	if rc != 2 {
+		t.Errorf("未知 json 字段 ⇒ 2，得到 %d · %s", rc, errb)
+	}
+	if !strings.Contains(errb, "现跑预检") {
+		t.Errorf("未知 json 字段拒收要点名「现跑预检」，得到 %q", errb)
+	}
+	// 两态都在任何盘面动作之前拒 —— 真源一个字节都不许建
+	if _, err := os.Stat(ledger); !os.IsNotExist(err) {
+		t.Errorf("现跑预检拒收不许动真源（%v）", err)
+	}
+
+	// 负控：真跑得动的判据放行 ⇒ 0 能进（非样板 verify ＋ 非样板 repro）
+	rc, out, errb := gapRun(t, base("现跑预检-放行", "zerg version --json name")...)
+	if rc != 0 {
+		t.Fatalf("真跑得动的判据要放行 ⇒ 0，得到 %d · %s · %s", rc, out, errb)
+	}
+	if n := len(gapReadLines(t, ledger)); n != 1 {
+		t.Errorf("真判据要落 1 行，得到 %d", n)
+	}
+}
+
 // ── 判据 ⑧ 判决成对（过 ⇒ 已解 + 证据；判据改坏 ⇒ 回归 + rc=1）──────────────────────────────────
 
 func TestGapFamily_VerifyJudgePairs(t *testing.T) {

@@ -136,8 +136,25 @@ var eggRequired = []string{"host", "model", "state"}
 // 「名册声明了却**永不可孵**（本机无实测档案）」与「可孵而此刻未装」在 `egg ls` / `egg show` 的**机器面**
 // 上不可辨。子端 `/eggs` 已有该格（只覆盖**在管的卵**），主控侧零命中 ⇒ 本件把它透到投影的字段表。
 //
-// ★ 值域：`true` / `false`（照子端那一格的布尔渲染 —— 同一格不许两套词 ⇒ 判据②）。
+// ★ 值域：`true` / `false` —— 照子端那一格的布尔渲染（同一格不许两套词 ⇒ 判据②）；**另加**
+// 一态 `eggProfileUnknown`（`GAP-20261013-17`：那一台的档案面**读不到**时照实说「读不到」，
+// 见下）。前两态与子端逐字同源；第三态是**本面**对「读不到」的结论词（不同源、不冒充）。
 const eggFieldHasProfile = "has_profile"
+
+// eggProfileUnknown —— `has_profile` 的**第三态**（`GAP-20261013-17`）。
+//
+// 为什么必须有它：实测档案目录是**逐机**的（`eggProfileUsable` 的边界注 · 子端
+// `monitor.EggProfile.Machine`「档案绑定机型，跨机不得互抄」），而本 CLI 只读得到**本机**
+// 那一枚目录 ⇒ 对**别的机**上的卵，旧写法拿**本机**目录的读数当**那一台**的读数：
+// 本机目录里根本不会有别台的卵档案 ⇒ 结构上**恒 `false`** ⇒ 把「那一台**没有**档案」
+// 与「本 CLI **读不到**那一台」两件事**谎报成同一格**，且该格的判据**永不变绿**。
+//
+// 修法（**不动网关协议** ✗ · ✗ 不动孵化/闸门路径）：节点侧**本来就把这一格透出来了** ——
+// 子端 `/eggs` 的 `has_profile` 是**那一台自己**按**自己**的档案目录算的
+// （`agent/internal/server/eggs_endpoint.go` 的 `eggProfileOf`）；而本面**已经在**为 `state`
+// 读那份回据（`eggBackendProbeLive`）⇒ 逐字取它当节点卵的答案。回据里**没有这一枚**
+// （那台没在管它 / 那台答不动）⇒ 落 `unknown`（读不到就是读不到 —— 同 `state` 的 `取不到`）。
+const eggProfileUnknown = "unknown"
 
 // eggProfileDir —— 本 CLI 读得到的**实测档案目录**（口径与子端 `monitor.EggProfileDir` /
 // 主控 `gateway.EggProfileDir` 逐字同源：`ZERG_EGG_PROFILE_DIR` 覆盖 · 缺省 `~/.zerg/egg-profiles`）。
@@ -158,8 +175,13 @@ func eggProfileDir() string {
 // `calib_runs` ≥ 3（§8.4 标定铁律：反复三次取上界）。取不到 / 轮数不足 ⇒ false（如实，**绝不编造** true）。
 //
 // ★ 边界（照实说）：档案是**逐机**的（`monitor.EggProfile.Machine`「档案绑定机型，跨机不得互抄」），
-// 而本函数只读本 CLI 所在机的那枚目录 ⇒ 对**别的机**上那一行，本格只能反映「本机档案目录里有没有这一枚」。
-// 要把逐机那一位也钉死，得让子端在 `/eggs` 之外再开一条**逐卵档案面**（本件不动那条路 —— 如实登记）。
+// 而本函数只读本 CLI 所在机的那枚目录 ⇒ 它的读数**只对「长在本机」的卵**成立。
+//
+// ★★ `GAP-20261013-17`：本函数**从此只喂本机卵**（本机判定 = 名册 `fleet:` 段里该机 host 落
+// 回环 —— 见 `eggLocalHosts`）；**别的机**上的卵由 `eggReconcileBackends` 逐字取**那一台子端
+// `/eggs` 里那一格**（同源：子端那一格也是按**它自己的**目录算的 ⇒ 不动网关协议 ✗）。
+// 回据拿不到 ⇒ `eggProfileUnknown`。⇒ **调用点不许**再拿本函数的返回值当非本机卵的答案
+// （那正是本缺口：结构上恒 `false`、该格判据永不变绿）。
 func eggProfileUsable(model string) bool {
 	dir := eggProfileDir()
 	if dir == "" || strings.TrimSpace(model) == "" {
@@ -204,6 +226,43 @@ func eggProfileCalibRunsOK(text string) bool {
 		}
 	}
 	return false
+}
+
+// eggLocalHosts —— 名册里**长在本机**的那些机器名（`fleet:` 段里 host 落回环 ⇒ 本机）。
+//
+// 口径**逐字沿用仓内既有那一条**（`read_layer=local` 的身份源）：`scripts/gates/check-nodes-roster.py`
+// 判据 H 的「可推导集 ⊇ { 回环 `127.0.0.1`/`::1`/`localhost` }」与本包 Go 侧的对读件
+// `cnrLocalHosts`（`check_nodes_roster.go:127`）同一份约定 —— 本件**不另立一套**「谁是本机」。
+//
+// 为什么卵面非要有它：实测档案目录**逐机**（`eggProfileUsable` 的边界注）⇒ 只有本机那一枚
+// 目录里的读数才配当这一枚卵的 `has_profile`；别的机得问那一台自己（子端 `/eggs`）。
+//
+// ★ 读不到名册 ⇒ 返回空集（**不回落成「全是本机」**）：那样把非本机卵也推去问节点回据最坏也只落 `unknown`（照实说读不到），**绝不**回落成本机目录的假 `false`。
+func eggLocalHosts() map[string]bool {
+	out := map[string]bool{}
+	addrs, _, rc := agentFleetAddrs(io.Discard)
+	if rc != exitOK {
+		return out
+	}
+	for name, a := range addrs {
+		if loopbackHost(a.Host) {
+			out[name] = true
+		}
+	}
+	return out
+}
+
+// loopbackHost —— 这个地址字面量是不是「本机自己」（回环）：`127.*` / `::1` / `localhost`。
+// 只认字面量（名册里写的就是字面量）；主机名解析不在这里做（那要 DNS，命令面不做网络之外的事）。
+func loopbackHost(h string) bool {
+	h = strings.ToLower(strings.TrimSpace(h))
+	h = strings.TrimPrefix(h, "[")
+	h = strings.TrimSuffix(h, "]")
+	switch h {
+	case "localhost", "::1", "0:0:0:0:0:0:0:1":
+		return true
+	}
+	return strings.HasPrefix(h, "127.")
 }
 
 // egg_id 的分隔符：`<模型 id>@<主机>`（照 `svc@arg.service` 那一格的形状）。
@@ -343,6 +402,11 @@ func projectEggs(c *client, inv *invocation, stderr io.Writer, only string) ([]m
 	}
 	// ★ `GAP-20261005-06`：逐枚卵把「有没有可用实测档案」落进 `has_profile` 一格
 	//   （判据 = 本 CLI 读得到的档案目录里 `<卵名>.yaml` 存在且 `calib_runs` ≥ 3）。
+	//
+	// ★★ `GAP-20261013-17`：**这一格是逐机的** —— 档案目录只反映**本机**，所以本机的读数
+	//   **只喂长在本机的那几枚卵**（`eggLocalHosts`）；**别台**上的卵先落 `eggProfileUnknown`，
+	//   由 `eggReconcileBackends` 用**那一台子端 `/eggs` 自己的那一格**落定；拿不到 ⇒ 留 `unknown`。
+	localHosts := eggLocalHosts()
 	hasProfile := map[string]bool{}
 	for _, id := range order {
 		hasProfile[id] = eggProfileUsable(id)
@@ -375,7 +439,11 @@ func projectEggs(c *client, inv *invocation, stderr io.Writer, only string) ([]m
 				eggFieldWatchdogVerdict: "",
 				// ★ `GAP-20261005-06`：`has_profile` —— 本 CLI 读得到的档案目录里这枚卵有没有
 				// **可用**实测档案。`false` ⇒ 507 的第一个因（无实测档案）⇒ 名册声明了也**永不可孵**。
-				eggFieldHasProfile: strconv.FormatBool(hasProfile[id]),
+				//
+				// ★★ `GAP-20261013-17`：本机卵照旧（读本机目录 = 逐字同源）⇒ **行为不变**；
+				// 别台卵这一格**不拿本机目录冒充** ⇒ 先落 `unknown`，随后由
+				// `eggReconcileBackends` 逐字取**那一台子端 `/eggs`** 的回据。
+				eggFieldHasProfile: eggProfileCell(localHosts, cd.host, hasProfile[id]),
 			})
 		}
 	}
@@ -387,6 +455,19 @@ func projectEggs(c *client, inv *invocation, stderr io.Writer, only string) ([]m
 		return rows[i]["model"] < rows[j]["model"]
 	})
 	return rows, problems, exitOK
+}
+
+// eggProfileCell —— `has_profile` 那一格的**初值**（本机卵 / 别台卵两态分流 · `GAP-20261013-17`）。
+//
+// 本机卵（host 落回环）：本 CLI 的档案目录就是**那一台自己的**目录 ⇒ 逐字取值（旧口径一字未动
+// ⇒ 本机卵行为不回退）。
+// 别台卵：**不拿**本机目录的读数冒充（那是本缺口的病灶：结构上恒 `false`）⇒ 落
+// `eggProfileUnknown`，随后由 `eggReconcileBackends` 逐字取那台子端 `/eggs` 的回据落定。
+func eggProfileCell(localHosts map[string]bool, host string, localUsable bool) string {
+	if localHosts[host] {
+		return strconv.FormatBool(localUsable)
+	}
+	return eggProfileUnknown
 }
 
 // eggRowBroken —— 判据①「三格齐」的**机检**：返回第一个空格的字段名（齐 ⇒ 空串）。
@@ -445,6 +526,12 @@ type eggBackendFact struct {
 	Reachable bool
 	Running   map[string]int
 	Why       string
+	// Profile 模型 id ⇒ 子端 `/eggs` 报的 `has_profile`（**逐字取自节点侧** —— 那一格是子端
+	// 按**它自己的**实测档案目录算出来的，`agent/internal/server/eggs_endpoint.go` 的 `eggProfileOf`）。
+	//
+	// ★ `GAP-20261013-17`：**缺席** = 那一台的回据里**没有这一枚卵** ⇒ 本面**不得**据此报
+	// `false`（不许拿本机档案目录的读数冒充别台的读数）⇒ 调用方落 `eggProfileUnknown`。
+	Profile map[string]bool
 	// Watchdog 模型 id ⇒ 子端 `/eggs` 的 `watchdog` 子对象（**逐字照报** · `GAP-20260925-15`）；
 	// 缺席 = 子端那份回据里没这一枚卵 / 没给 `watchdog` 子对象 ⇒ 两格留空（不编）。
 	Watchdog map[string]eggBackendWatchdog
@@ -529,7 +616,29 @@ func eggBackendProbeLive(machine string, a agentAddr) eggBackendFact {
 			}
 		}
 	}
-	return eggBackendFact{Reachable: true, Running: running, Watchdog: watchdog}
+	// ★ `GAP-20261013-17`：`has_profile` 逐枚**照节点侧回据**留下 —— 它**不走**上面那道
+	//   `port > 0` 的过滤：那一格量的是「那一台**有没有**这枚卵的实测档案」，与引擎此刻
+	//   在不在跑**无关**（没在跑而档案齐的卵照样可孵 —— 正是本格要能分辨的那一态）。
+	//   缺席（回据里没这一枚 / 没这一格）⇒ **不落值** ⇒ 调用方按 `unknown` 处理（不编 `false`）。
+	profile := map[string]bool{}
+	for _, it := range asList(doc["eggs"]) {
+		o := asObj(it)
+		if o == nil {
+			continue
+		}
+		v, ok := o[eggFieldHasProfile]
+		if !ok || v == nil {
+			continue
+		}
+		id := cell(o["model"])
+		if id == "" {
+			id = cell(o["egg_id"])
+		}
+		if id != "" {
+			profile[id] = cell(v) == "true"
+		}
+	}
+	return eggBackendFact{Reachable: true, Running: running, Watchdog: watchdog, Profile: profile}
 }
 
 // eggBackendTimeout 单机探测的超时（子端是**近端**服务；一条 `egg ls` 对每台机只问一次）。
@@ -578,6 +687,9 @@ func eggReconcileBackends(inv *invocation, rows []map[string]string, stderr io.W
 		hosts = append(hosts, r["host"])
 	}
 	facts := eggBackends(hosts)
+	// ★ `GAP-20261013-17`：本机是哪几台（口径见 `eggLocalHosts`）—— **别台**卵的 `has_profile`
+	//   要按**那一台自己的**回据落定；本机卵那一格在 `projectEggs` 就已按本机档案目录落定。
+	localHosts := eggLocalHosts()
 	// ★ 缺口 `GAP-20260925-44`（命令面 · 异步查询）：主控装载登记表里**在装**的卵（键 `机器\t模型`）。
 	//   只读面读不到 ⇒ `loadOK=false`（调用方不落 `装载中` —— 「取不到」不是「没有在装的」）。
 	pending, loadOK := eggPendingLoad(newClient(), stderr)
@@ -591,6 +703,16 @@ func eggReconcileBackends(inv *invocation, rows []map[string]string, stderr io.W
 			r["backend_port"] = ""
 			unreadable[r["host"]] = true
 			continue
+		}
+		// ★ `GAP-20261013-17`：**别台**卵的 `has_profile` 这一格 = **那一台自己**报的
+		//   `has_profile`（逐字 · 子端按**它自己的**档案目录算的 ⇒ 同源、且不动网关协议 ✗）。
+		//   回据里没有这一枚 ⇒ **保持** `unknown`（「那一台没报这一格」≠「那一台没有档案」
+		//   —— 绝不回落成 `false`）。本机卵这一格**一律不碰**（`projectEggs` 已按本机档案目录
+		//   落定 ⇒ 本机卵口径零回退）。
+		if !localHosts[r["host"]] {
+			if v, ok := f.Profile[r["model"]]; ok {
+				r[eggFieldHasProfile] = strconv.FormatBool(v)
+			}
 		}
 		// ★ `GAP-20260925-15`（Face A · 字段面投影）：把子端 `/eggs` **已经读到的**看门狗读数
 		//   **逐字**投影上来 —— 只在这一台答得动（`Reachable`）且它对这一枚报过 `watchdog` 子对象时

@@ -412,6 +412,13 @@ func writeEggProfileFixture(t *testing.T, dir, model string) {
 // 与「可孵而此刻未装」不可辨。两态：Egg-A 有档 ⇒ `true`；Egg-B 无档 ⇒ `false`。
 //
 // 改前该格**不存在**：`--json ...,has_profile` 被字段表拒（未知字段 ⇒ 退 2）。
+//
+// ★★ `GAP-20261013-17`（2026-10-13 · 本判据件改版）：**「无档」只对本机卵成立**。档案是
+// **逐机**的（子端 `monitor.EggProfile.Machine`「绑定机型，跨机不得互抄」），而本 CLI 只读得到
+// 本机那一枚目录 ⇒ 对**别台**卵，旧写法读出的 `false` 是**假的**（本机目录里永远不会有别台的
+// 卵档案 ⇒ 结构上恒 `false`，且这条判据跟着**永不变绿**）。⇒ 本判据件原来那句
+// `got["edge-node\tEgg-B"] != "false"` **钉住的正是那个 bug**，本次改成：别台卵 —— 那台子端
+// `/eggs` 报了 ⇒ 逐字取它；没报 ⇒ `unknown`（读不到 ≠ 没有档案）。
 func TestEggHasProfileDisclosesUnhatchable(t *testing.T) {
 	srv := newSyntheticMaster(t, map[string]string{
 		"/api/fleet/models": eggFleetJSON,
@@ -444,11 +451,19 @@ func TestEggHasProfileDisclosesUnhatchable(t *testing.T) {
 			t.Errorf("`has_profile` 那一格缺格：%s（%v）", k, got)
 		}
 	}
-	if got["Mr2109\tEgg-A"] != "true" {
-		t.Errorf("有实测档案的卵 ⇒ has_profile=true，实得 %q（%v）", got["Mr2109\tEgg-A"], got)
+	if got["Mr2109	Egg-A"] != "true" {
+		t.Errorf("有实测档案的本机卵 ⇒ has_profile=true，实得 %q（%v）", got["Mr2109	Egg-A"], got)
 	}
-	if got["Mr2109\tEgg-B"] != "false" || got["x"+"3\tEgg-B"] != "false" {
-		t.Errorf("无实测档案的卵 ⇒ has_profile=false（永不可孵那一态），实得 %v", got)
+	if got["Mr2109	Egg-B"] != "false" {
+		t.Errorf("本机无实测档案的卵 ⇒ has_profile=false（永不可孵那一态），实得 %q（%v）",
+			got["Mr2109	Egg-B"], got)
+	}
+	// ★ `GAP-20261013-17`：**别台**卵这一格 —— 合成子端（`eggStubOnMS01`）在 `/eggs` 里
+	// **没有报**这一枚 ⇒ 必须落 `unknown`。旧写法在这里读本机档案目录（永远没有别台的档案）
+	// ⇒ 恒 `false`：把「本 CLI 读不到那一台」谎报成「那一台没有档案」。
+	if got["x"+"3	Egg-B"] != "unknown" {
+		t.Errorf("别台卵而那一台的回据里没有这一枚 ⇒ has_profile=unknown（不许拿本机目录的 false 冒充），实得 %q（%v）",
+			got["x"+"3	Egg-B"], got)
 	}
 
 	// ② 单枚面（本缺口的症状形态）：无档 ⇒ 逐字 false；有档 ⇒ 逐字 true。
@@ -462,6 +477,51 @@ func TestEggHasProfileDisclosesUnhatchable(t *testing.T) {
 	rc, stdout, stderr = runEggCmd(t, "egg", "show", "Egg-A@Mr2109", "--json", "egg_id,model,has_profile")
 	if rc != 0 || !strings.Contains(stdout, `"has_profile":"true"`) {
 		t.Errorf("有档卵的单枚面要逐字给 has_profile=true：rc=%d · %q · stderr=%s", rc, stdout, stderr)
+	}
+}
+
+// ★ `GAP-20261013-17`（本判据件的**第二颗牙**）：别台卵的 `has_profile` 必须取**那一台自己**
+// 的节点回据 —— 与上一条判据**成对**（上钉「没报 ⇒ unknown」，本条钉「报了 ⇒ 逐字取它」）：
+//
+//	① 子端 `/eggs` 报 `has_profile=true` ⇒ 面上逐字 `true`（**哪怕本机档案目录里根本没有
+//	   这一枚** —— 那正是旧写法读出假 `false` 的场景：档案逐机，本机目录永远没有别台的档案）；
+//	② 同一次里**本机卵**的口径必须零回退（有档 `true` / 无档 `false`）。
+func TestEggHasProfileOfNodeEggComesFromThatNode(t *testing.T) {
+	srv := newSyntheticMaster(t, map[string]string{
+		"/api/fleet/models": eggFleetJSON,
+		"/api/fleet/status": eggStatusJSON,
+		"/api/models/Egg-A": `{"name":"Egg-A","host":"Mr2109","status":"已加载"}`,
+		"/api/models/Egg-B": `{"name":"Egg-B","host":"Mr2109","status":"未加载"}`,
+	})
+	defer srv.Close()
+	// edge-node 那台**报了** Egg-B 的 `has_profile=true` ⇒ 面上逐字取它（不拿本机目录的读数顶）。
+	eggStubBackends(t, map[string]zerg.EggBackendFactForTest{
+		"Mr2109":    {Reachable: true, Running: map[string]int{"Egg-A": 9001}},
+		"x" + "3": {Reachable: true, Profile: map[string]bool{"Egg-B": true}},
+	})
+	dir := eggProfileDirFor(t)
+	writeEggProfileFixture(t, dir, "Egg-A") // 本机目录里**只有 Egg-A** ⇒ 别台那枚绝无本机档案
+
+	rc, stdout, stderr := runEggCmd(t, "egg", "ls", "--json", "host,model,has_profile")
+	if rc != 0 {
+		t.Fatalf("egg ls --json 退码 = %d（要 0）· stderr=%s", rc, stderr)
+	}
+	var doc struct {
+		Items []map[string]string `json:"items"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &doc); err != nil {
+		t.Fatalf("--json 输出不是合法对象：%v · stdout=%s", err, stdout)
+	}
+	got := map[string]string{}
+	for _, it := range doc.Items {
+		got[it["host"]+"\t"+it["model"]] = it["has_profile"]
+	}
+	if got["x"+"3\tEgg-B"] != "true" {
+		t.Errorf("那一台的子端报 has_profile=true ⇒ 别台卵必须逐字取它（旧写法：本机目录没有它 ⇒ 假 false），实得 %q（%v）",
+			got["x"+"3\tEgg-B"], got)
+	}
+	if got["Mr2109\tEgg-A"] != "true" || got["Mr2109\tEgg-B"] != "false" {
+		t.Errorf("本机卵那一格必须零回退（Egg-A 有档 ⇒ true · Egg-B 无档 ⇒ false）：%v", got)
 	}
 }
 

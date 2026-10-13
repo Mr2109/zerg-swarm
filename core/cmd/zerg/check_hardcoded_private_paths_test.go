@@ -132,3 +132,87 @@ func TestCheckHardcodedPrivatePathsGatePort(t *testing.T) {
 		t.Fatalf("self-test 档失败：得 rc=%d out=%q", rc, out)
 	}
 }
+
+// TestCheckHardcodedPrivatePathsAddrSweep —— `GAP-20261010-20`：机器地址/端口面（规则族②）的成对负控。
+//
+// 口径：门跑完报「现读」；★ 夹具值一律**拼接构造**（同件头自指纪律）。
+// 两态：真·硬编码地址 ⇒ rc=1 且点名件:行；合法写法（回环/未指定/文档段/注释/纯字母 .local）⇒ rc=0。
+func TestCheckHardcodedPrivatePathsAddrSweep(t *testing.T) {
+	tmp := t.TempDir()
+	mk := func(name, rel, body string) string {
+		d := filepath.Join(tmp, name)
+		p := filepath.Join(d, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatalf("建夹具失败 %s: %v", rel, err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatalf("写夹具失败 %s: %v", rel, err)
+		}
+		return d
+	}
+	addr := "192.168." + "9.9"
+	ten := "10." + "0.0.42"
+	host := "edge01deMac-Studio" + ".local"
+
+	// ① 成对正控：合法写法一律不报（回环 / 未指定 / 文档段 / localhost / 纯字母 .local）
+	ok := mk("addr-ok", "core/main.go",
+		"package main\n\nvar a = \"127.0.0.1\"\nvar b = \"0.0.0.0\"\nvar c = \"192.0.2.1\"\n"+
+			"var d = \"localhost\"\nvar e = \"zerg.local\"\nvar f = \"foo.local\"\n")
+	if rc, out, _ := hcppTestRun(ok); rc != 0 || !strings.Contains(out, "机器地址面无新增") {
+		t.Fatalf("正控-合法写法失败：得 rc=%d out=%q", rc, out)
+	}
+
+	// ② 负控（有牙）：代码行写死内网地址 ⇒ rc=1 ＋ 点名件:行 ＋ 回显命中值
+	bad := mk("addr-bad", "core/net.go", "package main\n\nvar u = \"http://"+addr+":8580/api\"\n")
+	rc, out, _ := hcppTestRun(bad)
+	if rc != 1 || !strings.Contains(out, "  ✗ 机器地址 内网地址 192.168.x · core/net.go:3:") || !strings.Contains(out, addr) {
+		t.Fatalf("负控-192.168 失败：得 rc=%d out=%q", rc, out)
+	}
+
+	// ③ 负控：另两族（10.0.x · 机器主机名 *.local）在 agent/ 面也红
+	two := mk("addr-two", "agent/x.go", "package agent\n\nvar p = \""+ten+"\"\nvar h = \""+host+"\"\n")
+	rc, out, _ = hcppTestRun(two)
+	if rc != 1 || !strings.Contains(out, "  ✗ 机器地址 集群内网地址 10.0.x · agent/x.go:3:") ||
+		!strings.Contains(out, "  ✗ 机器地址 机器主机名 *.local · agent/x.go:4:") {
+		t.Fatalf("负控-另两族失败：得 rc=%d out=%q", rc, out)
+	}
+
+	// ④ 成对正控：同一地址落在注释行 ⇒ rc=0（防假红）
+	cmt := mk("addr-cmt", "core/a.go", "package main\n\n// 历史：曾写死 "+"http://"+addr+":8580"+"（注释不算）\nvar x = 1\n")
+	if rc, out, _ := hcppTestRun(cmt); rc != 0 {
+		t.Fatalf("正控-注释防假红失败：得 rc=%d out=%q", rc, out)
+	}
+
+	// ⑤ 成对正控：`_test.go` / Rust `#[cfg(test)]` 段内的同类字面量 ⇒ rc=0（整体豁免，两族同口径）
+	tst := mk("addr-tst", "core/a_test.go", "package main\n\nvar p = \""+addr+"\"\n")
+	if rc, _, _ := hcppTestRun(tst); rc != 0 {
+		t.Fatalf("正控-测试件豁免失败：得 rc=%d", rc)
+	}
+	rscfg := mk("addr-rs", "ui/src/c.rs", "#[cfg(test)]\nmod tests {\n    const P: &str = \""+ten+"\";\n}\n")
+	if rc, _, _ := hcppTestRun(rscfg); rc != 0 {
+		t.Fatalf("正控-rust cfg(test) 豁免失败：得 rc=%d", rc)
+	}
+
+	// ⑥ 存量豁免表接线：首条 (件,值) 必判豁免；表外 (件,值) 必判不豁免（棘轮——新增才红）
+	if len(hcppAddrKnown) == 0 || !hcppAddrExempt(hcppAddrKnown[0].rel, hcppAddrKnown[0].val) {
+		t.Fatalf("存量豁免表接线失败：首条未判豁免（表长 %d）", len(hcppAddrKnown))
+	}
+	if hcppAddrExempt("core/x.go", addr) {
+		t.Fatalf("存量豁免表边界失败：表外 (件,值) 竟判豁免 —— 棘轮失效")
+	}
+	for i, e := range hcppAddrKnown {
+		if e.rel == "" || e.val == "" {
+			t.Fatalf("存量豁免表第 %d 条有空字段：%+v", i+1, e)
+		}
+	}
+
+	// ⑦ 白名单表：回环 / 未指定 / 文档段 ⇒ 判合法（永不报）；表外真地址 ⇒ 判不合法
+	for _, v := range []string{"127.0.0.1", "0.0.0.0", "::1", "localhost", "192.0.2.", "203.0.113."} {
+		if !hcppAddrAllowed(v) {
+			t.Fatalf("白名单失败：%q 应判合法写法", v)
+		}
+	}
+	if hcppAddrAllowed(addr) {
+		t.Fatalf("白名单越界失败：%q 不该判合法", addr)
+	}
+}

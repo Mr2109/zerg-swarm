@@ -12,9 +12,10 @@
 //	① fail-closed：卵名 / 权重 / 引擎路径任一拿不到就报错拒孵，绝不编造默认值
 //	   （孵化器只照单执行，不推断、不补默认，§6.7）；
 //	② 只挂该卵在声明里点名的**文件**：entry.file → `/models/<基名>`、mmproj → `/models/<基名>`、
-//	   chat_template → 与权重同目录落 `/models/<基名>`、否则落 `/templates/<基名>`（都是逐文件
-//	   只读绑定），参数里的宿主路径改写成对应空间内路径 ⇒ **权重所在目录整体不再挂载** ——
-//	   同目录的别的模型与整个 /data 在空间内根本不存在（§6.6 / §9.3）；
+//	   chat_template → 与权重同目录落 `/models/<基名>`、否则落 `/templates/<基名>`、ds4 的
+//	   `vision` 视觉编码器 → `/models/<基名>`（都是逐文件只读绑定），参数里的宿主路径改写成
+//	   对应空间内路径 ⇒ **权重所在目录整体不再挂载** —— 同目录的别的模型与整个 /data 在空间内
+//	   根本不存在（§6.6 / §9.3）；
 //	③ 空间内路径约定写死在本文件（/models、/engine、/libs、/templates、/work、/kvdisk），
 //	   与 hatch 包的命令行配方一一对应；
 //	④ 要**写**的落点一律走可写绑定（ExtraRWBinds → bwrap `--bind`）：WorkDir 给**空间内**
@@ -442,6 +443,23 @@ func (r pathRewrite) matches(tok string) bool {
 	return (r.host != "" && tok == r.host) || (r.raw != "" && tok == r.raw)
 }
 
+// visionPath 取卵声明里的视觉编码器路径（ds4 家族的口径：「有值才算声明」）。
+//
+// 键名与读法**与子端适配器同源**（`modeladapter/ds4.go`：`entry.Custom["vision"].(string)` 且非空
+// 才发 `--vision`）——注册表里写哪个键、适配器读哪个键、本函数绑哪个键，三者必须是同一个；
+// ✗ 不在这里另立键名（自创键名 = 绑了一份引擎根本不读的文件，看着像修好了）。
+// 非字符串 / 空串一律当「未声明」（与适配器同口径，绝不猜）。
+func visionPath(entry *registry.ModelEntry) string {
+	if entry == nil {
+		return ""
+	}
+	v, ok := entry.Custom["vision"].(string)
+	if !ok {
+		return ""
+	}
+	return v
+}
+
 // spaceInputMappings 算出需要改写的宿主侧输入，以及需要额外只读绑定的清单（ExtraROBinds）。
 //
 // **逐文件**覆盖三类输入（都只读；缺陷 12 修正：整**目录**不再挂载 —— 旧实现把权重所在目录
@@ -450,6 +468,9 @@ func (r pathRewrite) matches(tok string) bool {
 //   - 权重文件（必给）：`<entry.file>:/models/<基名>`；
 //   - 视觉投影 mmproj（可选）：`<mmproj>:/models/<基名>`（逐文件挂载后不再要求「与权重同目录」
 //     —— 那条限制的由来就是整目录挂载，理由已随之消失；真危险的是**基名撞车**，见下）；
+//   - 视觉编码器 vision（可选，ds4 家族）：`<vision>:/models/<基名>`——它是注册表里的**另一枚
+//     inline 键**（键名与读法跟子端适配器同源：`modeladapter/ds4.go` 的 `entry.Custom["vision"]`），
+//     故不并进 mmproj，但处理完全同款（逐文件只读绑定 + 参数改写）；
 //   - 聊天模板 chat_template（可选）：文件存在才处理（适配器也只在存在时才发该参数）；
 //     与权重同目录 ⇒ `/models/<基名>`，否则 ⇒ `/templates/<基名>`（沿用既有的输入通道落点）。
 //
@@ -509,6 +530,26 @@ func spaceInputMappings(eggID string, entry *registry.ModelEntry, hostWeightFile
 			binds = append(binds, b)
 			rewrites = append(rewrites, pathRewrite{host: host, raw: p, space: space})
 		}
+	}
+	// 视觉编码器 vision（可选，ds4 家族）——与上面的 mmproj **同款**：逐文件只读绑进 /models/<基名>，
+	// 并把引擎参数里那个宿主路径改写成空间内路径。
+	// 不绑的后果（2026-10-13 edge-node 真机实测·逐字）：`--vision` 带着**宿主路径**原样进沙箱，而空间内
+	// 既没有 /data 也没绑该文件 ⇒ 引擎退：
+	//	ds4: cannot open model '/data/models/DeepSeek-V4-Flash-Vision-Encoder.gguf': No such file or directory
+	if p := strings.TrimSpace(visionPath(entry)); p != "" {
+		host := expandTilde(p)
+		space := spaceWeightsDir + "/" + filepath.Base(host)
+		if prev, dup := claimed[space]; dup {
+			return nil, nil, fmt.Errorf("卵 %s：视觉编码器 %q 与 %s 的空间内落点都是 %q——拒孵：逐文件挂载时后挂的会盖住先挂的，"+
+				"落点撞车等于有一份静默不见了", eggID, p, prev, space)
+		}
+		claimed[space] = "视觉编码器 " + p
+		b, err := roBind(host, space)
+		if err != nil {
+			return nil, nil, fmt.Errorf("卵 %s：%w", eggID, err)
+		}
+		binds = append(binds, b)
+		rewrites = append(rewrites, pathRewrite{host: host, raw: p, space: space})
 	}
 	return rewrites, binds, nil
 }

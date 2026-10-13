@@ -184,7 +184,7 @@ func gapRereadWhy(cmdStr string) string {
 	if m := gapVerifyOneMetaHit(cmdStr); m != "" {
 		return fmt.Sprintf("含 shell 元字符 %q（只跑那一格命令本身 · 不拼 shell 串）", m)
 	}
-	fields := strings.Fields(cmdStr)
+	fields := gapCmdFields(cmdStr) // ★ 本族**唯一**分词口径（剥引号 ＋ 空格安全取件）—— ✗ 不用裸 `strings.Fields`
 	if len(fields) == 0 {
 		return "空命令"
 	}

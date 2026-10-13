@@ -71,7 +71,7 @@ func TestGapAddVerifyCmdActionLevel(t *testing.T) {
 		}
 	}
 	// 负控：**其它族**的只读动作未被波及（本就是一等公民）。
-	if rc := add("zerg model ls --json name"); rc != 0 {
+	if rc := add("zerg model ls --json id"); rc != 0 {
 		t.Errorf("其它族只读动作应照旧收下：rc=%d（要 0）", rc)
 	}
 }

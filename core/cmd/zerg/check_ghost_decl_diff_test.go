@@ -9,9 +9,14 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
+
+// gddSelftestTmpRe —— 自检自建临时目录名的归一锚（见 `SelfTestTwoStateByteEqual` 那格的说明）。
+// ★ 抹到**行尾**（不是只抹 `\d+`）：随机后缀位数不定，40 符文截断会留下 `/f` / `/f1` 一类残片。
+var gddSelftestTmpRe = regexp.MustCompile(`gdd-selftest-[^\n]*`)
 
 const tgGoodDecl = "# 夹具声明树\n" +
 	"kind\tname\t声明件\t程序\t进程特征\t归属\t处置\n" +
@@ -261,7 +266,16 @@ func TestCheckGhostDeclDiffGatePort(t *testing.T) {
 		if rcA != 0 || rcB != 0 {
 			t.Fatalf("自检 rc 在盘=%d 移出=%d want 0/0\n--- 在盘 ---\n%s\n--- 移出 ---\n%s", rcA, rcB, bufA.String(), bufB.String())
 		}
-		if bufA.String() != bufB.String() {
+		// ★ 归一（假红发生器 · 测件侧最小修）：抹掉自检自建的**随机临时目录名** ——
+		// `gddSelfTestRoot` 每次 `os.MkdirTemp("", "gdd-selftest-")` 建一个
+		// `<TMPDIR>/gdd-selftest-<随机数字>`，与「在盘 / 移出」两态**语义无关**。
+		// ⑥ 那格备注只截 40 符文（`gddTruncRunes`）⇒ 短 TMPDIR（如 `/tmp`）下截断点落进随机数；
+		// 而随机后缀**位数不定** ⇒ 截断残片（`/f` 与 `/f1`）也会残留 ⇒ 只抹数字段仍不等。
+		// 故抹到该行**行尾**（其后只剩同一个固定说明串，仍无语义差异）。
+		norm := func(s string) string {
+			return gddSelftestTmpRe.ReplaceAllString(s, "gdd-selftest-N")
+		}
+		if norm(bufA.String()) != norm(bufB.String()) {
 			t.Fatalf("两态自检输出不逐字同（本单回归牙）：\n--- 在盘 ---\n%s\n--- 移出 ---\n%s", bufA.String(), bufB.String())
 		}
 		if !strings.Contains(bufA.String(), "④b") || !strings.Contains(bufA.String(), "④c") {

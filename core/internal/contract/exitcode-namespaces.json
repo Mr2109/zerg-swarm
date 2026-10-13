@@ -288,7 +288,7 @@
           },
           {
             "site": "core/cmd/zerg/family_gap.go",
-            "line": 1286,
+            "line": 1399,
             "must_contain": "退码 1"
           },
           {
@@ -305,7 +305,7 @@
         "sites": [
           {
             "site": "core/cmd/zerg/family_eggs_cocoons.go",
-            "line": 1074,
+            "line": 1196,
             "must_contain": "退码 2"
           },
           {
@@ -320,7 +320,7 @@
           },
           {
             "site": "core/cmd/zerg/family_gap.go",
-            "line": 1607,
+            "line": 1720,
             "must_contain": "退码 2"
           }
         ]
@@ -342,12 +342,12 @@
           },
           {
             "site": "core/cmd/zerg/family_eggs_cocoons.go",
-            "line": 223,
+            "line": 282,
             "must_contain": "退码 8"
           },
           {
             "site": "core/cmd/zerg/family_gap.go",
-            "line": 2526,
+            "line": 2649,
             "must_contain": "取数不到"
           },
           {

@@ -465,9 +465,70 @@ func gapJudgeUnknownFlag(fields []string) string {
 // **逐字不变**」这条硬线（本仓绝大多数账条即此类）由**代码本身**保证、不靠回归牙兜。
 func gapCmdFields(cmdStr string) []string {
 	if strings.IndexAny(cmdStr, "'\"") < 0 {
-		return strings.Fields(cmdStr)
+		return gapJoinPathTokens(strings.Fields(cmdStr))
 	}
-	return cnsfSplitArgs(cmdStr)
+	return gapJoinPathTokens(cnsfSplitArgs(cmdStr))
+}
+
+// gapPathValFlags —— 「值是**一个路径**」的那几枚旗标（取件入口）：`--root` / `--path`。
+// ★ 只登这一类（取件根 / 取件件）；✗ 不登自由文本值旗标（`--evidence` / `--title` / `--symptom` …），
+//
+//	否则一句正常的多词取值会被错并成「一个路径」。
+var gapPathValFlags = map[string]bool{"--root": true, "--path": true}
+
+// gapJoinPathTokens —— **空格安全取件形态**（★ 缺口 `GAP-20261013-326` 本笔修点）。
+//
+// 病（修前）：仓根含空格（`"/Volumes/" + "AHZ"/00 项目/…`）时，账内一条**不带引号**的取件判据
+// （`zerg repo status --root "/Volumes/" + "AHZ"/00 项目/模型类/Zerg-内部文档`）被切词器按空格切碎
+// （`--root` ⇒ `"/Volumes/" + "AHZ"/00` ＋ `项目/模型类/Zerg-内部文档`）⇒ 后一段成**多余位置参数** ⇒ 判据
+// **恒 rc=2**（实测 `GAP-20260927-57` / `-58` / `-71` / `-327` 同族四条即此型；不带空格的取件照旧正常）。
+// 带引号形态本来就过，但账内历史条一律是不带引号的裸串 ⇒ 靠改账治不了本。
+//
+// 治：**取件旗标（`--root` / `--path`）后的路径按「盘上存在性」重拼成一个参数** —— 逐 token 向右
+// 试探，只要「已拼出来的那一段」现读在盘上是个真路径就继续吞下一枚，取**最长**的那个存在段。
+// ★ 硬线：拼得出来的路径**不存在** ⇒ **一字不并**、逐字退回旧切词结果 ⇒「不需要重拼的 `verify_cmd`
+//
+//	切词结果逐字不变」由**代码本身**保证、不靠回归牙兜（本仓绝大多数账条即此类）。
+//
+// ★ 只认**值位**（旗标紧随的那一枚起）且遇 `-` 开头的 token 即止 ⇒ ✗ 不扫整串、✗ 不动旗标本身。
+func gapJoinPathTokens(in []string) []string {
+	out := make([]string, 0, len(in))
+	for i := 0; i < len(in); i++ {
+		out = append(out, in[i])
+		if !gapPathValFlags[in[i]] || i+1 >= len(in) {
+			continue
+		}
+		best := -1
+		join := in[i+1]
+		if gapPathTokenExists(join) {
+			best = i + 1
+		}
+		for k := i + 2; k < len(in); k++ {
+			if strings.HasPrefix(in[k], "-") {
+				break
+			}
+			join += " " + in[k]
+			if gapPathTokenExists(join) {
+				best = k
+			}
+		}
+		if best <= i+1 {
+			continue
+		}
+		out = append(out, strings.Join(in[i+1:best+1], " "))
+		i = best
+	}
+	return out
+}
+
+// gapPathTokenExists —— 该 token 现读是不是盘上一个真路径（**存在性**是本档唯一的取件判据：
+// 拼得出来的路径不存在 ⇒ 不合并 ⇒ 退回旧切词，✗ 不猜）。
+func gapPathTokenExists(tok string) bool {
+	if tok == "" || strings.HasPrefix(tok, "-") {
+		return false
+	}
+	_, err := os.Stat(filepath.FromSlash(tok))
+	return err == nil
 }
 
 // gapWriteFaceWhy —— **只读闸**：把一条判据解析到命令树，落在危险档（写面）且**没带 `--dry-run`**
@@ -667,6 +728,58 @@ func gapBoilerplateWhy(cmdStr string) string {
 		return ""
 	}
 	return fmt.Sprintf("`%s` 是通用（内省型）命令 —— 只列举 / 打印概览、判不了任何一条缺口", strings.Join(fields, " "))
+}
+
+// gapJudgePreflightWhy —— **现跑预检闸**（缺口 `GAP-20261013-14` 靶心）：把一条 `verify_cmd` **真跑一次取 rc**，
+// 抠出「结构性恒非绿」的判据（命令树里解析得到、真跑却不给结论）。
+//
+// 病（修前）：本族写侧的 `--verify-cmd` 只有两道**静态**闸 —— 样板值闸 `gapBoilerplateWhy` ＋ 命令树解析面
+// `gapJudgeArgv`（自递归 / 写面 / 假旗标）—— **都不真跑** ⇒ 「解析得到、一跑却恒退 2」的判据照样入库，
+// 且这类判据**永远变不成绿**（现读实测：`zerg fleet logs` 解析得到、非样板，真跑 rc=2
+// `the following arguments are required: command`；`zerg gap ls --json scope` 真跑 rc=2 `未知字段 "scope"`）。
+//
+// 治（本枚）：**真跑一次取 rc** —— `rc=2` 且错文点名**未知旗标 / 未知字段 / 缺必填子命令** ⇒ 拒收；
+// 其余 rc（0 / 1 / 「件不在」一类**有鉴别力**的读数）⇒ 收（判据只需跑得动、读数可辨）。
+// ★ 只对**新写入**生效：本闸在写侧（`gap add` / `gap idea promote` / `gap judge set`）调用 ⇒
+// 存量账**一字不回溯**（✗ 不回扫旧账）。
+// ★ 执行面 = 同族唯一 `run` 入口（进程内 · 不拼 shell · 输出有界收集 · 解析不过不跑），✗ 不新造第二套 runner；
+// 静态三档的判词仍由 `gapJudgeArgv` 出（本闸只在其后补「真跑」这一档 · ✗ 不改前三档判词语义）。
+func gapJudgePreflightWhy(cmdStr string) string {
+	args, why := gapJudgeArgv(cmdStr)
+	if why != "" {
+		return "" // 静态闸（解析 / 写面 / 自递归 / 假旗标）已在 `gapJudgeArgv` 里判过 ⇒ 不重复出判词
+	}
+	w := &gapCapWriter{max: 2048}
+	rc := run(args, w, w)
+	out := strings.TrimSpace(w.String())
+	if rc != exitUsage {
+		return ""
+	}
+	if bad := gapJudgePreflightBadText(out); bad != "" {
+		return fmt.Sprintf("判据 `%s` 真跑一次 rc=2，错文点名 %s ⇒ 拒收（结构性恒非绿：命令树里解析得到、"+
+			"真跑却不给结论 ⇒ 该判据永远变不绿）", strings.Join(args, " "), bad)
+	}
+	return ""
+}
+
+// gapJudgePreflightBadText —— 现跑输出的「结构性恒非绿」指纹（命中即返回该指纹 · 无 ⇒ 空串）。
+//
+// 只认**点名**用的那几族措辞（✗ 不按 rc 单判 —— rc=2 也可能是「件不在」一类**有鉴别力**的读数，那要收）：
+//
+//	· `未知旗标` / `未知字段` / `未知参数` —— 本仓命令面解析器（`main.go` `parseInvocation`）；
+//	· `unrecognized arguments` / `the following arguments are required` —— 子件 py argparse（未知旗标 / 缺必填子命令）；
+//	· `不是一个可执行动作` / `要给动作` —— 本仓**族名 / 中间节点**档（裸族名 ⇒ 缺必填子命令 / 缺动作）。
+func gapJudgePreflightBadText(out string) string {
+	for _, pat := range []string{
+		"未知旗标", "未知字段", "未知参数",
+		"unrecognized arguments", "the following arguments are required",
+		"不是一个可执行动作", "要给动作",
+	} {
+		if strings.Contains(out, pat) {
+			return pat
+		}
+	}
+	return ""
 }
 
 // gapCapWriter —— 判据输出**有界**收集（只留一小段当证据；不把被判命令的整段输出吃进内存）。
@@ -2277,6 +2390,16 @@ func gapAddUsageConfirm(inv *invocation, stderr io.Writer, in gapAddInput, sympt
 		inv.setErr("usage", "verify_cmd_unresolved", why)
 		fmt.Fprintf(stderr, "%s: `--verify-cmd` 解析不到命令树：%s\n", progName, why)
 		fmt.Fprintf(stderr, "  v1.3 §七 规矩 2：判据必须能在命令树里解析到（解析面 = 命令树，门⑪ `T1` 保证它与矩阵 `command` 列同尺）\n")
+		return gapRecord{}, exitUsage
+	}
+	// ★ 缺口 `GAP-20261013-14`（本枚 · 现跑预检）：上面两道**静态**闸（样板值 / 解析面）都不真跑 ⇒
+	// 「命令树里解析得到、真跑却恒退 2（未知旗标 / 未知字段 / 缺必填子命令）」的判据照样入库、
+	// 且永远变不绿。本档**真跑一次取 rc**：命中那几族错文 ⇒ 拒收；其余 rc（0 / 1 / 有鉴别力的读数）⇒ 收。
+	// ★ 只对**新写入**生效（存量账一字不回溯）。
+	if why := gapJudgePreflightWhy(verifyCmd); why != "" {
+		inv.setErr("usage", "verify_cmd_preflight", why)
+		fmt.Fprintf(stderr, "%s: `--verify-cmd` 现跑预检不过：%s\n", progName, why)
+		fmt.Fprintf(stderr, "  口径：判据要**真跑得动**且读数可辨 —— 不给结论的形态（未知旗标 / 未知字段 / 缺必填子命令）收下来只会让该条判据永远变不绿 ⇒ 拒收 2（缺口 `GAP-20261013-14`）\n")
 		return gapRecord{}, exitUsage
 	}
 
@@ -7579,6 +7702,15 @@ func cmdGapJudgeSet(inv *invocation, stdout, stderr io.Writer) int {
 		inv.setErr("usage", "verify_cmd_unresolved", why)
 		fmt.Fprintf(stderr, "%s: `--verify-cmd` 解析不到命令树：%s\n", progName, why)
 		fmt.Fprintf(stderr, "  v1.3 §七 规矩 2：判据必须能在命令树里解析到（解析面 = 命令树，门⑪ `T1` 保证它与矩阵 `command` 列同尺）\n")
+		return exitUsage
+	}
+	// ★ 缺口 `GAP-20261013-14`（本枚 · 现跑预检）：静态三档之外再**真跑一次取 rc** —— 命中
+	// 未知旗标 / 未知字段 / 缺必填子命令 ⇒ 拒收（该形态永远变不绿）；其余 rc ⇒ 收。
+	// ★ 只对**新写入**生效（存量账一字不回溯）。
+	if why := gapJudgePreflightWhy(verifyWant); why != "" {
+		inv.setErr("usage", "verify_cmd_preflight", why)
+		fmt.Fprintf(stderr, "%s: `--verify-cmd` 现跑预检不过：%s\n", progName, why)
+		fmt.Fprintf(stderr, "  口径：判据要**真跑得动**且读数可辨 —— 不给结论的形态（未知旗标 / 未知字段 / 缺必填子命令）收下来只会让该条判据永远变不绿 ⇒ 拒收 2（缺口 `GAP-20261013-14`）\n")
 		return exitUsage
 	}
 	// `--repro-cmd` 同 `gap add` 口径：只过样板值闸（设计上收自由文本：`go test …` / `gh …` / 散文都合法）。

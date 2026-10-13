@@ -1732,6 +1732,10 @@ func ImpactSlotLineForTest(root string) (string, error) {
 type EggBackendFactForTest struct {
 	Reachable bool
 	Running   map[string]int // 模型 id ⇒ 在跑的引擎端口
+	// Profile 模型 id ⇒ 子端 `/eggs` 报的 **`has_profile`**（`GAP-20261013-17`：别台卵那一格的
+	// 真源 = 那一台**自己**算的）。缺席 = 这次合成回据里**没报这一枚** ⇒ 本面落 `unknown`
+	// （与真路径同形：没报 ≠ 没有档案）。
+	Profile map[string]bool
 }
 
 // SetEggBackendProbeForTest 把探测口换成按 `host` 查表的合成回据；返回**还原函数**。
@@ -1747,7 +1751,11 @@ func SetEggBackendProbeForTest(byHost map[string]EggBackendFactForTest) func() {
 		for k, v := range f.Running {
 			run[k] = v
 		}
-		return eggBackendFact{Reachable: f.Reachable, Running: run, Why: "合成子端"}
+		prof := map[string]bool{}
+		for k, v := range f.Profile {
+			prof[k] = v
+		}
+		return eggBackendFact{Reachable: f.Reachable, Running: run, Profile: prof, Why: "合成子端"}
 	}
 	return func() { eggBackendProbe = prev }
 }

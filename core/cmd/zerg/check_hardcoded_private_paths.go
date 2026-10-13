@@ -77,6 +77,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"unicode"
 )
@@ -108,6 +109,106 @@ const hcppUsage = "用法：python3 scripts/gates/check-hardcoded-private-paths.
 // 若在此直写原串，本件一落仓就把本门判红。这里**拼接构造**：源码文本里没有连成一串的私径。
 func hcppNeedles() []string {
 	return []string{"/Volumes/" + "AHZ", "/Volumes/" + "BXC", "/Users/" + "Mr2109"}
+}
+
+// ── 规则族②：机器地址 / 端口字面量（`GAP-20261010-20` · 扩既有断言 · ✗ 不新造命令）──────────
+//
+// 为什么加：本门原先只扫「私有绝对路径」三类字面量；**「仓内硬编码机器地址/端口」无一条判据盯着**
+// （脱敏侧 `publish/replace-rules.tsv` 早有替换规则、**门禁侧那一半未落**）⇒ 按既有门扩一格。
+// 规则源 = `publish/replace-rules.tsv` §「内网地址（示例值）」段（**唯一真源**，✗ 不另立口径）：
+//
+//	· `192.168.x.x` 内网地址兜底 · `10.0.x.x` 集群内网地址兜底 · 主机名 `<机器名>.local`
+//
+// ★ 覆盖形态：地址**连同它带的端口**（命中即点名整行 ⇒ `http://192.168.<私>.<私>:<端口>` 这类
+//
+//	「地址:端口」一并被点名）。★ **裸端口数字不判**（`8100`/`8580` 与合法常量
+//	`config.DefaultAgentPort` 在文本上不可区分；判它必然误拦）—— 这是有意收窄，见回执。
+//
+// ★ 白名单（合法写法 · **永不报**）：见 `hcppAddrAllow`。
+// ★ 存量豁免（**只许减**）：见 `hcppAddrKnown` —— 扩规则那一刻的现存命中逐条入免扫面。
+var hcppAddrRules = []struct {
+	kind string
+	re   *regexp.Regexp
+}{
+	{"内网地址 192.168.x", regexp.MustCompile(`192\.168\.\d{1,3}\.\d{1,3}`)},
+	{"集群内网地址 10.0.x", regexp.MustCompile(`\b10\.0\.\d{1,3}\.\d{1,3}\b`)},
+	{"机器主机名 *.local", regexp.MustCompile(`\b[A-Za-z][A-Za-z0-9-]*[-0-9][A-Za-z0-9-]*\.local\b`)},
+}
+
+// hcppAddrAllow 值级白名单 —— **合法写法，永不报**（命中值逐字等于其中之一、或以之为前缀即放过）。
+//
+//	· 回环 / 未指定：`127.0.0.1` · `0.0.0.0` · `::1` · `::` · `localhost`（本机自己，不是机器地址）
+//	· 文档举例段（RFC5737 TEST-NET-1/2/3）—— 文档/示例专用，不是真机
+//
+// ★ 现读三条规则（`hcppAddrRules`）**结构性**就不会命中上表多数值（回环是 `127.*`、未指定是 `0.0.0.0`、
+//
+//	文档段是 `192.0.2.*`/`198.51.100.*`/`203.0.113.*`）；本表是**显式声明**：
+//	① 把「哪些写法算合法」写成可审的一行行；② 日后若有人放宽规则，白名单**先行**挡住误拦。
+var hcppAddrAllow = []struct{ val, why string }{
+	{"127.0.0.1", "回环（本机 · 非机器地址）"},
+	{"0.0.0.0", "未指定地址（全接口监听）"},
+	{"::1", "回环（IPv6）"},
+	{"::", "未指定（IPv6）"},
+	{"localhost", "本机名（非机群机器）"},
+	{"192.0.2.", "RFC5737 文档段 TEST-NET-1（文档举例）"},
+	{"198.51.100.", "RFC5737 文档段 TEST-NET-2（文档举例）"},
+	{"203.0.113.", "RFC5737 文档段 TEST-NET-3（文档举例）"},
+}
+
+// hcppAddrAllowed：值 ∈ 白名单（逐字，或以白名单项为前缀）⇒ 合法写法、不报。
+func hcppAddrAllowed(v string) bool {
+	for _, a := range hcppAddrAllow {
+		if v == a.val || strings.HasPrefix(v, a.val) {
+			return true
+		}
+	}
+	return false
+}
+
+// hcppAddrHit 一处「机器地址/端口」命中（规则族②）。
+type hcppAddrHit struct {
+	rel  string
+	line int
+	kind string
+	val  string
+	text string
+}
+
+// hcppAddrKnown 存量豁免（`GAP-20261010-20` 扩规则那一刻的现存命中 · **只许减**）。
+//
+// 命中全落在各判据件里**自检夹具的示例值 / 检测词表字面**（不是生产取址）——
+// 逐条 =(仓内相对件, 命中值) ⇒ 该件里**那个值**不算命中；**同一件里出现新值、或别处出现该值仍判红**。
+// ★ 值一律**拼接构造**：源码里不连成一串 ⇒ 本件不成为自己的命中宿主（同 `hcppNeedles` 的自指纪律）。
+// ★ 现存命中被清掉后**应把该行删掉**（门只有「新增即红」这一颗牙；删行是人工动作，删行不改判色）。
+var hcppAddrKnown = []struct {
+	rel, val, why string
+}{
+	{"core/cmd/zerg/check_approve_merge.go", "Mr2109deMac-Studio" + ".local", "自检夹具：审批合并列里的本机名"},
+	{"core/cmd/zerg/check_doc_freshness.go", "10." + "0.0.1", "自检夹具：文档新鲜度取样行里的示例地址"},
+	{"core/cmd/zerg/check_fleet_loadable.go", "10." + "0.0.1", "自检夹具：fleet 夹具名册 host"},
+	{"core/cmd/zerg/check_fleet_loadable.go", "10." + "0.0.2", "自检夹具：fleet 夹具名册 host"},
+	{"core/cmd/zerg/check_nodes_roster.go", "10." + "0.0.2", "自检夹具：名册/fleet 夹具 host"},
+	{"core/cmd/zerg/check_nodes_roster.go", "10." + "0.0.3", "自检夹具：名册夹具的变异值"},
+	{"core/cmd/zerg/check_nodes_roster.go", "192.168." + "110.4", "自检夹具：判据 H「拨号地址不在名册 ⇒ 红」的坏例"},
+	{"core/cmd/zerg/check_password_argv.go", "10." + "0.0.7", "自检夹具：口令走 argv 的 ssh 目标"},
+	{"core/cmd/zerg/check_password_argv.go", "10." + "0.0.83", "自检夹具：口令走 argv 的 ssh 目标"},
+	{"core/cmd/zerg/check_password_argv.go", "10." + "0.0.9", "自检夹具：口令走 argv 的 ssh 目标"},
+	{"core/cmd/zerg/check_private_path_forms.go", "192.168." + "1.5", "形态枚举件自身的示例值（F-06 内网地址）"},
+	{"core/cmd/zerg/check_private_path_forms.go", "Mr2109deMac-Studio" + ".local", "形态枚举件自身的示例值（F-09 主机名）"},
+	{"core/cmd/zerg/check_public_face_wording.go", "Mr2109deMac-Studio" + ".local", "写作面用词表的**检测词表**（该门自己盯这个词）"},
+	{"core/cmd/zerg/check_public_marks.go", "192.168." + "1.10", "自检夹具：私有面泄漏样例"},
+	{"core/cmd/zerg/check_public_marks.go", "192.168." + "31.7", "自检夹具：私有面泄漏样例"},
+	{"core/cmd/zerg/check_token_argv.go", "10." + "0.0.7", "自检夹具：令牌走 argv 的 controller 地址"},
+}
+
+// hcppAddrExempt：该 (件, 值) 是否在存量豁免表内。
+func hcppAddrExempt(rel, val string) bool {
+	for _, e := range hcppAddrKnown {
+		if e.rel == rel && e.val == val {
+			return true
+		}
+	}
+	return false
 }
 
 // ── 判据辅助 ─────────────────────────────────────────────────────────────────────────────
@@ -191,7 +292,10 @@ type hcppHit struct {
 }
 
 // hcppWalk：按 py `os.walk(topdown=True)` 的**确定序**递归 —— 先逐件（字典序），再逐子目录（字典序）。
-func hcppWalk(root, dir string, hits *[]hcppHit, scanned *int) {
+// ★ `addr` 是规则族②（机器地址/端口）的命中出口；两族共用**同一趟遍历与同一套豁免面**
+//
+//	（注释行 / `_test.go` / Rust `#[cfg(test)]` / 二进制 / 跳过目录）。
+func hcppWalk(root, dir string, hits *[]hcppHit, addr *[]hcppAddrHit, scanned *int) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return
@@ -228,6 +332,10 @@ func hcppWalk(root, dir string, hits *[]hcppHit, scanned *int) {
 		}
 		for i, line := range lines {
 			ln := i + 1
+			// 注释行与 Rust 夹具段：两族**一并**跳过（防假红的口径不分族）。
+			if rustSkip[ln] || hcppIsComment(line) {
+				continue
+			}
 			matched := false
 			for _, n := range needles {
 				if strings.Contains(line, n) {
@@ -235,33 +343,40 @@ func hcppWalk(root, dir string, hits *[]hcppHit, scanned *int) {
 					break
 				}
 			}
-			if !matched {
-				continue
+			if matched {
+				*hits = append(*hits, hcppHit{rel: rel, line: ln, text: strings.TrimRightFunc(line, unicode.IsSpace)})
 			}
-			if rustSkip[ln] || hcppIsComment(line) {
-				continue
+			// 规则族②：机器地址/端口字面量（白名单先筛；存量豁免在出口处筛）。
+			for _, rule := range hcppAddrRules {
+				for _, m := range rule.re.FindAllString(line, -1) {
+					if hcppAddrAllowed(m) {
+						continue
+					}
+					*addr = append(*addr, hcppAddrHit{rel: rel, line: ln, kind: rule.kind, val: m,
+						text: strings.TrimRightFunc(line, unicode.IsSpace)})
+				}
 			}
-			*hits = append(*hits, hcppHit{rel: rel, line: ln, text: strings.TrimRightFunc(line, unicode.IsSpace)})
 		}
 	}
 	for _, d := range subdirs {
-		hcppWalk(root, d, hits, scanned)
+		hcppWalk(root, d, hits, addr, scanned)
 	}
 }
 
-// hcppScan：扫全部白名单目录，返回 (命中, 扫描面件数)。
-func hcppScan(root string, strict bool) ([]hcppHit, int) {
+// hcppScan：扫全部白名单目录，返回 (私径命中, 机器地址命中, 扫描面件数)。
+func hcppScan(root string, strict bool) ([]hcppHit, []hcppAddrHit, int) {
 	var hits []hcppHit
+	var addr []hcppAddrHit
 	scanned := 0
 	for _, sd := range hcppScanDirs {
 		base := filepath.Join(append([]string{root}, strings.Split(sd, "/")...)...)
 		if !hcppIsDir(base) {
 			continue
 		}
-		hcppWalk(root, base, &hits, &scanned)
+		hcppWalk(root, base, &hits, &addr, &scanned)
 	}
 	_ = strict // KNOWN_PENDING 现读为空 ⇒ 两支同值（见件头未覆盖面⑤）
-	return hits, scanned
+	return hits, addr, scanned
 }
 
 // hcppRepoRoot：显式参数 → abspath；否则从 cwd 逐级上溯（≤6 层）找带 `core/` 与 `ui/` 的目录；再否则 cwd。
@@ -385,6 +500,46 @@ func hcppSelfTest(stdout io.Writer) int {
 	rc, out = run(comment)
 	chk("档①′ 成对正控：同一路径出现在注释里 ⇒ **不许红**（防假红）", 0, rc, out)
 
+	// ── 规则族②（机器地址/端口 · GAP-20261010-20）成对负控 ──
+	// ★ 夹具值一律**拼接构造**（本件在门自己的扫描面内 ⇒ 正文里不许连成一串的真地址）。
+	chkBool := func(label string, ok bool) {
+		if ok {
+			fmt.Fprintf(stdout, "  ✓ %s\n", label)
+			return
+		}
+		bad++
+		fmt.Fprintf(stdout, "  ✗ %s\n", label)
+	}
+	addrReal := "192.168." + "9.9" // 不在存量豁免表里 ⇒ 真·新增
+	addrTen := "10." + "0.0.42"    // 同上（另一族）
+	hostReal := "edge01deMac-Studio" + ".local"
+
+	addrClean := fixture("addrc-ok", "package main\n\nvar a = \"127.0.0.1\"\nvar b = \"0.0.0.0\"\n"+
+		"var c = \"192.0.2.1\"\nvar d = \"localhost\"\nvar e = \"zerg.local\"\nvar f = \"foo.local\"\n")
+	rc, out = run(addrClean)
+	chk("档②′ 成对正控：合法写法（127.0.0.1 / 0.0.0.0 / 文档段 / localhost / 纯字母 .local）⇒ 不许红", 0, rc, out)
+
+	addrBad := fixture("addrc-bad", "package main\n\nvar u = \"http://"+addrReal+":8580/api\"\n")
+	rc, outBad := run(addrBad)
+	chk("档②″ 负控：代码行写死内网地址 ⇒ 红", 1, rc, outBad)
+	chkBool("档②‴ 负控：红并**点名件:行**（core/main.go:3）＋回显命中值",
+		strings.Contains(outBad, "  ✗ 机器地址 内网地址 192.168.x · core/main.go:3:") && strings.Contains(outBad, addrReal))
+
+	addrTwo := fixture("addrc-two", "package main\n\nvar p = \""+addrTen+"\"\nvar h = \""+hostReal+"\"\n")
+	rc, out = run(addrTwo)
+	chk("档②⁗ 负控：另两族（10.0.x / 机器主机名 *.local）也红", 1, rc, out)
+
+	addrCmt := fixture("addrc-cmt", "package main\n\n// 例："+"http://"+addrReal+":8580"+"（注释不算）\nvar x = 1\n")
+	rc, out = run(addrCmt)
+	chk("档②⁵ 成对正控：同一地址落在**注释行** ⇒ 不许红（防假红）", 0, rc, out)
+
+	// 存量豁免表 / 白名单接线自检（表里第 1 条必判豁免；表外 (件,值) 必判不豁免）。
+	chkBool("档②⁶ 存量豁免表接线：首条 (件,值) 判豁免",
+		len(hcppAddrKnown) > 0 && hcppAddrExempt(hcppAddrKnown[0].rel, hcppAddrKnown[0].val))
+	chkBool("档②⁷ 存量豁免表边界：表外的 (件,值) 判**不**豁免（棘轮）", !hcppAddrExempt("core/x.go", addrReal))
+	chkBool("档②⁸ 白名单：回环/未指定/文档段判合法写法", hcppAddrAllowed("127.0.0.1") &&
+		hcppAddrAllowed("0.0.0.0") && hcppAddrAllowed("192.0.2.") && !hcppAddrAllowed(addrReal))
+
 	rc, out = run(clean, "--no-such-flag")
 	chk("档③ 用法错：未知旗标（输入错 ≠ 零命中）", 2, rc, out)
 
@@ -440,8 +595,15 @@ func hardcodedPrivatePathsGateMain(stdout, stderr io.Writer, argv []string) int 
 	fmt.Fprintf(stdout, "仓库根: %s\n", root)
 	fmt.Fprintf(stdout, "扫描根: %s（跳过构建/运行态目录与二进制文件）\n", strings.Join(hcppScanDirs, "、"))
 	fmt.Fprintf(stdout, "命中词: %s\n", strings.Join(hcppNeedles(), "、"))
+	addrKinds := make([]string, 0, len(hcppAddrRules))
+	for _, r := range hcppAddrRules {
+		addrKinds = append(addrKinds, r.kind)
+	}
+	fmt.Fprintf(stdout, "机器地址规则: %s（白名单 %d 条 · 命中即在「地址:端口」形态上点名整行）\n",
+		strings.Join(addrKinds, "、"), len(hcppAddrAllow))
+	fmt.Fprintf(stdout, "存量豁免（机器地址 · 只许减）: %d 条 (件,值) 登记\n", len(hcppAddrKnown))
 
-	hits, scanned := hcppScan(root, strict)
+	hits, addrHits, scanned := hcppScan(root, strict)
 	// ★ 空集守卫（GAP-20260927-108）：空域 ⇒ fail-closed（扫描面 0 件 ⇒ rc=2，不许把「空转」当绿）
 	if scanned == 0 {
 		fmt.Fprintf(stderr, "BLOCKED —— 空域：扫描面（%s）下一件可扫源码都没取到 ⇒ rc=2（不给结论；空转 ≠ 绿）\n",
@@ -452,11 +614,33 @@ func hardcodedPrivatePathsGateMain(stdout, stderr io.Writer, argv []string) int 
 	for _, h := range hits {
 		fmt.Fprintf(stdout, "  ✗ %s:%d:%s\n", h.rel, h.line, h.text)
 	}
+
+	// 机器地址面：存量豁免逐条打印（○ · **不进退码**）；其余 = 新增 ⇒ 红并点名件:行。
+	var addrRed []hcppAddrHit
+	addrKeep := 0
+	for _, a := range addrHits {
+		if hcppAddrExempt(a.rel, a.val) {
+			addrKeep++
+			fmt.Fprintf(stdout, "  ○ 存量豁免 %s · %s:%d:%s（值 %s）\n", a.kind, a.rel, a.line, a.text, a.val)
+			continue
+		}
+		addrRed = append(addrRed, a)
+	}
+	for _, a := range addrRed {
+		fmt.Fprintf(stdout, "  ✗ 机器地址 %s · %s:%d:%s（值 %s）\n", a.kind, a.rel, a.line, a.text, a.val)
+	}
+	fmt.Fprintf(stdout, "存量豁免命中: %d 处（登记 %d 条 · 只打印不进退码）\n", addrKeep, len(hcppAddrKnown))
+
 	exemptFiles := len(hcppKnownPending) // 现读空表 ⇒ 0（与 py `len({e[0] for e in exempt})` 同值）
 	if len(hits) > 0 {
 		fmt.Fprintf(stdout, "\n结果: 失败——白名单代码里有 %d 处写死的私有绝对路径（应改为经 statepath/modelreg/HOME 解析）\n", len(hits))
+	}
+	if len(addrRed) > 0 {
+		fmt.Fprintf(stdout, "\n结果: 失败——仓内新增 %d 处硬编码机器地址/端口（应改为经 fleet.yaml 名册真源解析 · GAP-20261010-20）\n", len(addrRed))
+	}
+	if len(hits) > 0 || len(addrRed) > 0 {
 		return 1
 	}
-	fmt.Fprintf(stdout, "\n结果: 通过——未发现写死的私有绝对路径（已登记待修补 %d 个文件）\n", exemptFiles)
+	fmt.Fprintf(stdout, "\n结果: 通过——未发现写死的私有绝对路径（已登记待修补 %d 个文件）· 机器地址面无新增（存量豁免 %d 条）\n", exemptFiles, len(hcppAddrKnown))
 	return 0
 }
