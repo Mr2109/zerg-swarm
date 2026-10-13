@@ -707,7 +707,13 @@ func cmdPlan(inv *invocation, stdout, stderr io.Writer) int {
 
 	// 落点：`--out <件>` 优先，否则 `$ZERG_PLAN_DIR`（缺省 ~/.zerg/plans/<plan_id>.json）
 	out := strings.TrimSpace(inv.flagVal("--out"))
-	if out == "" {
+	// ★ 干跑档只许【打印】或写【显式命名】的计划件（`GAP-20260927-35` ② · dryrun.v1 真源口径：
+	//   `dryrun-semantics.json` 的 `_零副作用定义`「只允许：打印，或写计划件」＋ `_一句话`「计划必须
+	//   可读（打印到 stdout/stderr，或写一张**显式命名**的计划件）」，同册 plan 条目的备注逐字
+	//   「`--dry-run` = `plan` 的退化形态（算·打印·**不落件**）」）⇒ `--dry-run` **未给 `--out`** 时
+	//   不得落默认落点（`$ZERG_PLAN_DIR`，缺省 `~/.zerg/plans/`）：打印意图件、一个字节不写。
+	dryNoOut := inv.dryRun && out == ""
+	if out == "" && !dryNoOut {
 		dir := planDir()
 		if dir == "" {
 			inv.setErr("failed", "no_plan_dir", "无法解析意图件落点（HOME 不可用且未给 --out）")
@@ -717,9 +723,30 @@ func cmdPlan(inv *invocation, stdout, stderr io.Writer) int {
 		out = filepath.Join(dir, env.Items[0].PlanID+".json")
 	}
 	// ★ 授权侧（`GAP-20260927-140` ① · 2026-10-08 拍）：意图件真写盘 ⇒ 默认档 fail-closed
-	//   （`--dry-run` 出计划件；缺 `--yes` 退 2、零写）。
+	//   （缺 `--yes` 退 2、零写；`--dry-run` 档只打印、不落件 —— 见下）。
 	if rc := writeGuardYes(inv, stderr); rc != exitOK {
 		return rc
+	}
+	if dryNoOut {
+		// 干跑未给 `--out` ⇒ 打印意图件（计划可读 · 一个字节不写）。
+		if inv.jsonGiven {
+			if rc := requireFields(inv, stderr); rc != exitOK {
+				return rc
+			}
+			row := map[string]string{
+				"plan_id": env.Items[0].PlanID, "plan_digest": digest,
+				"action": actionID, "target_kind": kind, "target_name": name,
+				"nodes": strings.Join(nodes, ","), "host": planHost(), "status": "proposed",
+				"path": "", "layers_passed": "L1_schema,L2_reference,L3_dry_run",
+			}
+			return selectJSON(stdout, stderr, inv, inv.path, planFields, row)
+		}
+		fmt.Fprint(stdout, string(canon))
+		if !strings.HasSuffix(string(canon), "\n") {
+			fmt.Fprintln(stdout)
+		}
+		fmt.Fprintf(stderr, "（--dry-run：只出计划件 · 零副作用 —— 未写盘；要落盘给 `--out <件>`）\n")
+		return exitOK
 	}
 	if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
 		inv.setErr("failed", "plan_dir_create_failed", err.Error())

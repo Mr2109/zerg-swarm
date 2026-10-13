@@ -575,3 +575,41 @@ func TestIntentTargetKindsExistInCommandTree(t *testing.T) {
 	_ = modelreg.CapabilityNames
 	_ = json.Valid
 }
+
+// TestPlanDryRunWithoutOutWritesNothing —— `GAP-20260927-35` ②：`--dry-run` **未给 `--out`** 时不许落盘
+// （dryrun.v1 真源口径：`_零副作用定义`「只允许：打印，或写计划件」＋`_一句话`「写一张**显式命名**的计划件」）
+// ⇒ 只打印意图件，默认落点（`$ZERG_PLAN_DIR`）一个字节不写。
+// 负控（改前，`-overlay` 把 `family_fusion.go` 映回改前态）：那一支去掉 ⇒ 文件落盘 ⇒ 本用例必红。
+func TestPlanDryRunWithoutOutWritesNothing(t *testing.T) {
+	ids, err := contract.DevTargets()
+	if err != nil || len(ids) == 0 {
+		t.Fatalf("编号闭集读不出来：%v", err)
+	}
+	planDir := t.TempDir()
+	t.Setenv("ZERG_PLAN_DIR", planDir)
+
+	rc, sout, serr := fusionRun(t, "plan", "model", "start", "example-35b-v2",
+		"--dry-run", "--target", "待办:"+ids[0])
+	if rc != 0 {
+		t.Fatalf("`plan --dry-run`（未给 --out）退码 %d（要 0）· stderr=%s", rc, serr)
+	}
+	if !strings.Contains(sout, "PLAN-") {
+		t.Errorf("干跑应打印意图件（计划可读）：%q", sout)
+	}
+	if leaked := fusionFirstEntry(planDir); leaked != "" {
+		t.Fatalf("`--dry-run` 未给 `--out` 时不许落盘，默认落点里却落了件：%s", leaked)
+	}
+}
+
+// fusionFirstEntry —— 目录里的第一个条目名（空目录 ⇒ 空串）。
+// 用 for/return 而非数量比较：本处是「必须为空」的存在性断言，不是「抽结构再数数」的计数断言。
+func fusionFirstEntry(dir string) string {
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return ""
+	}
+	for _, e := range ents {
+		return e.Name()
+	}
+	return ""
+}

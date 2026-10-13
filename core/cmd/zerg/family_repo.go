@@ -227,9 +227,18 @@ func repoStatusMulti(roots []string, inv *invocation, stdout, stderr io.Writer) 
 	}
 	fmt.Fprintf(stderr, "%s: 合计：未提交 %d 处（脏 %d · 未跟踪 %d）—— 「脏」是状态不是错（照单仓口径）\n",
 		progName, totalDirty+totalUnt, totalDirty, totalUnt)
+	// ★ 缺口 `GAP-20260927-14`（2026-10-14 · 真修）：多仓面同一格（合计 ＋ 两数），与单仓面同源。
+	if repoStatusJSONFieldFaceIntact(inv) {
+		inv.metaAddJSON("total", strconv.Itoa(totalDirty+totalUnt))
+		inv.metaAddJSON("dirty", strconv.Itoa(totalDirty))
+		inv.metaAddJSON("untracked", strconv.Itoa(totalUnt))
+		inv.metaAddStr("count_basis", repoStatusTotalBasis)
+	}
+	repoStatusAddTotalField(items, totalDirty+totalUnt)
 	if rc := listCmd(inv, stdout, stderr, []string{"head", "branch", "path", "status", "untracked"}, items); rc != exitOK {
 		return rc
 	}
+	repoStatusPrintTotal(stdout, inv, totalDirty+totalUnt, totalDirty+totalUnt, totalDirty, totalUnt)
 	if totalDirty+totalUnt > 0 {
 		return exitFail
 	}
@@ -401,17 +410,40 @@ func repoStatusOne(root string, inv *invocation, stdout, stderr io.Writer) int {
 			"status": "clean", "untracked": "否", "mtime": "—", "sha256": "—", "head_files": "—",
 		})
 		fmt.Fprintf(stderr, "%s: 干净（退码 0）—— 逐字对拍请用 `zerg repo status --json` 两跑 diff\n", progName)
+		// ★ 缺口 `GAP-20260927-14`（2026-10-14 · 真修）：干净也是一条真读数 —— **合计 0 处**
+		//   （「空」不是「缺这一格」：两面同出、只增不改）。
+		if repoStatusJSONFieldFaceIntact(inv) {
+			inv.metaAddJSON("total", "0")
+			inv.metaAddJSON("dirty", "0")
+			inv.metaAddJSON("untracked", "0")
+			inv.metaAddStr("count_basis", repoStatusTotalBasis)
+		}
+		repoStatusAddTotalField(rows, 0)
 		if rc := listCmd(inv, stdout, stderr, []string{"head", "branch", "path", "status"}, rows); rc != exitOK {
 			return rc
 		}
+		repoStatusPrintTotal(stdout, inv, 0, 0, sum.dirty, sum.untracked)
 		return exitOK
 	}
 	// 有脏件：退 1（**不是错** —— 「没提交」是状态；要看它是不是错由调用方判）。
 	fmt.Fprintf(stderr, "%s: 有 %d 处未提交（退码 1 · 不是错，是状态）\n", progName, len(rows))
+	// ★ 缺口 `GAP-20260927-14`（2026-10-14 · 真修）：**件数合计** —— 单仓面此前只有 stderr 那句
+	//   人面话，`stdout` 没有、`--json` 也没有。现两面同出、只增不改：
+	//   ① `meta.total` = `statusTotal`（**真合计处数** · 与既有的 `meta.count`＝本页处数分开）；
+	//   ② `meta.dirty` / `meta.untracked` = 现读式子 `sum` 的两数（与 stderr 那句**同源**，不另立第二份口径）；
+	//   ③ 人面 `stdout` 末行一句合计（`--limit` 裁过时另注「本页」）。
+	if repoStatusJSONFieldFaceIntact(inv) {
+		inv.metaAddJSON("total", strconv.Itoa(statusTotal))
+		inv.metaAddJSON("dirty", strconv.Itoa(sum.dirty))
+		inv.metaAddJSON("untracked", strconv.Itoa(sum.untracked))
+		inv.metaAddStr("count_basis", repoStatusTotalBasis)
+	}
+	repoStatusAddTotalField(rows, statusTotal)
 	if rc := listCmd(inv, stdout, stderr,
 		[]string{"head", "branch", "path", "status", "untracked", "mtime", "sha256"}, rows); rc != exitOK {
 		return rc
 	}
+	repoStatusPrintTotal(stdout, inv, statusTotal, len(rows), sum.dirty, sum.untracked)
 	return exitFail
 }
 
@@ -617,4 +649,41 @@ func repoHeadFiles(root, rel string) string {
 		return repoHeadAbsent
 	}
 	return out
+}
+
+// repoStatusTotalBasis —— 「合计」的口径串（照 `script ls` 的 `count_basis` 先例：**数＋口径同出**）。
+const repoStatusTotalBasis = "合计=`git status --porcelain=v1` 现读的「脏 / 未跟踪」处数（真源就是 git 那一面 · 不自己比 mtime/sha）"
+
+// repoStatusJSONFieldFaceIntact —— 「这一发走到 `--json` 出口时不会先死在校验上」的判据口
+// （＝`listCmd` 里那句 `requireFields` 的**前置**）。为什么要有它：给 `--json` 却不给字段那一档
+// 一律死在校验上、包封走**既有**的错误面，而那一面是**冻结读数**（矩阵 must-fail 格
+// `repo/status#--json 不给字段` = 2 / 332 字节）⇒ 这一支**一个 meta 键都不加**，
+// 免得新面把既有冻结字节推着涨（✗ 不改矩阵、✗ 不放宽任何判据）。
+func repoStatusJSONFieldFaceIntact(inv *invocation) bool {
+	return inv == nil || !inv.jsonGiven || len(inv.fields) > 0
+}
+
+// repoStatusAddTotalField —— 给逐行对象补 item 级**可选字段** `total`（本跑**真合计处数** ·
+// 与包封 `meta.total` 同源同值）。走可选字段层（`main.go` 的 `optFields`）：`--json total` 点得出来、
+// 逐行真带该键；**不给这一格时输出逐字不变**（`marshalObjectRegistered` 只投影点名的格 ——
+// 本函数只往行 map 里多写一个键，不动任何既有输出 / 退码）。
+func repoStatusAddTotalField(rows []map[string]string, total int) {
+	t := strconv.Itoa(total)
+	for _, r := range rows {
+		r["total"] = t
+	}
+}
+
+// repoStatusPrintTotal —— `repo status` 人面那一句合计（**只走 stdout** · `--json` 档不印，机器面走
+// `meta.total` / `meta.dirty` / `meta.untracked`）。`--limit` 裁过时 `total` 与 `page` 不同 ⇒ 另注「本页」；
+// 干净仓 / 空仓 ⇒ 逐字 `合计 0 处（脏件 0 · 未跟踪 0）`（「空」是一条真读数，不是缺格）。
+func repoStatusPrintTotal(stdout io.Writer, inv *invocation, total, page, dirty, untracked int) {
+	if inv != nil && inv.jsonGiven {
+		return
+	}
+	if page != total {
+		fmt.Fprintf(stdout, "合计 %d 处（本页 %d 处 · 脏件 %d · 未跟踪 %d）\n", total, page, dirty, untracked)
+		return
+	}
+	fmt.Fprintf(stdout, "合计 %d 处（脏件 %d · 未跟踪 %d）\n", total, dirty, untracked)
 }

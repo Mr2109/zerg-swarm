@@ -180,6 +180,14 @@ func cmdFind(inv *invocation, stdout, stderr io.Writer) int {
 		return rows[i]["relpath"] < rows[j]["relpath"]
 	})
 
+	// ★ 缺口 `GAP-20260927-14`（2026-10-14 · 真修 ①）：item 级**可选字段** `total` —— 逐行落一格
+	//   `total` = 本跑**真命中件数**（跑级真值 · 与包封 `meta.total` **同源同值**）。走可选字段层
+	//   （`main.go` 的 `optFields`）：`--json total` 点得出来、逐行真带该键；**不给这一格时输出逐字不变**
+	//   （`marshalObjectRegistered` 只投影点名的格 ⇒ 这一段只往行 map 里多写一个键、不动任何既有输出）。
+	for _, r := range rows {
+		r["total"] = strconv.Itoa(hits)
+	}
+
 	fmt.Fprintf(stderr, "%s: 扫了 %d 个子目录 · 命中 %d 件\n", progName, dirsScanned, hits)
 	// cut —— 本跑**真裁了件**（命中件数比这一页多 ⇒ 一页硬顶命中）。
 	cut := len(rows) < hits
@@ -190,6 +198,17 @@ func cmdFind(inv *invocation, stdout, stderr io.Writer) int {
 	if hits == 0 {
 		inv.setErr("failed", "no_match", "零命中")
 		fmt.Fprintf(stderr, "%s: 零命中 —— 这不是错，是「没有」（退码 1）\n", progName)
+		// ★ 缺口 `GAP-20260927-14`（2026-10-14 · 真修）：**零命中也要给合计** ——
+		//   「空目录 ⇒ 合计 0」是这条面的一条真读数（旧面在零命中那一支 `stdout` 是空的、
+		//   `--json` 也没有任何合计键）。两面同出、只增不改：机器面 `meta.total`，人面 `stdout` 一句。
+		//   ★ 落笔口径：新增行一律**插在上面那句「（退码 1）」之后** —— 那一行是
+		//   `core/internal/contract/exitcode-namespaces.json` 的 R8 落点锚（表记 `family_find.go:192`），
+		//   行号不动 ⇒ 连「行号已漂」的提示都不多一条（该锚现按内容判、行号只当提示）。
+		if findJSONFieldFaceIntact(inv) {
+			inv.metaAddJSON("total", "0")
+			inv.metaAddStr("count_basis", findTotalBasis)
+		}
+		findPrintTotal(stdout, inv, 0, 0)
 		return exitFail
 	}
 	// ★ 截断**自报**（与同族 `code find` 的**同一处判据 · 同一三件**，不自造第二套写法）。
@@ -216,7 +235,18 @@ func cmdFind(inv *invocation, stdout, stderr io.Writer) int {
 			`{"cut_from":"tail","kept_items":%d,"dropped_items":%d,"total_items":%d}`,
 			len(rows), hits-len(rows), hits))
 	}
+	// ★ 缺口 `GAP-20260927-14`（2026-10-14 · 真修）：**件数合计** —— 两面同出、只增不改：
+	//   ① 机器面 `meta.total` = 本次受控遍历的**真命中件数**（与既有的 `meta.count`＝本页条数
+	//      分开写，两个都是真值）；② 人面 `stdout` 末行一句合计（✗ 不落 stderr —— 那一面已有
+	//      「命中 N 件」，同一件事再写一遍只添噪声）。**空目录 ⇒ 合计 0**（见上面零命中那一支）。
+	if findJSONFieldFaceIntact(inv) {
+		inv.metaAddJSON("total", strconv.Itoa(hits))
+		inv.metaAddStr("count_basis", findTotalBasis)
+	}
 	rc := listCmd(inv, stdout, stderr, []string{"relpath", "size", "mtime"}, rows)
+	if rc == exitOK {
+		findPrintTotal(stdout, inv, hits, len(rows))
+	}
 	if cut {
 		// 人面末行：表格之后再钉一句 —— 「这一页不是全集」不许靠读者自己推。
 		fmt.Fprintf(stderr,
@@ -224,6 +254,33 @@ func cmdFind(inv *invocation, stdout, stderr io.Writer) int {
 			progName, len(rows), hits, hits-len(rows))
 	}
 	return rc
+}
+
+// findTotalBasis —— 「合计」的口径串（照 `script ls` 的 `count_basis` 先例：**数＋口径同出**，
+// 免得读到一个数却不知道它数的是什么）。
+const findTotalBasis = "合计=本次受控遍历（排除表 `findSkipDirs` 跳过的目录不计 · `--root` / `--type` 面同算）里**文件名含该片段**的命中件数"
+
+// findJSONFieldFaceIntact —— 「这一发走到 `--json` 出口时不会先死在校验上」的判据口
+// （＝`listCmd` 里那句 `requireFields` 的**前置**）。为什么要有它：给 `--json` 却不给字段那一档
+// 一律死在校验上、包封走**既有**的错误面，而那一面是**冻结读数**（矩阵 must-fail 格
+// `find#--json 不给字段` / `repo/status#--json 不给字段` 的 `want_stdout_bytes`）⇒ 这一支
+// **一个 meta 键都不加**，免得新面把既有冻结字节推着涨（✗ 不改矩阵、✗ 不放宽任何判据）。
+func findJSONFieldFaceIntact(inv *invocation) bool {
+	return inv == nil || !inv.jsonGiven || len(inv.fields) > 0
+}
+
+// findPrintTotal —— `find` 人面那一句合计（**只走 stdout** · `--json` 档一律不印，机器面走 `meta.total`）。
+// ★ 一页硬顶（`--limit` 裁过）时 `合计` 与 `本页` 不同 ⇒ 两个数都写出来；没裁时两者相等 ⇒ 只写一个数
+// （验收里那句「合计与逐行能对上」就是这一条：没裁时 `合计` == 本页列出的行数）。空目录 ⇒ 逐字 `合计 0 件`。
+func findPrintTotal(stdout io.Writer, inv *invocation, hits, page int) {
+	if inv != nil && inv.jsonGiven {
+		return
+	}
+	if page != hits {
+		fmt.Fprintf(stdout, "合计 %d 件（本页 %d 件）\n", hits, page)
+		return
+	}
+	fmt.Fprintf(stdout, "合计 %d 件\n", hits)
 }
 
 // findHumanSize —— `find` 人面用的体积（只展示，判据一律用字节数）。
