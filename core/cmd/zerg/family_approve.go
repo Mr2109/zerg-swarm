@@ -708,23 +708,62 @@ func approveNewConfirmPair(inv *invocation, tool string) error {
 // ---- keygen（人签的密钥）----
 
 func cmdApproveKeygen(inv *invocation, stdout, stderr io.Writer) int {
+	// ★ 三态（D3 档）：`--dry-run`（只出计划件 · 零副作用）· `--yes`（真写那一档）· 干跑与真写不许同给。
+	//   同给判定走**共享**那一处（`guard.go` 的 `dryRunYesConflict`），位置 = 命令处理器入口、
+	//   在任何盘面动作之前（与同族 `approve new:460` / `approve rotate:806` 同形）。
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
 	by := strings.TrimSpace(inv.flagVal("--by"))
 	if by == "" {
 		inv.setErr("usage", "missing_by", "缺 --by")
 		fmt.Fprintf(stderr, "%s: `approve keygen` 要 `--by <人名>`（件里要留「谁生成的操作员密钥」）\n", progName)
 		return exitUsage
 	}
-	// ★ `E5`（`I1` · `P28`）**确认对**：在册已有钥 ⇒ 换钥那一格要 `--confirm=<旧 key_id>` **与**
-	// `--yes` **同时到**；第一次生成（在册没钥）⇒ 这两枚**都不许**出现。判在**终端判据 / 读口令之前**
-	// = **执行前判**（授权面的事与「谁在敲」无关；这几格一律不读口令、不碰任何件）。
 	oldKeyID, hasKey := operatorKeyIDInUse()
-	if err := operatorRekeyConfirmPair(inv, oldKeyID, hasKey); err != nil {
-		inv.setErr("usage", "rekey_confirm_required", err.Error())
-		fmt.Fprintf(stderr, "%s: %v ⇒ 不给换钥（退码 2）\n", progName, err)
+	// ★ `E5`（`I1` · `P28`）**确认对**的输入端（只读）：在册已有钥 ⇒ 换钥那一格；在册没钥 ⇒ 首次生成。
+	// ★ 干跑那一态（唯一返回 0 的那一态）：只出**计划件** —— 不读口令、不生成钥、不落盘、不归档。
+	//   照同族 `approve rotate:839` 的措辞与形状（`--by` 字段面判在它之前 ⇒ 缺 `--by` 仍先拒）。
+	if inv.dryRun {
+		printApproveStateDir(stderr)
 		if hasKey {
-			fmt.Fprintf(stderr, "  要真换：「%s approve keygen --by <人名> --confirm=%s --yes」（旧件全废 · 旧钥进归档）\n", progName, oldKeyID)
+			fmt.Fprintf(stdout, "计划     : **换钥** —— 用 %s 生成新操作员密钥（在册旧 key_id=%s）\n", progName, oldKeyID)
+			fmt.Fprintf(stdout, "旧钥     : %s / %s ⇒ **归档**到 %s（先复制 + 逐字核 sha256 + 才移走 · 字节不丢 ✗ 不删）\n",
+				operatorKeyPath(), operatorPubPath(), archiveDirOf())
+			fmt.Fprintf(stdout, "授权判据 : 换钥要 `--confirm=%s` 与 `--yes` **同时到**（D3 fail-closed）；先看：%s approve keygen --by <人名> --confirm=%s --yes --dry-run\n",
+				oldKeyID, progName, oldKeyID)
+		} else {
+			fmt.Fprintf(stdout, "计划     : **首次生成**操作员密钥（在册没钥）\n")
+			fmt.Fprintf(stdout, "落点     : 私钥 %s（口令加密 · 权限 600）/ 公钥 %s\n", operatorKeyPath(), operatorPubPath())
+			fmt.Fprintf(stdout, "授权判据 : 真写要 `--yes`（D3 fail-closed）；先看：%s approve keygen --by <人名> --yes --dry-run\n", progName)
 		}
-		return exitUsage
+		fmt.Fprintf(stdout, "生效     : 要**人在终端上**设口令（非交互会话一律拒 · §17.3 铁律④③）\n")
+		fmt.Fprintf(stderr, "（--dry-run：只出计划件 · 零副作用 —— 未读口令 · 未生成 · 未落盘 · 未归档）\n")
+		return exitOK
+	}
+	// ★ `E5`（`I1` · `P28`）**确认对**：在册已有钥 ⇒ 换钥那一格要 `--confirm=<旧 key_id>` **与**
+	// `--yes` **同时到**；首次生成（在册没钥）⇒ `--confirm` **不许**出现（否则就是拿它当后门）。
+	// 判在**终端判据 / 读口令之前** = **执行前判**（授权面的事与「谁在敲」无关；这几格一律不读口令、不碰任何件）。
+	//   ★ 首次生成不再借 `operatorRekeyConfirmPair`（它连带禁 `--yes`，与下面那枚 fail-closed 档冲突）
+	//   ⇒ 首生成只禁 `--confirm`（换钥的确认值 · 首生成没有对象）。
+	if hasKey {
+		if err := operatorRekeyConfirmPair(inv, oldKeyID, true); err != nil {
+			inv.setErr("usage", "rekey_confirm_required", err.Error())
+			fmt.Fprintf(stderr, "%s: %v ⇒ 不给换钥（退码 2）\n", progName, err)
+			fmt.Fprintf(stderr, "  要真换：「%s approve keygen --by <人名> --confirm=%s --yes」（旧件全废 · 旧钥进归档）\n", progName, oldKeyID)
+			return exitUsage
+		}
+	} else if inv.confirmGiven {
+		if err := operatorRekeyConfirmPair(inv, oldKeyID, false); err != nil {
+			inv.setErr("usage", "rekey_confirm_required", err.Error())
+			fmt.Fprintf(stderr, "%s: %v ⇒ 不给生成（退码 2）\n", progName, err)
+			return exitUsage
+		}
+	}
+	// ★ D3 fail-closed 确认档（`guard.go:211` 的 `writeGuardYes` · 唯一一处）：**缺 `--yes` ⇒ 退 2**
+	//   （首生成与换钥两路都钉 —— 密钥是**私钥的唯一保护**，不许静默落盘；零副作用 · 不读口令）。
+	if rc := writeGuardYes(inv, stderr); rc != exitOK {
+		return rc
 	}
 	if !isTTYFile(os.Stdin) {
 		inv.setErr("usage", "not_a_human", "密钥要人在终端上生成")

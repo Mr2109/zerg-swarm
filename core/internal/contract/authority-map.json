@@ -194,15 +194,15 @@
   "写面登记": [
     {
       "命令": "agent reload",
-      "授权类": "无闸",
-      "理由": "无闸 —— 门100（`core/cmd/zerg/check_write_face_gate.go（CLI 门 check-write-face-gate）`）现读「已登记 danger 但 usage 未声明对应旗标」：`catalog()` 有 danger 档，而 `usage`（`zerg agent reload <机器名> [--json <字段>]`）无 `--yes`/`--confirm` ⇒ 声明面无闸（未声明）",
-      "出处": "GAP-20260927-90 · 门100 现读"
+      "授权类": "D2",
+      "理由": "D2 —— `agent reload` 真打 `POST http://<host>:<port>/infer/reload`（改子端在跑引擎态 · 必带 `X-Auth-Token`）；`catalog()` 已挂 `dangerSpec{D2}`（`opened`）+ `usage` 声明 `--yes [--dry-run]`；默认档 fail-closed：缺 `--yes` ⇒ 退 2（`guard.go` 的 `writeGuardYes`）· `--dry-run` 只出计划件（2026-10-14 拍：补实现，令波1 声明的三态成真）",
+      "出处": "GAP-20260927-90 · 门100 现读（2026-10-14 补实现随动）"
     },
     {
       "命令": "approve keygen",
-      "授权类": "无闸",
-      "理由": "无闸 —— 门100 现读「已登记 danger 但 usage 未声明对应旗标」：`catalog()` 有 danger 档，而 `usage`（`zerg approve keygen --by <人名>`）无 `--yes`/`--confirm` ⇒ 声明面无闸（未声明）",
-      "出处": "GAP-20260927-90 · 门100 现读"
+      "授权类": "D3",
+      "理由": "D3 —— `approve keygen` 真写操作员密钥对（私钥口令加密落盘 · 公钥给消费者验签）；**换钥路**归档并 `os.Remove` 旧钥（旧件全废 · 不可逆）；`catalog()` 已挂 `dangerSpec{D3}`（`opened`）+ `usage` 声明 `--yes [--dry-run]`；默认档 fail-closed：缺 `--yes` ⇒ 退 2（`guard.go` 的 `writeGuardYes`）· 换钥路还要 `--confirm=<旧 key_id>` · `--dry-run` 只出计划件（2026-10-14 拍：补实现）",
+      "出处": "GAP-20260927-90 · 门100 现读（2026-10-14 补实现随动）"
     },
     {
       "命令": "dev edit",

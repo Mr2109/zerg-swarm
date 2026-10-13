@@ -414,6 +414,13 @@ func run(args []string, stdout, stderr io.Writer) int {
 	if inv.hasFlag("--check-excludes-parity") && !usageDeclaresFlag(cmd, "--check-excludes-parity") {
 		inv.unknown = append(inv.unknown, "--check-excludes-parity")
 	}
+	// ★ 同一条数据驱动收口（本单 · 缺口 `GAP-20260929-28` 剩面）：`--uncertain` 在解析面刚上户口
+	//   （布尔 case）⇒ 全族共用；若不在此收口，别族（usage 未列它的命令）真给它会从「未知旗标 2」
+	//   退化成**静默吞**（硬约束⑤：既有命令的退码与输出一字不动）。形状逐字照拄上面
+	//   `--check-excludes-parity` 那条；`gate find` 的 usage 已列它 ⇒ 归它。
+	if inv.hasFlag("--uncertain") && !usageDeclaresFlag(cmd, "--uncertain") {
+		inv.unknown = append(inv.unknown, "--uncertain")
+	}
 	// ★ 同一条数据驱动收口（本单 · 缺口 GAP-20260928-139）：`--build-info` 在解析面刚上户口（布尔 case）⇒ **全族共用**；
 	//   若不在此收口，别族（usage 未列它的命令）真给它会从「未知旗标 2」退化成**静默吞**（硬约束⑤：既有命令的退码与输出一字不动）。
 	//   形状逐字照拄上面 `--literal-text` 那条：把不归本命令的那一枚补回 `inv.unknown` ⇒ 由下面**同一条**判词 + 同一个退码 2 收口。`version` 的 usage 已列它 ⇒ 归它。
@@ -843,7 +850,11 @@ func init() {
 			usage:   "zerg gate ls [--json <字段>] [--fingerprint]",
 			fields:  []string{"total", "scope", "mode", "step"},
 			// ★ 缺口 GAP-20260926-102（批⑤ · 2026-10-13）：`reds`（最近一趟非 PASS 的步名清单）同走**可选字段层**。
-			optFields:   []string{"name", "gates_total", "fast", "reds"},
+			// ★ 缺口 `GAP-20260928-68`（本片 · 2026-10-14）：`id`（每步的**稳定短 id** = 步名派生的内容指纹 ·
+			//  ✗ 不含行号/序号 ⇒ 步骤表插/删一行后其余步的 id 逐字不变）同走**可选字段层** ⇒
+			//  `zerg gate ls --json id` 点得出来（件内那一侧是 `gate.go` 的 `gateLsOptFields`，两表逐字一致
+			//  由 `TestGateLsOptFieldsParity` 钉住 · ✗ 不进冻结 `fields:` ⇒ 帮助面与命令页一行不动）。
+			optFields:   []string{"name", "gates_total", "fast", "reds", "id"},
 			endpoint:    "",
 			passthrough: true,
 			run:         cmdGate,
@@ -877,16 +888,21 @@ func init() {
 			path:    []string{"gate", "find"},
 			kind:    "GateFind",
 			summary: "按**门件名/命令串片段**找步骤名（门件名 ⇒ 步名 的桥）· 只读",
-			usage:   "zerg gate find <片段> [--json <字段>]",
+			usage:   "zerg gate find <片段> [--json <字段>] | zerg gate find --uncertain [--json <字段>]",
 			arity:   "any",
 			args:    []string{"片段（门件名或命令串里的一段，例：check-gate-coverage）"},
 			// 九格 = 与 `gate explain` 同义字段逐字同名（判据/日志/出处在本仓只有一处口径）+ 第八格
 			// `next`（照抄即走的下一步）+ 第九格 `wiring`（三处接线面 precommit / all.sh / real-gates.sh
 			// 的现读结论 —— 「零命中」与「不存在」的分别就靠它）。★ 本命令**不走脚本**：只读脚本里的
 			// `add_step` 声明 ⇒ 与 `gate results` 同规（命令面分支），不改任何脚本退码。
-			fields:   gateFindFields,
-			endpoint: "",
-			run:      cmdGate,
+			fields: gateFindFields,
+			// ★ 本单（缺口 `GAP-20260929-28` 剩面）：可选字段层两批 —— ① `command_kind` /
+			//   `command_resolved`（第五格形态 + 真身的人面两格 · 与 `gate explain` 同款）；
+			//   ② `line` / `kind` / `why` / `raw`（`gate find --uncertain` 那张正门表的四格）。
+			//   都不进冻结 `fields:` ⇒ 不重生命令页 / 帮助面；点得出即用。
+			optFields: []string{"command_kind", "command_resolved", "line", "kind", "why", "raw"},
+			endpoint:  "",
+			run:       cmdGate,
 		},
 		{
 			path:    []string{"gate", "results"},
@@ -1150,7 +1166,7 @@ func init() {
 			opened:   true,
 			kind:     "AgentReload",
 			summary:  "子端热重载（`POST http://<host>:<port>/infer/reload` · **必带 `X-Auth-Token`**（不带就回 unauthorized）；子端那三格原样透传）",
-			usage:    "zerg agent reload <机器名> [--json <字段>]",
+			usage:    "zerg agent reload <机器名> --yes [--dry-run] [--json <字段>]",
 			arity:    "any",
 			args:     []string{"机器名"},
 			fields:   agentReloadFields,
@@ -1461,7 +1477,7 @@ func init() {
 			path:    []string{"core", "start"},
 			machine: machineHostName,
 			summary: "起主控（危险 D3 · 本版未开放）",
-			usage:   "zerg core start --confirm=<主机名> --yes [--dry-run]",
+			usage:   "zerg core start [--node <机>] --confirm=<主机名> --yes [--dry-run]",
 			arity:   "any",
 			args:    []string{"主机名"},
 			danger:  &dangerSpec{dangerD3, "主机名", "起主控进程（会绑端口 8580；已在跑时是**换件**前置）", "§三 C 族 · §7.1 P11 · 开工单 T-45", true, dangerScopeSystem},
@@ -1471,7 +1487,7 @@ func init() {
 			path:    []string{"core", "restart"},
 			machine: machineHostName,
 			summary: "重启主控（危险 D3 · 已开放：确认档齐就真执行 `launchctl kickstart -k`）· 审计留痕 + 就绪判据绑自己的 pid",
-			usage:   "zerg core restart --confirm=<主机名> --yes [--dry-run]",
+			usage:   "zerg core restart [--node <机>] --confirm=<主机名> --yes [--dry-run]",
 			arity:   "any",
 			args:    []string{"主机名"},
 			danger:  &dangerSpec{dangerD3, "主机名", "停 + 起主控（**整个虫群的控制面会断一会儿**）", "§三 C 族 · 开工单 T-45 · 缺口 Q-103", true, dangerScopeSystem},
@@ -1541,7 +1557,7 @@ func init() {
 		// ---- 退场正门（设计稿 `Zerg-内部文档/01-设计/设计-退场正门-retire-20261006.md` ＋ 拍板 决-01/02/03/09 · 2026-10-07）----
 		// 定位：**只管登记面退场**，✗ **不代管物理删除**（`git rm`）——真删交 git 历史＋提案审计（决-01）。
 		// 真源**沿用** `core/internal/contract/adopt-retire.json` 的 `retire_ledger`（✗ 不另起第二真源 · 决-02）；
-		// 目标件闭集 = **自研面全体 py/sh（全仓 − `vendor/**` − `tools/ocr/venv/**`）**（决-12 · ★ 描述串与 `scriptRetireClosedSetDesc` 同源）；
+		// 目标件闭集 = **自研面全体 py/sh**（口径**单点真源** = `scriptRetireClosedSetExcludedPrefixes` · ✗ 不在此重抄前缀表以免长歪 · 决-12 · ★ 描述串与 `scriptRetireClosedSetDesc` 同源）；
 		// 例外类 = **逐条登记名册 ＋ 理由 ＋ 保留代价栏**（同真源 `retire_exceptions` · 决-09）。
 		// 危险档 D2（与 `inventory sync` 同档）：`--dry-run` 零副作用 · 缺 `--yes` ⇒ 2 · 写面进审计
 		//   （审计先落盘 → `cp -p` 备份真源 → 原子写 → 写后读回，复查不过逐字节写回）。
@@ -1577,6 +1593,11 @@ func init() {
 			fields:   []string{"relpath", "size", "mtime"},
 			endpoint: "",
 			run:      cmdFind,
+			// ★ 缺口 `GAP-20260927-14`（2026-10-14 · 真修 ①）：`total` 走**可选字段层**（`optFields`，
+			//  与 `code find` 的 `count` 同一体例：登在出口白名单、`--json total` 点得出来，但**不进**
+			//  上面那份 `fields:` 冻结表 ⇒ 帮助面 / 命令页一行不动、`合法字段:` 那条错误面也一字不变）。
+			//  逐行落一格 `total` = 本跑**真命中件数**（跑级真值 · 与包封 `meta.total` 同源同值）。
+			optFields: []string{"total"},
 		},
 		// ── A2（2026-09-27）· 件名统一出口的**命令面**（《设计-件名统一出口与调用点判据-v0.1.md》
 		//   §4.1 · P-7/P-10 · 任务清单 A2 · 缺口账 `GAP-20260927-216` 的 ②）─────────────
@@ -1695,6 +1716,11 @@ func init() {
 			fields:   []string{"head", "branch", "path", "status", "untracked", "mtime", "sha256", "head_files"},
 			endpoint: "",
 			run:      cmdRepoStatus,
+			// ★ 缺口 `GAP-20260927-14`（2026-10-14 · 真修 ①）：`total` 走**可选字段层**（`optFields`，
+			//  与 `code find` 的 `count` 同一体例：登在出口白名单、`--json total` 点得出来，但**不进**
+			//  上面那份 `fields:` 冻结表 ⇒ 帮助面 / 命令页一行不动、`合法字段:` 那条错误面也一字不变）。
+			//  逐行落一格 `total` = 本跑**真合计处数**（与包封 `meta.total` 同源同值）。
+			optFields: []string{"total"},
 		},
 		// ---- T20 正门一条（本枚 · **只增**）----
 		// 「报行数三格」的机检面：判一份 diffstat 报没报齐 `原始 diff / 增 / 减`。
@@ -1741,7 +1767,7 @@ func init() {
 			path:    []string{"repo", "commit"},
 			kind:    "RepoCommit",
 			summary: "提交：**按文件名逐件暂存**（禁 `git add -A`）· 或**点名单路径**（`--only <路径…>`：索引面允许非空、别人的暂存只许多不许少）· **过快速档才放行** · 禁 `--no-verify`（例外走 `--waive <步名> --reason <…>` 并进审计）",
-			usage:   "zerg repo commit --message <题> (--file <件>… | --only <路径>[ --only <路径>]… | --removed <路径>…) [--proposal <提案 id>] [--by <谁>] [--trace <id>] [--criterion <判据>] [--waive <步名> --reason <理由>] [--allow-stale-gates <一句话理由>] [--dry-run] [--yes]",
+			usage:   "zerg repo commit --message <题> (--file <件>… | --only <路径>[ --only <路径>]… | --removed <路径>…) [--proposal <提案 id>] [--by <谁>] [--trace <id>] [--criterion <判据>] [--waive <步名> --reason <理由>] [--allow-stale-gates <一句话理由>] [--json <字段>] [--dry-run] [--yes]",
 			arity:   "any",
 			args:    []string{"提交主题（--message）", "逐件点名（--file · 可重复）或点名单路径（--only · 可重复 · 可 `--only=<路径>`）"},
 			fields:  repoCommitFields,
@@ -1752,15 +1778,21 @@ func init() {
 			run:      cmdRepoCommit,
 		},
 		{
-			path:     []string{"gate", "explain"},
-			kind:     "GateExplain",
-			summary:  "读懂某一步到底在判什么（scope/模式/判据/退码口径/日志路径/出处文件:行 —— **精确匹配**步名）",
-			usage:    "zerg gate explain <步名> [--json <字段>]",
-			arity:    "any",
-			args:     []string{"步名（与 `zerg gate ls` 逐字相同）"},
-			fields:   []string{"scope", "mode", "criterion", "verdict", "exit", "log", "source", "command", "script_say"},
-			endpoint: "",
-			run:      cmdGateExplain,
+			path:    []string{"gate", "explain"},
+			kind:    "GateExplain",
+			summary: "读懂某一步到底在判什么（scope/模式/判据/退码口径/日志路径/出处文件:行 —— **精确匹配**步名）",
+			usage:   "zerg gate explain <步名> [--json <字段>]",
+			arity:   "any",
+			args:    []string{"步名（与 `zerg gate ls` 逐字相同）"},
+			fields:  []string{"scope", "mode", "criterion", "verdict", "exit", "log", "source", "command", "script_say"},
+			// ★ 本单（缺口 `GAP-20260929-28` 剩面 · 2026-10-14）：`command_kind`（第五格形态：
+			//   字面命令 / 变量间接 / 命令替换）与 `command_resolved`（真身：变量定义行 + 可能值集 /
+			//   命令替换点名）走**可选字段层**（`optFields`）—— 它们由 `family_gate_explain.go` 一处算、
+			//   与 `gate find` 同款 ⇒ `--json command_kind` 点得出来，但**不进**冻结 `fields:`
+			//   ⇒ 帮助面与命令页一行不动（与 `gate results` 的 `source` 同体例）。
+			optFields: []string{"command_kind", "command_resolved"},
+			endpoint:  "",
+			run:       cmdGateExplain,
 		},
 		// ── `danger`（**D2**）：本表项**真写盘**（修前无 `danger` ⇒ `zerg help` 把它判成安全档 ✗）
 		//   定档理由（逐条读 `family_gate_matrix.go:cmdGateMatrix` 得）：`--out <件>` 那一支
@@ -1964,7 +1996,7 @@ func init() {
 			opened:  true,
 			kind:    "PublishRun",
 			summary: "出公开镜像树（**本地** dist/<版本>/release · 白名单+排除项+脱敏 · 不出网、不推送）",
-			usage:   "zerg publish run [--check-excludes-parity] [--dry-run | --confirm=<主机名> --yes]",
+			usage:   "zerg publish run [--node <机>] [--check-excludes-parity] [--dry-run | --confirm=<主机名> --yes]",
 			// 本版已开放（Mr2109 2026-09-25「脱敏推」授权）：真跑只写**本地**产物目录。
 			// 「推远端」不在命令面 —— 不可逆动作按规矩等 Mr2109 发话后单独执行（不另开执行路径）。
 			run: cmdPublishRun,
@@ -2397,7 +2429,7 @@ func init() {
 			danger:  &dangerSpec{dangerD3, "主机名", "重编制品（自举档 `--only cli` 只写 bin/zerg 一件；**换件档会覆盖 bin/ 里的在跑制品** · 底层 Go 真身 scripts/build/cmd/zerg-build-all/main.go）", "GAP-20261005-39 · family_build.go:279 自印「危险档：D3」· §17.2 ③ 建环", true, dangerScopeSystem},
 			opened:  true,
 			summary: "重编制品（**自举档已开放**：`--only cli` 只写 bin/zerg 一件；换件档/发布档仍未开放）",
-			usage:   "zerg build all [--only cli] [--dry-run | --confirm=<主机名> --yes]",
+			usage:   "zerg build all [--node <机>] [--only cli] [--dry-run | --confirm=<主机名> --yes]",
 			run:     cmdBuildPassthrough,
 		},
 		{
@@ -2406,7 +2438,7 @@ func init() {
 			danger:  &dangerSpec{dangerD3, "主机名", "打包发布件（清单档 `--manifest-only` 只写 dist/<版本>/release/；**换件档真跑未开放** · 底层 Go 真身 scripts/build/cmd/zerg-build-all/main.go）", "GAP-20261005-39 · family_build.go:279 自印「危险档：D3」· §17.2 ③ 建环", true, dangerScopeRepo},
 			opened:  true,
 			summary: "打包发布件（**计划面已开放**：`--dry-run` 出计划件；**清单档 `--manifest-only` 已开放** —— 只重写 `dist/<版本>/release/` 的清单与逐件 sha256，不编译、不重打包、不碰在跑件；**换件档真跑已开放（2026-10-10 · Mr2109 拍）** —— 内含全量构建、会覆盖 `bin/` 里的在跑制品）",
-			usage:   "zerg build release [--manifest-only] [--dry-run | --confirm=<主机名> --yes]",
+			usage:   "zerg build release [--node <机>] [--manifest-only] [--dry-run | --confirm=<主机名> --yes]",
 			run:     cmdBuildPassthrough,
 		},
 		// ---- 危险动作：**未开放的那批只登记形状，不开放执行**（§6.2 批 1 零写操作）；
@@ -2556,7 +2588,7 @@ func init() {
 			path:    []string{"agent", "reap"},
 			machine: machineNodeName,
 			summary: "回收残留干跑单（真回收危险 D3 · 本版未开放；**入库件永不进候选 = 红线**）",
-			usage:   "zerg agent reap --dry-run --min-age-days <n>   # 干跑单（带 plan_id + 逐件证据）\n       zerg agent reap --confirm=<机器名> --yes [--dry-run]   # 真回收（本版未开放）",
+			usage:   "zerg agent reap [--node <机>] --dry-run --min-age-days <n>   # 干跑单（带 plan_id + 逐件证据）\n       zerg agent reap [--node <机>] --confirm=<机器名> --yes [--dry-run]   # 真回收（本版未开放）",
 			arity:   "any",
 			args:    []string{"机器名"},
 			danger: &dangerSpec{dangerD3, "机器名",
@@ -2594,7 +2626,7 @@ func init() {
 			path:    []string{"core", "stop"},
 			machine: machineHostName,
 			summary: "停主控（危险 D3 · 本版未开放）",
-			usage:   "zerg core stop --confirm=<主机名> --yes [--dry-run]",
+			usage:   "zerg core stop [--node <机>] --confirm=<主机名> --yes [--dry-run]",
 			arity:   "any",
 			args:    []string{"主机名"},
 			danger:  &dangerSpec{dangerD3, "主机名", "停掉主控进程（**整个虫群的控制面会断**）", "§三 C 族 · §7.1 P11 · 开工单 T-45", true, dangerScopeSystem},
@@ -2613,7 +2645,7 @@ func init() {
 			path:    []string{"core", "update"},
 			machine: machineHostName,
 			summary: "主控自身换件（危险 D3 · 本版未开放）",
-			usage:   "zerg core update --confirm=<主机名> --yes [--dry-run]",
+			usage:   "zerg core update [--node <机>] --confirm=<主机名> --yes [--dry-run]",
 			arity:   "any",
 			args:    []string{"主机名"},
 			danger:  &dangerSpec{dangerD3, "主机名", "换掉在跑的主控制品（**不可逆**；走 F-3 例外清单 + 验签 + 回执）", "§九 M20 F-3 · §7.1 P12 · 开工单 T-52", true, dangerScopeSystem},
@@ -2659,7 +2691,7 @@ func init() {
 			path:    []string{"update"},
 			machine: machineHostName,
 			summary: "源码式自更新（危险 D3 · 本版未开放）",
-			usage:   "zerg update --confirm=<主机名> --yes [--dry-run]",
+			usage:   "zerg update [--node <机>] --confirm=<主机名> --yes [--dry-run]",
 			arity:   "any",
 			args:    []string{"主机名"},
 			danger:  &dangerSpec{dangerD3, "主机名", "按真源走一次自更新（校验 + 换件 + 回执；走 F-3 例外清单）", "§7.1 P12 · §九 M20 F-3 · 开工单 T-52", true, dangerScopeSystem},
@@ -2669,7 +2701,7 @@ func init() {
 			path:    []string{"dev", "proposal"},
 			kind:    "Proposal",
 			summary: "提案件通道：只产可审查物（new|list|show|check|revise）· 目标必须回指既有编号 · **判据必须可机检** · `check --deep` 真跑每件判据（报 rc 与命中数）· 「提 ≠ 批」两对字段（subject/approver）· 作废档 `--retract/--void <提案 id>`（打作废标记 · 号不复用 · 落审计一行）",
-			usage:   "zerg dev proposal new --title <题（必填）> --target <待办编号（必填 · 只收 D/E/F/G 族编号 · 逐条闭集真源 core/internal/contract/dev-targets.json）> --goal <目标（必填）> --evidence <出处（必填 · 至少一条）—— 两类：① **id 形状**（首部 `GAP-…` / `DEV-…`，如 `GAP-YYYYMMDD-NN`）须**在册**（缺口账 / 在册提案件里查得到）—— 查不到 ⇒ 退码 2「出处 … 在缺口账 / 在册件里查不到 ⇒ 不给结论」；② **描述性证据**（无前缀自由文本）直接收，不要求在册> --rollback <退点件（必填 · 仓外整件路径 —— 退建议照它核 sha256 取改前态；路径形的退点（绝对 / 带目录分隔符）在提案这一步就要求**现读可得**（读不到 / 是目录 ⇒ 当场退 2），非路径形的「方式」文本才留到退建议那一步判）> --criterion <判据（必填 · 一条首词是 zerg、本版真跑得动的命令）> [--criterion-new <前瞻判据（可选 · 一条首词是 zerg、本版**还跑不动**的命令形态 ⇒ 显式标前瞻；本版已能真跑的命令写 --criterion）>] [--by <提出者>] [--file <要改的件（仓内相对路径 —— 与 --rollback 收的**仓外**整件路径是两套口径 · 别混）>]… [--subject <提出者>] [--subject-kind human|ai|egg|ci] [--egg-id <卵 id>] [--approver <批准者>] [--approver-kind human] [--batch <件.json（可机读批量档 · 一次建多枚 · 逐格走单片档同一条闸 · 与单片旗标互斥）>] [--from-file <件.json（单片档 · 读一枚 JSON 对象 = 一片提案的字段 · 与单片旗标互斥）>] [--add-file <路径（仓内相对 · 可重复 · 补进既有提案的 files[]）>…（revise 补件） [--retract <提案 id> | --void <提案 id> --reason <理由>（作废档：打作废标记 · 号不复用 · 落审计一行）] [--dry-run | --yes] —— ★ 自由文本字段（题/目标/出处/判据/退点）含反引号或 `$` 时：请用**单引号**包裹、或改走 --from-file <件>；**双引号会被 shell 先展开**（丢字符/误执行）",
+			usage:   "zerg dev proposal new --title <题（必填）> --target <待办编号（必填 · 只收 D/E/F/G 族编号 · 逐条闭集真源 core/internal/contract/dev-targets.json）> --goal <目标（必填）> --evidence <出处（必填 · 至少一条）—— 两类：① **id 形状**（首部 `GAP-…` / `DEV-…`，如 `GAP-YYYYMMDD-NN`）须**在册**（缺口账 / 在册提案件里查得到）—— 查不到 ⇒ 退码 2「出处 … 在缺口账 / 在册件里查不到 ⇒ 不给结论」；② **描述性证据**（无前缀自由文本）直接收，不要求在册> --rollback <退点件（必填 · 仓外整件路径 —— 退建议照它核 sha256 取改前态；路径形的退点（绝对 / 带目录分隔符）在提案这一步就要求**现读可得**（读不到 / 是目录 ⇒ 当场退 2），非路径形的「方式」文本才留到退建议那一步判）> --criterion <判据（必填 · 一条首词是 zerg、本版真跑得动的命令）> [--criterion-new <前瞻判据（可选 · 一条首词是 zerg、本版**还跑不动**的命令形态 ⇒ 显式标前瞻；本版已能真跑的命令写 --criterion）>] [--by <提出者>] [--file <要改的件（仓内相对路径 —— 与 --rollback 收的**仓外**整件路径是两套口径 · 别混）>]… [--subject <提出者>] [--subject-kind human|ai|egg|ci] [--egg-id <卵 id>] [--approver <批准者>] [--approver-kind human] [--batch <件.json（可机读批量档 · 一次建多枚 · 逐格走单片档同一条闸 · 与单片旗标互斥）>] [--from-file <件.json（单片档 · 读一枚 JSON 对象 = 一片提案的字段 · 与单片旗标互斥）>] [--add-file <路径（仓内相对 · 可重复 · 补进既有提案的 files[]）>…（revise 补件） [--retract <提案 id> | --void <提案 id> --reason <理由>（作废档：打作废标记 · 号不复用 · 落审计一行）] [--json <字段>] [--dry-run | --yes] —— ★ 自由文本字段（题/目标/出处/判据/退点）含反引号或 `$` 时：请用**单引号**包裹、或改走 --from-file <件>；**双引号会被 shell 先展开**（丢字符/误执行）",
 			arity:   "any",
 			args:    []string{"动作：new | list | show | check | revise", "提案 id（show/check/revise 才要 · `--retract`/`--void` 也点名它）"},
 			fields:  proposalFields,
@@ -2709,7 +2741,7 @@ func init() {
 			path:    []string{"approve", "new"},
 			kind:    "ApprovalSign",
 			summary: "**人签**一枚批准件（要人在终端上敲口令；非交互会话一律拒）· 写不进即拒 · 同名不覆盖",
-			usage:   "zerg approve new --tool <工具名> --by <人名> --note <理由> [--scope <范围>] [--self-test] [--dry-run | --confirm=<工具名> --yes]",
+			usage:   "zerg approve new --tool <工具名> --by <人名> --note <理由> [--scope <范围>] [--self-test] [--json <字段>] [--dry-run | --confirm=<工具名> --yes]",
 			arity:   "any",
 			args:    []string{"工具名（--tool）", "人名（--by）"},
 			fields:  approveNewFields,
@@ -2725,7 +2757,7 @@ func init() {
 			opened:   true,
 			kind:     "ApprovalKeygen",
 			summary:  "生成**操作员密钥**（人在终端上设口令；私钥口令加密落盘，公钥给消费者验签）",
-			usage:    "zerg approve keygen --by <人名>",
+			usage:    "zerg approve keygen --by <人名> --yes [--dry-run] [--confirm=<旧 key_id>]",
 			arity:    "any",
 			args:     []string{"人名（--by）"},
 			endpoint: "",
@@ -2753,7 +2785,7 @@ func init() {
 			path:    []string{"dev", "edit"},
 			kind:    "DevEdit",
 			summary: "受控写入：只改**提案声明过**的件（越界写 ⇒ 2）· 默认干跑 · 一行一事件的审计（写不进审计就不改件）",
-			usage:   "zerg dev edit --proposal <提案 id> --file <仓内相对路径> (--from <件> | --replace <件：补丁 JSON 数组 [{\"old\":…,\"new\":…}] —— 逐格精确替换 · 每格 old 必须在目标件里**恰好命中 1 次**（0 次或多次 ⇒ 拒执 2）>) [--base <件路径|HEAD|sha>] [--by <谁>] [--allow-cross-root <理由>] [--allow-sibling-repo <名>] [--literal-text] [--dry-run | --confirm=<本机名> --yes] （真写前置：一枚**人签批准件** <状态目录>/approvals/dev_edit.json —— 由 `zerg approve new --tool dev_edit` 签出 · `zerg approve ls` 可查现状；无件 / 手写件 / 它的 scope 不含本件 ⇒ 一律拒（退 2）；--dry-run 那一态不需要它；`--base` 只与 `--replace` 合用：用**基线内容**当匹配基（`HEAD`=该件的已提交版 · `sha`=某提交版 · 其它=当作仓外前态件路径读），并把基线作为审计的 before ⇒ 已改盘的件可**回放**；回放结果必须与现盘件逐字节相同、否则拒执 2）" + devEditDryRunOnlyNote,
+			usage:   "zerg dev edit --proposal <提案 id> --file <仓内相对路径> (--from <件> | --replace <件：补丁 JSON 数组 [{\"old\":…,\"new\":…}] —— 逐格精确替换 · 每格 old 必须在目标件里**恰好命中 1 次**（0 次或多次 ⇒ 拒执 2）>) [--base <件路径|HEAD|sha>] [--by <谁>] [--allow-cross-root <理由>] [--allow-sibling-repo <名>] [--literal-text] [--json <字段>] [--dry-run | --confirm=<本机名> --yes] （真写前置：一枚**人签批准件** <状态目录>/approvals/dev_edit.json —— 由 `zerg approve new --tool dev_edit` 签出 · `zerg approve ls` 可查现状；无件 / 手写件 / 它的 scope 不含本件 ⇒ 一律拒（退 2）；--dry-run 那一态不需要它；`--base` 只与 `--replace` 合用：用**基线内容**当匹配基（`HEAD`=该件的已提交版 · `sha`=某提交版 · 其它=当作仓外前态件路径读），并把基线作为审计的 before ⇒ 已改盘的件可**回放**；回放结果必须与现盘件逐字节相同、否则拒执 2）" + devEditDryRunOnlyNote,
 			arity:   "any",
 			args:    []string{"提案 id（--proposal）", "要改的件（--file · 必须在提案的 files[] 里）"},
 			fields:  devEditFields,
@@ -2770,7 +2802,7 @@ func init() {
 			path:     []string{"dev", "reclaim"},
 			kind:     "DevReclaim",
 			summary:  "**直写补正门**：给被非正门直写的件补审计链（真前态 = 审计末行 after 回盘 → 调既有 `dev edit --from` 净零重落 · 核 sha 逐字同 · 盘上内容逐字节不变）",
-			usage:    "zerg dev reclaim <仓内相对件>… --proposal <提案 id> [--pre <件>=<仓外前态件>]… [--by <谁>] [--dry-run | --confirm=<本机名> --yes]",
+			usage:    "zerg dev reclaim <仓内相对件>… --proposal <提案 id> [--pre <件>=<仓外前态件>]… [--by <谁>] [--json <字段>] [--dry-run | --confirm=<本机名> --yes]",
 			arity:    "any",
 			args:     []string{"要补正的件（仓内相对路径 · 可多给）"},
 			fields:   reclaimFields,
@@ -2892,7 +2924,7 @@ func init() {
 			path:    []string{"dev", "receipt"},
 			kind:    "Receipt",
 			summary: "交接回执（一轮一页 · 带 trace_id）：new | ls | show；读法 = `zerg context ls --resume`（`new` 写要 `--yes`）",
-			usage:   "zerg dev receipt new --what <做了什么> --next <下一步> [--evidence <证据>]… [--blockers <阻碍>]… [--commit <sha>]… [--trace <trace_id>] [--dry-run | --yes]",
+			usage:   "zerg dev receipt new --what <做了什么> --next <下一步> [--evidence <证据>]… [--blockers <阻碍>]… [--commit <sha>]… [--trace <trace_id>] [--json <字段>] [--dry-run | --yes]",
 			arity:   "any",
 			args:    []string{"动作：new | ls | show", "轮次 id（只 show 要）"},
 			fields:  receiptFields,
@@ -3052,7 +3084,7 @@ func init() {
 			path:    []string{"calib", "run"},
 			kind:    "Calib",
 			summary: "跑一支标定脚本（D2 三态 · --dry-run 零副作用 · 缺 --yes ⇒ 2 · 真调旧脚本、退码原样转出）",
-			usage:   "zerg calib run <名> [位置参数…] [--dry-run | --yes]",
+			usage:   "zerg calib run <名> [位置参数…] [--json <字段>] [--dry-run | --yes]",
 			arity:   "any",
 			args:    []string{"件名（与 `zerg calib ls` 逐字相同）", "位置参数（原样交给脚本）"},
 			fields:  calibRunFields,
@@ -3088,7 +3120,7 @@ func init() {
 			path:    []string{"eval", "run"},
 			kind:    "Eval",
 			summary: "跑一支评测脚本（D2 三态 · **只对 ① 收编的件开放** · 缺 --yes ⇒ 2 · 真调旧脚本、退码原样转出）",
-			usage:   "zerg eval run <名> [位置参数…] [--dry-run | --yes]",
+			usage:   "zerg eval run <名> [位置参数…] [--json <字段>] [--dry-run | --yes]",
 			arity:   "any",
 			args:    []string{"件名（与 `zerg eval ls` 逐字相同）", "位置参数（原样交给脚本）"},
 			fields:  evalRunFields,
@@ -3939,7 +3971,7 @@ func init() {
 			kind:     "FleetRender",
 			layer:    "host",
 			summary:  "由**真源**（名册 `~/.zerg/contexts/<档>.yaml` 的 `nodes:`）生成**投影**（`gateway/fleet.yaml` 的 `fleet:`/`updates.nodes`）—— 消「两处手抄 ⇒ 漂移」（缺失项 `GAP-20260927-172`）；`--preview-only`（缺省·只打印·零写盘）/ `--emit`＋`--yes`（真写·D2 原子写+读回校+回滚，只碰两段数据行）/ `--expect-no-changes`（只读断言·现读≠生成 ⇒ 非 0）",
-			usage:    "zerg fleet render [--preview-only] [--expect-no-changes] [--emit] [--roster <名册件>] [--path <投影件>] [--context <档名>] [--json <字段>]",
+			usage:    "zerg fleet render [--preview-only] [--expect-no-changes] [--emit] [--roster <名册件>] [--path <投影件>] [--context <档名>] [--json <字段>] [--dry-run | --yes]",
 			arity:    "any",
 			args:     []string{"（无位置参数）"},
 			fields:   []string{"action", "roster", "fleet", "nodes", "drift", "changed", "result"},
@@ -4771,6 +4803,15 @@ func parseInvocation(args []string) (*invocation, error) {
 		//   它的命令 ⇒ 真给即退 2「未知旗标」）。★ **✗ 不进 `valueFlagName`**（那是**取值**名表）：布尔名
 		//   登进去会让门73 判据丙「形态」判红。必须在下面「未知旗标」兜底**之前**上户口。
 		case a == "--check-excludes-parity":
+			inv.kvSet(a, "true")
+		// ★ 本单（缺口 `GAP-20260929-28` 剩面 · 本枚）：`gate find --uncertain` —— 把「解析不确定」
+		//   清单从 stderr 侧信道提到**正门** stdout / 机器面（`family_gate_find.go` 的
+		//   `cmdGateFindUncertain`）。语义是**布尔档**（用法串写裸形 `[--uncertain]`）⇒ 与
+		//   `--list-selfcases` / `--check-excludes-parity` 同一种形态：写进 `inv.kv`（`kvSet`）⇒
+		//   dispatch 的数据驱动收口看得见（usage 未列它的命令 ⇒ 真给即退 2「未知旗标」）。
+		//   ★ **✗ 不进 `valueFlagName`**：那张表是**取值**旗标名表，布尔名登进去会让门73 判据丙
+		//   「形态」判红。必须在下面「未知旗标」兜底**之前**上户口，否则 `gate find --uncertain` 一律退 2。
+		case a == "--uncertain":
 			inv.kvSet(a, "true")
 		case strings.HasPrefix(a, "-") && a != "-":
 			// 未知旗标：**先记下**（透传型命令要把它逐字交给脚本）；非透传命令在 dispatch 里硬判。

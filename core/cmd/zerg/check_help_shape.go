@@ -1108,7 +1108,7 @@ func chsHead5(xs []string) []string {
 
 // ── 冻结常量（A 类：现跑取数 · 禁手写；刷新走 py 的 `--emit-baseline`）──
 
-const chsListRules = "判据（三条 · 现算 + 对界 · 缺口 GAP-20260927-401）\n-----------------------------------------------\n  S1 族级段（闭集相等）：现跑 `help --all` 末尾段 token ⟷ 命令树（`cli-matrix.json` 的\n     `cases[].command` 首段）· 段头在 · 括注族数 == 现算族数 · 双向差集空 · 裸 `help` 不带段\n  S2 条数与行数：rows(--all) == rows(help) + rows(help dangerous) ·\n     族级段行数 == 1 + ceil(族数/8)（段头之前必须是空行）；两个面的 lines/bytes == 冻结常量\n     （现跑取数 · --emit-baseline 刷）\n  S3 末行：`--all` 末行 == 由族名清单现算重建的那一行；裸 `help` 末行 == 冻结读数（逐字）\n  S4 危险档面（`help dangerous` · 2026-09-27 补 · 缺口 GAP-20260927-418）：\n     S4a 表尾计数（`上表 N 条：已开放 X / 未开放 Y` ⇒ N == X + Y == 逐条行数）·\n     S4b 逐条行尾标记出现次数 == 表尾 X / Y ·\n     S4c 逐条行形状闭集（`zerg <路径>  D2|D3  --dry-run · [--confirm=<目标> · ]--yes  …  ← 标记`）·\n     S4d 逐条 `--confirm=<目标>` 的核心名 ⟷ 该命令在 `help --all` 的用法串（现算脱钩集合 == 冻结名单）·\n     S4f 两面**同印** `--confirm=` 的值须**逐字相等**（现算值冲突集合 == 冻结名单 · 现读空集 —— 独立一条腿：\n         S4d 只判「名字在不在用法串里」⇒ 值冲突但名字集合不变时 S4d 看不见）·\n     S4e 该面的 lines / bytes / 条数 / 表尾逐字 == 冻结读数（现跑取数 · --emit-baseline 刷）\n  S5 配置主题面（`help config` · 2026-09-27 补 · 缺口 GAP-20260927-440）：\n     S5a 同面交叉：优先级链行现算的级名表 == 逐级说明 `N. **名字**` 的名字表（同序逐字 · 两边剥反引号）·\n         编号必须 `1..N` 连号无重复 · 链行恰好 1 条 ·\n     S5b 同源跨面：`help config` 的链行**逐字等于**裸 `help` 的那一行（同源 = `helptext.go` 的\n         `configPriorityLine` 常量 —— 分家 = 有人抄了第二份）·\n     S5c 该面的 lines / bytes == 冻结读数（现跑取数 · --emit-baseline 刷）\n\n不假装覆盖（照实登记）\n----------------------\n  · 只判**形状**（段 / 条数 / 行数 / 末行）；段的**说明文字**逐字、危险档判词、层级列不在本格\n  · 两态 rc 语义（`zerg <族> --help` 退 2 等）**不在本件**（那是 `cli_help_twostate_test.go` 的面，禁碰）\n  · `help config` 只判**形状/结构**：链 ⟷ 逐级说明同序 · 同源链行逐字 · lines/bytes 常量；\n    「凭据」那批条目的**文字**与主题表 `topics.go` 的 `Brief` 串同源不同源**不在本格**\n    （要另开一处读 Go 源的口径 —— 本单不开第三份口径）\n  · 建件时本件**未挂门**（挂门 + `scripts/公开标记.tsv` + `dryrun-semantics.json` 三处登记是随动口）\n"
+const chsListRules = "判据（三条 · 现算 + 对界 · 缺口 GAP-20260927-401）\n-----------------------------------------------\n  S1 族级段（闭集相等）：现跑 `help --all` 末尾段 token ⟷ 命令树（`cli-matrix.json` 的\n     `cases[].command` 首段）· 段头在 · 括注族数 == 现算族数 · 双向差集空 · 裸 `help` 不带段\n  S2 条数与行数：rows(--all) == rows(help) + rows(help dangerous) ·\n     族级段行数 == 1 + ceil(族数/8)（段头之前必须是空行）；两个面的 **lines == 冻结常量**；\n     **bytes 降级为「观察值 + 归因」**（✗ 不进 rc · 2026-10-14 本轮）—— 字节是**派生量**\n     （随用法串自然增长）⇒ 现读值与「与冻结值的差」逐趟打印，字节不等**不判红**\n  闸A 逐字覆盖（`help --all` 面 ⟷ 命令树源码 `core/cmd/zerg/main.go` 的 `commands[].usage`）：\n     树里每条的 `\"  \" + usage` 必须**逐字**在面里（多行 usage 由子串口径自然覆盖）⇒ 不在即点名：\n     面里有该命令的用法行 ⇒「文本不符」；连行都没有 ⇒「漏印」· 面里以 `zerg <小写词>` 起头的\n     每条用法行必须能归到某条树命令（按**最长命令名**前缀）⇒ 归不到即「多印」· 树取数为 0 ⇒ fail-closed\n  闸B 无重复（`help --all` / 裸 `help`）：两面**不得有重复行、不得有第二份族级段**（段头 `族级面（`）\n     ⇒ rc=1 时逐一指出重复内容与次数\n\n  S3 末行：`--all` 末行 == 由族名清单现算重建的那一行；裸 `help` 末行 == 冻结读数（逐字）\n  S4 危险档面（`help dangerous` · 2026-09-27 补 · 缺口 GAP-20260927-418）：\n     S4a 表尾计数（`上表 N 条：已开放 X / 未开放 Y` ⇒ N == X + Y == 逐条行数）·\n     S4b 逐条行尾标记出现次数 == 表尾 X / Y ·\n     S4c 逐条行形状闭集（`zerg <路径>  D2|D3  --dry-run · [--confirm=<目标> · ]--yes  …  ← 标记`）·\n     S4d 逐条 `--confirm=<目标>` 的核心名 ⟷ 该命令在 `help --all` 的用法串（现算脱钩集合 == 冻结名单）·\n     S4f 两面**同印** `--confirm=` 的值须**逐字相等**（现算值冲突集合 == 冻结名单 · 现读空集 —— 独立一条腿：\n         S4d 只判「名字在不在用法串里」⇒ 值冲突但名字集合不变时 S4d 看不见）·\n     S4e 该面的 lines / bytes / 条数 / 表尾逐字 == 冻结读数（现跑取数 · --emit-baseline 刷）\n  S5 配置主题面（`help config` · 2026-09-27 补 · 缺口 GAP-20260927-440）：\n     S5a 同面交叉：优先级链行现算的级名表 == 逐级说明 `N. **名字**` 的名字表（同序逐字 · 两边剥反引号）·\n         编号必须 `1..N` 连号无重复 · 链行恰好 1 条 ·\n     S5b 同源跨面：`help config` 的链行**逐字等于**裸 `help` 的那一行（同源 = `helptext.go` 的\n         `configPriorityLine` 常量 —— 分家 = 有人抄了第二份）·\n     S5c 该面的 lines / bytes == 冻结读数（现跑取数 · --emit-baseline 刷）\n\n不假装覆盖（照实登记）\n----------------------\n  · 只判**形状**（段 / 条数 / 行数 / 末行）；段的**说明文字**逐字、危险档判词、层级列不在本格\n  · 两态 rc 语义（`zerg <族> --help` 退 2 等）**不在本件**（那是 `cli_help_twostate_test.go` 的面，禁碰）\n  · `help config` 只判**形状/结构**：链 ⟷ 逐级说明同序 · 同源链行逐字 · lines/bytes 常量；\n    「凭据」那批条目的**文字**与主题表 `topics.go` 的 `Brief` 串同源不同源**不在本格**\n    （要另开一处读 Go 源的口径 —— 本单不开第三份口径）\n  · 建件时本件**未挂门**（挂门 + `scripts/公开标记.tsv` + `dryrun-semantics.json` 三处登记是随动口）\n"
 
 const chsFixTail = "上表 5 条：**已开放 1 条**（确认档齐就真执行 —— 逐条见上行标记）；**未开放 4 条**（真跑一律**拒执**、退码 2 = 不给结论，只有 `--dry-run` 出计划件 = 退码 0）。"
 const chsFixChain = "旗标 > ZERG_* 环境变量 > 项目 .env > ~/.zerg/config.yaml > 内置默认"
@@ -1136,8 +1136,8 @@ type chsFaceBl struct {
 type chsBaselineSet map[string]chsFaceBl
 
 var chsBaseline = chsBaselineSet{
-	"help --all":     {HasLines: true, Lines: 409, HasBytes: true, Bytes: 221239},
-	"help":           {HasLines: true, Lines: 295, HasBytes: true, Bytes: 73241, HasLast: true, Last: "      非交互用 `--token-stdin`；详见 `zerg help credentials`）。"},
+	"help --all":     {HasLines: true, Lines: 409, HasBytes: true, Bytes: 222814},
+	"help":           {HasLines: true, Lines: 295, HasBytes: true, Bytes: 73292, HasLast: true, Last: "      非交互用 `--token-stdin`；详见 `zerg help credentials`）。"},
 	"help dangerous": {HasLines: true, Lines: 117, HasBytes: true, Bytes: 44681, HasRows: true, Rows: 105, HasTail: true, Tail: "上表 105 条：**已开放 92 条**（确认档齐就真执行 —— 逐条见上行标记）；**未开放 13 条**（真跑一律**拒执**、退码 2 = 不给结论，只有 `--dry-run` 出计划件 = 退码 0）。"},
 	"help config":    {HasLines: true, Lines: 21, HasBytes: true, Bytes: 1748},
 }
@@ -1225,14 +1225,14 @@ func chsJudge(allText, bareText, dangerText string, cmds []string, bl chsBaselin
 			text = bareText
 		}
 		w := bl[face]
-		gotL, gotB := len(chsSplitLines(text)), len(text)
+		gotL := len(chsSplitLines(text))
 		if w.HasLines && gotL != w.Lines {
 			bad = append(bad, fmt.Sprintf("S2 常量：`%s` 行数 %d ≠ 冻结读数 %d（形状漂了 —— 取法见件头 `BASELINE` 注释）",
 				face, gotL, w.Lines))
 		}
-		if w.HasBytes && gotB != w.Bytes {
-			bad = append(bad, fmt.Sprintf("S2 常量：`%s` 字节 %d ≠ 冻结读数 %d", face, gotB, w.Bytes))
-		}
+		// ★ 字节**降级为观察值**（2026-10-14 · 本轮）：字节是派生量（随用法串自然增长）⇒ 正当改动
+		//   也会判红、逼人手刷冻结常量（同一格一晚漂三次的由来）。⇒ 现读值与「与冻结值的差」改由
+		//   `chsByteDrift` 打在观察行上，**✗ 不进 `bad`、✗ 不进退码**；真假鉴别力交给闸A/闸B。
 	}
 
 	// ---- S3 末行 ----
@@ -1461,6 +1461,302 @@ func chsHead5Pairs(xs [][]string) [][]string {
 	return xs
 }
 
+// ── 闸A【逐字覆盖】/ 闸B【无重复】/ 字节面观察（2026-10-14 · 本轮加）──────────────────
+//
+// 病灶（现读拄证）：S2 曾把 `help --all` / 裸 `help` 的**字节数**冻成常量 ⇒ 字节是**派生量**
+// （随用法串自然增长）⇒ 正当改动也判红、逼人手刷冻结常量（同一格几小时内漂
+// 221239 → 222763 → 222814 三次）。⇒ 本轮把字节**降级为观察值 + 归因**（✗ 不进 rc），真假
+// 鉴别力交给下面两条闸：闸A 判「用法串对不对」（逐字覆盖），闸B 判「面里有没有重影」。
+//
+// 闸A 的第二份真源 = 命令树源码的 `usage` 串（口径照 `gen_cli_reference.go` 的
+// `gcrTreeFromSource`／`gcrConstUsages`）；★ 与它的一处分别：本处认 `\"` 转义 ——
+// `usage: "… [{\"old\":…}] …"` 那类字面量在 `[^"]*` 口径下会被截断（闸A 会误报「文本不符」）。
+var (
+	chsTreeMainRel  = []string{"core", "cmd", "zerg", "main.go"}
+	chsTreeHeadLit  = "commands = []*command{"
+	chsTreeTailLit  = "\n\t}\n"
+	chsPathRE       = regexp.MustCompile(`path:\s*\[\]string\{([^}]*)\}`)
+	chsPathPartRE   = regexp.MustCompile(`"([^"]+)"`)
+	chsUsageLitRE   = regexp.MustCompile(`usage:\s*"((?:\\.|[^"\\])*)"`)
+	chsUsageIdentRE = regexp.MustCompile(`usage:\s*([A-Za-z_][A-Za-z0-9_]*)`)
+	chsConstLitRE   = regexp.MustCompile(`(?m)^[ \t]*(?:const[ \t]+)?([A-Za-z_][A-Za-z0-9_]*)[ \t]*:?=[ \t]*"((?:\\.|[^"\\])*)"[ \t]*$`)
+)
+
+// chsGoUnescape —— Go 字符串字面量转义还原（本件只遇到 `\"` / `\\` / `\n` / `\t` / `\uXXXX`）。
+func chsGoUnescape(s string) string {
+	if !strings.Contains(s, `\`) {
+		return s
+	}
+	rs := []rune(s)
+	var b strings.Builder
+	for i := 0; i < len(rs); i++ {
+		if rs[i] != '\\' || i+1 >= len(rs) {
+			b.WriteRune(rs[i])
+			continue
+		}
+		i++
+		switch rs[i] {
+		case 'n':
+			b.WriteRune('\n')
+		case 't':
+			b.WriteRune('\t')
+		case 'r':
+			b.WriteRune('\r')
+		case '"':
+			b.WriteRune('"')
+		case '\'':
+			b.WriteRune('\'')
+		case '\\':
+			b.WriteRune('\\')
+		case 'u':
+			if i+4 < len(rs) {
+				if n, err := strconv.ParseInt(string(rs[i+1:i+5]), 16, 32); err == nil {
+					b.WriteRune(rune(n))
+					i += 4
+					continue
+				}
+			}
+			b.WriteRune('u')
+		default:
+			b.WriteRune(rs[i])
+		}
+	}
+	return b.String()
+}
+
+// chsConstUsages —— 包内「名字 = "字面量"」表（首见为准 · 遍历序 = 排序后的 *.go · 口径同
+// `gen_cli_reference.go` 的 `gcrConstUsages`）。
+func chsConstUsages(pkgDir string) map[string]string {
+	out := map[string]string{}
+	ents, err := os.ReadDir(pkgDir)
+	if err != nil {
+		return out
+	}
+	var files []string
+	for _, e := range ents {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".go") {
+			files = append(files, e.Name())
+		}
+	}
+	sort.Strings(files)
+	for _, n := range files {
+		raw, err := os.ReadFile(chsPyJoin(pkgDir, n))
+		if err != nil {
+			continue
+		}
+		for _, m := range chsConstLitRE.FindAllStringSubmatch(string(raw), -1) {
+			if _, seen := out[m[1]]; !seen {
+				out[m[1]] = chsGoUnescape(m[2])
+			}
+		}
+	}
+	return out
+}
+
+// chsTreeUsage —— 命令树源码（`core/cmd/zerg/main.go` 的 `commands` 切片）⇒ [(命令名, usage 串)]。
+// ✗ 取不到（件不在盘 / 切片头尾标记找不到 / 一条都没有）⇒ (nil, 理由) ⇒ 调用方 fail-closed。
+func chsTreeUsage(root string) ([][2]string, string) {
+	mainPath := chsPyJoinAll(append([]string{root}, chsTreeMainRel...)...)
+	if !chsIsFile(mainPath) {
+		return nil, "命令树源码不在盘：" + mainPath
+	}
+	raw, err := os.ReadFile(mainPath)
+	if err != nil {
+		return nil, "命令树源码读不回来（" + chsOSErrStr(mainPath, err) + "）"
+	}
+	src := string(raw)
+	start := strings.Index(src, chsTreeHeadLit)
+	if start < 0 {
+		return nil, "命令树源码里找不到切片头 `" + chsTreeHeadLit + "`（口径漂了）"
+	}
+	rel := strings.Index(src[start:], chsTreeTailLit)
+	if rel < 0 {
+		return nil, "命令树源码里找不到 `commands` 切片的收尾标记（口径漂了）"
+	}
+	seg := src[start : start+rel]
+	consts := chsConstUsages(chsPyDirname(mainPath))
+	matches := chsPathRE.FindAllStringSubmatchIndex(seg, -1)
+	var out [][2]string
+	for i, m := range matches {
+		var parts []string
+		for _, p := range chsPathPartRE.FindAllStringSubmatch(seg[m[2]:m[3]], -1) {
+			parts = append(parts, p[1])
+		}
+		if len(parts) == 0 {
+			continue
+		}
+		nxt := len(seg)
+		if i+1 < len(matches) {
+			nxt = matches[i+1][0]
+		}
+		block := seg[m[1]:nxt]
+		usage := ""
+		if u := chsUsageLitRE.FindStringSubmatch(block); u != nil {
+			usage = chsGoUnescape(u[1])
+		} else if id := chsUsageIdentRE.FindStringSubmatch(block); id != nil {
+			usage = consts[id[1]]
+		}
+		out = append(out, [2]string{strings.Join(parts, " "), usage})
+	}
+	if len(out) == 0 {
+		return nil, "命令树源码里一条 `path:` 都没有（口径漂了？）"
+	}
+	return out, ""
+}
+
+// chsTreeNamesLongestFirst —— 命令名按**词数**降序（多印归属用：最长者先认）。
+func chsTreeNamesLongestFirst(tree [][2]string) []string {
+	names := make([]string, 0, len(tree))
+	for _, e := range tree {
+		names = append(names, e[0])
+	}
+	sort.SliceStable(names, func(i, j int) bool { return len(chsSplitWS(names[i])) > len(chsSplitWS(names[j])) })
+	return names
+}
+
+// chsFaceUsageRowFor —— 面里「该命令自己的用法行」首见原文（判词点名用 · 无则空串）。
+func chsFaceUsageRowFor(text, name string) string {
+	for _, l := range chsSplitLines(text) {
+		s := chsPyTrim(l)
+		if s == "zerg "+name || strings.HasPrefix(s, "zerg "+name+" ") {
+			return s
+		}
+	}
+	return ""
+}
+
+// chsUsageCover —— 闸A【逐字覆盖】（`help --all` 面 ⟷ 命令树源码的 `usage` 串）：
+//
+//	① 树里每条的 `"  " + usage` 必须**逐字**在面里（多行 usage 由子串口径自然覆盖）⇒ 不在即点名：
+//	   面里有该命令的用法行 ⇒「文本不符」；连行都没有 ⇒「漏印」。
+//	② 面里以 `zerg <小写词>` 起头的每条用法行必须能归到某条树命令（按**最长命令名**前缀）
+//	   ⇒ 归不到：「多印」（面里有 · 命令树里没有这条命令）。
+//
+// ★ 树空（取数失败 / 抽空）⇒ fail-closed 判红（✗ 不许当「面里也没问题」）。
+func chsUsageCover(allText string, tree [][2]string) []string {
+	bad := []string{}
+	if len(tree) == 0 {
+		bad = append(bad, "闸A 逐字覆盖：命令树 usage 取数为 0 条（抽空 ⇒ fail-closed · ✗ 不许当「面里也没问题」）")
+		return bad
+	}
+	var miss, wrong []string
+	for _, e := range tree {
+		name, usage := e[0], e[1]
+		if usage == "" {
+			wrong = append(wrong, name+"（树里这条没有 usage 串）")
+			continue
+		}
+		if strings.Contains(allText, "  "+usage) {
+			continue
+		}
+		if row := chsFaceUsageRowFor(allText, name); row != "" {
+			wrong = append(wrong, fmt.Sprintf("%s（树 `%s` ≠ 面 `%s`）", name, usage, chsFirstRunes(row, 110)))
+			continue
+		}
+		miss = append(miss, name)
+	}
+	if len(miss) > 0 {
+		bad = append(bad, fmt.Sprintf("闸A 逐字覆盖：命令树里 %d 条命令在 `help --all` 面**漏印**（树里有 · 面上没有逐字用法串）—— %s",
+			len(miss), chsJoinDot(chsHead5(miss))))
+	}
+	if len(wrong) > 0 {
+		bad = append(bad, fmt.Sprintf("闸A 逐字覆盖：%d 条命令的用法串**文本不符**（面上那一行的字 ≠ 树里 `usage` 逐字）—— %s",
+			len(wrong), chsJoinDot(chsHead5(wrong))))
+	}
+	names := chsTreeNamesLongestFirst(tree)
+	var extra []string
+	for _, l := range chsSplitLines(allText) {
+		s := chsPyTrim(l)
+		if !strings.HasPrefix(s, "zerg ") || len(s) < 6 {
+			continue
+		}
+		if c := s[5]; c < 'a' || c > 'z' {
+			continue // `zerg <对象> <动作> …` 一类占位行不属于任何命令
+		}
+		hit := false
+		for _, n := range names {
+			if s == "zerg "+n || strings.HasPrefix(s, "zerg "+n+" ") {
+				hit = true
+				break
+			}
+		}
+		if !hit {
+			extra = append(extra, chsFirstRunes(s, 110))
+		}
+	}
+	if len(extra) > 0 {
+		sort.Strings(extra)
+		bad = append(bad, fmt.Sprintf("闸A 逐字覆盖：`help --all` 面里 %d 条用法行**多印**（面里有 · 命令树里没有这条命令）—— %s",
+			len(extra), chsJoinDot(chsHead5(extra))))
+	}
+	return bad
+}
+
+// chsDupScan —— 闸B【无重复】：面里① 非空行不得重复 ② 族级段段头不得出现第二次（= 第二份族级段）。
+// ⇒ rc=1 时逐一指出重复内容与次数。
+func chsDupScan(face, text string) []string {
+	bad := []string{}
+	counts := map[string]int{}
+	for _, l := range chsSplitLines(text) {
+		if chsPyTrim(l) == "" {
+			continue // 空行天然重复 ⇒ ✗ 不入账
+		}
+		counts[l]++
+	}
+	var dups []string
+	for l, n := range counts {
+		if n > 1 {
+			dups = append(dups, fmt.Sprintf("`%s`（%d 次）", chsFirstRunes(l, 110), n))
+		}
+	}
+	if len(dups) > 0 {
+		sort.Strings(dups)
+		bad = append(bad, fmt.Sprintf("闸B 无重复：`%s` 里 %d 条重复行（逐条各指一次出现次数）—— %s",
+			face, len(dups), chsJoinDot(chsHead5(dups))))
+	}
+	nHdr := 0
+	for _, l := range chsSplitLines(text) {
+		if strings.HasPrefix(l, chsSecHeaderPrefix) {
+			nHdr++
+		}
+	}
+	if nHdr > 1 {
+		bad = append(bad, fmt.Sprintf("闸B 无重复：`%s` 里族级段段头（`%s`）出现 %d 次 —— 族级段只许一份",
+			face, chsSecHeaderPrefix, nHdr))
+	}
+	return bad
+}
+
+// chsByteDrift —— 字节面「观察值 + 归因」（✗ 不进 rc）：现读字节 · 冻结读数 · 两者之差。
+func chsByteDrift(pairs [][2]string, bl chsBaselineSet) []string {
+	out := []string{}
+	for _, p := range pairs {
+		face, text := p[0], p[1]
+		w := bl[face]
+		if !w.HasBytes {
+			continue
+		}
+		got := len(text)
+		linePart := fmt.Sprintf("行数 %d", len(chsSplitLines(text)))
+		if w.HasLines {
+			linePart = fmt.Sprintf("行数 %d ⟷ 冻结 %d", len(chsSplitLines(text)), w.Lines)
+		}
+		out = append(out, fmt.Sprintf("字节观察（✗ 不进 rc）：`%s` 现读 %d ⟷ 冻结 %d（差 %+d）· %s",
+			face, got, w.Bytes, got-w.Bytes, linePart))
+	}
+	return out
+}
+
+// chsAnyHasSub —— 一片里有没有含该子串的一项（自检断言用）。
+func chsAnyHasSub(xs []string, sub string) bool {
+	for _, x := range xs {
+		if strings.Contains(x, sub) {
+			return true
+		}
+	}
+	return false
+}
+
 // ── 夹具（合成 · 不碰真目标）──
 
 func chsFixDangerRows() []string {
@@ -1481,15 +1777,34 @@ func chsFixConfigText() string {
 	return strings.Join(body, "\n") + "\n"
 }
 
+// chsFixTree —— 夹具命令树（[命令名, usage 串]）：夹具 `help --all` 面的用法行**逐字由它生成**
+// （闸A 的正控要「面 ⟷ 树」逐字相等 ⇒ 夹具只留**一份**来源，✗ 不许两处各写一遍）。
+var chsFixTree = chsFixTreeOf()
+
+func chsFixTreeOf() [][2]string {
+	out := [][2]string{
+		{"agent ls", "zerg agent ls ｜ 茧壁:host ｜ 说明"},
+		{"gap ls", "zerg gap ls ｜ 茧壁:host ｜ 说明"},
+		{"gate run", "zerg gate run ｜ 茧壁:host ｜ 说明"},
+		{"help", "zerg help ｜ 茧壁:host ｜ 说明"},
+		{"version", "zerg version ｜ 茧壁:host ｜ 说明"},
+	}
+	// 危险档那几条的用法串 = 面里那几行**去缩进**（同一份来源 · 见 chsFixDanger 的第四格）。
+	for _, t := range chsFixDanger {
+		out = append(out, [2]string{t[0], chsPyTrim(t[3])})
+	}
+	return out
+}
+
 func chsFixTexts() (string, string, string, string) {
 	fams := chsFamiliesOf(chsFixCmds)
 	var rowsBare []string
-	for _, c := range chsFixCmds[:5] {
-		rowsBare = append(rowsBare, "  zerg "+c+" ｜ 茧壁:host ｜ 说明")
+	for _, e := range chsFixTree[:5] {
+		rowsBare = append(rowsBare, "  "+e[1])
 	}
 	rowsAll := append([]string{}, rowsBare...)
-	for _, t := range chsFixDanger {
-		rowsAll = append(rowsAll, t[3])
+	for _, e := range chsFixTree[5:] {
+		rowsAll = append(rowsAll, "  "+e[1])
 	}
 	var sb strings.Builder
 	sb.WriteString("zerg —— 形状夹具 · 深度 ≤ 3 层\n\n")
@@ -1535,6 +1850,15 @@ var chsCaseNames = []string{
 	"负控④：清单漏一族 ⇒ 必红",
 	"对界：命令树多一族 ⇒ 必红",
 	"负控⑭：抹掉一条危险档行的**逐条标记**（行还在 · 标记没了）⇒ S4b 必红",
+	// ── 2026-10-14 本轮加：闸A / 闸B / 字节降级（各配成对负控）──
+	"闸A 正控：面 ⟷ 命令树逐字（夹具原样）⇒ 必绿且不许有 闸A 断言",
+	"闸A 负控：面上改一个命令名（`agent ls`→`agent lsx`）⇒ 必须点名「漏印」",
+	"闸A 负控：面上改一条用法串（`gate run` 那行）⇒ 必须点名「文本不符」",
+	"闸A 负控：面上多印一条命令（`zzz ls`）⇒ 必须点名「多印」",
+	"闸A 抽空：命令树喂 nil（取数失败）⇒ fail-closed 必红（✗ 不许静默绿）",
+	"闸B 正控：两面（`--all` / 裸 `help`）无重复行 ⇒ 必绿且不许有 闸B 断言",
+	"闸B 负控：面里多加一条**重复行**（`version` 那行）⇒ 必须点名重复内容与次数",
+	"闸B 负控：面里多印**第二份族级段**段头 ⇒ 必须点名「族级段」",
 }
 
 // chsCase —— py `self_test` 内 `case(...)` 的复刻。
@@ -1585,7 +1909,8 @@ func chsCase(out io.Writer, total, failed *int, name string, wantRed bool, bad [
 	}
 }
 
-// chsSelfTest —— py `self_test(out)` 的复刻（24 格 · 正控 + 负控 + 对界 + A 档取数口）。
+// chsSelfTest —— py `self_test(out)` 的复刻 ＋ 本轮新增的闸A/闸B/字节降级格
+// （35 格 · 正控 + 负控 + 对界 + 闸A/闸B 成对负控 + 字节降级三格 + A 档取数口）。
 func chsSelfTest(out io.Writer) bool {
 	total, failed := 0, 0
 	allT, bareT, dangT, cfgT := chsFixTexts()
@@ -1642,6 +1967,44 @@ func chsSelfTest(out io.Writer) bool {
 	cmdsMore := append(append([]string{}, chsFixCmds...), "zzz ls")
 	c(19, true, chsJudge(allT, bareT, dangT, cmdsMore, bl, nil), "", "")
 	c(20, true, chsJudge(allT, bareT, strings.Replace(dangT, chsDangerOpenMark, "", 1), chsFixCmds, bl, nil), "S4b", "")
+
+	// ── 闸A【逐字覆盖】/ 闸B【无重复】/ 字节降级（2026-10-14 · 本轮加：成对负控）──────
+	usageMutName := strings.Replace(allT, "  zerg agent ls ｜ 茧壁:host ｜ 说明", "  zerg agent lsx ｜ 茧壁:host ｜ 说明", 1)
+	usageMutText := strings.Replace(allT, "  zerg gate run ｜ 茧壁:host ｜ 说明", "  zerg gate run [--fast] ｜ 茧壁:host ｜ 说明", 1)
+	usageMutMore := strings.Replace(allT, "  zerg version ｜ 茧壁:host ｜ 说明",
+		"  zerg version ｜ 茧壁:host ｜ 说明\n  zerg zzz ls ｜ 茧壁:host ｜ 说明", 1)
+	c(21, false, chsUsageCover(allT, chsFixTree), "", "闸A")
+	c(22, true, chsUsageCover(usageMutName, chsFixTree), "漏印", "")
+	c(23, true, chsUsageCover(usageMutText, chsFixTree), "文本不符", "")
+	c(24, true, chsUsageCover(usageMutMore, chsFixTree), "多印", "")
+	c(25, true, chsUsageCover(allT, nil), "抽空", "")
+	c(26, false, append(chsDupScan("help --all", allT), chsDupScan("help", bareT)...), "", "闸B")
+	c(27, true, chsDupScan("help --all", allT+"  zerg version ｜ 茧壁:host ｜ 说明\n"), "重复行", "")
+	c(28, true, chsDupScan("help --all", allT+"族级面（9 族 · 第二份段）:\n"), "族级段", "")
+
+	// 字节降级：面**字节变了（行数不变）⇒ 判据仍绿** ＋ 观察行给归因（成对：行数变 ⇒ 必红 = 上面的负控②b）
+	byteMut := strings.Replace(allT, "zerg —— 形状夹具 · 深度 ≤ 3 层", "zerg —— 形状夹具 · 深度 ≤ 3 层（字节降级夹具）", 1)
+	byteBad := chsJudge(byteMut, bareT, dangT, chsFixCmds, bl, nil)
+	byteObs := chsByteDrift([][2]string{{"help --all", byteMut}, {"help", bareT}}, bl)
+	byteCases := []struct {
+		name string
+		ok   bool
+	}{
+		{"字节降级①：面字节变了（行数不变）⇒ 判据仍绿（✗ 不进 rc）", len(byteBad) == 0},
+		{"字节降级②：观察行打印「与冻结值的差」", chsAnyHasSub(byteObs, "（差 +")},
+		{"字节降级③：观察行点明冻结读数（现读 ⟷ 冻结）", chsAnyHasSub(byteObs, "⟷ 冻结")},
+	}
+	total += len(byteCases)
+	for _, bc := range byteCases {
+		if !bc.ok {
+			failed++
+		}
+		mark := "✓"
+		if !bc.ok {
+			mark = "✗"
+		}
+		fmt.Fprintf(out, "  %s %s\n", mark, bc.name)
+	}
 
 	// ── A 档取数口（`GAP-20261001-47` · 拆档）：读落盘 help 面制品 ──────────────
 	artDir, aerr := os.MkdirTemp("", "hshape-artifact-")
@@ -1945,6 +2308,12 @@ func checkHelpShapeGateMain(stdout, stderr io.Writer, argv []string) int {
 		fmt.Fprintf(stdout, "⛔ 不给结论（rc=2）：%s\n", cwhy)
 		return 2
 	}
+	// 闸A 的第二份真源 = 命令树源码的 `usage` 串：取不到 ⇒ fail-closed（✗ 不许静默跳过闸A）。
+	tree, twhy := chsTreeUsage(repoRoot)
+	if tree == nil {
+		fmt.Fprintf(stdout, "⛔ 不给结论（rc=2）：%s\n", twhy)
+		return 2
+	}
 	order := []string{"help --all", "help", "help dangerous", "help config"}
 	argvs := [][]string{{"help", "--all"}, {"help"}, {"help", "dangerous"}, {"help", "config"}}
 	faces := map[string]string{}
@@ -1992,8 +2361,16 @@ func checkHelpShapeGateMain(stdout, stderr io.Writer, argv []string) int {
 		len(cmds), len(fams), len(chsSplitLines(faces["help --all"])),
 		len(faces["help --all"]), len(chsSplitLines(faces["help"])), secStr, len(toks))
 
+	// 字节面：观察值 + 归因（✗ 不进 rc —— 字节是派生量，随用法串自然增长）。
+	for _, o := range chsByteDrift([][2]string{{"help --all", faces["help --all"]}, {"help", faces["help"]}}, bl) {
+		fmt.Fprintf(stdout, "  %s\n", o)
+	}
 	cfg := faces["help config"]
 	bad := chsJudge(faces["help --all"], faces["help"], faces["help dangerous"], cmds, bl, &cfg)
+	// 闸A【逐字覆盖】· 闸B【无重复】：本轮新增的两条真鉴别力闸（进退码）。
+	bad = append(bad, chsUsageCover(faces["help --all"], tree)...)
+	bad = append(bad, chsDupScan("help --all", faces["help --all"])...)
+	bad = append(bad, chsDupScan("help", faces["help"])...)
 	d := faces["help dangerous"]
 	if len(bad) > 0 {
 		fmt.Fprint(stdout, "⇒ 判红（rc=1）：\n")
@@ -2007,9 +2384,11 @@ func checkHelpShapeGateMain(stdout, stderr io.Writer, argv []string) int {
 		}
 		fmt.Fprintf(stdout, "  ✓ S1 族级段 %d 族 ⟷ 命令树逐 token 相等（裸 `help` 不带段）\n", len(fams))
 		fmt.Fprintf(stdout, "  ✓ S2 rows(--all)=%d == rows(help)=%d + rows(dangerous)=%d（危险档净增）；"+
-			"两个面行/字节 == 冻结读数（段 %d 行 · 命令树 %d 条为族名另一源）\n",
+			"两个面**行数** == 冻结读数（段 %d 行 · 命令树 %d 条为族名另一源；字节已降级为上面的观察值）\n",
 			len(chsRowsOf(faces["help --all"])), len(chsRowsOf(faces["help"])),
 			len(chsRowsOf(d)), secInt, len(cmds))
+		fmt.Fprintf(stdout, "  ✓ 闸A 逐字覆盖：命令树源码 %d 条 `usage` 串 ⟷ `help --all` 面逐字（漏印 0 · 多印 0 · 文本不符 0）\n", len(tree))
+		fmt.Fprint(stdout, "  ✓ 闸B 无重复：`help --all` / 裸 `help` 两面 0 条重复行 · 族级段各一份\n")
 		fmt.Fprint(stdout, "  ✓ S3 末行 = 族名清单现算重建的那一行（裸 `help` 末行逐字符合）\n")
 		_, nT, nO, nC, hasTN := chsDangerTail(d)
 		nTv, nOv, nCv := -1, -1, -1
@@ -2032,7 +2411,7 @@ func checkHelpShapeGateMain(stdout, stderr io.Writer, argv []string) int {
 		}
 		fmt.Fprintf(stdout, "  ✓ S5 配置主题面：链行 ⟷ 逐级说明 %d 级同序逐字相等；链行 ⟷ 裸 `help` 同源逐字；"+
 			"行/字节 == 冻结读数 %d/%d\n", chainLevels, len(chsSplitLines(cf)), len(cf))
-		fmt.Fprint(stdout, "⇒ 五条都合（rc=0）\n")
+		fmt.Fprint(stdout, "⇒ 五条（S1–S5）＋ 闸A/闸B 都合（rc=0）\n")
 	}
 
 	if a.json {

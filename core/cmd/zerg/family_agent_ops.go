@@ -272,6 +272,13 @@ func cmdAgentReload(inv *invocation, stdout, stderr io.Writer) int {
 			return rc
 		}
 	}
+	// ★ 三态（D2 档）：`--dry-run`（只出计划件 · 零副作用）· 缺 `--yes` fail-closed（退 2）· `--yes` 才真打。
+	//   两枚旗标的判定走**共享**那一处（`guard.go` 的 `dryRunYesConflict`）—— ✗ 不另写第二套。
+	//   ★ 插入位置硬约束：判定**排在字段面判（上面那一段）之后** ⇒ 字段面的输出字节（矩阵格
+	//   `agent/reload#字段面·未知字段` = rc 2 / stdout 468 B）一字不动（见 `cli-matrix.json`）。
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
 	if len(inv.args) == 0 {
 		inv.setErr("usage", "missing_target", "缺机器名")
 		fmt.Fprintf(stderr, "%s: `agent reload` 要一台机器名（`%s agent ls` 看名册）\n", progName, progName)
@@ -285,6 +292,38 @@ func cmdAgentReload(inv *invocation, stdout, stderr io.Writer) int {
 	machine := strings.TrimSpace(inv.args[0])
 	a, rc := agentChildAddr(machine, stderr)
 	if rc != exitOK {
+		return rc
+	}
+
+	// ★ 干跑那一态（**唯一返回 0 的那一态**）：只出**计划件** —— 不打子端、不改任何状态。
+	//   照同族真身 `cmdAgentRegistry:683` / `cmdAgentRestart:1720` 的措辞与形状（干跑排在只读解析之后）。
+	if inv.dryRun {
+		w := stdout
+		if inv.jsonGiven {
+			w = stderr // 机器面 stdout 只许剩包封（`A3-b` 案的先例）
+		}
+		path := "/infer/reload"
+		fmt.Fprintf(w, "计划件（--dry-run · 零副作用 —— 未打子端、未改任何状态）\n")
+		fmt.Fprintf(w, "  动作     : %s agent reload %s\n", progName, machine)
+		fmt.Fprintf(w, "  目标子端 : %s（%s）\n", machine, agentChildBase(a))
+		fmt.Fprintf(w, "  端点     : POST %s%s（带 X-Auth-Token；令牌只从凭据链取、不入 argv/日志）\n", agentChildBase(a), path)
+		fmt.Fprintf(w, "  它会动   : 让子端热重载 —— 改子端**在跑引擎态**（不改盘上件）\n")
+		fmt.Fprintf(w, "  授权判据 : 真跑要 `--yes`（D2 fail-closed）；先看计划件：%s agent reload %s --dry-run\n", progName, machine)
+		fmt.Fprintln(stderr, "（--dry-run：只出计划件 · 零副作用 —— 未执行、未改任何状态）")
+		changed := false
+		inv.changed = &changed
+		if !inv.jsonGiven {
+			return exitOK
+		}
+		row := map[string]string{
+			"machine": machine, "host": a.Host, "port": strconv.Itoa(a.Port),
+			"via": agentChildBase(a) + path,
+		}
+		return listCmd(inv, stdout, stderr, agentReloadDisplay, []map[string]string{agentFillRow(row, agentReloadFields)})
+	}
+	// ★ 真跑那一档：D2 fail-closed 确认档（`guard.go:211` 的 `writeGuardYes` · 唯一一处）——
+	//   缺 `--yes` ⇒ 退 2（**零请求** —— 还没走到下面那行 `agentChildDo`）。
+	if rc := writeGuardYes(inv, stderr); rc != exitOK {
 		return rc
 	}
 
@@ -1716,6 +1755,11 @@ func cmdAgentRestart(inv *invocation, stdout, stderr io.Writer) int {
 	}
 	branch := agentRestartBranch(a)
 
+	// ★ 门98（`check-dryrun-yes-conflict-coverage`）调用点粒度：`--dry-run` 与 `--yes` 同给 ⇒ 共享判定
+	//   必须在任何盘面动作**之前**跑（同给时先早退/先写 ⇒ `--yes` 被静默吞或 `--dry-run` 被无视）。
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
 	// ① `--dry-run`：计划件 · 零副作用 —— 唯一返回 0 的那一态。
 	if inv.dryRun {
 		agentRestartPlan(machine, a, stdout)

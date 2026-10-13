@@ -29,6 +29,15 @@
 //	· 入口 `flagRegistryParityGateMain` 目前**无调用点** —— 这是 M2-0 的**刻意**状态：
 //	  先证明「搬得逐字相同」，接线与命令注册是后一单的事。
 //
+// ★ v1.1.0 增补（**非** py 真搬面 · py 原件已退役 ⇒ 无从对拍 · 照实声明）：
+//
+//	**面⑦「声明面 ⇔ 用法串 双向零差集」**（按命令 · **进退码** · **零豁免**）—— 治
+//	「`zerg build all --only cli` 必带 `--node` 而用法串未列」这一类：把命令树当**单一真源**，
+//	取该命令**声明面**（`machine:` / `fields:` / `danger:`）里由实现**证明了的**消费旗标，
+//	断言「声明面推得的必列旗标 ⇔ 该命令用法串的旗标」。三条取证在本件 `frpDeclFace` 件头逐条写。
+//	★ 它是**零豁免**的（✗ 不借豁免表转绿）⇒ 真树上有漂就是 rc=1（照任务单「如实报 · 不放宽」）。
+//	自检成对负控在 `frpSelfTest` 末尾六格（机器面 / 字段面 / 危险档面各一负控一正控）。
+//
 // 入口签名（与 py 的 `main()` 逐字对齐）：
 //
 //	func flagRegistryParityGateMain(stdout, stderr io.Writer, argv []string) int
@@ -86,7 +95,7 @@ import (
 
 // ── 常量（与 py 逐条对齐 · 名字前缀 `frp` 防包内同名）──────────────────────────────
 const (
-	frpVersion = "1.0.0"
+	frpVersion = "1.1.0"
 	frpPKGRel  = "core/cmd/zerg"
 	frpMainRel = "core/cmd/zerg/main.go"
 )
@@ -109,7 +118,16 @@ const frpRules = "面① 用法串 = 命令树 usage:（非字面量按包内常
 	"拒执守卫（同一函数里 `inv.flagVals`/`inv.hasFlag` 存在性检查）与别处已列 不计。" +
 	"面⑥ 运行期用法行面（按命令 · 报告档 · 不进退码）= 件内运行期 stderr 用法行的旗标集 ⟷ " +
 	"面① 命令树同命令用法串旗标集（双向对拍 · 全局选项不计 · 命令需精确同名）—— 差集非空逐条列" +
-	"（缺口 `GAP-20260928-183`）。"
+	"（缺口 `GAP-20260928-183`）。" +
+	"面⑦ 声明面 ⇔ 用法串（按命令 · **进退码** · **零豁免** · 双向）= 把命令树当**单一真源**，" +
+	"取该命令**声明面**（`machine:` / `fields:` / `danger:`）里由实现**证明了的**消费旗标 ⇒ " +
+	"断言「声明面推得的必列旗标 ⇔ 该命令用法串的旗标」双向零差集：" +
+	"甲 **声明未列** = `machine:` 声明对象是某台机、用法串又没给位置参数机器名 ⇒ 必列 `--node <机>`" +
+	"（`remote.go` 的 `enforceNodeRules` 真跑无目标 ⇒ rc=2 · 治「`build all --only cli` 必带 `--node` " +
+	"而用法串未列」这一类）；`fields:` 非空 ⇒ 必列 `--json`（`main.go` 收 `--json` 的真条件）；" +
+	"`danger:` 非空 ⇒ 必列 `--dry-run` 或 `--yes`（危险档三态：`--dry-run` 出计划件 / 真跑要 " +
+	"`--yes`＋`--confirm`）；乙 **用法未注册** = 面甲的同一向（用法串取值形态的旗标 ∉ 解析面）。" +
+	"★ 零豁免表（✗ 不放宽）：真漂就逐条报红、**不许**借豁免转绿 ⇒ rc=1。"
 
 // ★ 取数标记字面 —— 按「自指检查 = 是 ⇒ 禁用反引号原串」，一律写成**解释型字符串**（双引号 + 转义）。
 const (
@@ -147,6 +165,17 @@ var (
 	frpTreeSplitRE = regexp.MustCompile("\n\t\t\\{")
 	// py `re.findall(r'"([^"]+)"', ...)`
 	frpQuotedRE = regexp.MustCompile(`"([^"]+)"`)
+	// ── 面⑦ 声明面（命令树三键 · 块内锚三枚制表符 —— 块由 `frpTreeSplitRE` 切开，键在块内）──
+	// MACHINE_RE = (?m)^	{3}machine:\s*(.*)
+	frpMachineRE = regexp.MustCompile(`(?m)^	{3}machine:\s*(.*)`)
+	// FIELDS_DECL_RE = (?m)^	{3}fields:\s*(.*)
+	frpFieldsDeclRE = regexp.MustCompile(`(?m)^	{3}fields:\s*(.*)`)
+	// DANGER_DECL_RE = (?m)^	{3}danger:\s*&dangerSpec\{
+	frpDangerDeclRE = regexp.MustCompile(`(?m)^	{3}danger:\s*&dangerSpec\{`)
+	// POS_MACHINE_RE —— 用法串里的**位置参数**机器名（`<机器名>` / `<主机名>` / `<网关主机名>`）。
+	frpPosMachineRE = regexp.MustCompile(`<(?:机器名|主机名|网关主机名)>`)
+	// CONFIRM_VAL_RE —— `--confirm=<…>`（其 `<>` 里的名字**不算**位置参数口，先剥掉再找）。
+	frpConfirmValRE = regexp.MustCompile(`--confirm=<[^>]*>`)
 )
 
 // frpKey —— 存量豁免表键（py 里是 `(面, 旗标)` 元组）。
@@ -158,12 +187,19 @@ var frpEXEMPT = map[frpKey]string{}
 // frpViol —— 一条分家项（py 里是四元组）。
 type frpViol struct{ Face, Flag, Where, Why string }
 
-// frpRow —— 命令树一条（py dict 三键 + 面④ `run`）。
+// frpRow —— 命令树一条（py dict 三键 + 面④ `run` + 面⑦ 声明面三键）。
+//
+// ★ 面⑦（本版新增）要读命令树的**声明面** ⇒ 多带三格：`Machine`（`machine:` 的机器目标名 ·
+// 空串 ⇒ 对象不是机器）· `Fields`（有无 `fields:` 声明）· `Danger`（有无 `danger:` 声明）。
+// 加这三格**不改** 面①②③④⑤⑥ 的任何读数（它们只用 Path/Usage/Passthrough/Run）。
 type frpRow struct {
 	Path        string
 	Usage       string
 	Passthrough bool
 	Run         string
+	Machine     string
+	Fields      bool
+	Danger      bool
 }
 
 // frpSrc —— 包内一件（名 + 已剥注释正文）。
@@ -361,7 +397,8 @@ func frpParseFaces(root string) ([]string, map[string]bool, []frpRow, map[string
 			run = mr[1]
 		}
 		rows = append(rows, frpRow{Path: path, Usage: usage,
-			Passthrough: strings.Contains(block, "passthrough: true"), Run: run})
+			Passthrough: strings.Contains(block, "passthrough: true"), Run: run,
+			Machine: frpMachineOf(block), Fields: frpHasFieldsDecl(block), Danger: frpHasDangerDecl(block)})
 	}
 	if len(rows) == 0 {
 		return nil, nil, nil, nil, fmt.Errorf("命令树解析出 0 条命令（解析不出 = 判不了，不给结论）")
@@ -370,6 +407,45 @@ func frpParseFaces(root string) ([]string, map[string]bool, []frpRow, map[string
 		return nil, nil, nil, nil, fmt.Errorf("面② 名字表解析出 0 项（空转 = 假绿，不给结论）")
 	}
 	return V, D, rows, consts, nil
+}
+
+// ── 面⑦ 声明面取数（命令树三键 · 只读块内文本）─────────────────────────────────────
+
+// frpMachineOf —— 命令树一条的 `machine:` 机器目标名（空串 ⇒ 对象**不是**机器）。
+//
+//	`machine:` 两形态：标识符（`machineNodeName` / `machineHostName` / `machineGatewayHost`）
+//	或字符串字面量（空串 ⇒ 未声明）。取不到 / 空串 ⇒ 回空串（= 不判本命令的机器面）。
+func frpMachineOf(block string) string {
+	m := frpMachineRE.FindStringSubmatch(block)
+	if m == nil {
+		return ""
+	}
+	v := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(m[1]), ","))
+	if v == "" || v == "nil" {
+		return ""
+	}
+	if strings.HasPrefix(v, "\"") {
+		if lit := frpUsageLitRE.FindStringSubmatch(v); lit != nil {
+			return lit[1]
+		}
+		return ""
+	}
+	return v
+}
+
+// frpHasFieldsDecl —— 命令树一条有没有 `fields:` 声明（**有字段表** ⇒ `main.go` 收 `--json`）。
+func frpHasFieldsDecl(block string) bool {
+	m := frpFieldsDeclRE.FindStringSubmatch(block)
+	if m == nil {
+		return false
+	}
+	v := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(m[1]), ","))
+	return v != "" && v != "nil"
+}
+
+// frpHasDangerDecl —— 命令树一条有没有 `danger:` 声明（危险档 ⇒ 认 `--dry-run` / `--yes` / `--confirm`）。
+func frpHasDangerDecl(block string) bool {
+	return frpDangerDeclRE.MatchString(block)
 }
 
 // frpValueForm —— py `value_form()`。
@@ -721,6 +797,60 @@ func frpRuntimeUsageFace(root string) ([]frpRtDrift, []string, error) {
 	return drift, unmatched, nil
 }
 
+// ── 面⑦ 声明面 ⇔ 用法串（按命令 · **进退码** · **零豁免**）────────────────────────────
+//
+// 口径（任务单-一条链三段 · 波1 片2 · 本单**不入账**）：把命令树当**单一真源**，断言「该命令
+// **声明面**（`machine:` / `fields:` / `danger:`）里由实现**证明了的**消费旗标 ⇔ 该命令用法串
+// 的旗标」。只认能拿实现取证的三条（✗ 不凭猜）：
+//
+//	甲1 `machine:` 非空 ⇒ `remote.go:enforceNodeRules` 在**执行之前**判对象级作用域：
+//	    真跑（非 `--dry-run`）无目标（既无位置参数机器名、又无 `--node`）⇒ rc=2
+//	    ⇒ **该命令用法串必列 `--node`**。免判档：用法串已给位置参数机器名
+//	    （`<机器名>` / `<主机名>`；`--confirm=<…>` 括号里的名字**不算**位置参数口）。
+//	    ★ 这就是「`zerg build all --only cli` 必带 `--node` 而用法串未列」那一类。
+//	甲2 `fields:` 非空 ⇒ `main.go` 的 `--json` 收口判词（有字段表就收 / 没有就拒 2）
+//	    ⇒ **用法串必列 `--json`**。
+//	甲3 `danger:` 非空 ⇒ 危险档三态（`--dry-run` 出计划件 / 真跑要 `--yes`＋`--confirm`）
+//	    ⇒ **用法串必列 `--dry-run` 或 `--yes`**（二选一即达）。
+//
+// 乙（反向）＝ 面甲同一条判据（用法串取值形态的旗标 ∉ 解析面）⇒ 不在本面重复点名。
+// ★ 零豁免表（✗ 不放宽）：真漂逐条报红 ⇒ rc=1（照任务单「若真有漂就如实报」）。
+func frpDeclFace(root string) ([]frpViol, error) {
+	_, _, rows, _, err := frpParseFaces(root)
+	if err != nil {
+		return nil, err
+	}
+	var out []frpViol
+	for _, r := range rows {
+		if r.Passthrough {
+			continue
+		}
+		where := "zerg " + strings.ReplaceAll(r.Path, "/", " ")
+		if r.Machine != "" {
+			noConfirm := frpConfirmValRE.ReplaceAllString(r.Usage, "")
+			if !frpPosMachineRE.MatchString(noConfirm) && !strings.Contains(r.Usage, "--node") {
+				out = append(out, frpViol{"声明未列", "--node", where,
+					"命令树 `machine:` 声明本命令的对象是某台**机**（`remote.go` 的 `enforceNodeRules` 真跑无目标 ⇒ rc=2）⇒ 用法串必列 `--node <机>`（或给出位置参数机器名）"})
+			}
+		}
+		if r.Fields && !strings.Contains(r.Usage, "--json") {
+			out = append(out, frpViol{"声明未列", "--json", where,
+				"命令树 `fields:` 非空（`--json` 取得到字段表）⇒ 用法串必列 `--json <字段>`"})
+		}
+		if r.Danger && !strings.Contains(r.Usage, "--dry-run") && !strings.Contains(r.Usage, "--yes") {
+			out = append(out, frpViol{"声明未列", "--dry-run|--yes", where,
+				"命令树 `danger:` 非空（危险档三态：`--dry-run` 出计划件 / 真跑要 `--yes`＋`--confirm`）⇒ 用法串必列 `--dry-run` 或 `--yes`"})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Where != out[j].Where {
+			return out[i].Where < out[j].Where
+		}
+		return out[i].Flag < out[j].Flag
+	})
+	return out, nil
+}
+
 // frpCompute —— py `compute()`。
 func frpCompute(root string) ([]frpViol, []frpKey, []frpKey, []frpKey, frpCounts, []frpNoReader, []frpNoUsage, []frpRtDrift, []string, error) {
 	V, D, rows, _, err := frpParseFaces(root)
@@ -822,6 +952,15 @@ func frpCompute(root string) ([]frpViol, []frpKey, []frpKey, []frpKey, frpCounts
 					len(anyUse[f]), len(bare))})
 		}
 	}
+
+	// ── 面⑦ 声明面 ⇔ 用法串（按命令 · **进退码** · 零豁免）──
+	//   ★ 本面**不读**存量豁免表（照任务单「✗ 不放宽」）⇒ 它的每一条都直接进 `viol` ⇒ rc=1。
+	declViols, err := frpDeclFace(root)
+	if err != nil {
+		return nil, nil, nil, nil, frpCounts{}, nil, nil, nil, nil,
+			fmt.Errorf("面⑦ 声明面取数面拿不到（%s）", err.Error())
+	}
+	viol = append(viol, declViols...)
 
 	used := map[frpKey]bool{}
 	for _, k := range exemptUsed {
@@ -1352,6 +1491,63 @@ func frpSelfTest(stdout io.Writer) int {
 		}
 	}
 	add("⑥运行期用法行面（正控）：运行期用法行把命令树旗标列全 ⇒ 该命令不再列", !stillRT, "")
+
+	// ── 面⑦ 声明面 ⇔ 用法串（按命令 · **进退码** · 零豁免）· 成对负控（合成夹具 · 仓外 tmpdir）──
+	//   ★ 这是任务单「仓外夹具里造一个『旗标注册了但用法串未列』的态 ⇒ 必报红并点名旗标」那一格。
+	declRoot := func(sub, usage, extra string) string {
+		d := frpMkFixture(filepath.Join(base, sub))
+		pm := filepath.Join(d, frpPKGRel, "main.go")
+		s := strings.Replace(frpRead(pm),
+			"			passthrough: true,\n		},\n	}\n}",
+			"			passthrough: true,\n		},\n"+
+				"		{\n			path:  []string{\"probe\", \"decl\"},\n"+
+				"			usage: \""+usage+"\",\n"+
+				extra+
+				"			run:   cmdProbeDecl,\n		},\n	}\n}", 1)
+		_ = os.WriteFile(pm, []byte(s), 0o644)
+		return d
+	}
+	declViols := func(sub, usage, extra string) []frpViol {
+		v7, _, _, _, _, _, _, _, _, _ := frpCompute(declRoot(sub, usage, extra))
+		return v7
+	}
+	// 甲1 机器面：声明 `machine:` 而用法串不写 `--node` ⇒ 必红且**点名 --node**（本单主病那一类）。
+	v7 := declViols("decl_machine_neg", "zerg probe decl", "			machine: machineNodeName,\n")
+	add("⑦声明面（负控 · 机器面）：`machine:` 声明了而用法串没写 `--node` ⇒ 判红且**点名 --node**",
+		hasViol(v7, "声明未列", "--node"), "")
+	// 甲1 正控：用法串写了 `--node <机>` ⇒ 不再列（且机器面一条都不出）。
+	v7 = declViols("decl_machine_ok", "zerg probe decl [--node <机>]", "			machine: machineNodeName,\n")
+	machRed := false
+	for _, x := range v7 {
+		if x.Face == "声明未列" && x.Flag == "--node" {
+			machRed = true
+		}
+	}
+	add("⑦声明面（正控 · 机器面）：用法串写了 `--node` ⇒ 不再列", !machRed, "")
+	// 甲2 字段面：`fields:` 非空而用法串不写 `--json` ⇒ 必红且点名 --json。
+	v7 = declViols("decl_fields_neg", "zerg probe decl", "			fields: []string{\"a\"},\n")
+	add("⑦声明面（负控 · 字段面）：`fields:` 非空而用法串没写 `--json` ⇒ 判红且**点名 --json**",
+		hasViol(v7, "声明未列", "--json"), "")
+	v7 = declViols("decl_fields_ok", "zerg probe decl [--json <字段>]", "			fields: []string{\"a\"},\n")
+	jsonRed := false
+	for _, x := range v7 {
+		if x.Face == "声明未列" && x.Flag == "--json" {
+			jsonRed = true
+		}
+	}
+	add("⑦声明面（正控 · 字段面）：用法串写了 `--json` ⇒ 不再列", !jsonRed, "")
+	// 甲3 危险档面：`danger:` 非空而用法串既无 `--dry-run` 也无 `--yes` ⇒ 必红且点名。
+	v7 = declViols("decl_danger_neg", "zerg probe decl", "			danger: &dangerSpec{dangerD2, \"x\", \"y\", \"z\", true, dangerScopeRepo},\n")
+	add("⑦声明面（负控 · 危险档面）：`danger:` 非空而用法串两枚都没有 ⇒ 判红且**点名 --dry-run|--yes**",
+		hasViol(v7, "声明未列", "--dry-run|--yes"), "")
+	v7 = declViols("decl_danger_ok", "zerg probe decl [--dry-run]", "			danger: &dangerSpec{dangerD2, \"x\", \"y\", \"z\", true, dangerScopeRepo},\n")
+	dangRed := false
+	for _, x := range v7 {
+		if x.Face == "声明未列" && x.Flag == "--dry-run|--yes" {
+			dangRed = true
+		}
+	}
+	add("⑦声明面（正控 · 危险档面）：用法串写了 `--dry-run` ⇒ 不再列", !dangRed, "")
 
 	bad := 0
 	for _, c := range checks {

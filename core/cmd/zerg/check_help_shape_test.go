@@ -28,9 +28,9 @@ func chsRunT(argv ...string) (string, string, int) {
 }
 
 // ── golden（现读自对拍台 · ✗ 非手抄）──
-const chsSelfTestGolden = "── 自检（合成夹具 · 不碰真目标）──\n  ✓ 正控：原样 ⇒ 必绿（期望绿 · 实得绿）\n  ✓ 负控⑤：改一条的 `--confirm` 目标（等长换字 · 字节不变）⇒ 必红（期望红 · 实得红）\n      ↳ S4d 旗标串 ⟷ 真实用法串：新增 1 处脱钩（印了 `--confirm=<目标>`，但该命令在 `help --all` 的用法串里没有这个目标的核心名）—— model start\n  ✓ 负控⑥：表尾计数对不上（等长改数）⇒ 必红（期望红 · 实得红）\n      ↳ S4a 表尾自洽：上表 6 条 ≠ 已开放 1 + 未开放 4（= 5）\n      ↳ S4a 表尾 ⟷ 逐条：表尾称 6 条 ≠ 逐条行数 5（两处不许各说各话）\n      ↳ S4e 常量：`help dangerous` 表尾逐字 '上表 6 条：**已开放 1 条**（确认档齐就真执行 —— 逐条见上行标记）；**未开放 4 条**（真跑一律**拒执**、退码 2 = 不给结论，只有 `--dry-run` 出计划件 = 退码 0）。' ≠ 冻结读数 '上表 5 条：**已开放 1 条**（确认档齐就真执行 —— 逐条见上行标记）；**未开放 4 条**（真跑一律**拒执**、退码 2 = 不给结论，只有 `--dry-run` 出计划件 = 退码 0）。'\n  ✓ 负控⑦：删掉表尾一行 ⇒ 必红（期望红 · 实得红）\n      ↳ S4a 表尾：`help dangerous` 末非空行不是表尾形状（`上表 N 条：**已开放 X 条**…**未开放 Y 条**`）—— 现读 '  zerg core restart  D3  --dry-run · --confirm=<主机名> · --yes  它会动什么  [出处]  ← **已'（表尾被删 / 改字 / 换口径？）\n      ↳ S4e 常量：`help dangerous` lines 5 ≠ 冻结读数 7（该面漂了 —— 取法见件头 `BASELINE` 注释）\n      ↳ S4e 常量：`help dangerous` bytes 606 ≠ 冻结读数 825（该面漂了 —— 取法见件头 `BASELINE` 注释）\n  ✓ 负控⑧：抹掉一条的 `--yes`（旗标串破形）⇒ 必红（期望红 · 实得红）\n      ↳ S4c 逐条行形状：第 5 条不符（旗标串只许 `--dry-run · [--confirm=<目标> · ]--yes` · 档位只许 D2/D3）—— '  zerg core restart  D3  --confirm=<主机名> --yes  它会动什么  [出处]  ← **已开放**（确认档齐就真执行）'\n      ↳ S4e 常量：`help dangerous` bytes 809 ≠ 冻结读数 825（该面漂了 —— 取法见件头 `BASELINE` 注释）\n  ✓ 负控⑨：两面同印 `--confirm=` 但值不等（等长换字 · 名字仍在用法串里 ⇒ S4d/字节常量都看不见）⇒ S4f 必红（期望红 · 实得红）\n      ↳ S4f 两面同印 `--confirm=` ⟷ 值须逐字相等：新增 1 处**值冲突**（危险面印的名字 ≠ 用法串里印的名字 ⇒ 用户照哪面敲都可能被拒）—— core restart（危险面 `机器名` ≠ 用法串 `主机名`）\n  ✓ 负控⑩：危险面值挪出用法串（名字集合变化 = S4d 的账）⇒ 旧 S4d 仍必红、S4f 不许抢账（期望红 · 实得红）\n      ↳ S4d 旗标串 ⟷ 真实用法串：新增 1 处脱钩（印了 `--confirm=<目标>`，但该命令在 `help --all` 的用法串里没有这个目标的核心名）—— agent load\n  ✓ 对界：夹具正控上 S4f 不许误报（两面同印的值逐字相等 · 现读 1 条）⇒ 绿且无 S4f 断言（期望绿 · 实得绿）\n  ✓ 正控②：配置面原样（链 ⟷ 逐级说明同序 · 与裸 `help` 同源）⇒ 必绿且不许有 S5 断言（期望绿 · 实得绿）\n  ✓ 负控⑪：只改链行一个字（`内置默认`→`内置缺省` · **等长换字** ⇒ 字节常量看不见）⇒ S5a/S5b 必红、S5c 不许响（期望红 · 实得红）\n      ↳ S5a 同面交叉：优先级链 5 级（旗标 · ZERG_* 环境变量 · 项目 .env · ~/.zerg/config.yaml · 内置缺省）≠ 逐级说明 5 条（旗标 · ZERG_* 环境变量 · 项目 .env · ~/.zerg/config.yaml · 内置默认）—— 同一个面上的两处必须同序逐字相等\n      ↳ S5b 同源跨面：`help config` 的链行 '  旗标 > ZERG_* 环境变量 > 项目 .env > ~/.zerg/config.yaml > 内置缺省' ≠ 裸 `help` 的链行 '  旗标 > ZERG_* 环境变量 > 项目 .env > ~/.zerg/config.yaml > 内置默认'（两处同源 = `helptext.go` 的 `configPriorityLine` 常量 ⇒ 字面必须逐字相等；分家 = 有人把链抄成了第二份）\n  ✓ 负控⑫：只改**裸 `help`**那条同源链行（配置面一字不动）⇒ S5b 必红、S5a 不许抢账（期望红 · 实得红）\n      ↳ S5b 同源跨面：`help config` 的链行 '  旗标 > ZERG_* 环境变量 > 项目 .env > ~/.zerg/config.yaml > 内置默认' ≠ 裸 `help` 的链行 '  旗标 > ZERG_* 环境变量 > 项目 .env > ~/.zerg/config.yaml > 内置缺省'（两处同源 = `helptext.go` 的 `configPriorityLine` 常量 ⇒ 字面必须逐字相等；分家 = 有人把链抄成了第二份）\n  ✓ 负控⑬：配置面掉一条逐级说明 ⇒ S5a 必红（编号连号 ⟷ 链级数）（期望红 · 实得红）\n      ↳ S5a 逐级说明：编号必须是 `1..N` 连号无重复 —— 现读 2 · 3 · 4 · 5\n      ↳ S5a 同面交叉：优先级链 5 级（旗标 · ZERG_* 环境变量 · 项目 .env · ~/.zerg/config.yaml · 内置默认）≠ 逐级说明 4 条（ZERG_* 环境变量 · 项目 .env · ~/.zerg/config.yaml · 内置默认）—— 同一个面上的两处必须同序逐字相等\n      ↳ S5c 常量：`help config` lines 13 ≠ 冻结读数 14（该面漂了 —— 取法见件头 `BASELINE` 注释 · `--emit-baseline` 刷）\n  ✓ 对界：配置面喂**空串** ⇒ 必红（证明「这个面没了」不是静默绿）（期望红 · 实得红）\n      ↳ S5a 优先级链：`help config` 里那条链行现读 0 条（期望恰好 1 条 —— 链被删 / 被拆行 / 被抄出第二份？）\n      ↳ S5c 常量：`help config` lines 0 ≠ 冻结读数 14（该面漂了 —— 取法见件头 `BASELINE` 注释 · `--emit-baseline` 刷）\n      ↳ S5c 常量：`help config` bytes 0 ≠ 冻结读数 486（该面漂了 —— 取法见件头 `BASELINE` 注释 · `--emit-baseline` 刷）\n  ✓ 负控①：删掉族级段 ⇒ 必红（期望红 · 实得红）\n      ↳ S1 族级段：`help --all` 末尾**没有**族级段（段头 `族级面（` 找不到）—— 族名清单消失（这正是本件要防的病）\n      ↳ S2 常量：`help --all` 行数 12 ≠ 冻结读数 16（形状漂了 —— 取法见件头 `BASELINE` 注释）\n      ↳ S2 常量：`help --all` 字节 610 ≠ 冻结读数 780\n  ✓ 负控②a：族级段掉一行 ⇒ 必红（期望红 · 实得红）\n      ↳ S1 族级段：漏了 1 族（前 5：watch）—— 命令树里有、清单里没有\n      ↳ S2 关系式：族级段 2 行 ≠ 2 + ceil(9 族 / 8 族一行) = 3\n      ↳ S2 常量：`help --all` 行数 15 ≠ 冻结读数 16（形状漂了 —— 取法见件头 `BASELINE` 注释）\n  ✓ 负控②b：整面多一行 ⇒ 必红（期望红 · 实得红）\n      ↳ S1 族级段：多了 1 项（前 5：多余一行）—— 清单里有、命令树里没有\n      ↳ S2 关系式：族级段 4 行 ≠ 2 + ceil(9 族 / 8 族一行) = 3\n      ↳ S2 常量：`help --all` 行数 17 ≠ 冻结读数 16（形状漂了 —— 取法见件头 `BASELINE` 注释）\n  ✓ 负控③a：`--all` 末行改写 ⇒ 必红（期望红 · 实得红）\n      ↳ S1 族级段：漏了 1 族（前 5：watch）—— 命令树里有、清单里没有\n      ↳ S1 族级段：多了 3 项（前 5：ui · update · watch-XX）—— 清单里有、命令树里没有\n      ↳ S2 常量：`help --all` 字节 818 ≠ 冻结读数 780\n  ✓ 负控③b：裸 `help` 末行改写 ⇒ 必红（期望红 · 实得红）\n      ↳ S2 常量：`help` 字节 361 ≠ 冻结读数 407\n      ↳ S3 末行：裸 `help` 末行 '凭据：改过的一句。' ≠ 冻结读数 '      非交互用 `--token-stdin`；详见 `zerg help credentials`）。'\n  ✓ 负控④：清单漏一族 ⇒ 必红（期望红 · 实得红）\n      ↳ S1 族级段：漏了 1 族（前 5：watch）—— 命令树里有、清单里没有\n      ↳ S1 族级段：多了 1 项（前 5：watchx）—— 清单里有、命令树里没有\n      ↳ S2 常量：`help --all` 字节 781 ≠ 冻结读数 780\n  ✓ 对界：命令树多一族 ⇒ 必红（期望红 · 实得红）\n      ↳ S1 族级段：段头括注 9 族 ≠ 现算命令树族数 10\n      ↳ S1 族级段：漏了 1 族（前 5：zzz）—— 命令树里有、清单里没有\n      ↳ S3 末行：`help --all` 末行 '  watch' ≠ 由族名清单现算重建的 '  watch · zzz'\n  ✓ 负控⑭：抹掉一条危险档行的**逐条标记**（行还在 · 标记没了）⇒ S4b 必红（期望红 · 实得红）\n      ↳ S4b 逐条标记 ⟷ 表尾：`← **已开放**` 出现 0 次 ≠ 表尾「已开放 1 条」\n      ↳ S4b 逐条标记：逐条行 5 条，带标记的只有 4 条（有行没印 ← 已开放 / ← 本版未开放）\n      ↳ S4e 常量：`help dangerous` bytes 808 ≠ 冻结读数 825（该面漂了 —— 取法见件头 `BASELINE` 注释）\n  ✓ A 档①制品读得出\n  ✓ A 档②制品不在盘 ⇒ 判不了（不许当空面）\n  ✓ A 档③制品零输出 ⇒ 判不了\n  自检 24 格 · 失败 0 格\n"
+const chsSelfTestGolden = "── 自检（合成夹具 · 不碰真目标）──\n  ✓ 正控：原样 ⇒ 必绿（期望绿 · 实得绿）\n  ✓ 负控⑤：改一条的 `--confirm` 目标（等长换字 · 字节不变）⇒ 必红（期望红 · 实得红）\n      ↳ S4d 旗标串 ⟷ 真实用法串：新增 1 处脱钩（印了 `--confirm=<目标>`，但该命令在 `help --all` 的用法串里没有这个目标的核心名）—— model start\n  ✓ 负控⑥：表尾计数对不上（等长改数）⇒ 必红（期望红 · 实得红）\n      ↳ S4a 表尾自洽：上表 6 条 ≠ 已开放 1 + 未开放 4（= 5）\n      ↳ S4a 表尾 ⟷ 逐条：表尾称 6 条 ≠ 逐条行数 5（两处不许各说各话）\n      ↳ S4e 常量：`help dangerous` 表尾逐字 '上表 6 条：**已开放 1 条**（确认档齐就真执行 —— 逐条见上行标记）；**未开放 4 条**（真跑一律**拒执**、退码 2 = 不给结论，只有 `--dry-run` 出计划件 = 退码 0）。' ≠ 冻结读数 '上表 5 条：**已开放 1 条**（确认档齐就真执行 —— 逐条见上行标记）；**未开放 4 条**（真跑一律**拒执**、退码 2 = 不给结论，只有 `--dry-run` 出计划件 = 退码 0）。'\n  ✓ 负控⑦：删掉表尾一行 ⇒ 必红（期望红 · 实得红）\n      ↳ S4a 表尾：`help dangerous` 末非空行不是表尾形状（`上表 N 条：**已开放 X 条**…**未开放 Y 条**`）—— 现读 '  zerg core restart  D3  --dry-run · --confirm=<主机名> · --yes  它会动什么  [出处]  ← **已'（表尾被删 / 改字 / 换口径？）\n      ↳ S4e 常量：`help dangerous` lines 5 ≠ 冻结读数 7（该面漂了 —— 取法见件头 `BASELINE` 注释）\n      ↳ S4e 常量：`help dangerous` bytes 606 ≠ 冻结读数 825（该面漂了 —— 取法见件头 `BASELINE` 注释）\n  ✓ 负控⑧：抹掉一条的 `--yes`（旗标串破形）⇒ 必红（期望红 · 实得红）\n      ↳ S4c 逐条行形状：第 5 条不符（旗标串只许 `--dry-run · [--confirm=<目标> · ]--yes` · 档位只许 D2/D3）—— '  zerg core restart  D3  --confirm=<主机名> --yes  它会动什么  [出处]  ← **已开放**（确认档齐就真执行）'\n      ↳ S4e 常量：`help dangerous` bytes 809 ≠ 冻结读数 825（该面漂了 —— 取法见件头 `BASELINE` 注释）\n  ✓ 负控⑨：两面同印 `--confirm=` 但值不等（等长换字 · 名字仍在用法串里 ⇒ S4d/字节常量都看不见）⇒ S4f 必红（期望红 · 实得红）\n      ↳ S4f 两面同印 `--confirm=` ⟷ 值须逐字相等：新增 1 处**值冲突**（危险面印的名字 ≠ 用法串里印的名字 ⇒ 用户照哪面敲都可能被拒）—— core restart（危险面 `机器名` ≠ 用法串 `主机名`）\n  ✓ 负控⑩：危险面值挪出用法串（名字集合变化 = S4d 的账）⇒ 旧 S4d 仍必红、S4f 不许抢账（期望红 · 实得红）\n      ↳ S4d 旗标串 ⟷ 真实用法串：新增 1 处脱钩（印了 `--confirm=<目标>`，但该命令在 `help --all` 的用法串里没有这个目标的核心名）—— agent load\n  ✓ 对界：夹具正控上 S4f 不许误报（两面同印的值逐字相等 · 现读 1 条）⇒ 绿且无 S4f 断言（期望绿 · 实得绿）\n  ✓ 正控②：配置面原样（链 ⟷ 逐级说明同序 · 与裸 `help` 同源）⇒ 必绿且不许有 S5 断言（期望绿 · 实得绿）\n  ✓ 负控⑪：只改链行一个字（`内置默认`→`内置缺省` · **等长换字** ⇒ 字节常量看不见）⇒ S5a/S5b 必红、S5c 不许响（期望红 · 实得红）\n      ↳ S5a 同面交叉：优先级链 5 级（旗标 · ZERG_* 环境变量 · 项目 .env · ~/.zerg/config.yaml · 内置缺省）≠ 逐级说明 5 条（旗标 · ZERG_* 环境变量 · 项目 .env · ~/.zerg/config.yaml · 内置默认）—— 同一个面上的两处必须同序逐字相等\n      ↳ S5b 同源跨面：`help config` 的链行 '  旗标 > ZERG_* 环境变量 > 项目 .env > ~/.zerg/config.yaml > 内置缺省' ≠ 裸 `help` 的链行 '  旗标 > ZERG_* 环境变量 > 项目 .env > ~/.zerg/config.yaml > 内置默认'（两处同源 = `helptext.go` 的 `configPriorityLine` 常量 ⇒ 字面必须逐字相等；分家 = 有人把链抄成了第二份）\n  ✓ 负控⑫：只改**裸 `help`**那条同源链行（配置面一字不动）⇒ S5b 必红、S5a 不许抢账（期望红 · 实得红）\n      ↳ S5b 同源跨面：`help config` 的链行 '  旗标 > ZERG_* 环境变量 > 项目 .env > ~/.zerg/config.yaml > 内置默认' ≠ 裸 `help` 的链行 '  旗标 > ZERG_* 环境变量 > 项目 .env > ~/.zerg/config.yaml > 内置缺省'（两处同源 = `helptext.go` 的 `configPriorityLine` 常量 ⇒ 字面必须逐字相等；分家 = 有人把链抄成了第二份）\n  ✓ 负控⑬：配置面掉一条逐级说明 ⇒ S5a 必红（编号连号 ⟷ 链级数）（期望红 · 实得红）\n      ↳ S5a 逐级说明：编号必须是 `1..N` 连号无重复 —— 现读 2 · 3 · 4 · 5\n      ↳ S5a 同面交叉：优先级链 5 级（旗标 · ZERG_* 环境变量 · 项目 .env · ~/.zerg/config.yaml · 内置默认）≠ 逐级说明 4 条（ZERG_* 环境变量 · 项目 .env · ~/.zerg/config.yaml · 内置默认）—— 同一个面上的两处必须同序逐字相等\n      ↳ S5c 常量：`help config` lines 13 ≠ 冻结读数 14（该面漂了 —— 取法见件头 `BASELINE` 注释 · `--emit-baseline` 刷）\n  ✓ 对界：配置面喂**空串** ⇒ 必红（证明「这个面没了」不是静默绿）（期望红 · 实得红）\n      ↳ S5a 优先级链：`help config` 里那条链行现读 0 条（期望恰好 1 条 —— 链被删 / 被拆行 / 被抄出第二份？）\n      ↳ S5c 常量：`help config` lines 0 ≠ 冻结读数 14（该面漂了 —— 取法见件头 `BASELINE` 注释 · `--emit-baseline` 刷）\n      ↳ S5c 常量：`help config` bytes 0 ≠ 冻结读数 486（该面漂了 —— 取法见件头 `BASELINE` 注释 · `--emit-baseline` 刷）\n  ✓ 负控①：删掉族级段 ⇒ 必红（期望红 · 实得红）\n      ↳ S1 族级段：`help --all` 末尾**没有**族级段（段头 `族级面（` 找不到）—— 族名清单消失（这正是本件要防的病）\n      ↳ S2 常量：`help --all` 行数 12 ≠ 冻结读数 16（形状漂了 —— 取法见件头 `BASELINE` 注释）\n      ↳ S3 末行：`help --all` 末行 '  zerg core restart --host <机器名> --confirm=<主机名> --yes [--dry-run]   停起主控' ≠ 由族名清单现算重建的 '  watch'\n  ✓ 负控②a：族级段掉一行 ⇒ 必红（期望红 · 实得红）\n      ↳ S1 族级段：漏了 1 族（前 5：watch）—— 命令树里有、清单里没有\n      ↳ S2 关系式：族级段 2 行 ≠ 2 + ceil(9 族 / 8 族一行) = 3\n      ↳ S2 常量：`help --all` 行数 15 ≠ 冻结读数 16（形状漂了 —— 取法见件头 `BASELINE` 注释）\n  ✓ 负控②b：整面多一行 ⇒ 必红（期望红 · 实得红）\n      ↳ S1 族级段：多了 1 项（前 5：多余一行）—— 清单里有、命令树里没有\n      ↳ S2 关系式：族级段 4 行 ≠ 2 + ceil(9 族 / 8 族一行) = 3\n      ↳ S2 常量：`help --all` 行数 17 ≠ 冻结读数 16（形状漂了 —— 取法见件头 `BASELINE` 注释）\n  ✓ 负控③a：`--all` 末行改写 ⇒ 必红（期望红 · 实得红）\n      ↳ S1 族级段：漏了 1 族（前 5：watch）—— 命令树里有、清单里没有\n      ↳ S1 族级段：多了 3 项（前 5：ui · update · watch-XX）—— 清单里有、命令树里没有\n      ↳ S3 末行：`help --all` 末行 '  task · ui · update · version · watch-XX' ≠ 由族名清单现算重建的 '  watch'\n  ✓ 负控③b：裸 `help` 末行改写 ⇒ 必红（期望红 · 实得红）\n      ↳ S3 末行：裸 `help` 末行 '凭据：改过的一句。' ≠ 冻结读数 '      非交互用 `--token-stdin`；详见 `zerg help credentials`）。'\n  ✓ 负控④：清单漏一族 ⇒ 必红（期望红 · 实得红）\n      ↳ S1 族级段：漏了 1 族（前 5：watch）—— 命令树里有、清单里没有\n      ↳ S1 族级段：多了 1 项（前 5：watchx）—— 清单里有、命令树里没有\n      ↳ S3 末行：`help --all` 末行 '  watchx' ≠ 由族名清单现算重建的 '  watch'\n  ✓ 对界：命令树多一族 ⇒ 必红（期望红 · 实得红）\n      ↳ S1 族级段：段头括注 9 族 ≠ 现算命令树族数 10\n      ↳ S1 族级段：漏了 1 族（前 5：zzz）—— 命令树里有、清单里没有\n      ↳ S3 末行：`help --all` 末行 '  watch' ≠ 由族名清单现算重建的 '  watch · zzz'\n  ✓ 负控⑭：抹掉一条危险档行的**逐条标记**（行还在 · 标记没了）⇒ S4b 必红（期望红 · 实得红）\n      ↳ S4b 逐条标记 ⟷ 表尾：`← **已开放**` 出现 0 次 ≠ 表尾「已开放 1 条」\n      ↳ S4b 逐条标记：逐条行 5 条，带标记的只有 4 条（有行没印 ← 已开放 / ← 本版未开放）\n      ↳ S4e 常量：`help dangerous` bytes 808 ≠ 冻结读数 825（该面漂了 —— 取法见件头 `BASELINE` 注释）\n  ✓ 闸A 正控：面 ⟷ 命令树逐字（夹具原样）⇒ 必绿且不许有 闸A 断言（期望绿 · 实得绿）\n  ✓ 闸A 负控：面上改一个命令名（`agent ls`→`agent lsx`）⇒ 必须点名「漏印」（期望红 · 实得红）\n      ↳ 闸A 逐字覆盖：命令树里 1 条命令在 `help --all` 面**漏印**（树里有 · 面上没有逐字用法串）—— agent ls\n      ↳ 闸A 逐字覆盖：`help --all` 面里 1 条用法行**多印**（面里有 · 命令树里没有这条命令）—— zerg agent lsx ｜ 茧壁:host ｜ 说明\n  ✓ 闸A 负控：面上改一条用法串（`gate run` 那行）⇒ 必须点名「文本不符」（期望红 · 实得红）\n      ↳ 闸A 逐字覆盖：1 条命令的用法串**文本不符**（面上那一行的字 ≠ 树里 `usage` 逐字）—— gate run（树 `zerg gate run ｜ 茧壁:host ｜ 说明` ≠ 面 `zerg gate run [--fast] ｜ 茧壁:host ｜ 说明`）\n  ✓ 闸A 负控：面上多印一条命令（`zzz ls`）⇒ 必须点名「多印」（期望红 · 实得红）\n      ↳ 闸A 逐字覆盖：`help --all` 面里 1 条用法行**多印**（面里有 · 命令树里没有这条命令）—— zerg zzz ls ｜ 茧壁:host ｜ 说明\n  ✓ 闸A 抽空：命令树喂 nil（取数失败）⇒ fail-closed 必红（✗ 不许静默绿）（期望红 · 实得红）\n      ↳ 闸A 逐字覆盖：命令树 usage 取数为 0 条（抽空 ⇒ fail-closed · ✗ 不许当「面里也没问题」）\n  ✓ 闸B 正控：两面（`--all` / 裸 `help`）无重复行 ⇒ 必绿且不许有 闸B 断言（期望绿 · 实得绿）\n  ✓ 闸B 负控：面里多加一条**重复行**（`version` 那行）⇒ 必须点名重复内容与次数（期望红 · 实得红）\n      ↳ 闸B 无重复：`help --all` 里 1 条重复行（逐条各指一次出现次数）—— `  zerg version ｜ 茧壁:host ｜ 说明`（2 次）\n  ✓ 闸B 负控：面里多印**第二份族级段**段头 ⇒ 必须点名「族级段」（期望红 · 实得红）\n      ↳ 闸B 无重复：`help --all` 里族级段段头（`族级面（`）出现 2 次 —— 族级段只许一份\n  ✓ 字节降级①：面字节变了（行数不变）⇒ 判据仍绿（✗ 不进 rc）\n  ✓ 字节降级②：观察行打印「与冻结值的差」\n  ✓ 字节降级③：观察行点明冻结读数（现读 ⟷ 冻结）\n  ✓ A 档①制品读得出\n  ✓ A 档②制品不在盘 ⇒ 判不了（不许当空面）\n  ✓ A 档③制品零输出 ⇒ 判不了\n  自检 35 格 · 失败 0 格\n"
 
-const chsListRulesGolden = "判据（三条 · 现算 + 对界 · 缺口 GAP-20260927-401）\n-----------------------------------------------\n  S1 族级段（闭集相等）：现跑 `help --all` 末尾段 token ⟷ 命令树（`cli-matrix.json` 的\n     `cases[].command` 首段）· 段头在 · 括注族数 == 现算族数 · 双向差集空 · 裸 `help` 不带段\n  S2 条数与行数：rows(--all) == rows(help) + rows(help dangerous) ·\n     族级段行数 == 1 + ceil(族数/8)（段头之前必须是空行）；两个面的 lines/bytes == 冻结常量\n     （现跑取数 · --emit-baseline 刷）\n  S3 末行：`--all` 末行 == 由族名清单现算重建的那一行；裸 `help` 末行 == 冻结读数（逐字）\n  S4 危险档面（`help dangerous` · 2026-09-27 补 · 缺口 GAP-20260927-418）：\n     S4a 表尾计数（`上表 N 条：已开放 X / 未开放 Y` ⇒ N == X + Y == 逐条行数）·\n     S4b 逐条行尾标记出现次数 == 表尾 X / Y ·\n     S4c 逐条行形状闭集（`zerg <路径>  D2|D3  --dry-run · [--confirm=<目标> · ]--yes  …  ← 标记`）·\n     S4d 逐条 `--confirm=<目标>` 的核心名 ⟷ 该命令在 `help --all` 的用法串（现算脱钩集合 == 冻结名单）·\n     S4f 两面**同印** `--confirm=` 的值须**逐字相等**（现算值冲突集合 == 冻结名单 · 现读空集 —— 独立一条腿：\n         S4d 只判「名字在不在用法串里」⇒ 值冲突但名字集合不变时 S4d 看不见）·\n     S4e 该面的 lines / bytes / 条数 / 表尾逐字 == 冻结读数（现跑取数 · --emit-baseline 刷）\n  S5 配置主题面（`help config` · 2026-09-27 补 · 缺口 GAP-20260927-440）：\n     S5a 同面交叉：优先级链行现算的级名表 == 逐级说明 `N. **名字**` 的名字表（同序逐字 · 两边剥反引号）·\n         编号必须 `1..N` 连号无重复 · 链行恰好 1 条 ·\n     S5b 同源跨面：`help config` 的链行**逐字等于**裸 `help` 的那一行（同源 = `helptext.go` 的\n         `configPriorityLine` 常量 —— 分家 = 有人抄了第二份）·\n     S5c 该面的 lines / bytes == 冻结读数（现跑取数 · --emit-baseline 刷）\n\n不假装覆盖（照实登记）\n----------------------\n  · 只判**形状**（段 / 条数 / 行数 / 末行）；段的**说明文字**逐字、危险档判词、层级列不在本格\n  · 两态 rc 语义（`zerg <族> --help` 退 2 等）**不在本件**（那是 `cli_help_twostate_test.go` 的面，禁碰）\n  · `help config` 只判**形状/结构**：链 ⟷ 逐级说明同序 · 同源链行逐字 · lines/bytes 常量；\n    「凭据」那批条目的**文字**与主题表 `topics.go` 的 `Brief` 串同源不同源**不在本格**\n    （要另开一处读 Go 源的口径 —— 本单不开第三份口径）\n  · 建件时本件**未挂门**（挂门 + `scripts/公开标记.tsv` + `dryrun-semantics.json` 三处登记是随动口）\n"
+const chsListRulesGolden = "判据（三条 · 现算 + 对界 · 缺口 GAP-20260927-401）\n-----------------------------------------------\n  S1 族级段（闭集相等）：现跑 `help --all` 末尾段 token ⟷ 命令树（`cli-matrix.json` 的\n     `cases[].command` 首段）· 段头在 · 括注族数 == 现算族数 · 双向差集空 · 裸 `help` 不带段\n  S2 条数与行数：rows(--all) == rows(help) + rows(help dangerous) ·\n     族级段行数 == 1 + ceil(族数/8)（段头之前必须是空行）；两个面的 **lines == 冻结常量**；\n     **bytes 降级为「观察值 + 归因」**（✗ 不进 rc · 2026-10-14 本轮）—— 字节是**派生量**\n     （随用法串自然增长）⇒ 现读值与「与冻结值的差」逐趟打印，字节不等**不判红**\n  闸A 逐字覆盖（`help --all` 面 ⟷ 命令树源码 `core/cmd/zerg/main.go` 的 `commands[].usage`）：\n     树里每条的 `\"  \" + usage` 必须**逐字**在面里（多行 usage 由子串口径自然覆盖）⇒ 不在即点名：\n     面里有该命令的用法行 ⇒「文本不符」；连行都没有 ⇒「漏印」· 面里以 `zerg <小写词>` 起头的\n     每条用法行必须能归到某条树命令（按**最长命令名**前缀）⇒ 归不到即「多印」· 树取数为 0 ⇒ fail-closed\n  闸B 无重复（`help --all` / 裸 `help`）：两面**不得有重复行、不得有第二份族级段**（段头 `族级面（`）\n     ⇒ rc=1 时逐一指出重复内容与次数\n\n  S3 末行：`--all` 末行 == 由族名清单现算重建的那一行；裸 `help` 末行 == 冻结读数（逐字）\n  S4 危险档面（`help dangerous` · 2026-09-27 补 · 缺口 GAP-20260927-418）：\n     S4a 表尾计数（`上表 N 条：已开放 X / 未开放 Y` ⇒ N == X + Y == 逐条行数）·\n     S4b 逐条行尾标记出现次数 == 表尾 X / Y ·\n     S4c 逐条行形状闭集（`zerg <路径>  D2|D3  --dry-run · [--confirm=<目标> · ]--yes  …  ← 标记`）·\n     S4d 逐条 `--confirm=<目标>` 的核心名 ⟷ 该命令在 `help --all` 的用法串（现算脱钩集合 == 冻结名单）·\n     S4f 两面**同印** `--confirm=` 的值须**逐字相等**（现算值冲突集合 == 冻结名单 · 现读空集 —— 独立一条腿：\n         S4d 只判「名字在不在用法串里」⇒ 值冲突但名字集合不变时 S4d 看不见）·\n     S4e 该面的 lines / bytes / 条数 / 表尾逐字 == 冻结读数（现跑取数 · --emit-baseline 刷）\n  S5 配置主题面（`help config` · 2026-09-27 补 · 缺口 GAP-20260927-440）：\n     S5a 同面交叉：优先级链行现算的级名表 == 逐级说明 `N. **名字**` 的名字表（同序逐字 · 两边剥反引号）·\n         编号必须 `1..N` 连号无重复 · 链行恰好 1 条 ·\n     S5b 同源跨面：`help config` 的链行**逐字等于**裸 `help` 的那一行（同源 = `helptext.go` 的\n         `configPriorityLine` 常量 —— 分家 = 有人抄了第二份）·\n     S5c 该面的 lines / bytes == 冻结读数（现跑取数 · --emit-baseline 刷）\n\n不假装覆盖（照实登记）\n----------------------\n  · 只判**形状**（段 / 条数 / 行数 / 末行）；段的**说明文字**逐字、危险档判词、层级列不在本格\n  · 两态 rc 语义（`zerg <族> --help` 退 2 等）**不在本件**（那是 `cli_help_twostate_test.go` 的面，禁碰）\n  · `help config` 只判**形状/结构**：链 ⟷ 逐级说明同序 · 同源链行逐字 · lines/bytes 常量；\n    「凭据」那批条目的**文字**与主题表 `topics.go` 的 `Brief` 串同源不同源**不在本格**\n    （要另开一处读 Go 源的口径 —— 本单不开第三份口径）\n  · 建件时本件**未挂门**（挂门 + `scripts/公开标记.tsv` + `dryrun-semantics.json` 三处登记是随动口）\n"
 
 const chsHelpGolden = "usage: check-help-shape.py [-h] [--repo-root REPO_ROOT] [--bin BIN]\n" +
 	"                           [--matrix MATRIX] [--faces-dir FACES_DIR]\n" +
@@ -64,7 +64,7 @@ func TestCheckHelpShape_SelfTestGolden(t *testing.T) {
 	if out != chsSelfTestGolden {
 		t.Fatalf("自检 stdout 不逐字：\n实得 %q\n期望 %q", out, chsSelfTestGolden)
 	}
-	if !strings.Contains(out, "自检 24 格 · 失败 0 格") {
+	if !strings.Contains(out, "自检 35 格 · 失败 0 格") {
 		t.Fatalf("自检格数不对：%q", out)
 	}
 }
@@ -233,6 +233,26 @@ func TestCheckHelpShape_StubArtifactEndToEnd(t *testing.T) {
 	chsWrite(t, filepath.Join(dir, "bare.txt"), bareT, 0o644)
 	chsWrite(t, filepath.Join(dir, "danger.txt"), dangT, 0o644)
 	chsWrite(t, filepath.Join(dir, "config.txt"), cfgT, 0o644)
+	// 闸A 的第二份真源（命令树源码 `core/cmd/zerg/main.go`）：stub 仓里照夹具树现造一份
+	// （面 ⟷ 树逐字 ⇒ 闸A 不另添红；✗ 不手抄 —— 由同一份 `chsFixTree` 生成）。
+	if err := os.MkdirAll(filepath.Join(dir, "core", "cmd", "zerg"), 0o755); err != nil {
+		t.Fatalf("建 stub 命令树目录失败：%v", err)
+	}
+	var tsb strings.Builder
+	tsb.WriteString("package main\n\nvar commands = []*command{\n")
+	for _, e := range chsFixTree {
+		tsb.WriteString("\t{\n\t\tpath:  []string{")
+		for i, w := range strings.Split(e[0], " ") {
+			if i > 0 {
+				tsb.WriteString(", ")
+			}
+			tsb.WriteString("\"" + w + "\"")
+		}
+		tsb.WriteString("},\n\t\tusage: \"" + e[1] + "\",\n\t},\n")
+	}
+	// 收尾标记（`\n\t}\n`）之后再由 `chsTreeUsage` 现读解析。
+	tsb.WriteString("\t}\n}\n")
+	chsWrite(t, filepath.Join(dir, "core", "cmd", "zerg", "main.go"), tsb.String(), 0o644)
 	stub := filepath.Join(dir, "zerg")
 	chsWrite(t, stub, "#!/bin/sh\n"+
 		"case \"$*\" in\n"+
@@ -290,5 +310,61 @@ func TestCheckHelpShape_Rc2AndArgvPaths(t *testing.T) {
 	out, _, rc := chsRunT("--repo-root", dir, "--bin", dir, "--matrix", filepath.Join(dir, "x.json"))
 	if rc != 2 || !strings.Contains(out, "不在盘") {
 		t.Fatalf("目录制品档不对（rc=%d）：%q", rc, out)
+	}
+}
+
+// ── ⑥ 闸A / 闸B / 字节降级：成对负控（2026-10-14 · 本轮加）──────────────────────────
+//
+// 为什么单开一支：这三面**不在 `chsJudge` 里**（闸A/闸B 是独立纯函数 · 字节腿是观察面）
+// ⇒ 上面那张 `chsJudge` 的表喂不到它们 —— 各自成对跑，断言打在「点名子串」与「禁响子串」上。
+func TestCheckHelpShape_GateABPaired(t *testing.T) {
+	allT, bareT, dangT, cfgT := chsFixTexts()
+	bl := chsTestFixtureBaseline(allT, bareT, dangT, cfgT)
+	mutName := strings.ReplaceAll(allT, "  zerg agent ls ｜ 茧壁:host ｜ 说明", "  zerg agent lsx ｜ 茧壁:host ｜ 说明")
+	mutText := strings.Replace(allT, "  zerg gate run ｜ 茧壁:host ｜ 说明", "  zerg gate run [--fast] ｜ 茧壁:host ｜ 说明", 1)
+	mutMore := strings.Replace(allT, "  zerg version ｜ 茧壁:host ｜ 说明",
+		"  zerg version ｜ 茧壁:host ｜ 说明\n  zerg zzz ls ｜ 茧壁:host ｜ 说明", 1)
+	cases := []struct {
+		name      string
+		bad       []string
+		wantRed   bool
+		wantSub   string
+		forbidSub string
+	}{
+		{"正控_闸A面树逐字_绿", chsUsageCover(allT, chsFixTree), false, "", "闸A"},
+		{"负控_闸A漏印名_红", chsUsageCover(mutName, chsFixTree), true, "漏印", ""},
+		{"负控_闸A文本不符_红", chsUsageCover(mutText, chsFixTree), true, "文本不符", ""},
+		{"负控_闸A多印_红", chsUsageCover(mutMore, chsFixTree), true, "多印", ""},
+		{"负控_闸A树抽空_红", chsUsageCover(allT, nil), true, "抽空", ""},
+		{"正控_闸B两面无重复_绿", append(chsDupScan("help --all", allT), chsDupScan("help", bareT)...), false, "", "闸B"},
+		{"负控_闸B重复行_红", chsDupScan("help --all", allT+"  zerg version ｜ 茧壁:host ｜ 说明\n"), true, "重复行", ""},
+		{"负控_闸B第二份族级段_红", chsDupScan("help --all", allT+"族级面（9 族 · 第二份段）:\n"), true, "族级段", ""},
+	}
+	for _, c := range cases {
+		gotRed := len(c.bad) > 0
+		if gotRed != c.wantRed {
+			t.Errorf("%s：判红=%v 期望 %v（判词前 3：%v）", c.name, gotRed, c.wantRed, chsHead3(c.bad))
+		}
+		if c.wantSub != "" && !chsHasSub(c.bad, c.wantSub) {
+			t.Errorf("%s：判词里没有点名的 %q（实得前 3：%v）", c.name, c.wantSub, chsHead3(c.bad))
+		}
+		if c.forbidSub != "" && chsHasSub(c.bad, c.forbidSub) {
+			t.Errorf("%s：禁响子串 %q 冒出来了（实得前 3：%v）", c.name, c.forbidSub, chsHead3(c.bad))
+		}
+	}
+	// 字节降级：面**字节变（行数不变）⇒ 判据仍绿** ＋ 观察行给归因；行数变仍必红（上面负控②b 已钉）。
+	byteMut := strings.Replace(allT, "zerg —— 形状夹具 · 深度 ≤ 3 层", "zerg —— 形状夹具 · 深度 ≤ 3 层（字节降级夹具）", 1)
+	if len(byteMut) == len(allT) {
+		t.Fatalf("夹具没被改长（字节降级这格自证失效）")
+	}
+	if badByte := chsJudge(byteMut, bareT, dangT, chsFixCmds, bl, nil); len(badByte) > 0 {
+		t.Errorf("面字节变了不该判红（S2 字节已降级为观察值）：%v", chsHead3(badByte))
+	}
+	drift := chsByteDrift([][2]string{{"help --all", byteMut}, {"help", bareT}}, bl)
+	if !chsHasSub(drift, "差 +") {
+		t.Errorf("观察行没给「与冻结值的差」：%v", drift)
+	}
+	if !chsHasSub(drift, "⟷ 冻结") {
+		t.Errorf("观察行没点明冻结读数：%v", drift)
 	}
 }
