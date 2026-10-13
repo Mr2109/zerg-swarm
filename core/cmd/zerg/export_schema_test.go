@@ -372,3 +372,89 @@ func TestExportSchemaKeyJudgeHasTeeth(t *testing.T) {
 		t.Fatal("负控④ 未报：档位改错竟然通过了")
 	}
 }
+
+// TestDangerSideEffectScopeFace —— 新增「副作用面」展示栏（2026-10-13 · 承接项⑧ 已拍）的三例对拍。
+//
+// 病（本栏要治的）：危险动作表原来只有 `Effect`（散文「它会动什么」）—— 散文机器判不了（安全面：
+// 副作用面无机检）。治法 = 每条一个**闭集取值**（`dangerSpec.Scope` · 真源 `guard.go` 的
+// `dangerScope*` 六常量）。本件守三例（闭集 / CLI 可达 / 与人面同源），✗ 不改任何危险动作的行为。
+func TestDangerSideEffectScopeFace(t *testing.T) {
+	// 闭集（唯一真源 = `guard.go` 的 dangerScope* 常量；测试不另抄一份字面）。
+	closed := map[string]bool{dangerScopeUnknown: true}
+	for _, v := range dangerScopeValues {
+		closed[v] = true
+	}
+	if len(closed) != 6 {
+		t.Fatalf("副作用面闭集应有 6 值（5 档 + 不确定），实得 %d：%v", len(closed), closed)
+	}
+
+	// 例① 命令树：每条危险动作都有副作用面，且取值在闭集内（✗ 不得空 —— 空即「默认只读」的同罪）。
+	nDanger := 0
+	for _, c := range catalog() {
+		if c.danger == nil {
+			continue
+		}
+		nDanger++
+		if c.danger.Scope == "" {
+			t.Errorf("`zerg %s` 的副作用面为空（✗ 不得默认只读）", strings.Join(c.path, " "))
+			continue
+		}
+		if !closed[c.danger.Scope] {
+			t.Errorf("`zerg %s` 的副作用面 %q 不在闭集内", strings.Join(c.path, " "), c.danger.Scope)
+		}
+	}
+	if nDanger == 0 {
+		t.Fatal("危险动作 0 条 ⇒ 抽空（fail-closed）")
+	}
+
+	// 例② `help dangerous` 人面：逐条行都带 `副作用面：<值>`，取值在闭集内（新栏真打到 CLI）。
+	human := helpDangerous()
+	if !strings.Contains(human, "副作用面：") {
+		t.Fatal("`help dangerous` 人面没有 `副作用面：` 栏（新栏没打到 CLI）")
+	}
+	rows := 0
+	for _, ln := range strings.Split(human, "\n") {
+		if !strings.HasPrefix(ln, "  zerg ") {
+			continue
+		}
+		rows++
+		m := dangerSideEffectColRE.FindStringSubmatch(ln)
+		if m == nil {
+			t.Errorf("逐条行没有副作用面：%q", ln)
+			continue
+		}
+		if !closed[m[1]] {
+			t.Errorf("逐条行副作用面 %q 不在闭集内：%q", m[1], ln)
+		}
+	}
+	if rows != nDanger {
+		t.Errorf("`help dangerous` 逐条行数 %d ≠ 危险动作 %d 条", rows, nDanger)
+	}
+
+	// 例③ `help export`：机器面逐条有 `side_effect`（非危险档恒 `—`），导出物 markdown 带该列。
+	if !containsStr(helpExportFields, "side_effect") {
+		t.Error("`helpExportFields` 没有 `side_effect`（机器面字段表没随动）")
+	}
+	rowsJSON := helpExportRows(helpExportFacts{
+		Path: "/tmp/x.md", Root: "/tmp/Zerg-内部文档/项目文档", DocsVersion: "v9.9.9",
+		GeneratedAt: "2026-09-22T00:00:00+08:00",
+	})
+	if len(rowsJSON) == 0 {
+		t.Fatal("help export 机器面抽到 0 行（fail-closed）")
+	}
+	for _, r := range rowsJSON {
+		if r["is_dangerous"] == "true" {
+			if !closed[r["side_effect"]] {
+				t.Errorf("%s 的 side_effect=%q 不在闭集内", r["command"], r["side_effect"])
+			}
+		} else if r["side_effect"] != "—" {
+			t.Errorf("%s（非危险档）的 side_effect=%q 应为 `—`（与 danger_level 同口径）", r["command"], r["side_effect"])
+		}
+	}
+	if !strings.Contains(renderHelpMarkdown(), "| 副作用面 |") {
+		t.Error("导出物 markdown 危险动作表没有 `副作用面` 列（列集没随动）")
+	}
+}
+
+// dangerSideEffectColRE —— 人面逐条行里「副作用面：<值>」那一格的取词器（值不含空白 ⇒ `\S+`）。
+var dangerSideEffectColRE = regexp.MustCompile(`副作用面：(\S+)`)

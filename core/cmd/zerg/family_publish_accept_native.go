@@ -21,7 +21,7 @@
 //	· 验-1 ⇒ 进程内调 `publishVerifyRun`（`family_publish_verify_native.go:293` ＝同族既有 CLI 真身）。
 //	· 验-6/7/8 ⇒ `gateCheckGoEntry` 按名**进程内**调（照 `pfCallGate`）。
 //	· 验-5 ⇒ `gate ls --json` 的 `gates_total`（经 `gateLsJSON` ⟹ `pgsParseListJSON` 自证）＋ `--self-test`。
-//	· **仅** 验-2/3/4 无既有门 ⇒ 才在本件内定义**取数口**（判定仍以 ㈤v2 判据逐字为单一真源）。
+//	· 验-2/3/4 ⇒ `paccKindGate` 按名进程内调**真门** `check-publish-accept-*`（承接项 ①-6）。
 //
 // ★ 出口三档（只读主档 · ✗ 不许把 2 折成 0）：全 `rc==0` ⇒ `0`（收口）；任一 `rc==1` ⇒ `1`
 //
@@ -49,7 +49,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 )
@@ -82,8 +81,6 @@ const (
 	paccEnvHelpArt  = "ZERG_ACCEPT_HELP_ARTIFACTS"
 )
 
-var paccDanglingRe = regexp.MustCompile(`(?m)^(dangling|unreachable|missing|broken|error)`)
-
 // paccStepKind —— 8 条验收各自的「取数口」种类（照设计稿 §3.2 三档）。
 type paccStepKind int
 
@@ -115,19 +112,19 @@ var publishAcceptSteps = []paccStep{
 		run:      paccRunVerify,
 	},
 	{
-		id: "验-2", title: "`ls-remote` 差集空", kind: paccKindAdapter,
+		id: "验-2", title: "`ls-remote` 差集空", kind: paccKindGate,
 		criteria: "㈤v2 验-2 · 镜像意图 tip == 远端 tip ∧ refs 差集空（**先断言两侧非空** · 防空过）",
-		run:      paccRunMirrorTip,
+		gates:    [][]string{{"check-publish-accept-lsremote", "--mirror", "__MIRROR__"}},
 	},
 	{
-		id: "验-3", title: "镜像 fsck", kind: paccKindAdapter,
+		id: "验-3", title: "镜像 fsck", kind: paccKindGate,
 		criteria: "㈤v2 验-3 · `git fsck --full` rc=0 ∧ `^(dangling|unreachable|missing|broken|error)` 计数==0（补抓 dangling）",
-		run:      paccRunFsck,
+		gates:    [][]string{{"check-publish-accept-fsck", "--mirror", "__MIRROR__"}},
 	},
 	{
-		id: "验-4", title: "回退演练 digest 逐字", kind: paccKindAdapter,
+		id: "验-4", title: "回退演练 digest 逐字", kind: paccKindGate,
 		criteria: "㈤v2 验-4 · 现值 `shasum -a 256` == 记录值 `退点归档-<日期>/<件>.sha256`（空==空假 PASS 必红）",
-		run:      paccRunRollbackDigest,
+		gates:    [][]string{{"check-publish-accept-rollback", "--rollback", "__ROLLBACK__"}},
 	},
 	{
 		id: "验-5", title: "门本次身", kind: paccKindAdapter,
@@ -296,17 +293,23 @@ func paccRunGateGroup(root string, gates [][]string, out io.Writer) int {
 	return worst
 }
 
-// paccExpandArgv —— 把步表里的占位符展开成运行期实参（只此一处）。
+// paccExpandArgv —— 把步表里的占位符展开成运行期实参（只此一处；含 验-2/3/4 真门的 --mirror/--rollback）。
 func paccExpandArgv(argv []string) []string {
 	helpArt := strings.TrimSpace(os.Getenv(paccEnvHelpArt))
 	if helpArt == "" {
 		helpArt = "/tmp/zerg-help-artifacts"
 	}
+	mirrorDir := strings.TrimSpace(os.Getenv(paccEnvMirror))
+	rollbackFile := strings.TrimSpace(os.Getenv(paccEnvRollback))
 	out := make([]string, 0, len(argv))
 	for _, a := range argv {
 		switch a {
 		case "__HELP_ARTIFACTS__":
 			out = append(out, helpArt)
+		case "__MIRROR__":
+			out = append(out, mirrorDir)
+		case "__ROLLBACK__":
+			out = append(out, rollbackFile)
 		default:
 			out = append(out, a)
 		}
@@ -352,101 +355,15 @@ func paccRunVerify(root string, out io.Writer) int {
 	return 0
 }
 
-// ── 验-2/3/4/5：无既有门 ⇒ 本件内薄适配器（判定照 ㈤v2 判据逐字）──
-
-// paccRunMirrorTip —— 验-2：镜像意图 tip == 远端 tip ∧ refs 差集空（先断言两侧非空）。
-func paccRunMirrorTip(root string, out io.Writer) int {
-	img := strings.TrimSpace(os.Getenv(paccEnvMirror))
-	if img == "" {
-		fmt.Fprintf(out, "   ⛔ 验-2 缺件：未给镜像产出目录（%s）⇒ 跑不动 ⇒ fail-closed（缺件≠绿）\n", paccEnvMirror)
-		return paccRCBlocked
-	}
-	if !paccIsDir(img) {
-		fmt.Fprintf(out, "   ⛔ 验-2 缺件：镜像产出目录不在盘（%s）⇒ fail-closed\n", img)
-		return paccRCBlocked
-	}
-	r1, intent := paccGitOut(img, "rev-parse", "refs/heads/main")
-	if r1 != 0 || intent == "" {
-		fmt.Fprintln(out, "   ✗ 验-2 红：镜像意图 tip 取空（取数口 mirror-public.sh:118）")
-		return 1
-	}
-	r2, remote := paccRemoteTip(root, "public-gh")
-	if r2 != 0 || remote == "" {
-		fmt.Fprintln(out, "   ✗ 验-2 红：远端 tip 取空")
-		return 1
-	}
-	if intent != remote {
-		fmt.Fprintf(out, "   ✗ 验-2 红：意图 tip(%s) ≠ 远端 tip(%s)\n", paccShort(intent), paccShort(remote))
-		return 1
-	}
-	L := paccShowRefs(img)
-	R := paccRemoteRefs(root, "public-gh")
-	if L == "" || R == "" {
-		fmt.Fprintln(out, "   ✗ 验-2 红：refs 面一侧为空（空==空）")
-		return 1
-	}
-	if d := paccComm3Count(L, R); d != 0 {
-		fmt.Fprintf(out, "   ✗ 验-2 红：refs 差集非空（%d 行）\n", d)
-		return 1
-	}
-	fmt.Fprintln(out, "   ✅ 验-2 意图 tip==远端 tip ∧ refs 差集空")
-	return 0
-}
-
-// paccRunFsck —— 验-3：`git fsck --full` rc=0 ∧ dangling/unreachable/missing/broken/error 计数==0。
-func paccRunFsck(root string, out io.Writer) int {
-	_ = root
-	tree := strings.TrimSpace(os.Getenv(paccEnvMirror))
-	if tree == "" || !paccIsDir(tree) {
-		fmt.Fprintf(out, "   ⛔ 验-3 缺件：正式镜像树不在盘（%s）⇒ fail-closed\n", tree)
-		return paccRCBlocked
-	}
-	if rc, _ := paccGitOut(tree, "rev-parse", "--git-dir"); rc != 0 {
-		fmt.Fprintf(out, "   ⛔ 验-3 缺件：%s 不是 git 仓（切之后才有对象）⇒ fail-closed\n", tree)
-		return paccRCBlocked
-	}
-	rc, log := paccGitOut(tree, "fsck", "--full")
-	if rc != 0 {
-		fmt.Fprintf(out, "   ✗ 验-3 红：fsck rc=%d\n", rc)
-		paccTail(out, log, 4, "   ")
-		return 1
-	}
-	n := len(paccDanglingRe.FindAllString(log, -1))
-	if n != 0 {
-		fmt.Fprintf(out, "   ✗ 验-3 红：有 dangling/悬空/缺失对象 %d 行\n", n)
-		paccTail(out, paccDanglingMatching(log), 4, "   ")
-		return 1
-	}
-	fmt.Fprintln(out, "   ✅ 验-3 fsck rc=0 ∧ 悬空/缺失计数 0")
-	return 0
-}
-
-// paccRunRollbackDigest —— 验-4：现值 sha256 == 记录值（`退点归档-<日期>/<件>.sha256` · 退-1 写）。
-func paccRunRollbackDigest(root string, out io.Writer) int {
-	fileRel := strings.TrimSpace(os.Getenv(paccEnvRollback))
-	if fileRel == "" {
-		fmt.Fprintf(out, "   ⛔ 验-4 缺件：未给回退演练件（%s）⇒ 跑不动 ⇒ fail-closed\n", paccEnvRollback)
-		return paccRCBlocked
-	}
-	// 记录值件 = <状态目录>/退点归档-<日期>/<safeName>.sha256（照 devEditArchiveDir/devEditSafeName 体例）。
-	rec := filepath.Join(devEditArchiveDir(), devEditSafeName(fileRel)+".sha256")
-	if fi, err := os.Stat(rec); err != nil || fi.Size() == 0 {
-		fmt.Fprintf(out, "   ✗ 验-4 红：记录值缺位（空==空假 PASS）（%s）\n", rec)
-		return 1
-	}
-	now := paccSha256File(filepath.Join(root, fileRel))
-	if now == "" {
-		now = paccSha256File(fileRel)
-	}
-	recv := paccFirstField(rec)
-	if now == "" || recv == "" || now != recv {
-		fmt.Fprintf(out, "   ✗ 验-4 红：现值(%s) ≠ 记录值(%s) ⇒ 演练 FAIL（不给结论）\n", paccShort(now), paccShort(recv))
-		return 1
-	}
-	fmt.Fprintln(out, "   ✅ 验-4 现值 == 记录值")
-	return 0
-}
-
+// ── 验-2/3/4：**真门**（承接项 ①-6 · 升格前是件内薄适配器）────────────────────
+//
+// ★ 三条原在本件内直判（`paccRunMirrorTip`/`paccRunFsck`/`paccRunRollbackDigest`）⇒ 与「一切按
+//
+//	CLI 标准走」不一致。现改指 `paccKindGate`：按名进程内调**真门** `check-publish-accept-*`
+//	（`check_publish_accept.go` · 进 `gateCheckGoEntry` · `zerg gate check <名>` 直接打到）。
+//	单一判据真源 ⇒ ✗ 不两套并存判两次；实参由步表占位符 `__MIRROR__`/`__ROLLBACK__` 从既有
+//	env 旋钮展开（见 `paccExpandArgv`）。
+//
 // paccRunGateSelf —— 验-5：门本次身（三小条）。
 func paccRunGateSelf(root string, out io.Writer) int {
 	blocked, fail := false, false
@@ -629,106 +546,6 @@ func paccAtomicWrite(out, content string) error {
 
 // ── 底层取数助手（git / shasum / 脚本 · 只读）──
 
-func paccGitOut(dir string, args ...string) (int, string) {
-	a := append([]string{"-C", dir}, args...)
-	cmd := armChildGroup(exec.Command("git", a...)) // ★ 成组 + 登记 runningChild ⇒ 墙钟到点收得到（不漏网）
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = io.Discard
-	runningChild = cmd
-	defer func() { runningChild = nil }()
-	err := cmd.Run()
-	return paccExitCode(err), strings.TrimSpace(out.String())
-}
-
-func paccRemoteTip(root, remote string) (int, string) {
-	rc, out := paccGitOut(root, "ls-remote", remote, "refs/heads/main")
-	if out == "" {
-		return rc, ""
-	}
-	return rc, strings.TrimSpace(strings.Fields(out)[0])
-}
-
-func paccShowRefs(dir string) string {
-	_, out := paccGitOut(dir, "show-ref")
-	return paccSortedRefNames(out)
-}
-
-func paccRemoteRefs(root, remote string) string {
-	_, out := paccGitOut(root, "ls-remote", "--refs", remote)
-	return paccSortedRefNames(out)
-}
-
-// paccSortedRefNames —— 取 `git show-ref`/`ls-remote` 输出的**第 2 列（ref 名）**、排序、拼行（照 ㈤v2 的 awk+sort）。
-func paccSortedRefNames(raw string) string {
-	names := []string{}
-	for _, ln := range strings.Split(raw, "\n") {
-		f := strings.Fields(ln)
-		if len(f) >= 2 {
-			names = append(names, f[1])
-		}
-	}
-	sort.Strings(names)
-	return strings.Join(names, "\n")
-}
-
-// paccComm3Count —— 两侧 ref 名（已排序 · 换行分隔）的对称差行数（照 ㈤v2 的 `comm -3 … | wc -l`）。
-func paccComm3Count(l, r string) int {
-	inR := map[string]bool{}
-	for _, s := range strings.Split(r, "\n") {
-		if s != "" {
-			inR[s] = true
-		}
-	}
-	inL := map[string]bool{}
-	for _, s := range strings.Split(l, "\n") {
-		if s != "" {
-			inL[s] = true
-		}
-	}
-	n := 0
-	for _, s := range strings.Split(l, "\n") {
-		if s != "" && !inR[s] {
-			n++
-		}
-	}
-	for _, s := range strings.Split(r, "\n") {
-		if s != "" && !inL[s] {
-			n++
-		}
-	}
-	return n
-}
-
-func paccSha256File(path string) string {
-	cmd := armChildGroup(exec.Command("shasum", "-a", "256", path)) // ★ 成组 + 登记 runningChild ⇒ 墙钟到点收得到
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = io.Discard
-	runningChild = cmd
-	defer func() { runningChild = nil }()
-	if err := cmd.Run(); err != nil {
-		return ""
-	}
-	return paccFirstFieldText(out.String())
-}
-
-func paccFirstField(path string) string {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	return paccFirstFieldText(string(b))
-}
-
-func paccFirstFieldText(t string) string {
-	f := strings.Fields(strings.TrimSpace(t))
-	if len(f) == 0 {
-		return ""
-	}
-	return f[0]
-}
-
 func paccRunScript(root, rel string, args ...string) (int, string) {
 	cmd := armChildGroup(exec.Command("bash", append([]string{filepath.Join(root, rel)}, args...)...)) // ★ 成组 + 登记 runningChild
 	cmd.Dir = root
@@ -813,21 +630,6 @@ func paccJSONInt(d map[string]json.RawMessage, key string) (int, bool) {
 	return n, true
 }
 
-func paccIsDir(p string) bool {
-	fi, err := os.Stat(p)
-	return err == nil && fi.IsDir()
-}
-
-func paccShort(s string) string {
-	if s == "" {
-		return "—"
-	}
-	if len(s) > 12 {
-		return s[:12]
-	}
-	return s
-}
-
 // paccTail —— 复刻 `tail -n <n>`（取合并输出末 n 行 · 逐行加前缀）。
 func paccTail(w io.Writer, s string, n int, prefix string) {
 	if s == "" {
@@ -843,13 +645,4 @@ func paccTail(w io.Writer, s string, n int, prefix string) {
 	for _, ln := range lines {
 		fmt.Fprintf(w, "%s%s\n", prefix, ln)
 	}
-}
-
-func paccDanglingMatching(log string) string {
-	var b strings.Builder
-	for _, m := range paccDanglingRe.FindAllString(log, -1) {
-		b.WriteString(m)
-		b.WriteString("\n")
-	}
-	return b.String()
 }

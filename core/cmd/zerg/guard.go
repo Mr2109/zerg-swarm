@@ -29,6 +29,26 @@ const (
 	dangerD3 = "D3" // 不可逆：`--confirm=<目标>` 与 `--yes` **同时到**才执行
 )
 
+// 副作用面闭集（六值 · **唯一真源 = 这一格** · 消费者一律引本表，✗ 别各写一份字面）。
+//
+// ★ 新增展示栏（2026-10-13 · 承接项⑧ 已拍）：危险动作表原来只有 `Effect`（散文「它会动什么」）——
+// 散文**机器判不了**（安全面：副作用面无机检）。本栏给每一条一个**闭集取值**，让「这条会动哪一层」
+// 可机检。✗ 不改任何危险动作的行为（只增展示栏）。
+const (
+	dangerScopeReadOnly = "只读"  // 真跑零写（本批 105 条无一取此值 —— 危险档本体即写面；此值留在闭集里备消费方用）
+	dangerScopeRepo     = "仓内写" // 写主仓工作树内的件（含 `bin/` · `dist/` · `core/internal/contract/` 这类仓内目录）
+	dangerScopeOutRepo  = "仓外写" // 写主仓之外的件（状态目录 `~/.zerg/…` · 仓外台账 · 仓外落点 · 兄弟仓 `Zerg-内部文档`）
+	dangerScopeRemote   = "远端写" // 改动落在**别的机器**或经控制面 / `ssh` / `rsync`（命令本机只发请求、或只落对端件）
+	dangerScopeSystem   = "系统写" // 改**本机**机器态（进程 / 端口 / launchd / 在跑制品）
+	dangerScopeUnknown  = "不确定" // 取不到 / 取决于参数（✗ 不得默认「只读」—— 与「零命中 ≠ 不存在」同口径）
+)
+
+// dangerScopeValues —— 闭集**全序**（从重到轻）：一条命令若跨多面，取**最重**那一格
+// （判定口径见 `dangerSpec.Scope`）。`dangerScopeUnknown` 不进此序（它是「判不了」那一档，不参与取重）。
+var dangerScopeValues = []string{
+	dangerScopeSystem, dangerScopeRemote, dangerScopeRepo, dangerScopeOutRepo, dangerScopeReadOnly,
+}
+
 // ── 写面闸拒执的「控制层判决」格 ───────────────────────────────────────────────
 //
 // 病：写面闸（`cmdGuarded` / `writeGuardYes` / `guardedControlConfirmGate` /
@@ -71,6 +91,23 @@ type dangerSpec struct {
 	// 表在替实现许一个空承诺（§九 M3 C1：危险档 ↔ 确认档一一映射）。逐条登记见 main.go 每一处
 	// `danger: &dangerSpec{…, ChecksConfirm}`；此格是**位置参数**，漏登记编译不过。
 	ChecksConfirm bool
+	// Scope —— **副作用面**（新增展示栏 · 2026-10-13 · 承接项⑧ 已拍）：本条真跑（确认档齐）时会落的**最重一格**。
+	//
+	// 病（本栏要治的）：危险动作表原来只有 `Effect`（散文「它会动什么」）—— **机器判不了**（安全面：
+	// 副作用面无机检）。本栏给每条一个**闭集取值**，让「这条会动哪一层」可机检；✗ 不改任何危险动作的行为。
+	//
+	// 合法取值 = `dangerScope*` 六常量（唯一真源 = 本件上方那一格）：
+	//   `只读` / `仓内写` / `仓外写` / `远端写` / `系统写` / `不确定`。
+	// 判定口径（一条命令跨多面 ⇒ 取**最重**一格，次序从重到轻 = `dangerScopeValues`）：
+	//   系统写 > 远端写 > 仓内写 > 仓外写 > 只读；`不确定` 单列。
+	//   · 系统写：改**本机**机器态（进程 / 端口 / launchd / 在跑制品）
+	//   · 远端写：改动落在**别的机器**或经控制面 / `ssh` / `rsync`（命令本机只发请求、或只落对端件）
+	//   · 仓内写：写主仓工作树内的件（含 `bin/` · `dist/` · `core/internal/contract/` 这类仓内目录）
+	//   · 仓外写：写主仓之外的件（状态目录 `~/.zerg/…` · 仓外台账 · 仓外落点 · 兄弟仓 `Zerg-内部文档`）
+	//   · 只读：真跑零写（本批 105 条无一取此值 —— 危险档本体即写面；此值留在闭集里备消费方用）
+	//   · 不确定：**取不到 / 取决于参数**（✗ 不得默认「只读」—— 与「零命中 ≠ 不存在」「不给结论」同口径）
+	// 本格是**位置参数**（第 6 枚）—— 105 处逐处填实测口径，漏登记编译不过（`main.go` 每一处 `danger:`）。
+	Scope string
 }
 
 // cmdGuarded —— **登记到本门名下**（`run: cmdGuarded`）那批危险动作的执行门（未开放的那批只到「拒执 + 计划件」；**已开放**的各走自家 runner、不以本门为门 —— 逐条以 `zerg help dangerous` 现读为准）。
@@ -330,8 +367,9 @@ func helpDangerous() string {
 	b.WriteString("  --dry-run                 只出**计划件**，零副作用 —— 系统状态逐字不变\n")
 	b.WriteString("  --confirm=<目标>          值必须与目标**逐字相同**；给错值 = 拒绝（不是「当没给」）· D3 **必须给**；**下表逐条标出哪几条真读它** —— 没标 `--confirm` 的那几条本版实现**不读**它（给了也等于没给），D2 本就不需要它\n")
 	b.WriteString("  --yes                     D2 单独有效；**D3 必须 `--confirm` 与 `--yes` 同时到**（§十二 P-014 双档）\n")
-	b.WriteString("  非交互：无 TTY **零提示词**、缺确认一律 **fail-closed**（不执行）\n\n")
-	b.WriteString("清单（命令 · 档 · `--confirm` 的目标是什么 · 它会动什么 · 出处）：\n")
+	b.WriteString("  非交互：无 TTY **零提示词**、缺确认一律 **fail-closed**（不执行）\n")
+	b.WriteString("  副作用面（新增展示栏 · 闭集六值）：`只读`（真跑零写）/ `仓内写`（主仓工作树内）/ `仓外写`（主仓之外 · 状态目录 / 仓外台账 / 仓外落点）/ `远端写`（别的机器或控制面 · `ssh` · `rsync`）/ `系统写`（本机进程 / 端口 / launchd / 在跑制品）/ `不确定`（取不到 ⇒ 报不确定，**✗ 不得默认只读**）；跨多面取**最重**一格\n\n")
+	b.WriteString("清单（命令 · 档 · `--confirm` 的目标是什么 · 副作用面 · 它会动什么 · 出处）：\n")
 	w := 0
 	for _, c := range catalog() {
 		if c.danger == nil {
@@ -353,6 +391,7 @@ func helpDangerous() string {
 			flags = "  --dry-run · --confirm=<" + c.danger.Target + "> · --yes"
 		}
 		line := "  " + pad(name, w) + "  " + c.danger.Level + flags
+		line += "  副作用面：" + c.danger.Scope
 		line += "  " + c.danger.Effect + "  [" + c.danger.Source + "]"
 		if c.opened {
 			line += "  ← **已开放**（确认档齐就真执行）"

@@ -214,7 +214,7 @@ func TestCheckBypassIdiomsGatePort(t *testing.T) {
 		if !strings.Contains(out, `"unregistered_items": [{"file": "probe.sh", "line": 1, "forms": ["F01-DEVNULL", "F02-OR-TRUE", "F07-LSREMOTE-SWALLOW"]}]`) {
 			t.Fatalf("json：明细结构不符 out=%s", out)
 		}
-		if !strings.Contains(out, `"registry_ceiling": 2`) || !strings.Contains(out, `"forms": 12`) {
+		if !strings.Contains(out, `"registry_ceiling": 555`) || !strings.Contains(out, `"forms": 12`) {
 			t.Fatalf("json：常量位不符 out=%s", out)
 		}
 	})

@@ -156,8 +156,8 @@ func helpExportList(w io.Writer) {
 		if c.opened {
 			opened = "已开放"
 		}
-		fmt.Fprintf(w, "  zerg %s ｜ %s ｜ %s ｜ %s ｜ %s\n",
-			strings.Join(c.path, " "), c.danger.Level, opened, dangerFlags(c, true), c.danger.Effect)
+		fmt.Fprintf(w, "  zerg %s ｜ %s ｜ %s ｜ %s ｜ 副作用面:%s ｜ %s\n",
+			strings.Join(c.path, " "), c.danger.Level, opened, dangerFlags(c, true), c.danger.Scope, c.danger.Effect)
 	}
 }
 
@@ -177,10 +177,11 @@ func helpExportFieldList(fields []string) []string {
 }
 
 // helpExportFields —— `zerg help export --json` 的**合法字段**（机器面 = 逐条清单：一行一条命令）。
-// 前 10 格是**摘要格**（每行都带，旧五格一格里都在 —— 字段只增不改）；后 9 格是**逐条格**（缺口 `G-17` ②）。
+// 前 10 格是**摘要格**（每行都带，旧五格一格里都在 —— 字段只增不改）；后 10 格是**逐条格**（缺口 `G-17` ②；
+// `side_effect` 为本批新增的「副作用面」逐条格 —— 2026-10-13 · 承接项⑧）。
 var helpExportFields = []string{
 	"path", "root", "docs_version", "commands", "dangerous", "schema", "layers", "generated_at", "written", "dry_run",
-	"command", "is_dangerous", "danger_level", "opened", "confirm_target", "summary", "layer", "endpoint", "fields",
+	"command", "is_dangerous", "danger_level", "opened", "confirm_target", "side_effect", "summary", "layer", "endpoint", "fields",
 }
 
 // helpExportFacts —— 导出物的**四个事实**（全部现算，不是各算各的）：落点 · 取源根 · 版本档案目录 · 生成时刻 · 写没写。
@@ -225,15 +226,18 @@ func helpExportRows(f helpExportFacts) []map[string]string {
 		// `opened` = **真跑开没开**（缺口 序33 · 2026-09-24 已拍）—— 口径 = 单一真源 `openedForRun`：
 		// 危险档看逐条 `opened` 标记；非危险档默认开放，但**声明了拒执**的（`refuses`）不算。
 		// 修前这一格对非危险档**恒写 `"true"`** ⇒ 一条真跑拒执的命令在机器面上也报「已开放」（假绿）。
-		isDanger, level, opened, target := "false", "—", strconv.FormatBool(openedForRun(c)), ""
+		isDanger, level, opened, target, scope := "false", "—", strconv.FormatBool(openedForRun(c)), "", "—"
 		if c.danger != nil {
-			isDanger, level, opened, target = "true", c.danger.Level, strconv.FormatBool(openedForRun(c)), c.danger.Target
+			isDanger, level, opened, target, scope = "true", c.danger.Level, strconv.FormatBool(openedForRun(c)), c.danger.Target, c.danger.Scope
 		}
 		row["command"] = "zerg " + strings.Join(c.path, " ")
 		row["is_dangerous"] = isDanger
 		row["danger_level"] = level
 		row["opened"] = opened
 		row["confirm_target"] = target
+		// `side_effect` = **副作用面**（闭集六值 · 真源 = 命令树 `dangerSpec.Scope`）—— 非危险档恒 `—`
+		// （与 `danger_level` 同口径：不给空串，省得消费方分不清「没有」与「取不到」）。
+		row["side_effect"] = scope
 		row["summary"] = c.summary
 		row["layer"] = c.layer
 		row["endpoint"] = c.endpoint
@@ -323,7 +327,7 @@ func renderHelpMarkdown(landing ...string) string {
 		fmt.Fprintf(&b, "| `%s` | %s | %s | %s | `%s` |\n", "zerg "+strings.Join(c.path, " "), mdCell(c.summary), mdCell(f), mdCell(ep), c.layer)
 	}
 	fmt.Fprintf(&b, "\n## 二、危险动作（已登记 · 逐条标**本版已开放 / 未开放**）\n\n")
-	b.WriteString("| 命令 | 档 | 本版 | 三态 | `--confirm` 的目标 | 它会动什么 | 出处 | 茧壁层级 |\n|---|---|---|---|---|---|---|---|\n")
+	b.WriteString("| 命令 | 档 | 本版 | 三态 | `--confirm` 的目标 | 副作用面 | 它会动什么 | 出处 | 茧壁层级 |\n|---|---|---|---|---|---|---|---|---|\n")
 	for _, c := range catalog() {
 		if c.danger == nil {
 			continue
@@ -332,8 +336,8 @@ func renderHelpMarkdown(landing ...string) string {
 		if c.opened {
 			opened = "**已开放**"
 		}
-		fmt.Fprintf(&b, "| `%s` | %s | %s | %s | %s | %s | %s | `%s` |\n",
-			"zerg "+strings.Join(c.path, " "), mdCell(c.danger.Level), opened, mdCell(dangerFlags(c, false)), mdCell(c.danger.Target), mdCell(c.danger.Effect), mdCell(c.danger.Source), c.layer)
+		fmt.Fprintf(&b, "| `%s` | %s | %s | %s | %s | %s | %s | %s | `%s` |\n",
+			"zerg "+strings.Join(c.path, " "), mdCell(c.danger.Level), opened, mdCell(dangerFlags(c, false)), mdCell(c.danger.Target), mdCell(c.danger.Scope), mdCell(c.danger.Effect), mdCell(c.danger.Source), c.layer)
 	}
 	b.WriteString("\n## 三、退码表（唯一真源）\n\n")
 	b.WriteString("| 码 | 名 | 语义 | 可重试性 |\n|---|---|---|---|\n")

@@ -13,7 +13,10 @@
 package main
 
 import (
+	"io"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -130,5 +133,98 @@ func TestGapApplySurfacesBuildFail(t *testing.T) {
 	})
 	if d != "concurrent_write" || rc != exitConflict || m != "撞车了" {
 		t.Fatalf("build 拒写应原样透出，得到 detail=%q rc=%d msg=%q", d, rc, m)
+	}
+}
+
+// ── 承接项 ⑨（缺口 `GAP-20260927-62`）：「是否已在 HEAD」一档的成对三例 ────────────────────────────
+//
+// 口径见 `family_gap_state.go` 的「是否已在 HEAD」一节（**本账修的唯一标识串 = 该账行的 `unit`**）。
+// 三例都在**合成夹具仓**上跑（`t.TempDir()` ＋ `git init` ⇒ 不碰真仓、不碰真 `~/.zerg/state`）：
+//
+//	① 件在 HEAD 且工作树净    ⇒ 判「已在HEAD」
+//	② 件在 HEAD 但工作树又改  ⇒ 判「HEAD有·工作树改」（★ 共件假阳场景 ⇒ **不许**误报「已在HEAD/已修」）
+//	③ 件不在 HEAD（未提交）   ⇒ 判「不在HEAD」（⇒ 不判已修）
+//
+// 外加两格边界：无件兜底档 ⇒ 「不适用」· 仓根取不到 ⇒ 「判不了」（fail-closed）。
+func TestGapHeadTierThreeCases(t *testing.T) {
+	root := t.TempDir()
+	runGit := func(args ...string) {
+		t.Helper()
+		full := append([]string{"-C", root, "-c", "core.quotepath=false"}, args...)
+		if out, err := exec.Command("git", full...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v 失败：%v · %s", args, err, out)
+		}
+	}
+	runGit("init", "-q")
+	runGit("config", "user.email", "t@example.com")
+	runGit("config", "user.name", "t")
+
+	unit := "core/cmd/zerg/family_gap_state.go"
+	if err := os.MkdirAll(filepath.Join(root, "core", "cmd", "zerg"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(root, filepath.FromSlash(unit))
+	if err := os.WriteFile(p, []byte("// v1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", "-A")
+	runGit("commit", "-q", "-m", "v1")
+
+	// ① 件在 HEAD 且工作树净 ⇒ 已在HEAD
+	if got := gapHeadTierOf(unit, root); got != gapHeadInHead {
+		t.Errorf("① 件在 HEAD 且工作树净 要 %q，得到 %q", gapHeadInHead, got)
+	}
+
+	// ② 件在 HEAD 但工作树又改（共件假阳场景）⇒ HEAD有·工作树改（**不许**误报「已在HEAD」）
+	if err := os.WriteFile(p, []byte("// v1 + 他路在途改动\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := gapHeadTierOf(unit, root); got != gapHeadHeadDirty {
+		t.Errorf("② 共件假阳场景 要 %q，得到 %q", gapHeadHeadDirty, got)
+	}
+
+	// ③ 件不在 HEAD（新建、未纳入提交）⇒ 不在HEAD（⇒ 不判已修）
+	untracked := "core/cmd/zerg/zzz_new_probe.go"
+	if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(untracked)), []byte("// new\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := gapHeadTierOf(untracked, root); got != gapHeadNotInHead {
+		t.Errorf("③ 件不在 HEAD 要 %q，得到 %q", gapHeadNotInHead, got)
+	}
+
+	// 边界甲：无件兜底档（无标识串）⇒ 不适用
+	if got := gapHeadTierOf("无件(命令面)", root); got != gapHeadNotApplic {
+		t.Errorf("边界甲 无件兜底档 要 %q，得到 %q", gapHeadNotApplic, got)
+	}
+
+	// 边界乙：仓根取不到 ⇒ 判不了（fail-closed ⇒ ✗ 不许当「已在HEAD」用）
+	if got := gapHeadTierOf(unit, ""); got != gapHeadUnknown {
+		t.Errorf("边界乙 仓根取不到 要 %q，得到 %q", gapHeadUnknown, got)
+	}
+}
+
+// TestGapHeadTierWiredIntoGate —— **接线牙**：共用闸**真**读账行 `unit`（本账修的唯一标识串）⇒ 判 HEAD 档
+// ⇒ 机器面**真**落 `meta.head_tier` 一格（✗ 不是「定义了却没人调」的死函数）。
+// 合成真源一条（`t.TempDir()` 当状态目录 ⇒ 不碰真 `~/.zerg/state`）· `unit` = 本单正在改的那件
+// ⇒ 它是**跟踪件**（在 HEAD）⇒ 档必落在「已在HEAD / HEAD有·工作树改」两支之一
+// （✗ 不许是不适用 / 判不了 —— 那两种都说明标识串没取到或 git 面没读）。
+func TestGapHeadTierWiredIntoGate(t *testing.T) {
+	led := seedGapLedger(t, `{"id":"GAP-20261013-99","state":"仍缺","unit":"core/cmd/zerg/family_gap_state.go"}`)
+	inv := &invocation{}
+	if rc := gapTwoStateGate(inv, "GAP-20261013-99", "仍缺", "set-state", led, 1, io.Discard); rc != exitOK {
+		t.Fatalf("非销案面应放行（rc=exitOK），得到 rc=%d", rc)
+	}
+	got, seen := "", false
+	for _, kv := range inv.envMeta {
+		if kv.Key == "head_tier" {
+			seen = true
+			got = strings.Trim(kv.Val, `"`)
+		}
+	}
+	if !seen {
+		t.Fatalf("机器面没有 `head_tier` 那一格（meta=%v）—— 闸里没接线？", inv.envMeta)
+	}
+	if got != gapHeadInHead && got != gapHeadHeadDirty {
+		t.Errorf("跟踪件应落在「已在HEAD / HEAD有·工作树改」，得到 %q", got)
 	}
 }

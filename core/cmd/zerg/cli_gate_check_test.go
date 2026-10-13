@@ -328,8 +328,11 @@ func TestGateCheckGoEntryTableComplete(t *testing.T) {
 	if len(dupes) != 0 {
 		t.Fatalf("真实名录有同名多件 ⇒ 前置不成立：%v", dupes)
 	}
-	if got := len(gateCheckGoEntry); got != 185 {
-		t.Fatalf("进程内 Go 表项数要 == 185，得到 %d", got)
+	// ★ 2026-10-13（承接项 ①-6 · 本单）：发布验收三条升格真门，入表 +3
+	//
+	//	（check-publish-accept-lsremote / -fsck / -rollback · 见 core/cmd/zerg/check_publish_accept.go）⇒ 185→188。
+	if got := len(gateCheckGoEntry); got != 188 {
+		t.Fatalf("进程内 Go 表项数要 == 188，得到 %d", got)
 	}
 	// ★ 放宽（2026-10-07 退役批）：旧不变量「表键必在名录」⇒「表键 ⇒ 名录 **或** inproc 键 二者其一」。
 	//   退役件（py 已 `git rm`）只余 inproc 那一路（family_gate_check.go 的 inproc 兜底 ⇒ rc=0）；

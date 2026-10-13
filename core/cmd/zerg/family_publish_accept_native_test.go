@@ -1,7 +1,7 @@
 // family_publish_accept_native_test.go —— `zerg publish accept`（收口编排件）回归牙。
 //
 // 覆盖：① 三档聚合（0/1/2）② 负控 4 条（某门造红 ⇒ 1 · 缺件/跑不动 ⇒ 2 fail-closed ·
-// `--out` 缺 `--yes` ⇒ 不落件 · `gates_total` 漂移 ⇒ 红）③ 验-3/验-4 适配器夹具。
+// `--out` 缺 `--yes` ⇒ 不落件 · `gates_total` 漂移 ⇒ 红）③ 验-2/3/4 真门夹具（承接项 ①-6 · ✗ 不再走件内适配器）。
 // ★ 夹具只落仓外（`t.TempDir()`）· ✗ 不碰盘上件。
 package main
 
@@ -237,9 +237,8 @@ func TestPublishAcceptFsckFixture(t *testing.T) {
 	runGit("add", "a.txt")
 	runGit("commit", "-qm", "init")
 
-	t.Setenv(paccEnvMirror, repo)
 	var buf bytes.Buffer
-	if rc := paccRunFsck("", &buf); rc != 0 {
+	if rc, _ := paccCallGate("", "check-publish-accept-fsck", []string{"--mirror", repo}); rc != 0 {
 		t.Fatalf("干净仓 ⇒ 验-3 要 0，得 %d（输出：%s）", rc, buf.String())
 	}
 	// 造 1 个 dangling blob（hash-object -w 不引用它）。
@@ -249,7 +248,7 @@ func TestPublishAcceptFsckFixture(t *testing.T) {
 		t.Fatalf("hash-object: %v", err)
 	}
 	buf.Reset()
-	if rc := paccRunFsck("", &buf); rc != 1 {
+	if rc, _ := paccCallGate("", "check-publish-accept-fsck", []string{"--mirror", repo}); rc != 1 {
 		t.Fatalf("有 dangling ⇒ 验-3 要红（1），得 %d（输出：%s）", rc, buf.String())
 	}
 }
@@ -257,16 +256,14 @@ func TestPublishAcceptFsckFixture(t *testing.T) {
 // ⑦ 验-4 夹具：记录值件在场且一致 ⇒ 绿；缺记录值 ⇒ 红。
 func TestPublishAcceptRollbackFixture(t *testing.T) {
 	stateDir := t.TempDir()
-	t.Setenv("ZERG_STATE_DIR", stateDir)
 	file := filepath.Join(t.TempDir(), "artifact.bin")
 	if err := os.WriteFile(file, []byte("payload\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv(paccEnvRollback, file)
 
 	// 缺记录值 ⇒ 红。
 	var buf bytes.Buffer
-	if rc := paccRunRollbackDigest("", &buf); rc != 1 {
+	if rc, _ := paccCallGate("", "check-publish-accept-rollback", []string{"--rollback", file, "--state-dir", stateDir}); rc != 1 {
 		t.Fatalf("无记录值 ⇒ 验-4 要红（1），得 %d（输出：%s）", rc, buf.String())
 	}
 
@@ -275,7 +272,7 @@ func TestPublishAcceptRollbackFixture(t *testing.T) {
 	if err := os.MkdirAll(recDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	now := paccSha256File(file)
+	now := testSha256(t, file)
 	if now == "" {
 		t.Skip("无 shasum")
 	}
@@ -284,7 +281,7 @@ func TestPublishAcceptRollbackFixture(t *testing.T) {
 		t.Fatal(err)
 	}
 	buf.Reset()
-	if rc := paccRunRollbackDigest("", &buf); rc != 0 {
+	if rc, _ := paccCallGate("", "check-publish-accept-rollback", []string{"--rollback", file, "--state-dir", stateDir}); rc != 0 {
 		t.Fatalf("记录值一致 ⇒ 验-4 要 0，得 %d（输出：%s）", rc, buf.String())
 	}
 }
@@ -321,5 +318,89 @@ func TestPublishAcceptThreeTierExitLines(t *testing.T) {
 			t.Fatalf("%s：出口行缺\nwant: %s\ngot:\n%s", c.name, c.want, se)
 		}
 		t.Logf("三档[%s] rc=%d · 出口行=%s", c.name, rc, c.want)
+	}
+}
+
+// testSha256 —— 夹具用 sha256（`shasum -a 256` · 无则跳过）。
+func testSha256(t *testing.T, path string) string {
+	t.Helper()
+	out, err := exec.Command("shasum", "-a", "256", path).Output()
+	if err != nil {
+		t.Skip("无 shasum")
+	}
+	f := strings.Fields(string(out))
+	if len(f) == 0 {
+		t.Skip("shasum 无输出")
+	}
+	return f[0]
+}
+
+// ⑩ 承接项 ①-6：验-2/3/4 已升格为**真门** —— 键在 inproc 表（`zerg gate check <名>` 打得着），
+// 且编排件步表改指 `paccKindGate`（✗ 不两套并存判两次）。
+func TestPublishAcceptThreeRealGates(t *testing.T) {
+	want := map[string]string{
+		"验-2": "check-publish-accept-lsremote",
+		"验-3": "check-publish-accept-fsck",
+		"验-4": "check-publish-accept-rollback",
+	}
+	for _, k := range []string{"check-publish-accept-lsremote", "check-publish-accept-fsck", "check-publish-accept-rollback"} {
+		if _, ok := gateCheckGoEntry[k]; !ok {
+			t.Errorf("真门 %s 不在 inproc 表 ⇒ `zerg gate check %s` 打不到", k, k)
+		}
+	}
+	seen := map[string]bool{}
+	for _, st := range publishAcceptSteps {
+		n, ok := want[st.id]
+		if !ok {
+			continue
+		}
+		if st.kind != paccKindGate || len(st.gates) != 1 || st.gates[0][0] != n {
+			t.Errorf("%s 应改指真门 %s（paccKindGate），得 kind=%v gates=%v", st.id, n, st.kind, st.gates)
+		}
+		if st.run != nil {
+			t.Errorf("%s 不该再有件内直判 run 口（两套并存 ⇔ 判两次）", st.id)
+		}
+		seen[st.id] = true
+	}
+	if len(seen) != 3 {
+		t.Errorf("三条真门未被全部接线，命中 %d 条：%v", len(seen), seen)
+	}
+}
+
+// ⑪ 验-2 真门夹具（经 `paccCallGate` 打到 · 承接项 ①-6）：镜像 ⟷ 远端 同 tip 同 refs ⇒ rc=0；
+// 远端多一条 ref ⇒ refs 差集非空 ⇒ rc=1。夹具只落仓外（`t.TempDir()`）。
+func TestPublishAcceptLsremoteFixture(t *testing.T) {
+	if _, err := os.Stat("/usr/bin/git"); err != nil {
+		t.Skip("无 git")
+	}
+	mirror := t.TempDir()
+	runGit := func(dir string, args ...string) {
+		t.Helper()
+		cmd := gitCmd(dir, args...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git(-C %s) %v: %v (%s)", dir, args, err, out)
+		}
+	}
+	runGit(mirror, "init", "-q")
+	runGit(mirror, "config", "user.email", "t@t.local")
+	runGit(mirror, "config", "user.name", "t")
+	if err := os.WriteFile(filepath.Join(mirror, "a.txt"), []byte("hi\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(mirror, "add", "-A")
+	runGit(mirror, "commit", "-qm", "init")
+	runGit(mirror, "branch", "-M", "main")
+
+	remote := filepath.Join(t.TempDir(), "remote.git")
+	if out, err := exec.Command("git", "clone", "-q", "--bare", mirror, remote).CombinedOutput(); err != nil {
+		t.Fatalf("clone --bare: %v (%s)", err, out)
+	}
+
+	if rc, log := paccCallGate("", "check-publish-accept-lsremote", []string{"--mirror", mirror, "--remote", remote}); rc != 0 {
+		t.Fatalf("同 tip 同 refs ⇒ 验-2 要 0，得 %d（输出：%s）", rc, log)
+	}
+	runGit(remote, "branch", "extra")
+	if rc, log := paccCallGate("", "check-publish-accept-lsremote", []string{"--mirror", mirror, "--remote", remote}); rc != 1 {
+		t.Fatalf("远端多一条 ref ⇒ 验-2 要红（1），得 %d（输出：%s）", rc, log)
 	}
 }

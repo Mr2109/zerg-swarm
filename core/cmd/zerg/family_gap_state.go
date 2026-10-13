@@ -1027,6 +1027,134 @@ func gapTwoStateJudge(inv *invocation, id, stateWant string) (pair string, exemp
 	return "缺", !malformed && !gapTwoStateNewLedger(id), miss
 }
 
+// ═══ 「是否已在 HEAD」一档（承接项 ⑨ · 缺口 `GAP-20260927-62`）════════════════════════════════
+//
+// 病（本档要治的**假阳**）：账目对「这条修了没」此前**只看件脏不脏**（工作树改动面）——
+// 共件（多路共改的热件）被**并发他路**改动时，工作树照样是脏的 ⇒ 会被**误报成「已修」**。
+//
+// 治（★ 两者**并存 · 分层展示** ⇒ ✗ 不取消原有「脏不脏」信号）：在原「销案两态对拍」
+// （`two_state`）之上**再加一档**「是否已在 HEAD」—— 用**只读 git** 手段判「本账修」在不在 HEAD：
+//
+//	已在HEAD        件在 HEAD **且**工作树相对 HEAD 无改动（最强正读：修已进提交面）
+//	HEAD有·工作树改  件在 HEAD **但**工作树又改（★ 共件假阳场景 ⇒ **不判「已修」**：多半是别路在途改动）
+//	不在HEAD        件不在 HEAD（⇒ **不判「已修」**：修只活在工作树里，提交面还没有它）
+//	不适用          无件兜底档（无标识串 ⇒ 无件面落点可判）
+//	判不了          仓根取不到 / 无 HEAD / git 读不到（fail-closed · ✗ 不当「已在 HEAD」用）
+//
+// ★★ **「本账修的唯一标识串」取法（v1 · 本档口径真源）**：
+//
+//	① **主取 = 该账行的 `unit`**（仓内相对件路径）——「本账修」= 修落在**哪一件**；判 HEAD
+//	   只按这一段（git 路径面口径：`ls-tree -r --name-only HEAD -- <unit>` ＋ `status --porcelain -- <unit>`）；
+//	② **无标识串** = 兜底档（`unit` 空 / `无件…` / `拟(…)`）⇒ 无件面落点可判 ⇒ 判「不适用」；
+//	③ **组合形**（面级展示用）= `<id>@<unit>`（`id` 逐账唯一 ⇒ 一行一修；`unit` 定「修在哪件」）——
+//	   ✗ 判 HEAD 时**不**拿组合串去拼 git pathspec（`id` 不是路径）；
+//	④ 取不到该账行（账读不到 / 号不在账里）⇒ 判「判不了」（**读不到 ≠ 不在 HEAD** · ✗ 不许当绿）。
+//
+// 口径边界：本档**只报告**（机器面 `meta.head_tier` ＋ 人面一行）—— ✗ 不动判据（放行 / 拒收仍由
+// `gapTwoStateJudge` 那三件定）· ✗ 不进退出码 · ✗ 不取消原有「脏不脏」（`two_state`）信号。
+const (
+	// gapHeadInHead —— 件在 HEAD **且**工作树相对 HEAD 无改动（最强正读）。
+	gapHeadInHead = "已在HEAD"
+	// gapHeadHeadDirty —— 件在 HEAD **但**工作树又改（★ 共件假阳场景 ⇒ 不判「已修」）。
+	gapHeadHeadDirty = "HEAD有·工作树改"
+	// gapHeadNotInHead —— 件不在 HEAD（⇒ 不判「已修」）。
+	gapHeadNotInHead = "不在HEAD"
+	// gapHeadNotApplic —— 无件兜底档（无标识串 ⇒ 无件面落点可判）。
+	gapHeadNotApplic = "不适用"
+	// gapHeadUnknown —— 仓根取不到 / 无 HEAD / git 读不到（fail-closed）。
+	gapHeadUnknown = "判不了"
+)
+
+// gapHeadGitRO —— 跑一条**只读** `git -C <root> …`（rc≠0 / 起不来 ⇒ ok=false）。✗ 不写任何东西。
+// `--no-optional-locks` 硬带（与同族 `gapPremiseTrackedBasenames` 同一纪律：一个可选锁都不取）。
+func gapHeadGitRO(root string, args ...string) (string, bool) {
+	full := append([]string{"-C", root, "-c", "core.quotepath=false", "--no-optional-locks"}, args...)
+	out, err := exec.Command("git", full...).Output()
+	if err != nil {
+		return "", false
+	}
+	return string(out), true
+}
+
+// gapHeadTierOf —— 一件（仓内相对路径）的「是否已在 HEAD」判定（本档**唯一判处** · 纯只读 · 零写盘）。
+// 入参取**显式 root**（✗ 不吃全局 `repoRoot()`）⇒ 可在合成夹具仓上逐态跑（三例可测）。
+func gapHeadTierOf(unit, root string) string {
+	u := strings.TrimSpace(unit)
+	// ② 无标识串（兜底档 / 空）⇒ 无件面落点可判。
+	if u == "" || gapUnitIsNoFileSel(u) {
+		return gapHeadNotApplic
+	}
+	// 仓根取不到 / 无 HEAD（空仓 / 非 git 仓）⇒ 判不了（fail-closed · ✗ 不当「已在 HEAD」用）。
+	if root == "" {
+		return gapHeadUnknown
+	}
+	if _, ok := gapHeadGitRO(root, "rev-parse", "--verify", "-q", "HEAD"); !ok {
+		return gapHeadUnknown
+	}
+	// ① 在 HEAD？—— 只按 `unit` 这一段问 git（✗ 不拿 `<id>@<unit>` 去拼 pathspec）。
+	out, ok := gapHeadGitRO(root, "ls-tree", "-r", "--name-only", "HEAD", "--", u)
+	if !ok {
+		return gapHeadUnknown
+	}
+	inHead := false
+	for _, ln := range strings.Split(out, "\n") {
+		if strings.TrimSpace(ln) == u {
+			inHead = true
+			break
+		}
+	}
+	if !inHead {
+		return gapHeadNotInHead
+	}
+	// 件在 HEAD ⇒ 再看工作树相对 HEAD 有没有改动（★ 共件假阳就在这一格：别路在途改动也会让它是脏的）。
+	dirty, ok := gapHeadGitRO(root, "status", "--porcelain", "--", u)
+	if !ok {
+		return gapHeadUnknown
+	}
+	if strings.TrimSpace(dirty) != "" {
+		return gapHeadHeadDirty
+	}
+	return gapHeadInHead
+}
+
+// gapHeadUnitForID —— 从真源（**只读**）取该账行的 `unit`（= 本账修的唯一标识串 · 取法见上）。
+// 取不到（账读不到 / 号不在账里）⇒ ok=false ⇒ 上层判「判不了」（✗ 不许当「不在 HEAD」）。
+func gapHeadUnitForID(ledgerPath, id string) (string, bool) {
+	b, err := os.ReadFile(ledgerPath)
+	if err != nil {
+		return "", false
+	}
+	for _, ln := range strings.Split(string(b), "\n") {
+		ln = strings.TrimSpace(ln)
+		if ln == "" {
+			continue
+		}
+		var m map[string]any
+		if json.Unmarshal([]byte(ln), &m) != nil {
+			continue
+		}
+		if s, _ := m["id"].(string); s == id {
+			u, _ := m["unit"].(string)
+			return strings.TrimSpace(u), true
+		}
+	}
+	return "", false
+}
+
+// gapHeadTierForGate —— 共用闸那一格：「按账行取标识串（`unit`）⇒ 判 HEAD 档」。
+func gapHeadTierForGate(ledgerPath, id string) string {
+	unit, ok := gapHeadUnitForID(ledgerPath, id)
+	if !ok {
+		return gapHeadUnknown
+	}
+	return gapHeadTierOf(unit, repoRoot())
+}
+
+// gapHeadTierLine —— 人面那一行（与机器面 `meta.head_tier` **同源** · 口径随行印出）。
+func gapHeadTierLine(tier string) string {
+	return "  是否已在HEAD : " + tier + "（本账修的唯一标识串 = 该行 `unit` 件路径 · 只读 git 判 `ls-tree HEAD` ＋ `status --porcelain` · 只报告不进退出码 · ✗ 不取消原有「脏不脏」两态信号）"
+}
+
 // gapTwoStateGate —— 「新账销案必须带两态读数」的**共用闸**（缺口 `GAP-20260928-195`）。
 //
 // 病（该缺口逐字）：闸此前**只内联**在单条 `set-state` 一处 ⇒ `gap bulk set-state`（批量改态）与
@@ -1040,6 +1168,10 @@ func gapTwoStateJudge(inv *invocation, id, stateWant string) (pair string, exemp
 // **读面动作**：本函数一个字都不写（拒收时真源一个字节未改、审计一行未落 —— 闸在任何「审计先落盘」之前）。
 func gapTwoStateGate(inv *invocation, id, stateWant, cmdLabel, ledgerPath string, ledgerLines int, stderr io.Writer) int {
 	pair, exempt, miss := gapTwoStateJudge(inv, id, stateWant)
+	// ★ 承接项 ⑨（缺口 `GAP-20260927-62`）：在原「两态」之上**再加一档**「是否已在 HEAD」
+	//   （只读 · 只报告 · **分层展示** ⇒ ✗ 不取消原有「脏不脏」信号 —— 口径见本函数上方那一节）。
+	headTier := gapHeadTierForGate(ledgerPath, id)
+	inv.metaAddStr("head_tier", headTier)
 	// ★ GAP-20260928-196（甲）：自动跑那两条（`--before-cmd`/`--after-cmd`）**跑不起来** ⇒ **判不了**
 	//   （退码 8 · 该族既有档）—— 真源一个字节未改、审计一行未落；✗ 绝不当 0 用。
 	if pair == "判不了" {
@@ -1049,9 +1181,16 @@ func gapTwoStateGate(inv *invocation, id, stateWant, cmdLabel, ledgerPath string
 		}
 		fmt.Fprintf(stderr, "  真源         : %s（%d 行 · **本发一个字节未改**、审计一行未落 —— 闸在「审计先落盘」之前）\n", orDash(ledgerPath), ledgerLines)
 		gapTwoStateMeta(inv, "判不了", false)
+		fmt.Fprintln(stderr, gapHeadTierLine(headTier))
 		return exitBlocked
 	}
 	if stateWant != gapStSolved || exempt || len(miss) == 0 {
+		// ★ 承接项 ⑨：放行档也把「是否已在 HEAD」摆出来（分层展示 · 只报告 ⇒ **不进退出码**）。
+		//   ★ 共件假阳场景（件在 HEAD 但工作树又改 / 件不在 HEAD）⇒ 明写「不判已修」；
+		//   ✗ 但**不拦**（拦不拦由两态那三件定 —— 本档只治「误报已修」这个**读数**）。
+		if stateWant == gapStSolved && (headTier == gapHeadHeadDirty || headTier == gapHeadNotInHead) {
+			fmt.Fprintln(stderr, gapHeadTierLine(headTier))
+		}
 		return exitOK
 	}
 	inv.setErr("usage", "two_state_missing", "销案缺两态读数（缺 "+strconv.Itoa(len(miss))+" 段）")
@@ -1070,6 +1209,7 @@ func gapTwoStateGate(inv *invocation, id, stateWant, cmdLabel, ledgerPath string
 	fmt.Fprintf(stderr, "  生效面       : 新账（号内日期 ≥ %s）强制 · 存量账豁免**仅当两段真没给**（给了值却形态不符 ⇒ 拒收 · GAP-20260929-17）（设计稿 §11.5 两态对拍 · 共用闸取自缺口 `GAP-20260928-195`）\n", gapTwoStateDateMin)
 	fmt.Fprintf(stderr, "  真源         : %s（%d 行 · **本发一个字节未改**、审计一行未落 —— 闸在「审计先落盘」之前）\n",
 		orDash(ledgerPath), ledgerLines)
+	fmt.Fprintln(stderr, gapHeadTierLine(headTier))
 	gapTwoStateMeta(inv, "缺", false)
 	return exitUsage
 }
