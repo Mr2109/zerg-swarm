@@ -647,6 +647,11 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}
 	_ = json.NewEncoder(w).Encode(map[string]any{
+		// ★ 缺口 GAP-20260925-20：`/ready` 是**无令牌**的只读探活面 ⇒ 探活方（`zerg agent ping --direct`）
+		//   连上后读它一次即可认定「这条链路答话的是谁」——**由回答方（本端）在响应里带自己的身份**。
+		//   ✗ 不报身份，探活方就只能拿**它自己输入的地址/名册名**顶替（改前的病：回显随输入变、不随对端变，
+		//   外部服务占了端口也照报 reachable）。`machine` 是**本进程自报**的机器名（`agent.machine`）。
+		"machine":    s.agent.machine,
 		"ready":      ready,
 		"phase":      phase,
 		"elapsed_ms": elapsedMS,
