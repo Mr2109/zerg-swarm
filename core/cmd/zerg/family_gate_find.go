@@ -61,6 +61,14 @@ var gateFindFields = []string{"name", "scope", "mode", "verdict", "cmd", "log", 
 	//   同规：不改退码（现 rc=0 有现有消费者）、不改前十一格的字节与顺序、不改任何既有函数行为。
 	"uncertain", "uncertain_lines"}
 
+// gateFindDisplay —— 人面（默认 TSV）列 = 冻结十二格 + 两格人读补充（★ GAP-20260929-28：
+// 第五格形态 `command_kind` 与其真身 `command_resolved`）。★ **不进** `gateFindFields`
+// （那一份是文档/帮助导出面的冻结字段表 = `cmd.fields`）⇒ 不重生命令页、不改机器面字段集。
+// ★ 2.5.15-28c（用法串面开窗已落）：`command_kind` / `command_resolved`（连同 `--uncertain` 那张表的
+// `line`/`kind`/`why`/`raw`）已登进 `main.go` `gate find` 条目的可选字段层（`optFields`）
+// ⇒ `--json command_kind` 点得出来；仍**不进** `fields` 冻结表。
+var gateFindDisplay = append(append([]string{}, gateFindFields...), "command_kind", "command_resolved")
+
 // cmdGateFind —— `zerg gate find <片段> [--json <字段>]`。
 //
 // 放在 `cmdGate` 的分支里（与 `results` 同规：**只在命令面自己的旗标上生效**，不改脚本退码）。
@@ -88,25 +96,41 @@ func cmdGateFind(inv *invocation, stdout, stderr io.Writer, root, script string)
 	decls, unc := parseAddStepsStrict(src)
 	reportUncertainSteps(stderr, unc)
 	needle := strings.ToLower(probe)
+	// ★ 治 GAP-20260928-150（**第二半 · 步名面**）：与门件面（`gateFilesMatching` 的 `baseNeedle` 那一档，
+	//   同一缺口的上半）同尺 —— 片段是**仓内相对路径**（`scripts/gates/x` 一类）时，整串在步名/命令串上
+	//   必然命不中（命令串里写的是**另一前缀**的路径、或只写基名）⇒ 同一件事只差**入参形态**就读出两种结论：
+	//
+	//	zerg gate find check-help-shape               ⇒ rc=0（片段命中步名/命令串）
+	//	zerg gate find scripts/gates/check-help-shape ⇒ rc=1「零命中」（同一件 · 只差入参形态）✗
+	//
+	//   治法＝并上**基名**那一档（filepath.Base）。**基名 == 整串**（片段里没有路径分隔符）时它逐字等价于
+	//   旧行为 ⇒ 缺省面与既有消费者的读数**零变化**；只有带路径分隔符的片段才会多命中（＝要补的那一形态）。
+	baseNeedle := strings.ToLower(filepath.Base(filepath.FromSlash(probe)))
 	rows := []map[string]string{}
 
 	// ① 步骤行：片段命中**步名**或**命令串**（粘成一段再 contains：门件名在命令串里，
-	//    人给的词可能是步名里的词，两处都得能中）。
+	//    人给的词可能是步名里的词，两处都得能中）。整串与**基名**两档并试（见上 · 与门件面同尺）。
 	for _, d := range decls {
-		if !strings.Contains(strings.ToLower(d.Name+"\n"+d.Cmd), needle) {
+		// ★ GAP-20260929-28：匹配面**并上坐实值集** —— 第五格是变量间接时，命令内容在
+		//   `${VAR}` 的赋值里（如 `unhealthy_count` 藏在 `${B8_ROSTER_CMD}`）⇒ 不并上的话
+		//   「内容在盘、门面看不见」。字面命令的 Hay 逐字不变（零影响）。
+		hay := strings.ToLower(d.Name + "\n" + d.Cmd + "\n" + gateValuesHay(d))
+		if !strings.Contains(hay, needle) && !strings.Contains(hay, baseNeedle) {
 			continue
 		}
 		logNote, _ := gateStepLogNote(root, d.Name)
 		rows = append(rows, map[string]string{
-			"name":    d.Name,
-			"scope":   d.Scope,
-			"mode":    gateShowModeCell(d.Mode),
-			"verdict": gateModeVerdict(d.Mode),
-			"cmd":     d.Cmd,
-			"log":     logNote,
-			"source":  fmt.Sprintf("%s:%d", gateScriptRel, d.Line),
-			"next":    fmt.Sprintf("%s gate show '%s' --json", progName, d.Name),
-			"wiring":  gateWiringNote(root, d.Cmd, decls, unc),
+			"name":             d.Name,
+			"scope":            d.Scope,
+			"mode":             gateShowModeCell(d.Mode),
+			"verdict":          gateModeVerdict(d.Mode),
+			"cmd":              d.Cmd,
+			"log":              logNote,
+			"source":           gateFindSourceCell(d),
+			"next":             fmt.Sprintf("%s gate show '%s' --json", progName, d.Name),
+			"wiring":           gateWiringNote(root, d.Cmd, decls, unc),
+			"command_kind":     d.Kind,
+			"command_resolved": gateCmdResolvedCell(d),
 		})
 	}
 
@@ -134,34 +158,54 @@ func cmdGateFind(inv *invocation, stdout, stderr io.Writer, root, script string)
 			mode := gateShowModeCell(d.Mode)
 			logNote, _ := gateStepLogNote(root, d.Name)
 			rows = append(rows, map[string]string{
-				"name":    rel,
-				"scope":   d.Scope,
-				"mode":    mode,
-				"verdict": fmt.Sprintf("（本件由步骤 %q 点名）%s", d.Name, gateModeVerdict(d.Mode)),
-				"cmd":     d.Cmd,
-				"log":     logNote,
-				"source":  fmt.Sprintf("%s:%d（命令串点名）", gateScriptRel, d.Line),
-				"next":    fmt.Sprintf("%s gate show '%s' --json", progName, d.Name),
-				"wiring":  gateWiringNote(root, rel, decls, unc),
+				"name":             rel,
+				"scope":            d.Scope,
+				"mode":             mode,
+				"verdict":          fmt.Sprintf("（本件由步骤 %q 点名）%s", d.Name, gateModeVerdict(d.Mode)),
+				"cmd":              d.Cmd,
+				"log":              logNote,
+				"source":           fmt.Sprintf("%s:%d（命令串点名）", gateScriptRel, d.Line),
+				"next":             fmt.Sprintf("%s gate show '%s' --json", progName, d.Name),
+				"wiring":           gateWiringNote(root, rel, decls, unc),
+				"command_kind":     d.Kind,
+				"command_resolved": gateCmdResolvedCell(d),
 			})
 			continue
 		}
 		rows = append(rows, map[string]string{
-			"name":    rel,
-			"scope":   "—",
-			"mode":    "—",
-			"verdict": gateFindUnnamedVerdict(rel, unc),
-			"cmd":     "—",
-			"log":     "—",
-			"source":  gateFindUnnamedSource(rel, unc),
-			"next":    fmt.Sprintf("%s code find '%s'", progName, filepath.Base(rel)),
-			"wiring":  gateWiringNote(root, rel, decls, unc),
+			"name":             rel,
+			"scope":            "—",
+			"mode":             "—",
+			"verdict":          gateFindUnnamedVerdict(rel, unc),
+			"cmd":              "—",
+			"log":              "—",
+			"source":           gateFindUnnamedSource(rel, unc),
+			"next":             fmt.Sprintf("%s code find '%s'", progName, filepath.Base(rel)),
+			"wiring":           gateWiringNote(root, rel, decls, unc),
+			"command_kind":     "—",
+			"command_resolved": "—（未点名 ⇒ 无命令串）",
 		})
 	}
 
 	if len(rows) == 0 {
 		// ★ 零命中的口径与 `zerg code find` **逐字一致**：这不是错，是「没有」（退码 1）。
 		// 所以这里**不** setErr（error 面只在真出错时出现）—— 只把「怎么找得着」印给人。
+		//
+		// ★ GAP-20260929-28（**零命中要分家**）：步骤表里存在「变量间接 / 命令替换」声明（或读不出的
+		//   声明行）时，**「零命中」不等于「真没有」** —— 真身可能藏在变量/命令替换里（内容在盘、可见面
+		//   看不见）。此时印「**可能是解析不到**」并逐条点名件:行；✗ 不许再拿「真没有」盖过去
+		//   （拿「读不到」当「没有」＝本仓病根，同族纪律「读不到不许当健康」）。
+		if note := gateFindOpaqueNote(decls, unc); note != "" {
+			fmt.Fprintf(stderr, "%s: 零命中 —— 但步骤表里有**看不见真身**的声明（变量间接 / 命令替换 / 解析不确定）⇒ 这一段可能是**解析不到**，不是「真没有」（退码 1）\n",
+				progName)
+			fmt.Fprintf(stderr, "  看不见真身的声明：%s\n", note)
+			fmt.Fprintf(stderr, "口径：命令串若整串进了变量、或由函数运行期拼装，片段就命不中它（内容不在步骤表可见面）；逐条核 `%s code show %s:<行>`；要看全表 `%s gate ls`\n",
+				progName, gateScriptRel, progName)
+			for _, s := range nearestSteps(decls, probe, 3) {
+				fmt.Fprintf(stderr, "  像它的是：%s\n", s)
+			}
+			return exitFail
+		}
 		fmt.Fprintf(stderr, "%s: 零命中 —— 步骤名、命令串与 scripts/gates/ 件名里都没有 %q（现读 add_step 行 %d 条 · 退码 1）\n",
 			progName, probe, len(decls))
 		fmt.Fprintf(stderr, "口径：零命中不是错，是「没有」；要看全表 `%s gate ls`，要按件名找 `%s find <名字片段>`\n",
@@ -189,7 +233,109 @@ func cmdGateFind(inv *invocation, stdout, stderr io.Writer, root, script string)
 			progName, len(rows), len(rows), gateFindUniqueNo, len(rows))
 	}
 	// 表/JSON 两条路都走 `listCmd`（与 `gate explain` 同一入口）⇒ 默认面与机器面**不各写一份**。
-	return listCmd(inv, stdout, stderr, gateFindFields, rows)
+	// ★ GAP-20260929-28：人面列 = gateFindDisplay（冻结十二格 + command_kind/command_resolved）。
+	return listCmd(inv, stdout, stderr, gateFindDisplay, rows)
+}
+
+// ── ★ 2.5.15-28c（缺口 `GAP-20260929-28` 剩面）：`gate find --uncertain` —— 把「解析不确定」清单
+//
+//	从 **stderr 侧信道**提到**正门 stdout / 机器面**（`line`/`kind`/`why`/`raw` 表 + `--json`）。
+//
+// 病：`reportUncertainSteps` 只把读不出的声明行报给进程 stderr（人读面）⇒ 机读侧（子代理 / 门）
+//
+//	拿不到清单，同族纪律「读不到不许当健康」在**正门**上没有落点。治法 = 同一份 `unc` 走
+//	`listCmd` 出一张正门表（与 `gate ls` / `gate find` 同一入口 ⇒ 默认面与机器面不各写一份）。
+//
+// 退码（比照 `gate find` 的 0/1/2/8 四档 —— ★ 与同类命令一致）：0 有不确定行（列表）·
+//
+//	1 无不确定行（stdout **0 字节** + stderr 一句 · 与 `gate find` 零命中同口径）· 2 用法错 ·
+//	8 不给结论（门禁脚本读不到）。全程**只读**：只读脚本、不跑任何步骤、不写任何件。
+//
+// `--json` 的四格 `line`/`kind`/`why`/`raw` 已登 `main.go` `gate find` 的可选字段层（`optFields`）。
+var gateFindUncertainFields = []string{"line", "kind", "why", "raw"}
+
+func cmdGateFindUncertain(inv *invocation, stdout, stderr io.Writer, root, script string) int {
+	b, err := os.ReadFile(script)
+	if err != nil {
+		inv.setErr("blocked", "gate_script_unreadable", "门禁脚本读不到")
+		fmt.Fprintf(stderr, "%s: 读不到门禁脚本 %s（%v）⇒ 不给结论（退码 8）\n", progName, gateScriptRel, err)
+		return exitBlocked
+	}
+	decls, unc := parseAddStepsStrict(string(b))
+	if len(unc) == 0 {
+		// 无不确定行 ⇒ 与 `gate find` 的「零命中」同口径：这不是错，是「没有」（退码 1 · stdout 0 字节）。
+		fmt.Fprintf(stderr, "%s: 解析不确定 0 条 —— %d 条 `add_step` 声明**全部**读得出（现读 add_step 行 %d 条 · 退码 1）\n",
+			progName, len(decls), len(decls))
+		return exitFail
+	}
+	rows := make([]map[string]string, 0, len(unc))
+	for _, u := range unc {
+		k := u.Kind
+		if k == "" {
+			k = gateUncKindParse
+		}
+		rows = append(rows, map[string]string{
+			"line": fmt.Sprintf("%d", u.Line),
+			"kind": k,
+			"why":  u.Why,
+			"raw":  u.Raw,
+		})
+	}
+	fmt.Fprintf(stderr, "%s: 解析不确定 %d 条（现读 add_step 行 %d 条 · 逐条见下方表；✗ 别拿这 %d 条当「未点名」）\n",
+		progName, len(unc), len(decls), len(unc))
+	return listCmd(inv, stdout, stderr, gateFindUncertainFields, rows)
+}
+
+// gateFindSourceCell —— 步骤行的 `source` 格：出处 = `add_step` 行；第五格是变量/命令替换时**另点名定义行**
+// （★ GAP-20260929-28：让「真身在哪」在出处格直接可读）。字面命令 ⇒ 逐字等于旧形态。
+func gateFindSourceCell(d gateStepDecl) string {
+	base := fmt.Sprintf("%s:%d", gateScriptRel, d.Line)
+	switch d.Kind {
+	case gateCmdKindVarRef:
+		if len(d.Values) > 0 {
+			return fmt.Sprintf("%s（第五格是 %s ⇒ 命令串真身在该变量赋值行 @%s）", base, d.Cmd, gateDefLinesNote(d))
+		}
+		return fmt.Sprintf("%s（第五格是 %s ⇒ 值坐实不出，见「解析不确定」清单）", base, d.Cmd)
+	case gateCmdKindSubst:
+		return fmt.Sprintf("%s（第五格是 %s ⇒ 命令串由 %s() 运行期拼装）", base, d.Cmd, d.CmdName)
+	}
+	return base
+}
+
+// gateFindOpaqueNote —— 零命中时给「解析不到」的取证提示（变量间接 / 命令替换 / 解析不确定行）。
+// 返回空串 ⇒ 表里没有这一类声明（＝「真没有」那一档，按原口径印）。★ GAP-20260929-28。
+func gateFindOpaqueNote(decls []gateStepDecl, unc []gateStepUncertain) string {
+	vars, subs := []string{}, []string{}
+	for _, d := range decls {
+		switch d.Kind {
+		case gateCmdKindVarRef:
+			mark := "坐不实（内容看不见）"
+			if len(d.Values) > 0 {
+				mark = fmt.Sprintf("已坐实 %d 值 @%s", len(d.Values), gateDefLinesNote(d))
+			}
+			vars = append(vars, fmt.Sprintf("%s@%d（%s）", d.Cmd, d.Line, mark))
+		case gateCmdKindSubst:
+			subs = append(subs, fmt.Sprintf("%s@%d", d.Cmd, d.Line))
+		}
+	}
+	uncLines := make([]string, 0, len(unc))
+	for _, u := range unc {
+		uncLines = append(uncLines, fmt.Sprintf("L%d", u.Line))
+	}
+	if len(vars) == 0 && len(subs) == 0 && len(uncLines) == 0 {
+		return ""
+	}
+	parts := []string{}
+	if len(vars) > 0 {
+		parts = append(parts, fmt.Sprintf("变量间接 %d 处（%s）", len(vars), strings.Join(vars, " · ")))
+	}
+	if len(subs) > 0 {
+		parts = append(parts, fmt.Sprintf("命令替换 %d 处（%s）", len(subs), strings.Join(subs, " · ")))
+	}
+	if len(uncLines) > 0 {
+		parts = append(parts, fmt.Sprintf("解析不确定 %d 行（%s）", len(uncLines), strings.Join(uncLines, " · ")))
+	}
+	return strings.Join(parts, "；")
 }
 
 // ── 「命中唯一 / 命中多行」在机器可读面上的**唯一一处**定义（缺口 `GAP-20260928-145`）──

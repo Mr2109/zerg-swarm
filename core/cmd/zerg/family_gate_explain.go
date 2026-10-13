@@ -32,6 +32,18 @@ import (
 type gateStepDecl struct {
 	Scope, Name, Mode, Dir, Cmd string
 	Line                        int
+	// ★ GAP-20260929-28（门面「看得见」那一半）：第五格**三分类** + 变量/命令替换**坐实值集**。
+	//   Kind 取闭集三值 `字面命令` / `变量间接` / `命令替换`（见 gateCommandKind）；CmdName = 变量名或函数名。
+	//   Values = 变量间接形态**坐实到的可能值集**（空 = 坐不实 ⇒ 该声明行另进 unc，明确报 UNCERTAIN）。
+	Kind    string
+	CmdName string
+	Values  []gateCmdValue
+}
+
+// gateCmdValue —— 坐实到的一个可能值（值文本 + 它的**定义行**，行号 1 起）。
+type gateCmdValue struct {
+	Text    string
+	DefLine int
 }
 
 // addStepRE —— `add_step` 声明的四种引法（名字与命令必带引号；scope/mode 不带）。
@@ -69,9 +81,19 @@ var addStepLineRE = regexp.MustCompile(`^\s*add_step\s`)
 //	Line：行号（1 起）；Why：为什么判不确定；Raw：该行原文（截 160 字，够人核对）。
 type gateStepUncertain struct {
 	Line int
+	// ★ 本单（`GAP-20260929-28` 剩面）：`Kind` = 这一条不确定的**分类**（闭集三值，见下）——
+	//   供 `gate find --uncertain` 的 `kind` 格**直读**（✗ 不再靠 `Why` 正文反推）。
+	Kind string
 	Why  string
 	Raw  string
 }
+
+// gateUncKind* —— 一条「解析不确定」的分类闭集三值（`gate find --uncertain` 的 `kind` 格真源）。
+const (
+	gateUncKindParse = "解析失败"
+	gateUncKindVar   = "变量间接"
+	gateUncKindSubst = "命令替换"
+)
 
 func cmdGateExplain(inv *invocation, stdout, stderr io.Writer) int {
 	if len(inv.args) == 0 || strings.TrimSpace(inv.args[0]) == "" {
@@ -128,20 +150,23 @@ func cmdGateExplain(inv *invocation, stdout, stderr io.Writer) int {
 	// 步骤序号（日志文件名里的 NN）**以脚本 --list 为准**（那是运行期真序；自己按源码行数
 	// 数会把 self-test 分支与别的 scope 全算进去 ⇒ 数出来的 NN 与真日志名对不上）。
 	logNote, _ := gateStepLogNote(root, want)
+	// ★ GAP-20260929-28：末两格 = 第五格形态与前身（变量间接解引用 / 命令替换点名）—— 人面可见。
 	row := map[string]string{
-		"scope":      d.Scope,
-		"mode":       d.Mode,
-		"criterion":  gateStepCriterion(d, string(b)),
-		"exit":       gateExitLine,
-		"log":        logNote,
-		"source":     fmt.Sprintf("%s:%d", gateScriptRel, d.Line),
-		"command":    d.Cmd,
-		"verdict":    gateModeVerdict(d.Mode),
-		"script_say": gateScriptSelfSay(root, d.Cmd),
+		"scope":            d.Scope,
+		"mode":             d.Mode,
+		"criterion":        gateStepCriterion(d, string(b)),
+		"exit":             gateExitLine,
+		"log":              logNote,
+		"source":           fmt.Sprintf("%s:%d", gateScriptRel, d.Line),
+		"command":          d.Cmd,
+		"verdict":          gateModeVerdict(d.Mode),
+		"script_say":       gateScriptSelfSay(root, d.Cmd),
+		"command_kind":     d.Kind,
+		"command_resolved": gateCmdResolvedCell(d),
 	}
 	fmt.Fprintf(stderr, "%s: 步骤 %q 的判据讲解（真源 = 脚本自己那两行 · 本命令不另写一份步骤表）\n", progName, want)
 	return listCmd(inv, stdout, stderr,
-		[]string{"scope", "mode", "criterion", "verdict", "exit", "log", "source", "command"}, []map[string]string{row})
+		[]string{"scope", "mode", "criterion", "verdict", "exit", "log", "source", "command", "command_kind", "command_resolved"}, []map[string]string{row})
 }
 
 // parseAddSteps 读出脚本里所有 `add_step` 声明（行号从 1 数）。
@@ -163,6 +188,7 @@ func parseAddStepsStrict(src string) ([]gateStepDecl, []gateStepUncertain) {
 			if addStepLineRE.MatchString(ln) {
 				unc = append(unc, gateStepUncertain{
 					Line: i + 1,
+					Kind: gateUncKindParse,
 					Why:  "行首是 add_step，但四格引号串不闭合（命令串多半是**多行/heredoc**）⇒ 读不出这一条",
 					Raw:  clipLine(ln, 160),
 				})
@@ -172,18 +198,45 @@ func parseAddStepsStrict(src string) ([]gateStepDecl, []gateStepUncertain) {
 		if tail := strings.TrimSpace(ln[loc[1]:]); tail != "" {
 			unc = append(unc, gateStepUncertain{
 				Line: i + 1,
+				Kind: gateUncKindParse,
 				Why:  fmt.Sprintf("第五格捕获串与行尾不符（捕获后行尾还留着 %q）⇒ 捕获串可能是截断的，不当真源", clipLine(tail, 60)),
 				Raw:  clipLine(ln, 160),
 			})
 		}
-		out = append(out, gateStepDecl{
+		d := gateStepDecl{
 			Scope: ln[loc[2]:loc[3]],
 			Name:  addStepUnescape(ln[loc[4]:loc[5]]),
 			Mode:  ln[loc[6]:loc[7]],
 			Dir:   addStepUnescape(ln[loc[8]:loc[9]]),
 			Cmd:   addStepUnescape(ln[loc[10]:loc[11]]),
 			Line:  i + 1,
-		})
+		}
+		// ★ GAP-20260929-28：第五格三分类 ⇒ 变量间接坐实值集；坐不实 / 命令替换 ⇒ 明确进 unc。
+		//   为什么必须在这里判：合法五格、正则吃得下的**变量间接**行既不出声、也看不见真身
+		//   （`gate find unhealthy_count` 零命中 + 被读成「真没有」）—— 本批的病根就在这条静默路上。
+		d.Kind, d.CmdName = gateCommandKind(d.Cmd)
+		switch d.Kind {
+		case gateCmdKindVarRef:
+			d.Values = gateResolveVarValues(src, d.CmdName)
+			if len(d.Values) == 0 {
+				unc = append(unc, gateStepUncertain{
+					Line: i + 1,
+					Kind: gateUncKindVar,
+					Why: fmt.Sprintf("第五格是**变量间接**（%s）：本脚本里坐实不出它的字面值（赋值右侧是命令替换 / 运行期拼装 / heredoc）"+
+						"⇒ **解析不到**（这一步的命令内容读不出来 ⇒ ✗ 别当「步骤表里真没有」）", d.Cmd),
+					Raw: clipLine(ln, 160),
+				})
+			}
+		case gateCmdKindSubst:
+			unc = append(unc, gateStepUncertain{
+				Line: i + 1,
+				Kind: gateUncKindSubst,
+				Why: fmt.Sprintf("第五格是**命令替换**（%s）：命令串由 `%s()` 的函数体在运行期拼装，读不成一行字面命令"+
+					"⇒ **解析不到**（✗ 别当「步骤表里真没有」）", d.Cmd, d.CmdName),
+				Raw: clipLine(ln, 160),
+			})
+		}
+		out = append(out, d)
 	}
 	return out, unc
 }
@@ -209,6 +262,202 @@ func reportUncertainSteps(stderr io.Writer, unc []gateStepUncertain) {
 // —— 那是比「截断」更坏的错（读数看着像真的）。
 func addStepUnescape(s string) string {
 	return strings.NewReplacer(`\"`, `"`, `\\`, `\`).Replace(s)
+}
+
+// ── ★ GAP-20260929-28：第五格**三分类** + 变量/命令替换**坐实**（门面「看得见」的真身）──────────
+//
+// 病根（现读）：命令串先整串算进变量、`add_step` 第五格只留变量名（`"${B8_ROSTER_CMD}"`）⇒
+// `gate find unhealthy_count`（内容藏在变量里）**零命中**、「零命中」被读成「真没有」、
+// `gate explain` 又只回变量名不展开；且该行**合法五格**（正则吃得下）⇒ 既不进 `unc` 清单、也不出声
+// ＝**静默通过**（本批的药）。命令替换 `"$(name …)"` 同病。
+//
+// 治法（本处是唯一真源，`gate find`/`gate explain` 共用）：
+//
+//	① 三分类：字面命令 / 变量间接 / 命令替换（闭集三值）；
+//	② 变量间接 ⇒ 只读本脚本扫 `VAR=` 赋值（**含多行双引号段**）**坐实到可能值集**（if/else 各一支 ⇒ 逐值都收）；
+//	③ 坐实不出（右侧是命令替换 / 运行期拼装 / heredoc）或命令替换（函数体运行期拼装）⇒ 该声明行
+//	   并入 `unc`（reportUncertainSteps）**明确报 UNCERTAIN** —— ✗ 不再静默过。
+const (
+	gateCmdKindLiteral = "字面命令"
+	gateCmdKindVarRef  = "变量间接"
+	gateCmdKindSubst   = "命令替换"
+)
+
+var (
+	gateVarRefBraceRE = regexp.MustCompile(`^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$`)
+	gateVarRefBareRE  = regexp.MustCompile(`^\$([A-Za-z_][A-Za-z0-9_]*)$`)
+	gateSubstNameRE   = regexp.MustCompile(`^\$\(\s*([A-Za-z_][A-Za-z0-9_]*)`)
+)
+
+// gateCommandKind —— 第五格三分类；变量/命令替换形态另返回名字（变量名 / 函数名）。
+func gateCommandKind(cmd string) (kind, name string) {
+	if m := gateVarRefBraceRE.FindStringSubmatch(cmd); m != nil {
+		return gateCmdKindVarRef, m[1]
+	}
+	if m := gateVarRefBareRE.FindStringSubmatch(cmd); m != nil {
+		return gateCmdKindVarRef, m[1]
+	}
+	if strings.HasPrefix(cmd, "$(") {
+		if m := gateSubstNameRE.FindStringSubmatch(cmd); m != nil {
+			return gateCmdKindSubst, m[1]
+		}
+		return gateCmdKindSubst, ""
+	}
+	return gateCmdKindLiteral, ""
+}
+
+// gateResolveVarValues —— 只读本脚本：坐实变量 `<name>` 的赋值 ⇒ 可能值集（含多行双引号段 · 单引号段）。
+// 同一变量被赋值 N 次（if/else 各一支）⇒ 逐值都收（按「定义行 + 值」去重）。
+// 右侧不是可静态取值的引号串（命令替换 / 裸词拼接）⇒ 该次赋值坐不实（不收）。
+func gateResolveVarValues(src, name string) []gateCmdValue {
+	out := []gateCmdValue{}
+	seen := map[string]bool{}
+	lines := strings.Split(src, "\n")
+	prefix := name + "="
+	for i := 0; i < len(lines); i++ {
+		trimmed := strings.TrimLeft(lines[i], " 	")
+		if !strings.HasPrefix(trimmed, prefix) {
+			continue
+		}
+		// `=` **之后**那一列（= 前导空白 + 变量名宽度 + 1）。
+		col := len(lines[i]) - len(trimmed) + len(name) + 1
+		val, endLine, ok := gateReadAssignValue(lines, i, col)
+		if !ok {
+			continue
+		}
+		key := fmt.Sprintf("%d\x00%s", i+1, val)
+		if !seen[key] {
+			seen[key] = true
+			out = append(out, gateCmdValue{Text: val, DefLine: i + 1})
+		}
+		i = endLine // 多行赋值：跳过它的续行
+	}
+	return out
+}
+
+// gateReadAssignValue —— 从 lines[start] 的 col 处起读赋值右侧：只认 `"…"` 与 `'…'` 两种引号串。
+func gateReadAssignValue(lines []string, start, col int) (string, int, bool) {
+	if col >= len(lines[start]) {
+		return "", start, false
+	}
+	switch lines[start][col] {
+	case '"':
+		return gateReadDQuote(lines, start, col)
+	case '\'':
+		return gateReadSQuote(lines, start, col)
+	}
+	return "", start, false
+}
+
+// gateReadDQuote —— 读一个**可跨行**的 bash 双引号串（lines[start][col] == '"'）⇒ 解转义内容 + 结束行。
+//
+// 解转义只认 bash 双引号里的五个特义：`\"` `\\` `\$` 反引号转义 与「反斜杠 + 换行」的行延续；
+// 其余 `\x` **原样留两字符**（✗ 不许一并吃掉 —— 那会把 `python3 -c "...\n..."` 里的 `\n` 静默改成 `n`，
+// 与 addStepUnescape 同一条纪律）。
+func gateReadDQuote(lines []string, start, col int) (string, int, bool) {
+	var b strings.Builder
+	line, c := start, col+1
+	for {
+		if c >= len(lines[line]) {
+			// 行末：双引号串可跨行 ⇒ 换行是串内容的一部分（`\<newline>` 行延续由下一轮的分支吃掉）。
+			if line+1 >= len(lines) {
+				return "", start, false
+			}
+			b.WriteByte('\n')
+			line++
+			c = 0
+			continue
+		}
+		ch := lines[line][c]
+		if ch == '\\' {
+			if c+1 >= len(lines[line]) {
+				// 反斜杠 + 换行 = 行延续：两字符都不进串。
+				if line+1 >= len(lines) {
+					return "", start, false
+				}
+				line++
+				c = 0
+				continue
+			}
+			switch nxt := lines[line][c+1]; nxt {
+			case '"', '\\', '$', '`':
+				b.WriteByte(nxt)
+			default:
+				b.WriteByte('\\')
+				b.WriteByte(nxt)
+			}
+			c += 2
+			continue
+		}
+		if ch == '"' {
+			return b.String(), line, true
+		}
+		b.WriteByte(ch)
+		c++
+	}
+}
+
+// gateReadSQuote —— 读一个**可跨行**的 bash 单引号串（无转义）⇒ 内容 + 结束行。
+func gateReadSQuote(lines []string, start, col int) (string, int, bool) {
+	var b strings.Builder
+	line, c := start, col+1
+	for {
+		if c >= len(lines[line]) {
+			if line+1 >= len(lines) {
+				return "", start, false
+			}
+			b.WriteByte('\n')
+			line++
+			c = 0
+			continue
+		}
+		if lines[line][c] == '\'' {
+			return b.String(), line, true
+		}
+		b.WriteByte(lines[line][c])
+		c++
+	}
+}
+
+// gateValuesHay —— 坐实值集的**搜索面**（供 `gate find` 片段匹配；空值集 ⇒ 空串）。
+func gateValuesHay(d gateStepDecl) string {
+	if len(d.Values) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(d.Values))
+	for _, v := range d.Values {
+		parts = append(parts, v.Text)
+	}
+	return strings.Join(parts, "\n")
+}
+
+// gateDefLinesNote —— 坐实值的定义行清单（形如 `L4124 · L4153/L4155`；空值集 ⇒ 空串）。
+func gateDefLinesNote(d gateStepDecl) string {
+	if len(d.Values) == 0 {
+		return ""
+	}
+	ls := make([]string, 0, len(d.Values))
+	for _, v := range d.Values {
+		ls = append(ls, fmt.Sprintf("L%d", v.DefLine))
+	}
+	return strings.Join(ls, " · ")
+}
+
+// gateCmdResolvedCell —— 第五格「真身」的**人读一格**（`gate explain`/`gate find` 共用一处文案）。
+func gateCmdResolvedCell(d gateStepDecl) string {
+	switch d.Kind {
+	case gateCmdKindVarRef:
+		if len(d.Values) == 0 {
+			return fmt.Sprintf("%s 坐实不出（读不出赋值 ⇒ 见「解析不确定」清单）", d.Cmd)
+		}
+		first := strings.ReplaceAll(d.Values[0].Text, "\n", "⏎")
+		return fmt.Sprintf("%s ⇒ 定义 @%s · 可能值 %d 个（首值：%s）",
+			d.Cmd, gateDefLinesNote(d), len(d.Values), clipLine(first, 80))
+	case gateCmdKindSubst:
+		return fmt.Sprintf("%s ⇒ 由 %s() 运行期拼装（读不出字面命令）", d.Cmd, d.CmdName)
+	default:
+		return "—（字面命令：第五格就是命令串本身）"
+	}
 }
 
 // clipLine —— 取证行原文截断（本仓口径：截断必须**看得出来**，故补 `…`）。

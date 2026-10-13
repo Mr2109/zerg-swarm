@@ -58,12 +58,15 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -330,6 +333,13 @@ func cmdGate(inv *invocation, stdout, stderr io.Writer) int {
 		// 与 `results` 同规：**只读**、不走脚本、不改任何脚本退码 —— 它是第四条命令面分支。
 		// 病根：`gate show` / `gate explain` 的键都是**步骤名**，而手上的名字是**门件名**
 		// （`scripts/gates/check-*.py`）⇒ 没有这一格就只能手搓 `grep add_step` ✗。
+		// ★ 本单（缺口 `GAP-20260929-28` 剩面 · 2026-10-14）：`--uncertain` = 只列全部「解析不确定」行
+		//   （把 `reportUncertainSteps` 的 stderr 侧信道提到**正门** stdout / 机器面 ——
+		//   `family_gate_find.go` 的 `cmdGateFindUncertain`）。不计位置参数；只读、不走脚本、
+		//   不改任何脚本退码（与 `find` 同规）。
+		if inv.hasFlag("--uncertain") {
+			return cmdGateFindUncertain(inv, stdout, stderr, root, script)
+		}
 		return cmdGateFind(inv, stdout, stderr, root, script)
 	case "self-test":
 		args = []string{"--self-test"}
@@ -463,7 +473,15 @@ var gateLsFields = []string{"total", "scope", "mode", "step"}
 // ★ 缺口 GAP-20260926-102（批⑤ · 2026-10-13）：`reds`（最近一趟非 PASS 的步名清单）同走**可选字段层**
 //
 //	（顶层数组格 · 与 `gates_total` 同形：✗ 不进冻结 `fields:` ⇒ 帮助 / 命令页一行不动）。
-var gateLsOptFields = []string{"name", "gates_total", "fast", "reds"}
+//
+// ★ 缺口 `GAP-20260928-68`（本片 · 2026-10-14）：`id` 同走**可选字段层** —— 每步一个**稳定短 id**
+// （`gateStepShortID`：`s` ＋ sha256(归一后步名) 前 4 字节 hex ⇒ `s1a2b3c4d`）。它是**步名确定性派生**
+// 的内容指纹：**不含行号 / 序号 / 表内位置** ⇒ 步骤表里插一行、删一行、重排，其余步的 id **逐字不变**
+// （行号当 id 必漂 —— 那正是本条要治的）；「步名 ↦ 短 id」因此是一张**映射**，✗ 不是第二张步骤表。
+// 映射另**落件** `core/cmd/zerg/testdata/gate-step-ids.json`（真步名的冻结向量 + 机检）。**同名步**
+// ⇒ 响亮判冲突（口径照 `gate explain` 的「步骤名出现 N 次 ⇒ 歧义」），✗ 不静默取首。
+// 逐字：`zerg gate ls --json id` ⇒ `{"steps":[{"id":"s…"},…]}`。✗ 不进冻结 `fields:`（同 `name` 体例）。
+var gateLsOptFields = []string{"name", "gates_total", "fast", "reds", "id"}
 
 // gateLsFieldLegal —— 字段是否在闭集四格内（与 `gateShowFieldLegal` 同形 · 不另写第二份口径）。
 func gateLsFieldLegal(f string) bool {
@@ -478,6 +496,66 @@ func gateLsFieldLegal(f string) bool {
 		}
 	}
 	return false
+}
+
+// gateStepShortID —— 步的**稳定短 id**（缺口 `GAP-20260928-68` · 2026-10-14）：由步名**确定性派生**的
+// 内容指纹。**输入里没有任何行号 / 序号 / 表内位置。**
+//
+//	· 形状：`s` ＋ `sha256(normStepName(步名))` 前 4 字节的 16 进制 ⇒ **8** 个十六进制字符（`s1a2b3c4d`）；
+//	· 为什么这样定：本仓步名是**人读串**（含空格 / 冒号 / CJK / 反引号），而 `gate run --step` / `--fast` /
+//	  脚本的 `filter_step` 一律**按名逐字精确匹配**（脚本口径「命中 0 次（要恰好 1）」）⇒ 工具与脚本手上
+//	  没有一个短而稳的句柄。id 由名派生 ⇒ 引用面变短、变稳，而步骤表真源仍**只有脚本那一处**；
+//	· `normStepName` 是**权威归一**（与脚本 `filter_step` 去反斜杠同一串空间 · 见 `family_gate_run_step.go`）
+//	  ⇒ `--list` 形态与 `add_step` 源文形态（带反斜杠）派生出**同一个** id；
+//	· **插 / 删一行不变**：id 只看步名 ⇒ 表里插一行、删一行、重排，其余步的 id 逐字不变（本片判据
+//	  `gate_step_ids_test.go` 的 `TestGateStepShortID_StableUnderRowInsertDelete` 钉这一条）。
+func gateStepShortID(name string) string {
+	sum := sha256.Sum256([]byte(normStepName(name)))
+	return "s" + hex.EncodeToString(sum[:4])
+}
+
+// gateStepIDRow —— 判「短 id 撞车」要的那三格（步名 / scope / 模式）；id 现算，✗ 不落第二张表。
+type gateStepIDRow struct {
+	Scope string
+	Mode  string
+	Name  string
+}
+
+// gateStepIDConflictReports —— 短 id 撞车清单（缺口 `GAP-20260928-68`）：把「**一个短 id 落在不止一个步上**」
+// 的每一组逐条报出来，✗ 不替调用者择一（同族口径：`gate explain` 的「步骤名出现 N 次 ⇒ 歧义 · 退码 2」）。
+//
+// 两形态**同一条判据**（都报、不分家）：
+//
+//	① **同名步**（`normStepName` 归一后同名）⇒ 短 id 必同，而按名匹配的那几档本来就**不可能有唯一答案**；
+//	② **异名同 id**（sha256 前 4 字节撞了）⇒ 概率极低但**必须报**：静默取首会让工具引到一个**不是它要的**
+//	   步上 —— 「静默取首」正是这类假绿最容易被读成成功的地方。
+//
+// 返回值：每组一行（`短 id ⇒ N 步撞车；scope / 模式 / 步名…`），无撞车 ⇒ 空切片。
+func gateStepIDConflictReports(rows []gateStepIDRow) []string {
+	byID := map[string][]int{}
+	order := []string{}
+	for i, r := range rows {
+		id := gateStepShortID(r.Name)
+		if _, seen := byID[id]; !seen {
+			order = append(order, id)
+		}
+		byID[id] = append(byID[id], i)
+	}
+	out := []string{}
+	sort.Strings(order)
+	for _, id := range order {
+		idx := byID[id]
+		if len(idx) < 2 {
+			continue
+		}
+		var b strings.Builder
+		fmt.Fprintf(&b, "%s ⇒ %d 步撞在同一个短 id 上（判据要一个答案，不是一坨 · 退码 2）", id, len(idx))
+		for _, i := range idx {
+			fmt.Fprintf(&b, "；%s / %s / %q", rows[i].Scope, rows[i].Mode, rows[i].Name)
+		}
+		out = append(out, b.String())
+	}
+	return out
 }
 
 // gateLsJSON —— `gate ls --json [<字段>]` 机器面：仍只跑脚本 `--list`（**不另写步骤表**），
@@ -605,6 +683,7 @@ func gateLsJSON(inv *invocation, stdout, stderr io.Writer, root, script string) 
 	wantGatesTotal := false
 	wantFast := false
 	wantReds := false
+	wantID := false
 	rowKeys := []string{}
 	for _, f := range fields {
 		switch f {
@@ -618,6 +697,10 @@ func gateLsJSON(inv *invocation, stdout, stderr io.Writer, root, script string) 
 		case "fast":
 			// ★ 缺口 `GAP-20260927-21`（本片）：每步**是否在快速档**（名单真源 = 门脚本的 `FAST_STEPS`）。
 			wantFast = true
+			rowKeys = append(rowKeys, f)
+		case "id":
+			// ★ 缺口 `GAP-20260928-68`（本片）：每步的**稳定短 id**（步名派生 · 现算 · ✗ 不落第二张表）。
+			wantID = true
 			rowKeys = append(rowKeys, f)
 		case "reds":
 			// ★ 缺口 GAP-20260926-102（批⑤ · 2026-10-13）：红项清单（顶层格 · 不进 rowKeys）。
@@ -647,6 +730,24 @@ func gateLsJSON(inv *invocation, stdout, stderr io.Writer, root, script string) 
 			inv.setErr("usage", "gate_ls_fast_field_absent", "步表机读面缺 fast 格")
 			fmt.Fprintf(stderr, "%s: 步表机读面（`%s --list --json`）**一步都没有** `fast:true` ⇒ 该格缺失（旧机读面）⇒ 不给结论（✗ 不把「全 false」当读数）\n",
 				progName, gateScriptRel)
+			return exitUsage
+		}
+	}
+	// ★ 缺口 `GAP-20260928-68`（本片 · 2026-10-14）：`--json id` 的取数面**两路都够得着**（id 是步名的
+	//   纯函数 ⇒ 步表机读面在不在都算得出，与 `fast` 那条「必须机读面」不同）⇒ 没有取数失败态；
+	//   要拦的只有一件：**撞车**（一个短 id 落在不止一个步上）⇒ 响亮判红、**不给结论**（退 2），
+	//   ✗ 不静默取首（口径照 `gate explain` 的「步骤名出现 N 次 ⇒ 歧义」）。
+	if wantID {
+		idRows := make([]gateStepIDRow, 0, len(rows))
+		for _, r := range rows {
+			idRows = append(idRows, gateStepIDRow{Scope: r.Scope, Mode: r.Mode, Name: r.Step})
+		}
+		if conf := gateStepIDConflictReports(idRows); len(conf) > 0 {
+			inv.setErr("usage", "gate_ls_step_id_ambiguous", "步的短 id 撞车")
+			fmt.Fprintf(stderr, "%s: `--json id` 判不了 —— 短 id 撞车（一个 id 落在不止一个步上 · **不给结论** · 退码 2）：\n", progName)
+			for _, c := range conf {
+				fmt.Fprintf(stderr, "  %s\n", c)
+			}
 			return exitUsage
 		}
 	}
@@ -728,6 +829,9 @@ func gateLsJSON(inv *invocation, stdout, stderr io.Writer, root, script string) 
 						v = r.Scope
 					} else if f == "mode" {
 						v = r.Mode
+					} else if f == "id" {
+						// ★ 缺口 `GAP-20260928-68`：短 id 由步名现算（✗ 不落第二张表 · ✗ 不看行号）。
+						v = gateStepShortID(r.Step)
 					}
 					kk, _ := json.Marshal(f)
 					vv, _ := json.Marshal(v)

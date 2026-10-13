@@ -327,3 +327,183 @@ func TestCLIGateFindPublishFaceForPublishGate(t *testing.T) {
 		t.Fatalf("publish-preflight.sh 真命令位调用该件（第 1 行）⇒ wiring 必须补印「发布面: 点名@1」，实得 %q", out1)
 	}
 }
+
+// TestCLIGateFindRelPathFormSameVisibilityAsBasename —— 治 `GAP-20260928-150` 的**第二半**：
+// **入参形态**不许改变可见性（上一半修的是门件面 `gateFilesMatching`，本半同步步名面）。
+//
+// 病（父代理 2026-10-14 现读 · 两条逐字读数）：同一件只差入参形态就读出两种结论 ——
+//
+//	zerg gate find 合成步              ⇒ rc=0（片段命中**步名**）
+//	zerg gate find scripts/gates/合成步 ⇒ rc=1「零命中」（整串在步名/命令串上命不中）
+//
+// 治法＝**步名面与门件面同尺**：整串与**基名**（`filepath.Base`）两档并试。基名 == 整串时逐字等价于
+// 旧行为 ⇒ 缺省面零变化。三格成对（缺一格就证不了「同尺」且「不放宽」）：
+//
+//	① 基名形态（正控 · 旧行为）：rc=0 且命中该步；
+//	② **仓内相对路径形态**（本单修的格）：rc=0 且**读数本体 `items` 与①逐字节同**（同尺就是同一读数）；
+//	③ 反例：**不存在的相对路径** ⇒ 仍 rc=1「零命中」且 stdout 0 字节（补形态 ≠ 把「没有」读成「有」）。
+//
+// 走**进程内** `runZergRepo`（读**当前源码** —— `bin/zerg` 是按批重建制品，本单不重建）。
+func TestCLIGateFindRelPathFormSameVisibilityAsBasename(t *testing.T) {
+	root := showRepo(t) // 合成仓：步名「合成步」，命令串 `python3 scripts/gates/synthetic.py`
+
+	// ① 基名形态（正控 · 旧行为一字不改）。
+	rcA, outA, errA := runZergRepo(t, root, "gate", "find", "合成步", "--json", "name,cmd,wiring")
+	if rcA != 0 || !strings.Contains(outA, "合成步") {
+		t.Fatalf("基名形态（正控）应 rc=0 且命中「合成步」，实得 rc=%d stdout=%q stderr=%q", rcA, outA, errA)
+	}
+
+	// ② 仓内相对路径形态 —— 本单的修点：必须与①同尺（同一行集）。
+	rcB, outB, errB := runZergRepo(t, root, "gate", "find", "scripts/gates/合成步", "--json", "name,cmd,wiring")
+	if rcB != 0 {
+		t.Fatalf("**仓内相对路径形态**必须与基名形态同尺（rc=0），实得 rc=%d\nstderr=%s", rcB, errB)
+	}
+	if !strings.Contains(outB, "合成步") {
+		t.Fatalf("相对路径形态必须同样命中「合成步」，实得 stdout=%q", outB)
+	}
+	// 「同尺」＝**读数本体**逐字节同（包封里的 idempotency_key 是逐次派生量，不参与比较）。
+	jA, _ := json.Marshal(envelopeItems(t, outA))
+	jB, _ := json.Marshal(envelopeItems(t, outB))
+	if string(jA) != string(jB) {
+		t.Fatalf("两形态必须给出**同一读数本体**（同尺）\n基名形态：%s\n相对路径形态：%s", jA, jB)
+	}
+
+	// ③ 反例：不存在的相对路径仍须「零命中」（补形态后不许把「没有」读成「有」）。
+	rcC, outC, errC := runZergRepo(t, root, "gate", "find", "scripts/gates/zzz-没有这一件-zzz")
+	if rcC != 1 {
+		t.Fatalf("不存在的相对路径必须仍 rc=1「零命中」，实得 rc=%d\nstderr=%s", rcC, errC)
+	}
+	if strings.TrimSpace(outC) != "" {
+		t.Fatalf("零命中不许写 stdout（K2 的 0 字节档），实得 %q", outC)
+	}
+}
+
+// TestCLIGateFindVariableIndirectCmdVisible —— ★ GAP-20260929-28：命令串先整串算进变量、`add_step` 第五格
+// 只留变量名（`"${VAR}"`）时，门面**必须看得见**（三分类 + 坐实值集），✗ 不许再静默零命中。
+//
+// 病（现读 · 真仓逐字）：`add_step … "${B8_ROSTER_CMD}"` 的命令串里含 `unhealthy_count` ⇒
+// `zerg gate find unhealthy_count` **零命中**（rc=1）且被读成「真没有」；`gate explain` 只回变量名不展开。
+//
+// 本用例钉四件（合成仓 · 进程内读**当前源码** —— `bin/zerg` 是按批重建制品，本单不重建）：
+//
+//	① 变量间接：片段 = 变量**值**里的串（只出现在赋值行）⇒ rc=0 且命中该步（命令内容 ⇒ 步名 的桥）；
+//	② 出处：命中行的 `source` 必须点名**变量**与**它的赋值行**（`@L…`）—— 真身在哪要可读；
+//	③ 反例（字面命令**不误报**）：字面命令串里的片段 ⇒ rc=0 命中该步（与改前逐字同行为）；
+//	④ 零命中分家：变量间接在场时，零命中印「解析不到」而非「真没有」；退码仍 **1**、stdout 仍 **0 字节**。
+func TestCLIGateFindVariableIndirectCmdVisible(t *testing.T) {
+	root := syntheticRepo(t, syntheticGateList)
+	appendToFile(t, filepath.Join(root, "scripts", "gates", "precommit-gates.sh"),
+		// 变量间接（单行双引号赋值 · 命令串整串进变量）：值里含哨兵串 ZZZVARHIT。
+		"\nVAR_CMD=\"python3 scripts/gates/var-hidden.py --marker=ZZZVARHIT\"\n"+
+			"add_step gates \"变量间接步\" tri \"${REPO_ROOT}\" \"${VAR_CMD}\"\n"+
+			// 字面命令（反例）：片段 ZZZLITHIT 逐字在命令串里。
+			"add_step gates \"字面步\" tri \"${REPO_ROOT}\" \"python3 scripts/gates/lit.py --tok=ZZZLITHIT\"\n")
+	mustWrite(t, filepath.Join(root, "scripts", "gates", "var-hidden.py"), "print(1)\n")
+	mustWrite(t, filepath.Join(root, "scripts", "gates", "lit.py"), "print(1)\n")
+
+	// ① 变量间接：片段只出现在**赋值行**（命令串可见面 = `${VAR_CMD}`）⇒ 必须命中该步。
+	rc, out, errb := runZergRepo(t, root, "gate", "find", "ZZZVARHIT", "--json", "name,source")
+	if rc != 0 {
+		t.Fatalf("变量间接的命令内容必须看得见（rc=0），实得 rc=%d\nstdout=%s\nstderr=%s", rc, out, errb)
+	}
+	if !strings.Contains(out, "变量间接步") {
+		t.Fatalf("命中面必须给出步名「变量间接步」（命令内容 ⇒ 步名 的桥），实得 stdout=%q", out)
+	}
+	// ② 出处必须点名**变量**与**它的赋值行**（真身在哪）。
+	if !strings.Contains(out, "VAR_CMD") || !strings.Contains(out, "@L") {
+		t.Fatalf("出处必须点名变量与其赋值行（`${VAR_CMD}` + `@L…`），实得 stdout=%q", out)
+	}
+
+	// ③ 反例：字面命令的片段仍按原样判（✗ 不误报、✗ 不漏报）。
+	rc2, out2, errb2 := runZergRepo(t, root, "gate", "find", "ZZZLITHIT", "--json", "name,source")
+	if rc2 != 0 || !strings.Contains(out2, "字面步") {
+		t.Fatalf("字面命令片段必须照旧命中「字面步」（rc=0），实得 rc=%d stdout=%q stderr=%q", rc2, out2, errb2)
+	}
+
+	// ④ 零命中分家：变量间接在场 ⇒ 印「解析不到」（不是「真没有」）· 退码仍 1 · stdout 空。
+	rc3, out3, errb3 := runZergRepo(t, root, "gate", "find", "zzz-本片段谁都不含-zzz")
+	if rc3 != 1 {
+		t.Fatalf("零命中必须仍 rc=1（不是 2），实得 rc=%d", rc3)
+	}
+	if strings.TrimSpace(out3) != "" {
+		t.Fatalf("零命中不许写 stdout（K2 的 0 字节档），实得 %q", out3)
+	}
+	if !strings.Contains(errb3, "解析不到") {
+		t.Fatalf("变量间接在场时零命中必须印「解析不到」（✗ 不许拿「真没有」盖过去），实得 stderr=%q", errb3)
+	}
+	if strings.Contains(errb3, "是「没有」") {
+		t.Fatalf("变量间接在场时 ✗ 不许再印「真没有」那句（拿读不到当「没有」＝本仓病根），实得 stderr=%q", errb3)
+	}
+}
+
+// TestCLIGateFindUncertainFace —— ★ `GAP-20260929-28` 剩面（2.5.15-28c）：`gate find --uncertain` 把
+// 「解析不确定」清单从 stderr 侧信道提到**正门** stdout / 机器面（`line`/`kind`/`why`/`raw` 表 + `--json`），
+// 并钉住「用法串面已登记」与「字面命令不误报」。
+//
+// 钉五件（合成仓 · 进程内读**当前源码** —— `bin/zerg` 是按批重建制品，本单不重建）：
+//
+//	① 正控：`--uncertain` ⇒ rc=0 且 stdout 是 `line`/`kind`/`why`/`raw` 表（四格齐）；
+//	② 机器面：`--uncertain --json line,kind,why,raw` ⇒ rc=0 且逐条带分类（变量间接 / 命令替换）；
+//	③ 用法串面登记：`--json command_kind` 点得出来（rc=0，✗ 不再 `json_field_unknown`）；
+//	④ 反例（字面命令**不误报**）：字面步**不进**不确定表，且它的片段照旧命中（rc=0）；
+//	⑤ 零不确定 ⇒ 与 `gate find` 零命中同口径：rc=1 · stdout **0 字节** · stderr 有明报。
+func TestCLIGateFindUncertainFace(t *testing.T) {
+	root := syntheticRepo(t, syntheticGateList)
+	appendToFile(t, filepath.Join(root, "scripts", "gates", "precommit-gates.sh"),
+		// 变量间接：`VAR_CMD=$(date)` 是**裸值**（`=` 后不是引号串）⇒ 坐不实 ⇒ 进 unc · 分类=变量间接。
+		"\nVAR_CMD=$(date)\n"+
+			"add_step gates \"变量间接步\" tri \"${REPO_ROOT}\" \"${VAR_CMD}\"\n"+
+			// 命令替换 ⇒ 进 unc · 分类=命令替换。
+			"add_step gates \"命令替换步\" tri \"${REPO_ROOT}\" \"$(my_synth_fn arg)\"\n"+
+			// 字面命令（反例）：片段 ZZZLITHIT 逐字在命令串里 ⇒ ✗ 不许进不确定表。
+			"add_step gates \"字面步\" tri \"${REPO_ROOT}\" \"python3 scripts/gates/lit.py --tok=ZZZLITHIT\"\n")
+
+	// ① 人面：`--uncertain` ⇒ rc=0 且表头四格齐（line/kind/why/raw）。
+	rc, out, errb := runZergRepo(t, root, "gate", "find", "--uncertain")
+	if rc != 0 {
+		t.Fatalf("有不确定行 ⇒ rc=0，实得 rc=%d\nstdout=%s\nstderr=%s", rc, out, errb)
+	}
+	for _, col := range []string{"line", "kind", "why", "raw"} {
+		if !strings.Contains(out, col) {
+			t.Fatalf("正门表必须给 %s 格，实得 stdout=%q", col, out)
+		}
+	}
+
+	// ② 机器面：逐条带分类（变量间接 / 命令替换）；字面步**不进**表。
+	rc2, out2, errb2 := runZergRepo(t, root, "gate", "find", "--uncertain", "--json", "line,kind,why,raw")
+	if rc2 != 0 {
+		t.Fatalf("`--uncertain --json` 必须 rc=0，实得 rc=%d（stderr=%s）", rc2, errb2)
+	}
+	if !strings.Contains(out2, "变量间接") || !strings.Contains(out2, "命令替换") {
+		t.Fatalf("不确定表必须逐条给分类（变量间接 / 命令替换），实得 %q", out2)
+	}
+	if strings.Contains(out2, "字面步") || strings.Contains(out2, "ZZZLITHIT") {
+		t.Fatalf("字面命令**不许**进不确定表（✗ 误报），实得 %q", out2)
+	}
+
+	// ③ 用法串面登记：`--json command_kind` 点得出来（✗ 不再 json_field_unknown）。
+	rc3, out3, errb3 := runZergRepo(t, root, "gate", "find", "ZZZLITHIT", "--json", "name,command_kind")
+	if rc3 != 0 || !strings.Contains(out3, "command_kind") {
+		t.Fatalf("`--json command_kind` 必须点得出来（已登 optFields），实得 rc=%d stdout=%q stderr=%q",
+			rc3, out3, errb3)
+	}
+
+	// ④ 反例：字面步的片段照旧命中（✗ 不因新面而误报 / 漏报）。
+	rc4, out4, errb4 := runZergRepo(t, root, "gate", "find", "ZZZLITHIT", "--json", "name")
+	if rc4 != 0 || !strings.Contains(out4, "字面步") {
+		t.Fatalf("字面步必须照旧命中（rc=0），实得 rc=%d stdout=%q stderr=%q", rc4, out4, errb4)
+	}
+
+	// ⑤ 零不确定 ⇒ 与 `gate find` 零命中同口径：rc=1 · stdout 0 字节 · stderr 明报。
+	clean := syntheticRepo(t, syntheticGateList)
+	rc5, out5, errb5 := runZergRepo(t, clean, "gate", "find", "--uncertain")
+	if rc5 != 1 {
+		t.Fatalf("零不确定必须 rc=1（与 `gate find` 零命中同口径），实得 rc=%d", rc5)
+	}
+	if strings.TrimSpace(out5) != "" {
+		t.Fatalf("零不确定不许写 stdout（K2 的 0 字节档），实得 %q", out5)
+	}
+	if !strings.Contains(errb5, "解析不确定 0 条") {
+		t.Fatalf("零不确定必须有 stderr 明报，实得 %q", errb5)
+	}
+}
