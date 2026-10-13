@@ -20,8 +20,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -577,4 +579,273 @@ func TestScriptRetireRealRosterMissingKeepCostReddens(t *testing.T) {
 		t.Fatalf("负控破：抹 keep_cost 的报错没带 `件:行` 或没点名该列：%v", errs)
 	}
 	t.Logf("真名册派生负控读数（抹首条 keep_cost）：%v", errs)
+}
+
+// ── ⑦ 口径单源漂移判据（GAP-20261012-19 · **自重发现** · ✗ 不写死行号）────────────────────────
+//
+// 病（账内）：`自研面 py/sh` 闭集的**排除前缀口径**散在多处，引用面还**写死行号**
+// （`family_script_retire.go` 后接 `:数字` 的那一类）⇒ 件一长一挪，引用**静默漂**而无人报
+// （引它的门只判自己的件，没有一层会喊）。
+//
+// 判据（三条 · 一律按**符号**定位 ⇒ 行号移位一律不影响它）：
+//
+//	① **单源一致**：实现变量 `scriptRetireClosedSetExcludedPrefixes` ≡ 描述串常量
+//	   `scriptRetireClosedSetDesc` ≡ 契约 `adopt-retire.json` 的 `boundaries` 里「全仓 − …」那条；
+//	② **件内无旧口径**：实现件里凡带「全仓 − …」字样的行，其前缀集合必须 == 单源（✗ 不许重抄一份）；
+//	③ **无写死行号**：扫描域下 .go 里 ✗ 不得再出现「件名 + `.go:` + 数字」这种行号引用。
+//
+// 三态自证：真仓 ⇒ 0 处（绿）· 仓外夹具「锚点**上移 5 行**」⇒ 仍 0 处（撑明**不再随行号漂**）·
+// 仓外夹具「锚点不存在」⇒ 必报（红）。
+
+// srCaliberSym / srCaliberDescSym —— 本判据钉的口径所锚的**符号名**（✗ 不写行号）。
+const srCaliberSym = "scriptRetireClosedSetExcludedPrefixes"
+const srCaliberDescSym = "scriptRetireClosedSetDesc"
+
+// srCaliberBacktickRe / srCaliberQuoteRe —— 两种书写形态里取排除前缀（反引号 X/** 形态 → X/；双引号 "X/" 形态 → X/）。
+var (
+	srCaliberBacktickRe = regexp.MustCompile("`([^`]+)/\\*\\*`")
+	srCaliberQuoteRe    = regexp.MustCompile(`"([^"]+)"`)
+)
+
+// srCaliberPrefixes —— 从一段文字里取排除前缀集合。
+func srCaliberPrefixes(s string) []string {
+	if got := srCaliberBacktickRe.FindAllStringSubmatch(s, -1); len(got) > 0 {
+		out := make([]string, 0, len(got))
+		for _, m := range got {
+			out = append(out, m[1]+"/")
+		}
+		return out
+	}
+	var out []string
+	for _, m := range srCaliberQuoteRe.FindAllStringSubmatch(s, -1) {
+		if strings.HasSuffix(m[1], "/") {
+			out = append(out, m[1])
+		}
+	}
+	return out
+}
+
+// srCaliberFirstLineContaining —— 按**子串**取第一处命中的整行（✗ 不按行号）。
+func srCaliberFirstLineContaining(src, sub string) string {
+	for _, ln := range strings.Split(src, "\n") {
+		if strings.Contains(ln, sub) {
+			return ln
+		}
+	}
+	return ""
+}
+
+// srCaliberSameSet —— 两个前缀集合是否逐元素相等（与次序无关）。
+func srCaliberSameSet(a, b []string) bool {
+	if len(a) == 0 || len(a) != len(b) {
+		return false
+	}
+	m := map[string]int{}
+	for _, x := range a {
+		m[x]++
+	}
+	for _, x := range b {
+		m[x]--
+	}
+	for _, v := range m {
+		if v != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// srCaliberLineRefRe —— 写死行号引用（件名 + ".go:" + 数字）；★ 逐段拼装（✗ 不写字面量），免得本判据件
+// 自己落进自己的扫描面（自指）。
+func srCaliberLineRefRe(stem string) *regexp.Regexp {
+	return regexp.MustCompile(regexp.QuoteMeta(stem) + `\.go:` + `[0-9]+`)
+}
+
+// srCaliberDriftErrors —— 口径单源漂移判据（自重发现 · 按符号定位 · ✗ 不写死行号）。
+func srCaliberDriftErrors(t *testing.T, root, scanDir string) []string {
+	t.Helper()
+	var errs []string
+	add := func(f string, a ...interface{}) { errs = append(errs, fmt.Sprintf(f, a...)) }
+
+	srcPath := filepath.Join(root, "core", "cmd", "zerg", "family_script_retire.go")
+	b, err := os.ReadFile(srcPath)
+	if err != nil {
+		return []string{fmt.Sprintf("读不了实现件 %s：%v", srcPath, err)}
+	}
+	src := string(b)
+
+	implLine := srCaliberFirstLineContaining(src, "var "+srCaliberSym+" =")
+	if implLine == "" {
+		add("锚点不存在：实现件里找不到 `var %s = …`（符号锚失指）", srCaliberSym)
+	}
+	descLine := srCaliberFirstLineContaining(src, "const "+srCaliberDescSym+" =")
+	if descLine == "" {
+		add("锚点不存在：实现件里找不到 `const %s = …`（符号锚失指）", srCaliberDescSym)
+	}
+	impl := srCaliberPrefixes(implLine)
+	if len(impl) == 0 {
+		add("实现变量 `%s` 解析不出任何排除前缀（形态变了？）", srCaliberSym)
+	}
+
+	// 契约面：`boundaries` 里「全仓 − …」那条。
+	var cpref []string
+	cj, err := os.ReadFile(filepath.Join(root, "core", "internal", "contract", "adopt-retire.json"))
+	if err != nil {
+		add("读不了契约件 adopt-retire.json：%v", err)
+	} else {
+		var doc struct {
+			Boundaries []string `json:"boundaries"`
+		}
+		if e := json.Unmarshal(cj, &doc); e != nil {
+			add("契约件解不动：%v", e)
+		} else {
+			joined := ""
+			for _, e := range doc.Boundaries {
+				if strings.Contains(e, "全仓") {
+					joined += e + "\n"
+				}
+			}
+			if joined == "" {
+				add("契约件里找不到「全仓 − …」那条闭集口径")
+			}
+			cpref = srCaliberPrefixes(joined)
+		}
+	}
+
+	// ① 三条口径必须逐集合相等（✗ 不写死具体前缀 —— 由**单源**派生）。
+	for _, c := range []struct {
+		name string
+		got  []string
+	}{
+		{"描述串常量 `" + srCaliberDescSym + "`", srCaliberPrefixes(descLine)},
+		{"契约 `adopt-retire.json` boundaries", cpref},
+	} {
+		if !srCaliberSameSet(impl, c.got) {
+			add("口径不一致：实现 %v ⟷ %s %v", impl, c.name, c.got)
+		}
+	}
+
+	// ② 件内凡带「全仓 − …」字样的行，前缀集合必须 == 单源（✗ 不许重抄一份旧口径）。
+	for i, ln := range strings.Split(src, "\n") {
+		if !strings.Contains(ln, "全仓") {
+			continue
+		}
+		if got := srCaliberPrefixes(ln); len(got) > 0 && !srCaliberSameSet(impl, got) {
+			add("实现件内旧口径（应删掉、只留单源）：%s:%d ⇒ 前缀 %v ≠ 单源 %v",
+				"core/cmd/zerg/family_script_retire.go", i+1, got, impl)
+		}
+	}
+
+	// ③ 无写死行号（扫描域内逐件自重发现，✗ 不预先列件名）。
+	re := srCaliberLineRefRe("family_script_retire")
+	_ = filepath.Walk(filepath.Join(root, filepath.FromSlash(scanDir)), func(p string, info os.FileInfo, e error) error {
+		if e != nil || info.IsDir() || !strings.HasSuffix(p, ".go") {
+			return nil
+		}
+		fb, e2 := os.ReadFile(p)
+		if e2 != nil {
+			return nil
+		}
+		for i, ln := range strings.Split(string(fb), "\n") {
+			if re.MatchString(ln) {
+				rel, _ := filepath.Rel(root, p)
+				add("写死行号引用（应改成**符号锚** `%s`）：%s:%d ⇒ %s",
+					srCaliberSym, filepath.ToSlash(rel), i+1, strings.TrimSpace(ln))
+			}
+		}
+		return nil
+	})
+	return errs
+}
+
+// srWriteCaliberFixture —— 仓外合成夹具树：`topFiller` 行前置注释用来把**锚点位移**；
+// `withAnchor=false` ⇒ 抽掉符号锚（用来证「锚点不存在必红」）。
+func srWriteCaliberFixture(t *testing.T, root string, topFiller int, withAnchor bool) {
+	t.Helper()
+	dir := filepath.Join(root, "core", "cmd", "zerg")
+	if err := os.MkdirAll(filepath.Join(root, "core", "internal", "contract"), 0o755); err != nil {
+		t.Fatalf("建夹具目录失败：%v", err)
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("建夹具目录失败：%v", err)
+	}
+	var sb strings.Builder
+	sb.WriteString("package main\n")
+	for i := 0; i < topFiller; i++ {
+		sb.WriteString("// filler —— 把锚点往下顶的填充行（判据按**符号**定位 ⇒ 位移不影响它）\n")
+	}
+	if withAnchor {
+		sb.WriteString("const " + srCaliberDescSym + " = \"自研面全体 py/sh（全仓 − `vendor/**` − `tools/ocr/venv/**` − `scripts/evals/_archive/**`）\"\n")
+		sb.WriteString("var " + srCaliberSym + " = []string{\"vendor/\", \"tools/ocr/venv/\", \"scripts/evals/_archive/\"}\n")
+	}
+	srWrite(t, filepath.Join(dir, "family_script_retire.go"), sb.String())
+	// 引用面：只说**符号名**，✗ 不写行号。
+	srWrite(t, filepath.Join(dir, "check_lang_freeze.go"),
+		"package main\n// 排除前缀 = 同包 `"+srCaliberSym+"`（符号锚 · ✗ 不写行号）\n")
+	// 契约面：与实现同集合。
+	srWrite(t, filepath.Join(root, "core", "internal", "contract", "adopt-retire.json"),
+		`{"boundaries":["例外类名册…（决-12：**自研面** ＝ 全仓 − `+"`vendor/**`"+` − `+"`tools/ocr/venv/**`"+` − `+"`scripts/evals/_archive/**`"+` 的 py/sh）：…"]}`+"\n")
+}
+
+// TestScriptRetireCaliberSingleSourceRealRepo —— 真仓：口径单源一致 ＋ 件内无旧口径 ＋ 无写死行号 ⇒ 0 处。
+func TestScriptRetireCaliberSingleSourceRealRepo(t *testing.T) {
+	root := repoRootFromCLI(t)
+	if errs := srCaliberDriftErrors(t, root, "core/cmd/zerg"); len(errs) != 0 {
+		t.Fatalf("真仓口径漂移（应 0 处）：%v", errs)
+	}
+}
+
+// TestScriptRetireCaliberAnchorShifted5LinesStillGreen —— 夹具甲：锚点**上移 5 行** ⇒ 判据仍绿
+// （撑明**不再随行号漂**）；对照下移 5 行同样绿。
+func TestScriptRetireCaliberAnchorShifted5LinesStillGreen(t *testing.T) {
+	up := t.TempDir()
+	srWriteCaliberFixture(t, up, 0, true) // 锚点比基线高 5 行
+	if errs := srCaliberDriftErrors(t, up, "core/cmd/zerg"); len(errs) != 0 {
+		t.Fatalf("夹具甲（锚点上移 5 行）应仍绿，实得 %d 处：%v", len(errs), errs)
+	}
+	down := t.TempDir()
+	srWriteCaliberFixture(t, down, 5, true) // 锚点比基线低 5 行
+	if errs := srCaliberDriftErrors(t, down, "core/cmd/zerg"); len(errs) != 0 {
+		t.Fatalf("夹具甲对照（锚点下移 5 行）应仍绿，实得 %d 处：%v", len(errs), errs)
+	}
+}
+
+// TestScriptRetireCaliberAnchorMissingReddens —— 夹具乙：抽掉符号锚 ⇒ 必红，且点名「锚点不存在」。
+func TestScriptRetireCaliberAnchorMissingReddens(t *testing.T) {
+	root := t.TempDir()
+	srWriteCaliberFixture(t, root, 5, false)
+	errs := srCaliberDriftErrors(t, root, "core/cmd/zerg")
+	if len(errs) == 0 {
+		t.Fatal("夹具乙（锚点不存在）应必红，实得 0 处（判据没牙）")
+	}
+	found := false
+	for _, e := range errs {
+		if strings.Contains(e, "锚点不存在") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("夹具乙：报错没点名「锚点不存在」：%v", errs)
+	}
+}
+
+// TestScriptRetireCaliberHardcodedLineRefReddens —— 夹具丙：塞一条写死行号引用 ⇒ 判据③ 必红。
+func TestScriptRetireCaliberHardcodedLineRefReddens(t *testing.T) {
+	root := t.TempDir()
+	srWriteCaliberFixture(t, root, 5, true)
+	srWrite(t, filepath.Join(root, "core", "cmd", "zerg", "check_lang_freeze.go"),
+		"package main\n// 排除前缀见 "+srCaliberSym+"（"+"family_script_retire"+".go:"+"98"+"）\n")
+	errs := srCaliberDriftErrors(t, root, "core/cmd/zerg")
+	if len(errs) == 0 {
+		t.Fatal("夹具丙（写死行号引用）应必红，实得 0 处（判据③ 没牙）")
+	}
+	found := false
+	for _, e := range errs {
+		if strings.Contains(e, "写死行号引用") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("夹具丙：报错没点名「写死行号引用」：%v", errs)
+	}
 }

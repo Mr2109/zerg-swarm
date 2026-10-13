@@ -6,7 +6,7 @@
 //	· 决-01：本正门**只做登记面退场**，✗ 不代管 `git rm`（真删交 git 历史＋提案审计）。
 //	· 决-02：退场真源**沿用** `core/internal/contract/adopt-retire.json` 的 `retire_ledger`
 //	  （✗ 不另起第二真源）；本命令是它的**唯一写面**。
-//	· 决-12：目标件闭集 = **自研面**（＝全仓 − `vendor/**` − `tools/ocr/venv/**` 的 py/sh）。
+//	· 决-12：目标件闭集 = **自研面**（口径**单点真源** = `scriptRetireClosedSetExcludedPrefixes`；✗ 不在此重抄一份前缀表以免长歪）。
 //	  （2026-10-07 Mr2109 拍 · 原文作废：原 `scripts/**`＋`core/**` 只是「退场流程最初扫到的那两棵树」
 //	  ✗ ≠ 自研面 ⇒ 闭集该跟大目标的定义一致，✗ 不跟某个流程的历史范围一致。）
 //	· 决-09：例外类 = **逐条登记名册 ＋ 理由 ＋ 保留代价栏**（同真源 `retire_exceptions`）。
@@ -97,7 +97,7 @@ const scriptRetireClosedSetDesc = "自研面全体 py/sh（全仓 − `vendor/**
 //	✗ 不跟「退场流程最初扫到的那两棵树」（原 `scripts/**`＋`core/**`）一致。
 var scriptRetireClosedSetExcludedPrefixes = []string{"vendor/", "tools/ocr/venv/", "scripts/evals/_archive/"}
 
-// scriptRetireInClosedSet —— 目标件闭集判定（决-12）：自研面 py/sh（全仓 − `vendor/**` − `tools/ocr/venv/**`）。
+// scriptRetireInClosedSet —— 目标件闭集判定（决-12）：自研面 py/sh（口径**单点真源** = `scriptRetireClosedSetExcludedPrefixes`）。
 //
 // **逐字**只认两条：① ✗ 不落在任一排除前缀下；② 后缀 ∈ {.py, .sh}。
 func scriptRetireInClosedSet(rel string) bool {
@@ -317,7 +317,7 @@ func scriptRetireExcElements(raw, key string) ([]scriptRetireExcElem, error) {
 // scriptRetireExceptionErrors —— 例外类名册**逐条机检**（GAP-20261007-03）：
 //
 //	① **四列齐**：`category` / `reason` / `keep_cost` / `review_date` 都非空（`object` 亦不许空·主键）；
-//	② `object` 在**决-12 闭集**里（自研面 py/sh：全仓 − `vendor/**` − `tools/ocr/venv/**`）；
+//	② `object` 在**决-12 闭集**里（自研面 py/sh · 口径**单点真源** = `scriptRetireClosedSetExcludedPrefixes`）；
 //	③ `review_date` **可解析**（`2006-01-02`）；
 //	④ `reason` **首词 ∈ 闭集**（6 档）—— 判域 ≡ 首词合档（契约真源）；对照名单内件由本格**校验**。
 //

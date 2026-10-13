@@ -20,7 +20,7 @@
 // 真源（单点 · ✗ 不新造闭集表）：
 //
 //	· 闭集的**排除前缀** = **同包** `scriptRetireClosedSetExcludedPrefixes`
-//	  （`family_script_retire.go:98` · 决-12）；本件经 `scriptRetireInClosedSet` 复用它，
+//	  （同包 `family_script_retire.go` 的 `scriptRetireClosedSetExcludedPrefixes` · 决-12 · **符号锚** ✗ 不写行号）；本件经 `scriptRetireInClosedSet` 复用它，
 //	  ✗ 不复制一份前缀表（判据：全包只此一个 `var …ExcludedPrefixes`）。
 //	· 例外名册 / 退场台账 = **同包** `core/internal/contract/adopt-retire.json` 的
 //	  `retire_exceptions` / `retire_ledger`（`scriptRetireTruthRel` / `scriptRetireExceptionKey`

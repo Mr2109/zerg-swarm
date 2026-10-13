@@ -27,7 +27,7 @@
 //
 // 闭集排除（**目录级** · 读单点真源）：扫描域排除 `vendor/` · `tools/ocr/venv/` ·
 // `scripts/evals/_archive/` —— 前缀表**直读同包单点真源** `scriptRetireClosedSetExcludedPrefixes`
-// （`core/cmd/zerg/family_script_retire.go:98` · 决-12 · 2026-10-08 拍板「来源为归档的件 ≠ 自研面」）；
+// （`core/cmd/zerg/family_script_retire.go` 的 `scriptRetireClosedSetExcludedPrefixes`（**符号锚** ✗ 不写行号） · 决-12 · 2026-10-08 拍板「来源为归档的件 ≠ 自研面」）；
 // ✗ 本件不另立第二份前缀表。原先「归档件靠逐条下架 `cwsWhitelist` 登记消化」的口径已废（口径混两套）。
 //
 // 有序遍历点（逐处交代 · ✗ 不许只写「碰不到」）：① 非 git 根的 `os.walk` 产出序 = scandir 原序、
@@ -758,7 +758,7 @@ func cwsIsGateFile(p string) bool {
 // cwsExcludedByPrefix —— 「来源为归档的件 ≠ 自研面」的**目录级**判定（2026-10-08 拍板）。
 //
 // ★ 前缀表**不由本件自持**：直读**同包单点真源** `scriptRetireClosedSetExcludedPrefixes`
-// （`core/cmd/zerg/family_script_retire.go:98` · 决-12）——
+// （`core/cmd/zerg/family_script_retire.go` 的 `scriptRetireClosedSetExcludedPrefixes`（**符号锚** ✗ 不写行号） · 决-12）——
 //
 //	可机检的判据：全包只此一个 `var …ExcludedPrefixes`。
 //	凡落在这些前缀下的件**不进候选（扫描）域**：既不判断言 A 的「未接线」，也不进候选明细。
