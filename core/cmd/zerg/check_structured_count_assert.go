@@ -7,6 +7,8 @@
 //	naive `add_step [a-z]* "`（不锚）           = 259
 //	有锚声明行 `^\s*add_step\s`（**权威**）      = 253
 //	`add_step` 全 token（连注释/函数/夹具一起）  = 315
+//	★ 上列三数＝**立门时**现读（会随 `add_step` 增删漂移 ⇒ 本门每次现读复算 · ✗ 不拿它们当判据）；
+//	  权威读数的**冻结下界**（棘轮）见 `cscaAuthoritativeBaseline` —— 它钉的是「结构静默变小」，✗ 不是「必须等于某个数」。
 //
 // 差 6 = `clear_steps; add_step self "…"` 那 6 行自检夹具（不在行首 ⇒ 有锚读法不收）。三读数并存，
 // 存量判据点里**无一格**对它们做过「抽到 N 条印出来 + N 有下界 + 有负控 + 抽空 fail-closed」四件事。
@@ -52,7 +54,7 @@
 //	③ **本件自指**：本件在 `core/cmd/zerg/` ⇒ 落 GO 扫描面 ⇒ **自排除**（✗ 不把本件自己算进判据点）。
 //	④ **权威读数的真源只此一处**：`cscaCountReadings` 现读 `precommit-gates.sh` 的 `^\s*add_step\s`
 //	   行数（**有锚声明行** = 权威）⇒ 与 naive / 全 token 两对照读数一并印出（读者一眼看出读数是否相符）。
-//	   ★ 三读法**自排除本门自己那一步**（本门不数自己 ⇒ 加本门的前/后三读法同值 · 权威读数稳在 253）。
+//	   ★ 三读法**自排除本门自己那一步**（本门不数自己 ⇒ 加本门的前/后三读法同值 · 权威读数稳在冻结下界处）。
 package main
 
 import (
@@ -74,10 +76,18 @@ const (
 	cscaSelfRelName     = "check_structured_count_assert.go"
 	cscaSelfTestRelName = "check_structured_count_assert_test.go"
 
-	// cscaAuthoritativeBaseline —— 权威读数（有锚声明行）的**冻结下界**（棘轮 · 只许降）。
+	// cscaAuthoritativeBaseline —— 权威读数（有锚声明行）的**冻结下界**（棘轮）。
 	// 本门对自己的权威读数执行属性 ②：现读 < 此值 ⇒ rc=1（结构静默变小必红）。
-	// 取值点 = 本批（门128）**加步前**的现读复算值（有锚声明行读法）。
-	cscaAuthoritativeBaseline = 253
+	// ★ 「只许降」的准确口径（现读实践 · 见回归牙文件头「重钉记录」）：下界**随真源现读滚动重钉** ——
+	//   真源涨（他路加步）⇒ 同批重钉跟涨到**零余量**（任一 `add_step` 声明行消失即 rc=1）；
+	//   真源合法缩小（退役一步）⇒ 同批下调。任一方向都必须在回归牙文件头写依据与命令。
+	// ★ 重钉（2026-10-14 · 253 → 254）：他路在 `scripts/gates/precommit-gates.sh` 加了一步声明行，
+	//   而本常量与回归牙里手写的期望（253）未同批刷新 ⇒ 真源现读 254 ≠ 253 ⇒ 存量红。现读复核：
+	//   `grep -cE '^[[:space:]]*add_step[[:space:]]' scripts/gates/precommit-gates.sh` ⇒ 255（含本门那一步）；
+	//   同式接 `| grep -vc check-structured-count-assert` ⇒ 254（＝权威读数 · 自排除本门那一步）。
+	// ★ 本 `const` 读不了盘 ⇒ 派生不成立、只能显式重钉；回归牙那边已把期望改成**从真源现读派生**
+	//   （真源再涨不再把牙顶红）。
+	cscaAuthoritativeBaseline = 254
 
 	// cscaSelfStepKey —— 本门那一步的键（三读法**自排除**：本门不数自己那一步 ⇒ 加门前/后三读法同值）。
 	cscaSelfStepKey = "check-structured-count-assert"
@@ -597,7 +607,8 @@ func cscaSelfTest(stdout, stderr io.Writer) int {
 	chk(rc3 == cscaRCblock, fmt.Sprintf("负控：扫描面件取不到 ⇒ rc=2（实得 %d）", rc3))
 
 	// 格8：棘轮负控 —— 权威读数 < 冻结下界 ⇒ rc=1（造大量声明行不可行 ⇒ 直接验读数函数 + 下界比较语义）。
-	chk(rd.anchor < cscaAuthoritativeBaseline, "对照：小夹具的权威读数 < 冻结下界 253（棘轮判据按此比较 ⇒ 真仓低于基线必红）")
+	chk(rd.anchor < cscaAuthoritativeBaseline,
+		fmt.Sprintf("对照：小夹具的权威读数 < 冻结下界 %d（棘轮判据按此比较 ⇒ 真仓低于基线必红）", cscaAuthoritativeBaseline))
 
 	// 格9：自排除 —— 本件与其回归牙名已声明（真仓扫描面不含它们）。
 	chk(cscaSelfRelName == "check_structured_count_assert.go" &&
