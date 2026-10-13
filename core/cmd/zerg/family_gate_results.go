@@ -67,6 +67,12 @@ const gateResultsTSV = "results.tsv"
 //	`gateRunStepPerRule`（✗ 不另写第二份）。读不到 ⇒ 哨兵，✗ 不编数。
 var gateResultsFields = []string{"step", "status", "rc", "secs", "log", "worktree_fp", "head", "per_rule", "examples"}
 
+// gateResultsOptFields —— `gate results --json` 的**可选字段层**（`optFields`，与 `gate ls` / `code find`
+// 的 `count` 同一体例）：登在出口白名单、点得出来，但**不进** `gateResultsFields`（那一份是文档/帮助
+// 导出面的冻结字段表）⇒ 帮助面与命令页一行不动。★ 缺口 GAP-20260927-227（批⑤ · 2026-10-13）：
+// `source`（本页读的是**哪一趟**产物 = 那一趟目录）。
+var gateResultsOptFields = []string{"source"}
+
 // gateResultsStatuses —— 状态列的四档闭集（逐字取自脚本 `_judge` 的四个出口）。
 var gateResultsStatuses = []string{"PASS", "FAIL", "BLOCKED", "REPORT"}
 
@@ -81,6 +87,12 @@ type gateResultsRow struct {
 
 func gateResultsFieldLegal(f string) bool {
 	for _, ok := range gateResultsFields {
+		if f == ok {
+			return true
+		}
+	}
+	// ★ 缺口 GAP-20260927-227（批⑤）：可选字段层同认（与 `gateLsFieldLegal` 同形 · 不另写第二份口径）。
+	for _, ok := range gateResultsOptFields {
 		if f == ok {
 			return true
 		}
@@ -237,6 +249,9 @@ func gateResults(inv *invocation, stdout, stderr io.Writer, root string) int {
 				"step": r.Name, "status": r.Status, "rc": r.RC, "secs": r.Secs, "log": r.Log,
 				"worktree_fp": fpOut, "head": headOut,
 				"per_rule": perRule, "examples": examples,
+				// ★ 缺口 GAP-20260927-227（批⑤ · 2026-10-13）：`source` —— 本页读的是**哪一趟**产物（= 那一趟目录），
+				//   与 `meta.run_dir`/`meta.results_tsv` 同源（✗ 不另算第二遍）。
+				"source": dir,
 			})
 		}
 		rc := selectJSONList(stdout, stderr, inv, inv.path, fields, items)

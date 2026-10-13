@@ -40,6 +40,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 )
 
@@ -1859,6 +1860,18 @@ func clicWriteJSON(path string, doc any) error {
 		os.Remove(tmpName)
 		return err
 	}
+	// ★ 缺口 `GAP-20260927-303`（残余半 · 退点）：目标件已存在 ⇒ 先落一份逐字节**退点**
+	//   `<目标>.bak-<时间戳>`（同目录 · 供误合并/误写后回退）；退点写不成 ⇒ 删临时件、原目标不动。
+	//   （原子替换本身已由上面的临时件 + rename 保证「失败不伤原件」；这里补的是「改坏了能从退点回退」。）
+	if fi, serr := os.Stat(path); serr == nil && !fi.IsDir() {
+		bak := path + ".bak-" + time.Now().Format("20060102-150405")
+		if oldB, oerr := os.ReadFile(path); oerr == nil {
+			if werr := os.WriteFile(bak, oldB, 0o644); werr != nil {
+				os.Remove(tmpName)
+				return werr
+			}
+		}
+	}
 	if err := os.Rename(tmpName, path); err != nil {
 		os.Remove(tmpName)
 		return err
@@ -2310,6 +2323,15 @@ func clicCheckBin(root string, noRuntime bool, binPath string) (int, []string) {
 		"T7 " + t7,
 	}
 	lines = append(lines, t7Info...)
+	// ★ 缺口 `GAP-20260927-289`：把 baseline 的**计数锚**（声明值）与**实测值**在此一览自报 ——
+	//   让「note/计数锚过期」当场可读（T5b/T5c/T5 已在漂时判红；本行把它们摆在一起，✗ 不再只能从账外看出来）。
+	blOK := len(tree) == baseCmds && nMustFail >= baseMf && len(blanks) <= baseBlanks
+	blWord := "漂（见 ✗ T5/T5b/T5c）"
+	if blOK {
+		blWord = "齐"
+	}
+	lines = append(lines, fmt.Sprintf("baseline 计数锚 声明⟷实测（缺口 GAP-20260927-289）：命令树 %d/%d · must-fail %d/%d · 空白 %d/%d ⇒ %s",
+		len(tree), baseCmds, nMustFail, baseMf, len(blanks), baseBlanks, blWord))
 	lines = append(lines, fmt.Sprintf("T6 契约登记表 gate 字段点名本脚本：%s", clicYesNo(gatesNamed)))
 	lines = append(lines, fmt.Sprintf("R7 族名闭合（`agent` 唯一 · 全仓 `zerg node <动作>` 命中）：%d 处", len(hits)))
 	var exemptParts []string

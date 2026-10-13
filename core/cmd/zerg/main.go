@@ -408,6 +408,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 	if inv.hasFlag("--dist") && !usageDeclaresFlag(cmd, "--dist") {
 		inv.unknown = append(inv.unknown, "--dist")
 	}
+	// ★ 本枚（main.go 开窗第 6 条 · 缺口 GAP-20261012-27）：`--check-excludes-parity` 在解析面刚上户口
+	//   （布尔 case）⇒ 全族共用；不在此收口，别族（usage 未列它的命令）真给它会从「未知旗标 2」
+	//   退化成**静默吞**（硬约束⑤）。形状逐字照拄上面 `--dist` 那条。
+	if inv.hasFlag("--check-excludes-parity") && !usageDeclaresFlag(cmd, "--check-excludes-parity") {
+		inv.unknown = append(inv.unknown, "--check-excludes-parity")
+	}
 	// ★ 同一条数据驱动收口（本单 · 缺口 GAP-20260928-139）：`--build-info` 在解析面刚上户口（布尔 case）⇒ **全族共用**；
 	//   若不在此收口，别族（usage 未列它的命令）真给它会从「未知旗标 2」退化成**静默吞**（硬约束⑤：既有命令的退码与输出一字不动）。
 	//   形状逐字照拄上面 `--literal-text` 那条：把不归本命令的那一枚补回 `inv.unknown` ⇒ 由下面**同一条**判词 + 同一个退码 2 收口。`version` 的 usage 已列它 ⇒ 归它。
@@ -737,13 +743,15 @@ func init() {
 		},
 		// ---- 批 A · S2 只读面（§6.2 最小可验证集）：全程零写操作 ----
 		{
-			path:     []string{"doctor"},
-			kind:     "DoctorCheck",
-			summary:  "环境自检（本机项 + 主控可达）· 逐项判定词",
-			usage:    "zerg doctor [--json <字段>]",
-			fields:   []string{"name", "verdict", "detail", "advice", "artifact_commit", "source_head", "bin_perms", "signature", "digest_dialect"},
-			endpoint: "",
-			run:      cmdDoctor,
+			path:    []string{"doctor"},
+			kind:    "DoctorCheck",
+			summary: "环境自检（本机项 + 主控可达）· 逐项判定词",
+			usage:   "zerg doctor [--json <字段>]",
+			fields:  []string{"name", "verdict", "detail", "advice", "artifact_commit", "source_head", "bin_perms", "signature", "digest_dialect"},
+			// ★ 缺口 GAP-20260927-200（批⑤ · 2026-10-13）：`credential_consistency`（凭据一致性判词）走**可选字段层**。
+			optFields: []string{"credential_consistency"},
+			endpoint:  "",
+			run:       cmdDoctor,
 		},
 		{
 			path:    []string{"context", "ls"},
@@ -830,11 +838,12 @@ func init() {
 		// `count` 同一体例）—— 步名的第二个键（同族 `gate find`/`gate explain` 的 `name` 逐字同名）；
 		// **不进**上面这份帮助/导出面的冻结表 ⇒ 帮助面与命令页一行不动。
 		{
-			path:        []string{"gate", "ls"},
-			summary:     "门禁步骤表（逐行等于脚本 --list；薄壳不另写一份）",
-			usage:       "zerg gate ls [--json <字段>]",
-			fields:      []string{"total", "scope", "mode", "step"},
-			optFields:   []string{"name", "gates_total", "fast"},
+			path:    []string{"gate", "ls"},
+			summary: "门禁步骤表（逐行等于脚本 --list；薄壳不另写一份）",
+			usage:   "zerg gate ls [--json <字段>] [--fingerprint]",
+			fields:  []string{"total", "scope", "mode", "step"},
+			// ★ 缺口 GAP-20260926-102（批⑤ · 2026-10-13）：`reds`（最近一趟非 PASS 的步名清单）同走**可选字段层**。
+			optFields:   []string{"name", "gates_total", "fast", "reds"},
 			endpoint:    "",
 			passthrough: true,
 			run:         cmdGate,
@@ -887,9 +896,13 @@ func init() {
 			arity:   "none",
 			args:    []string{"（不收位置参数：那一趟由 `--last`（缺省即最近一趟）或 `--dir <目录>` 指）"},
 			// 逐条五格 = 步名/状态/退码/耗时/日志路径（缺口 `Q-111`/`B-8` 的机器面）。
-			fields:   gateResultsFields,
-			endpoint: "",
-			run:      cmdGate,
+			fields: gateResultsFields,
+			// ★ 缺口 GAP-20260927-227（批⑤ · 2026-10-13）：`source` 走**可选字段层**（`optFields`）——
+			//   「本页读的是**哪一趟**产物」的机读直读口（= 那一趟目录，与 `meta.run_dir`/`meta.results_tsv`
+			//   同源），登在出口白名单、`--json` 点得出来，但不进 `fields` 冻结表 ⇒ 不重生命令页。
+			optFields: []string{"source"},
+			endpoint:  "",
+			run:       cmdGate,
 		},
 		{
 			path:        []string{"gate", "self-test"},
@@ -1025,15 +1038,17 @@ func init() {
 		},
 		// ---- 批 B · T-19 茧壁：`agent ping` 默认经主控、`--direct` 才直连（§十五.4 丙案）----
 		{
-			path:     []string{"agent", "ping"},
-			kind:     "AgentPing",
-			summary:  "探活一台机（默认经主控；`--direct` 直连且回显 via）",
-			usage:    "zerg agent ping <机器名> [--direct <host:port>] [--json <字段>]",
-			arity:    "any",
-			args:     []string{"机器名"},
-			fields:   []string{"machine", "healthy", "code_version", "code_sha", "last_seen", "via"},
-			endpoint: "GET /api/fleet/status（默认档）",
-			run:      cmdAgentPing,
+			path:    []string{"agent", "ping"},
+			kind:    "AgentPing",
+			summary: "探活一台机（默认经主控；`--direct` 直连且回显 via）",
+			usage:   "zerg agent ping <机器名> [--direct <host:port>] [--json <字段>]",
+			arity:   "any",
+			args:    []string{"机器名"},
+			fields:  []string{"machine", "healthy", "code_version", "code_sha", "last_seen", "via"},
+			// ★ 缺口 GAP-20260925-20（批⑤ · 2026-10-13）：`answered_by`（**谁答的探活**）走**可选字段层**。
+			optFields: []string{"answered_by"},
+			endpoint:  "GET /api/fleet/status（默认档）",
+			run:       cmdAgentPing,
 		},
 		// ---- 批 B · T-17 事件面（§九 M1）：**唯一名字** `zerg watch` ----
 		{
@@ -1115,15 +1130,17 @@ func init() {
 			run:      cmdAgentForget,
 		},
 		{
-			path:     []string{"agent", "probe"},
-			kind:     "AgentProbe",
-			summary:  "探活诊断（默认经主控；直达属 F-2 例外、要显式 `--direct`）",
-			usage:    "zerg agent probe <机器名> [--direct] [--json <字段>]",
-			arity:    "any",
-			args:     []string{"机器名"},
-			fields:   []string{"machine", "healthy", "code_version", "code_sha", "last_seen", "via", "direct_gate"},
-			endpoint: "GET /api/fleet/status（默认档）",
-			run:      cmdAgentProbe,
+			path:    []string{"agent", "probe"},
+			kind:    "AgentProbe",
+			summary: "探活诊断（默认经主控；直达属 F-2 例外、要显式 `--direct`）",
+			usage:   "zerg agent probe <机器名> [--direct] [--json <字段>]",
+			arity:   "any",
+			args:    []string{"机器名"},
+			fields:  []string{"machine", "healthy", "code_version", "code_sha", "last_seen", "via", "direct_gate"},
+			// ★ 缺口 GAP-20260925-23（批⑤ · 2026-10-13）：`dial_addr`（本面若持 `--direct` 会拨的地址）走**可选字段层**。
+			optFields: []string{"dial_addr"},
+			endpoint:  "GET /api/fleet/status（默认档）",
+			run:       cmdAgentProbe,
 		},
 		// ---- 缺口 `GAP-20260925-50` ②③④ · `agent` 族第二组（2026-09-26）----
 		{
@@ -1704,15 +1721,19 @@ func init() {
 		//   「不自己比 mtime/sha」）；本命令比的是**审计行 vs 工作树身份**（两枚既有 sha 面的对拍），
 		//   不是自己造第二套判脏口径 —— 候选实现面 = 只读命令 `core/cmd/zerg/family_audit.go`。
 		{
-			path:     []string{"audit", "cover"},
-			kind:     "AuditCover",
-			summary:  "对拍「工作树脏件 ↔ 审计行」：分母 = `git status --porcelain=v1` 的**已跟踪 `M`/`A` 行**（真源是 git 自己的面 · **不由审计定**）· 逐件比「工作树 `sha256` ↔ 审计里该件最新一条 `edit` 行的 `after_sha256`」· 四判词 `有记录/无记录/记录过期/读不到` · 逐条点名未覆盖件（件·状态·工作树 sha16·审计有无行）+ 计数 · **只报告档**：有未覆盖仍退 0（不进任何必跑路径）· `8` = 读不到/**分母 0 判不了**（不当绿）· 与 `GAP-20260928-79` 族对偶（79 = 有行但回指不到授权物 · 本格 = 压根没有行）",
-			usage:    auditCoverUsage,
-			arity:    "none",
-			args:     []string{"（不收位置参数 —— 面由 `--file <件>` 收窄、仓根由 `--root <仓根>` 给）"},
-			fields:   auditCoverFields,
-			endpoint: "",
-			run:      cmdAuditCover,
+			path:    []string{"audit", "cover"},
+			kind:    "AuditCover",
+			summary: "对拍「工作树脏件 ↔ 审计行」：分母 = `git status --porcelain=v1` 的**已跟踪 `M`/`A` 行**（真源是 git 自己的面 · **不由审计定**）· 逐件比「工作树 `sha256` ↔ 审计里该件最新一条 `edit` 行的 `after_sha256`」· 四判词 `有记录/无记录/记录过期/读不到` · 逐条点名未覆盖件（件·状态·工作树 sha16·审计有无行）+ 计数 · **只报告档**：有未覆盖仍退 0（不进任何必跑路径）· `8` = 读不到/**分母 0 判不了**（不当绿）· 与 `GAP-20260928-79` 族对偶（79 = 有行但回指不到授权物 · 本格 = 压根没有行）",
+			usage:   auditCoverUsage,
+			arity:   "none",
+			args:    []string{"（不收位置参数 —— 面由 `--file <件>` 收窄、仓根由 `--root <仓根>` 给）"},
+			fields:  auditCoverFields,
+			// ★ 缺口 GAP-20260926-56（批⑤ · 2026-10-13）：`verified` 走**可选字段层**（`optFields`，与
+			//   `code find` 的 `count` 同一体例）—— 「该件有没有改动记录」的机读直读口，登在出口白名单、
+			//   `--json` 点得出来，但不进 `fields` 那份冻结帮助 / 文档导出面字段表 ⇒ 不重生命令页。
+			optFields: []string{"verified"},
+			endpoint:  "",
+			run:       cmdAuditCover,
 		},
 		// ---- D3b 第三步（2026-09-21）：**提交面**（缺口-命令面 §九 I4）----
 		// 按文件名暂存（禁 `git add -A`）· 过快速档才放行 · 禁 `--no-verify` · 提交信息模板。
@@ -1943,7 +1964,7 @@ func init() {
 			opened:  true,
 			kind:    "PublishRun",
 			summary: "出公开镜像树（**本地** dist/<版本>/release · 白名单+排除项+脱敏 · 不出网、不推送）",
-			usage:   "zerg publish run [--dry-run | --confirm=<主机名> --yes]",
+			usage:   "zerg publish run [--check-excludes-parity] [--dry-run | --confirm=<主机名> --yes]",
 			// 本版已开放（Mr2109 2026-09-25「脱敏推」授权）：真跑只写**本地**产物目录。
 			// 「推远端」不在命令面 —— 不可逆动作按规矩等 Mr2109 发话后单独执行（不另开执行路径）。
 			run: cmdPublishRun,
@@ -2333,13 +2354,16 @@ func init() {
 		},
 		// ---- 批 D · T-48 构建族（K 族 · §3.5 · §7.1 P11 · §17.2 ③ 建环）----
 		{
-			path:     []string{"build", "ls"},
-			kind:     "BuildArtifact",
-			summary:  "制品现状（现读 bin/ 逐件 sha256 + 身份件）—— 清单真源仍是构建脚本",
-			usage:    "zerg build ls [--json <字段>]",
-			fields:   []string{"name", "sha256", "bytes", "mtime", "version", "code", "built"},
-			endpoint: "",
-			run:      cmdBuildLs,
+			path:    []string{"build", "ls"},
+			kind:    "BuildArtifact",
+			summary: "制品现状（现读 bin/ 逐件 sha256 + 身份件）—— 清单真源仍是构建脚本",
+			usage:   "zerg build ls [--json <字段>]",
+			fields:  []string{"name", "sha256", "bytes", "mtime", "version", "code", "built"},
+			// ★ 缺口 GAP-20260927-311（批⑤ · 2026-10-13）：`identity`（逐件**身份串**）走**可选字段层**——
+			//   登在出口白名单、`--json` 点得出来，但不进 `fields` 冻结表 ⇒ 不重生命令页。
+			optFields: []string{"identity"},
+			endpoint:  "",
+			run:       cmdBuildLs,
 		},
 		{
 			path:     []string{"build", "show"},
@@ -2645,7 +2669,7 @@ func init() {
 			path:    []string{"dev", "proposal"},
 			kind:    "Proposal",
 			summary: "提案件通道：只产可审查物（new|list|show|check|revise）· 目标必须回指既有编号 · **判据必须可机检** · `check --deep` 真跑每件判据（报 rc 与命中数）· 「提 ≠ 批」两对字段（subject/approver）· 作废档 `--retract/--void <提案 id>`（打作废标记 · 号不复用 · 落审计一行）",
-			usage:   "zerg dev proposal new --title <题（必填）> --target <待办编号（必填 · 只收 D/E/F/G 族编号 · 逐条闭集真源 core/internal/contract/dev-targets.json）> --goal <目标（必填）> --evidence <出处（必填 · 至少一条）—— 两类：① **id 形状**（首部 `GAP-…` / `DEV-…`，如 `GAP-YYYYMMDD-NN`）须**在册**（缺口账 / 在册提案件里查得到）—— 查不到 ⇒ 退码 2「出处 … 在缺口账 / 在册件里查不到 ⇒ 不给结论」；② **描述性证据**（无前缀自由文本）直接收，不要求在册> --rollback <退点件（必填 · 仓外整件路径 —— 退建议照它核 sha256 取改前态；路径形的退点（绝对 / 带目录分隔符）在提案这一步就要求**现读可得**（读不到 / 是目录 ⇒ 当场退 2），非路径形的「方式」文本才留到退建议那一步判）> --criterion <判据（必填 · 一条首词是 zerg、本版真跑得动的命令）> [--criterion-new <前瞻判据（可选 · 一条首词是 zerg、本版**还跑不动**的命令形态 ⇒ 显式标前瞻；本版已能真跑的命令写 --criterion）>] [--by <提出者>] [--file <要改的件（仓内相对路径 —— 与 --rollback 收的**仓外**整件路径是两套口径 · 别混）>]… [--subject <提出者>] [--subject-kind human|ai|egg|ci] [--egg-id <卵 id>] [--approver <批准者>] [--approver-kind human] [--batch <件.json（可机读批量档 · 一次建多枚 · 逐格走单片档同一条闸 · 与单片旗标互斥）>] [--from-file <件.json（单片档 · 读一枚 JSON 对象 = 一片提案的字段 · 与单片旗标互斥）>] [--add-file <路径（仓内相对 · 可重复 · 补进既有提案的 files[]）>…（revise 补件） [--retract <提案 id> | --void <提案 id> --reason <理由>（作废档：打作废标记 · 号不复用 · 落审计一行）] [--dry-run | --yes]",
+			usage:   "zerg dev proposal new --title <题（必填）> --target <待办编号（必填 · 只收 D/E/F/G 族编号 · 逐条闭集真源 core/internal/contract/dev-targets.json）> --goal <目标（必填）> --evidence <出处（必填 · 至少一条）—— 两类：① **id 形状**（首部 `GAP-…` / `DEV-…`，如 `GAP-YYYYMMDD-NN`）须**在册**（缺口账 / 在册提案件里查得到）—— 查不到 ⇒ 退码 2「出处 … 在缺口账 / 在册件里查不到 ⇒ 不给结论」；② **描述性证据**（无前缀自由文本）直接收，不要求在册> --rollback <退点件（必填 · 仓外整件路径 —— 退建议照它核 sha256 取改前态；路径形的退点（绝对 / 带目录分隔符）在提案这一步就要求**现读可得**（读不到 / 是目录 ⇒ 当场退 2），非路径形的「方式」文本才留到退建议那一步判）> --criterion <判据（必填 · 一条首词是 zerg、本版真跑得动的命令）> [--criterion-new <前瞻判据（可选 · 一条首词是 zerg、本版**还跑不动**的命令形态 ⇒ 显式标前瞻；本版已能真跑的命令写 --criterion）>] [--by <提出者>] [--file <要改的件（仓内相对路径 —— 与 --rollback 收的**仓外**整件路径是两套口径 · 别混）>]… [--subject <提出者>] [--subject-kind human|ai|egg|ci] [--egg-id <卵 id>] [--approver <批准者>] [--approver-kind human] [--batch <件.json（可机读批量档 · 一次建多枚 · 逐格走单片档同一条闸 · 与单片旗标互斥）>] [--from-file <件.json（单片档 · 读一枚 JSON 对象 = 一片提案的字段 · 与单片旗标互斥）>] [--add-file <路径（仓内相对 · 可重复 · 补进既有提案的 files[]）>…（revise 补件） [--retract <提案 id> | --void <提案 id> --reason <理由>（作废档：打作废标记 · 号不复用 · 落审计一行）] [--dry-run | --yes] —— ★ 自由文本字段（题/目标/出处/判据/退点）含反引号或 `$` 时：请用**单引号**包裹、或改走 --from-file <件>；**双引号会被 shell 先展开**（丢字符/误执行）",
 			arity:   "any",
 			args:    []string{"动作：new | list | show | check | revise", "提案 id（show/check/revise 才要 · `--retract`/`--void` 也点名它）"},
 			fields:  proposalFields,
@@ -3278,7 +3302,9 @@ func init() {
 			//   标记的直读口，登在出口白名单、`--json` 点得出来，但**不进** `fields` 那份冻结帮助 /
 			//   文档导出面字段表（与 `truncated`/`hits`/`total`、`code find` 的 `count` 同一体例）
 			//   ⇒ 无需重生成命令页，也不造「表列着、面不产出」的反例。
-			optFields: []string{"truncated", "hits", "total", "triage_batch", "file"},
+			// ★ 缺口 GAP-20260927-322（批⑤ · 2026-10-13）：`frozen`（账真源**读面冻结锚**：sha16 · 行数 ·
+			//   读时点）同走**可选字段层** —— 登在出口白名单、`--json` 点得出来，但不进 `fields` 冻结表。
+			optFields: []string{"truncated", "hits", "total", "triage_batch", "file", "frozen"},
 		},
 		// ★ `gap status` —— **排行面**（批1 第四片 · 只读面 · 2026-09-28）：按件（`--by unit` · 缺省）
 		//   或按模块（`--by module`）分桶排行；**批4 第二片**再加 `--by tier`（按判据分级分桶 ——
@@ -4737,6 +4763,14 @@ func parseInvocation(args []string) (*invocation, error) {
 		//   ★ **✗ 不进 `valueFlagName`**：那张表是**取值**旗标名表，布尔名登进去会让门73 判据丙「形态」判红。
 		//   ★ 必须在下面「未知旗标」兜底**之前**上户口，否则 `dev build --dist` 一律退 2。
 		case a == "--dist":
+			inv.kvSet(a, "true")
+		// ★ 本枚（main.go 开窗第 6 条 · 缺口 GAP-20261012-27）：`--check-excludes-parity` —— `publish run`
+		//   的**对拍闸只读档**（零副作用：只跑排除名册对拍、不走 D3 确认 · 语义在 `family_publish_run.go`
+		//   的 `inv.hasFlag("--check-excludes-parity")` 支）。语义是**布尔档**（用法串写裸形）⇒ 与
+		//   `--dist`/`--build-info` 同一种形态：写进 `inv.kv`（`kvSet`）⇒ dispatch 收口看得见（usage 未列
+		//   它的命令 ⇒ 真给即退 2「未知旗标」）。★ **✗ 不进 `valueFlagName`**（那是**取值**名表）：布尔名
+		//   登进去会让门73 判据丙「形态」判红。必须在下面「未知旗标」兜底**之前**上户口。
+		case a == "--check-excludes-parity":
 			inv.kvSet(a, "true")
 		case strings.HasPrefix(a, "-") && a != "-":
 			// 未知旗标：**先记下**（透传型命令要把它逐字交给脚本）；非透传命令在 dispatch 里硬判。

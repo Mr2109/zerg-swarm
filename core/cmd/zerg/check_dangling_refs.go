@@ -763,6 +763,39 @@ func cdrLoadGapIds(path string) (map[string]bool, string) {
 	return ids, ""
 }
 
+// cdrLedgerSelfDangling —— ★ 缺口 `GAP-20261013-28`：**账真源自身**（缺口账 jsonl）正文里引了
+// **不在册**的缺口号时逐处点名（`<账件名>:<物理行> · 引的号 <号>`）。
+//
+// 为什么单立一档：本门的扫面是 `git ls-files` 的**仓内已跟踪件**，而账真源在**仓外**
+// （`<状态目录>/zerg-cli-gaps.jsonl`）⇒「账内注引用悬空号」结构上看不见（先例 `GAP-20261005-54`
+// 只治了仓内 tracked 件那半）。
+//
+// 口径（**只报告**）：本档 ✗ 不进棘轮（其基线是照**仓内**现读定的）、✗ 不进退出码 —— 逐条打印
+// 供人处置（改指在册号 / 先在账立案）。`ids == nil`（账取不到）⇒ 返回 nil（本类不给结论，
+// 与 GAP 号引用类同一条纪律）；读不到账件 ⇒ 同样返回 nil（照实空转，不编造）。
+func cdrLedgerSelfDangling(ledgerPath string, ids map[string]bool) []string {
+	if ids == nil || ledgerPath == "" || !cdrExists(ledgerPath) {
+		return nil
+	}
+	raw, err := os.ReadFile(ledgerPath)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for i, line := range strings.Split(string(raw), "\n") {
+		// 同一条记录里同一个号可能引多次（注文成段转述）⇒ **按（行, 号）去重**：一格只喊一次。
+		seen := map[string]bool{}
+		for _, ref := range cdrGapRE.FindAllString(line, -1) {
+			if !ids[ref] && !seen[ref] {
+				seen[ref] = true
+				out = append(out, fmt.Sprintf("%s:%d · 引的号 `%s` · 账内不在册（改指在册号，或先在账立案）",
+					filepath.Base(ledgerPath), i+1, ref))
+			}
+		}
+	}
+	return out
+}
+
 // cdrLooksLikeXref —— 跨仓引用是不是「引用形态」（比照 cdrLooksLikeRef，先剥跨仓前缀）。
 func cdrLooksLikeXref(ref string) bool {
 	if strings.HasSuffix(ref, "/") {
@@ -2031,6 +2064,13 @@ func checkDanglingRefsGateMain(stdout, stderr io.Writer, argv []string) int {
 		fmt.Fprintf(stdout, "合计（GAP 号引用类）：候选 %d 处 ⇒ **未判**（缺口账取不到 ⇒ 本类不给结论）\n",
 			gap.candidates)
 	}
+	// ★ 本枚（缺口 `GAP-20261013-28`）：**账真源自身**的悬空号 —— 扫面 = `git ls-files` 的仓内已跟踪件，
+	//   账真源在仓外 ⇒「账内注引了不在册的号」没有任何一层会喊。本档**只报告**：✗ 不进棘轮、✗ 不进退出码。
+	ledSelf := cdrLedgerSelfDangling(ledgerPath, gapIds)
+	fmt.Fprintf(stdout, "合计（账真源自身 · 只报告 · 不计棘轮）：悬挂号引用 %d 处\n", len(ledSelf))
+	for _, l := range ledSelf {
+		fmt.Fprintln(stdout, "   "+l)
+	}
 
 	// ── 棘轮格（存量 ≤ 基线 ⇒ 绿 · 超出 ⇒ 响亮红并点名新增处）────────────────────────
 	// 形状照先例 `check_verify_cmd_real.go` 的 `cvrBaseline` + 棘轮格（同形，✗ 不另起第二套）。
@@ -2184,6 +2224,7 @@ func checkDanglingRefsGateMain(stdout, stderr io.Writer, argv []string) int {
 		o.set("gap_hit", len(gHits))
 		o.set("gap_exempt", len(gExempt))
 		o.set("gap_ledger", ledgerPath)
+		o.set("ledger_self_dangling", len(ledSelf))
 		fmt.Fprintln(stdout, cdrJSONEnc(o, false, 0))
 	}
 	if dumpPath != "" {

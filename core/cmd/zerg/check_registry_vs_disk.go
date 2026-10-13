@@ -500,6 +500,54 @@ func crsAudit(root string) *crsResult {
 	return res
 }
 
+// crsFilterOnly —— 缺口 `GAP-20260926-186`③：只跑一格 / 只看某件（路径前缀匹配）。
+// 逐格调试时免读全量输出；✗ 不改三格口径本身 —— 三格计数按**过滤后**的集合同源现算。
+func crsFilterOnly(res *crsResult, only []string) {
+	match := func(s string) bool {
+		for _, o := range only {
+			o = strings.TrimSpace(o)
+			if o != "" && (s == o || strings.HasPrefix(s, o)) {
+				return true
+			}
+		}
+		return false
+	}
+	var dangling []crsDangling
+	for _, d := range res.dangling {
+		if match(d.entry) {
+			dangling = append(dangling, d)
+		}
+	}
+	res.dangling = dangling
+	var uncovered []crsUncovered
+	for _, u := range res.uncovered {
+		if match(u.entry) {
+			uncovered = append(uncovered, u)
+		}
+	}
+	res.uncovered = uncovered
+	var claims []crsClaim
+	for _, c := range res.claims {
+		if match(c.token) {
+			claims = append(claims, c)
+		}
+	}
+	res.claims = claims
+	var notJudged []crsToken
+	for _, t := range res.notJudged {
+		if match(t.token) {
+			notJudged = append(notJudged, t)
+		}
+	}
+	res.notJudged = notJudged
+	if res.counts != nil {
+		res.counts.dangling = len(res.dangling)
+		res.counts.uncovered = len(res.uncovered)
+		res.counts.claims = len(res.claims)
+		res.counts.notJudged = len(res.notJudged)
+	}
+}
+
 // ── 人读面 ──────────────────────────────────────────────────────────────────
 
 func crsPrintReport(stdout io.Writer, root string, res *crsResult, strict bool) int {
@@ -980,7 +1028,7 @@ func crsSelfTest(stdout io.Writer) int {
 
 // ── 入口（= py `main()`）────────────────────────────────────────────────────
 
-const crsHelpText = `usage: check-registry-vs-disk.py [-h] [--repo REPO] [--strict]
+const crsHelpText = `usage: check-registry-vs-disk.py [-h] [--repo REPO] [--strict] [--only ONLY]
                                  [--json JSON_FIELDS] [--self-test]
 
 登记表 ↔ 盘上真物对拍（空指 / 悬空 / 文案与实际不符）
@@ -991,11 +1039,13 @@ optional arguments:
   --strict            阻断档：任一格 > 0 ⇒ rc=1（默认报告档 rc=0）
   --json JSON_FIELDS  机器面：逗号分隔字段（dangling,uncovered,claims,not_judged,detail,s
                       chema…）
+  --only ONLY         只看点名的条目（路径前缀匹配 · 可重复 / 逗号分隔）—— 逐格调试免读全量
+                      输出（缺口 GAP-20260926-186 ③）
   --self-test         只跑合成夹具自检
 `
 
 func crsArgError(stderr io.Writer, msg string) int {
-	fmt.Fprint(stderr, "usage: check-registry-vs-disk.py [-h] [--repo REPO] [--strict]\n                                 [--json JSON_FIELDS] [--self-test]\n")
+	fmt.Fprint(stderr, "usage: check-registry-vs-disk.py [-h] [--repo REPO] [--strict] [--only ONLY]\n                                 [--json JSON_FIELDS] [--self-test]\n")
 	fmt.Fprintf(stderr, "check-registry-vs-disk.py: error: %s\n", msg)
 	return 2
 }
@@ -1011,6 +1061,8 @@ func registryVsDiskGateMain(stdout, stderr io.Writer, argv []string) int {
 	selfTest := false
 	jsonFields := ""
 	haveJSON := false
+	// ★ 缺口 `GAP-20260926-186`③：`--only <件>` —— 只跑一格 / 只看某件（路径前缀 · 可重复 / 逗号分隔）。
+	onlyArgs := []string{}
 
 	i := 0
 	for i < len(argv) {
@@ -1023,6 +1075,14 @@ func registryVsDiskGateMain(stdout, stderr io.Writer, argv []string) int {
 			strict = true
 		case a == "--self-test":
 			selfTest = true
+		case a == "--only":
+			if i+1 >= len(argv) {
+				return crsArgError(stderr, "argument --only: expected one argument")
+			}
+			onlyArgs = append(onlyArgs, strings.Split(argv[i+1], ",")...)
+			i++
+		case strings.HasPrefix(a, "--only="):
+			onlyArgs = append(onlyArgs, strings.Split(a[len("--only="):], ",")...)
 		case a == "--repo":
 			if i+1 >= len(argv) {
 				return crsArgError(stderr, "argument --repo: expected one argument")
@@ -1054,6 +1114,9 @@ func registryVsDiskGateMain(stdout, stderr io.Writer, argv []string) int {
 
 	root := crsResolveRoot(repoArg)
 	res := crsAudit(root)
+	if len(onlyArgs) > 0 {
+		crsFilterOnly(res, onlyArgs)
+	}
 	rc := crsPrintReport(stdout, root, res, strict)
 	if haveJSON {
 		fmt.Fprintln(stdout, crsEmitJSON(res, jsonFields))

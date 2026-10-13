@@ -244,6 +244,18 @@ var agentLogsDisplay = []string{"ts", "level", "machine", "component", "model", 
 //
 // 与 `agent ping` 的分工（不许两套语义）：`ping` 判「活不活」；`probe` 出**诊断面**
 // （经主控能读到什么 · 直达面为什么默认关 · 要直达得给 `--direct`）。默认档同样**经主控**。
+// agentDialAddrText —— 缺口 GAP-20260925-23（批⑤ · 2026-10-13）：本面若持 `--direct` 会拨的地址。
+//
+// 真源 = 名册（与 `agentChildAddr` **同一枚**）；名册里没有这台机 ⇒ 如实示「（名册里没有这台机）」，
+// ✗ 不编一个地址。取值只读名册件（✗ 不探活、✗ 不发请求）。
+func agentDialAddrText(machine string) string {
+	a, rc := agentChildAddr(machine, io.Discard)
+	if rc != exitOK {
+		return "（名册里没有这台机）"
+	}
+	return a.Host + ":" + strconv.Itoa(a.Port)
+}
+
 func cmdAgentProbe(inv *invocation, stdout, stderr io.Writer) int {
 	if len(inv.args) == 0 {
 		fmt.Fprintf(stderr, "%s: `agent probe` 要一台机器名（`zerg agent ls` 看名册）\n", progName)
@@ -264,6 +276,8 @@ func cmdAgentProbe(inv *invocation, stdout, stderr io.Writer) int {
 	row["machine"] = machine
 	row["via"] = via
 	row["direct_gate"] = "F-2 探活/诊断例外（要直达给 `--direct`；不许默认绕过主控）"
+	// ★ 缺口 GAP-20260925-23（批⑤ · 2026-10-13）：`dial_addr` —— 本面若持 `--direct` 会拨的地址（真源 = 名册）。
+	row["dial_addr"] = agentDialAddrText(machine)
 	return listCmd(inv, stdout, stderr,
 		[]string{"machine", "healthy", "code_version", "code_sha", "last_seen", "via", "direct_gate"},
 		[]map[string]string{row})

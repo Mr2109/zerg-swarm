@@ -861,9 +861,34 @@ func cecCheck(root string) (int, []string, []string, map[string]any) {
 				problems = append(problems, fmt.Sprintf("FAIL R8 %s 落点越界：%s:%d", cecStr(a["id"]), rel, ln))
 				continue
 			}
+			// ★ 本枚（缺口 `GAP-20261013-29`）：落点**按内容判锚**，行号只当提示 —— 源件插入/删除行
+			//   （如 DEV-2742 给 `family_gap.go` 增 50 行）会让**写死的行号**整批漂，而锚串本身还在。
+			//   口径：先看 `line` 那一行；不含锚串 ⇒ 全件找；**全件也没有** ⇒ 才判漂（红）。
+			//   ✗ 不放宽「锚串必须仍在件里」这条牙（删掉锚串照旧红），✗ 不动任何实现件。
 			if want != "" && !strings.Contains(ls[ln-1], want) {
-				problems = append(problems, fmt.Sprintf("FAIL R8 %s 落点 %s:%d 不再含 %q（表 ⟷ 实现漂移）：%s",
-					cecStr(a["id"]), rel, ln, want, cecTrunc(strings.TrimSpace(ls[ln-1]), 120)))
+				// ★ 取**离表记行最近**的那一处（✗ 不取第一处 —— 同一锚串常在多处出现，
+				//   取第一处会把它绑到一段无关正文上 ⇒ 该档的真落点被删也照样绿 = 判据弱于对象）。
+				foundAt, bestDist := -1, 0
+				for i2, l2 := range ls {
+					if !strings.Contains(l2, want) {
+						continue
+					}
+					at := i2 + 1
+					dist := at - ln
+					if dist < 0 {
+						dist = -dist
+					}
+					if foundAt < 0 || dist < bestDist {
+						foundAt, bestDist = at, dist
+					}
+				}
+				if foundAt < 0 {
+					problems = append(problems, fmt.Sprintf("FAIL R8 %s 落点 %s:%d 全件 %d 行均不再含 %q（表 ⟷ 实现漂移）：%s",
+						cecStr(a["id"]), rel, ln, len(ls), want, cecTrunc(strings.TrimSpace(ls[ln-1]), 120)))
+				} else {
+					notes = append(notes, fmt.Sprintf("R8 %s 落点 %s 行号已漂（表记 %d · 锚串现读 %d）—— 按锚串判过（缺口 GAP-20261013-29）",
+						cecStr(a["id"]), rel, ln, foundAt))
+				}
 			}
 		}
 	}

@@ -132,12 +132,12 @@ const dcmdMaxDepth = 3
 
 const dcmdProg = "check-doc-cmds.py"
 
-const dcmdUsageLine = "usage: check-doc-cmds.py [-h] [--scope {formal,devdocs}] [--self-test]"
+const dcmdUsageLine = "usage: check-doc-cmds.py [-h] [--scope {formal,devdocs}] [--self-test] [--root ROOT] [--only ONLY]"
 
 // dcmdReadFails —— B 类读失败登记面（读不了的 `.md` / 命令树源件 · 逐件登记 相对路径 + err 正文）。
 var dcmdReadFails []string
 
-const dcmdHelp = `usage: check-doc-cmds.py [-h] [--scope {formal,devdocs}] [--self-test]
+const dcmdHelp = `usage: check-doc-cmds.py [-h] [--scope {formal,devdocs}] [--self-test] [--root ROOT] [--only ONLY]
 
 门⑫ · 文档-命令一致性（M12 + D3 · T-51）
 
@@ -145,6 +145,11 @@ optional arguments:
   -h, --help            show this help message and exit
   --scope {formal,devdocs}
                         语料域（可重复；缺省 = 两棵都判）
+  --root ROOT           版本面根（devdocs 根）**显式**指定（缺口 GAP-20260927-281）：等价
+                        ZERG_DEVDOCS_ROOT 但显式优先；指到仓根一类**域大小突变** ⇒ BLOCK
+                        rc=2（不再静默扫全树）
+  --only ONLY           只看 / 只判点名的相对路径（前缀匹配 · 可重复 / 逗号分隔；缺口
+                        GAP-20260927-282）
   --self-test
 `
 
@@ -740,7 +745,45 @@ func dcmdCurrentVersion(root string) (string, bool) {
 	return "v" + m[1], true
 }
 
+// ══ 显式旋钮（缺口 `GAP-20260927-281` / `-282`）════════════════════════════════════════════
+
+// dcmdDomainCap —— devdocs 域**大小上限**（缺口 GAP-20260927-281）：正常版本面 ~100 篇，
+// 一旦现读远超它，多半是「根指错了」（指到仓根 / 整棵文档仓）⇒ **BLOCK（rc=2）而不是静默扫全树**。
+const dcmdDomainCap = 800
+
+// dcmdSplitOnly —— `--only` 取值切分（逗号分隔 · 去空白 · 丢空段）。
+func dcmdSplitOnly(s string) []string {
+	out := []string{}
+	for _, x := range strings.Split(s, ",") {
+		if t := strings.TrimSpace(x); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// dcmdFilterOnly —— 语料件按 `--only` 收窄（要么 rel 全等、要么是它的一段前缀）；only 空 ⇒ 原样。
+func dcmdFilterOnly(files []dcmdFile, only []string) []dcmdFile {
+	out := []dcmdFile{}
+	for _, f := range files {
+		for _, o := range only {
+			o = strings.TrimSpace(o)
+			if o != "" && (f.rel == o || strings.HasPrefix(f.rel, o)) {
+				out = append(out, f)
+				break
+			}
+		}
+	}
+	return out
+}
+
+// dcmdCheck —— 旧签名（自检与既有调用点沿用）：无 `--root` / `--only` 旋钮。
 func dcmdCheck(root string, scopes []string) (int, []string) {
+	return dcmdCheckOnly(root, scopes, "", nil)
+}
+
+// dcmdCheckOnly —— 本件主体（+ 缺口 `GAP-20260927-281`/`-282` 两枚显式旋钮：显式版本面根 · 只判点名件）。
+func dcmdCheckOnly(root string, scopes []string, devdocsRoot string, only []string) (int, []string) {
 	dcmdReadFails = nil
 	blockedMsg := fmt.Sprintf("⛔ 不给结论：命令树读不出来（%s 缺件/空转）—— 判据不可判 ⇒ 不给结论", dcmdMainRel)
 	if !dcmdIsFile(dcmdJoin(root, dcmdMainRel)) {
@@ -772,6 +815,13 @@ func dcmdCheck(root string, scopes []string) (int, []string) {
 				blocked = append(blocked, "⛔ 不给结论：formal 扫到 0 篇（空转 = 假绿）—— 判据不可判")
 				continue
 			}
+			if len(only) > 0 {
+				files = dcmdFilterOnly(files, only)
+				if len(files) == 0 {
+					blocked = append(blocked, "⛔ 不给结论：`--only` 收窄后 formal 语料 0 篇（收窄打空 ≠ 零命中）—— 判据不可判")
+					continue
+				}
+			}
 			n, _, details, nUnread := dcmdJudge(files, tree, true, stats)
 			if nUnread > 0 {
 				// ● GAP-20261001-32③ 修（照 py 候件逐处同步）：读不了 ≠ 零命中 ⇒ 归 blocked（rc=2）。
@@ -784,6 +834,9 @@ func dcmdCheck(root string, scopes []string) (int, []string) {
 			detailAll = append(detailAll, dcmdHead(details, 20)...)
 		} else {
 			docsRoot := os.Getenv("ZERG_DEVDOCS_ROOT")
+			if devdocsRoot != "" {
+				docsRoot = devdocsRoot // ★ GAP-20260927-281：显式 `--root` 优先于 env
+			}
 			if docsRoot == "" {
 				// 默认根：`<同级文档仓>/项目文档/<当前版>`，版本由**唯一真源**现算
 				// （py `GAP-20260926-209`：曾钉死 `v2.5.13` ⇒ 换版静默过期 ⇒ 同「先静默绿」一类病）。
@@ -807,6 +860,17 @@ func dcmdCheck(root string, scopes []string) (int, []string) {
 			if !ok {
 				blocked = append(blocked, fmt.Sprintf("⛔ 不给结论：devdocs 根整棵不在盘（%s · 语料域缺件）—— 判据不可判（换根请设 `ZERG_DEVDOCS_ROOT` 或同级根 `ZERG_DOCS_ALT`/`ZERG_DOCS`）", docsRoot))
 				continue
+			}
+			if len(files) > dcmdDomainCap {
+				blocked = append(blocked, fmt.Sprintf("⛔ 不给结论：devdocs **域大小突变**（%d 篇 > 上限 %d · 缺口 GAP-20260927-281）—— 这多半不是**版本面根**（指到了仓根 / 整棵文档仓？）⇒ 静默扫全树会把判据带歪 ⇒ 不可判（请把 `--root` / `ZERG_DEVDOCS_ROOT` 指回 `<…>/项目文档/vX.Y.Z`）", len(files), dcmdDomainCap))
+				continue
+			}
+			if len(only) > 0 {
+				files = dcmdFilterOnly(files, only)
+				if len(files) == 0 {
+					blocked = append(blocked, "⛔ 不给结论：`--only` 收窄后 devdocs 语料 0 篇（收窄打空 ≠ 零命中）—— 判据不可判")
+					continue
+				}
 			}
 			if len(files) == 0 {
 				blocked = append(blocked, "⛔ 不给结论：devdocs 扫到 0 篇（空转 = 假绿）—— 判据不可判")
@@ -885,9 +949,15 @@ func dcmdValidScope(v string) bool {
 
 // dcmdParseArgs —— 复刻 py 的 argparse（`--scope` append + `--self-test` + `-h/--help`）。
 // 返回 (scopes, selfTest, rc, done)：done=true 表示参数面已给出终局（帮助/错误）。
-func dcmdParseArgs(argv []string, stdout, stderr io.Writer) ([]string, bool, int, bool) {
+// dcmdParseArgs —— 复刻 py 的 argparse（`--scope` append + `--self-test` + `-h/--help`），
+// 并按缺口 `GAP-20260927-281` / `-282` 补两枚**显式**旋钮：`--root <版本面根>` 与
+// `--only <相对路径…>`（逐个 rel 前缀匹配 · 可重复 / 逗号分隔）。
+// 返回 (scopes, selfTest, root, only, rc, done)：done=true 表示参数面已给出终局（帮助/错误）。
+func dcmdParseArgs(argv []string, stdout, stderr io.Writer) ([]string, bool, string, []string, int, bool) {
 	scopes := []string{}
 	selfTest := false
+	rootArg := ""
+	only := []string{}
 	unknown := []string{}
 	i := 0
 	for i < len(argv) {
@@ -899,19 +969,39 @@ func dcmdParseArgs(argv []string, stdout, stderr io.Writer) ([]string, bool, int
 		switch {
 		case a == "-h" || a == "--help":
 			fmt.Fprint(stdout, dcmdHelp)
-			return nil, false, dcmdRCOK, true
+			return nil, false, "", nil, dcmdRCOK, true
 		case a == "--self-test":
 			selfTest = true
+			i++
+		case a == "--root":
+			if i+1 >= len(argv) {
+				dcmdArgErr(stderr, "argument --root: expected one argument")
+				return nil, false, "", nil, dcmdRCBlocked, true
+			}
+			rootArg = argv[i+1]
+			i += 2
+		case strings.HasPrefix(a, "--root="):
+			rootArg = a[len("--root="):]
+			i++
+		case a == "--only":
+			if i+1 >= len(argv) {
+				dcmdArgErr(stderr, "argument --only: expected one argument")
+				return nil, false, "", nil, dcmdRCBlocked, true
+			}
+			only = append(only, dcmdSplitOnly(argv[i+1])...)
+			i += 2
+		case strings.HasPrefix(a, "--only="):
+			only = append(only, dcmdSplitOnly(a[len("--only="):])...)
 			i++
 		case a == "--scope":
 			if i+1 >= len(argv) {
 				dcmdArgErr(stderr, "argument --scope: expected one argument")
-				return nil, false, dcmdRCBlocked, true
+				return nil, false, "", nil, dcmdRCBlocked, true
 			}
 			v := argv[i+1]
 			if !dcmdValidScope(v) {
 				dcmdArgErr(stderr, fmt.Sprintf("argument --scope: invalid choice: '%s' (choose from 'formal', 'devdocs')", v))
-				return nil, false, dcmdRCBlocked, true
+				return nil, false, "", nil, dcmdRCBlocked, true
 			}
 			scopes = append(scopes, v)
 			i += 2
@@ -919,7 +1009,7 @@ func dcmdParseArgs(argv []string, stdout, stderr io.Writer) ([]string, bool, int
 			v := a[len("--scope="):]
 			if !dcmdValidScope(v) {
 				dcmdArgErr(stderr, fmt.Sprintf("argument --scope: invalid choice: '%s' (choose from 'formal', 'devdocs')", v))
-				return nil, false, dcmdRCBlocked, true
+				return nil, false, "", nil, dcmdRCBlocked, true
 			}
 			scopes = append(scopes, v)
 			i++
@@ -933,9 +1023,9 @@ func dcmdParseArgs(argv []string, stdout, stderr io.Writer) ([]string, bool, int
 	}
 	if len(unknown) > 0 {
 		dcmdArgErr(stderr, "unrecognized arguments: "+strings.Join(unknown, " "))
-		return nil, false, dcmdRCBlocked, true
+		return nil, false, "", nil, dcmdRCBlocked, true
 	}
-	return scopes, selfTest, 0, false
+	return scopes, selfTest, rootArg, only, 0, false
 }
 
 // checkDocCmdsGateMain —— 真搬入口（M2 刻意无调用点）。
@@ -962,7 +1052,7 @@ func checkDocCmdsGateMain(stdout, stderr io.Writer, argv []string) int {
 		fmt.Fprint(stderr, "⇒ 用法错（rc=2）：**机器面缺 ≠ 零命中** —— 两态不许同形\n")
 		return dcmdRCBlocked
 	}
-	scopes, selfTest, rc, done := dcmdParseArgs(argv, stdout, stderr)
+	scopes, selfTest, rootArg, only, rc, done := dcmdParseArgs(argv, stdout, stderr)
 	if done {
 		return rc
 	}
@@ -977,7 +1067,7 @@ func checkDocCmdsGateMain(stdout, stderr io.Writer, argv []string) int {
 	if len(scopes) == 0 {
 		scopes = []string{"formal", "devdocs"}
 	}
-	jc, lines := dcmdCheck(root, scopes)
+	jc, lines := dcmdCheckOnly(root, scopes, rootArg, only)
 	// ★ 2026-10-04 同步（候选 · GAP-20261001-32③）：先把 stdout 人读面印全（含 py 新增的「读不了 ⇒ blocked」
 	//   文案），再落 B 类登记面的 stderr BLOCKED（Go-only 分叉）—— 改前这里在印 stdout 之前就早退，
 	//   会把 py 侧新增的那条 blocked 文案整个吞掉（= 同步落空）。

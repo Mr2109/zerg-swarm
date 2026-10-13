@@ -82,7 +82,7 @@ type scriptRetireDoc struct {
 // scriptRetireClosedSetDesc —— 闭集口径的**唯一描述串**（决-12）。
 //
 // ★ 报话 / 计划件**全引它**，✗ 不各处手写一份（防「两处各写一套前缀/口径」而长歪）。
-const scriptRetireClosedSetDesc = "自研面全体 py/sh（全仓 − `vendor/**` − `tools/ocr/venv/**`）"
+const scriptRetireClosedSetDesc = "自研面全体 py/sh（全仓 − `vendor/**` − `tools/ocr/venv/**` − `scripts/evals/_archive/**`）"
 
 // scriptRetireClosedSetExcludedPrefixes —— 闭集的**排除前缀表**（决-12 · ★ 单点真源）。
 //

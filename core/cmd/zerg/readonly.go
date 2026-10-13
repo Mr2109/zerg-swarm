@@ -428,14 +428,53 @@ func cmdDoctor(inv *invocation, stdout, stderr io.Writer) int {
 // ⇒ 两键在此**一次补齐**（缺省空串），漂移那一项在自己的分支里写真值（见 `driftIDs`）。
 //
 // 人面一字不动：表渲染取的是 name/verdict/detail/advice 四格，多两个键不进表；退码路径也不碰。
+// doctorCredentialConsistency —— 缺口 GAP-20260927-200（批⑤ · 2026-10-13）：**凭据一致性**判词。
+//
+// 只对拍本单**已有的两行判决**（「凭据」⟷「主控可达」）—— ✗ 不另起一条探活、✗ 不读令牌值
+// （令牌永不进 argv / 日志 / 回显）。「主控接受本机凭据」= 拿着本机凭据打得通主控面那一趟。
+func doctorCredentialConsistency(items []map[string]string) string {
+	cred, core := "", ""
+	for _, it := range items {
+		switch it["name"] {
+		case "凭据":
+			cred = it["verdict"]
+		case "主控可达":
+			core = it["verdict"]
+		}
+	}
+	switch {
+	case cred == "":
+		return "（未取数：本单没有「凭据」项）"
+	case cred != "PASS":
+		return "（无本机凭据 ⇒ 无从对拍）"
+	case core == "PASS":
+		return "一致（磁盘凭据被主控接受 · 主控判决 PASS）"
+	default:
+		c := core
+		if c == "" {
+			c = "（无「主控可达」项）"
+		}
+		return "（未取数：主控" + c + " ⇒ 拿不到主控对凭据的判决）"
+	}
+}
+
 func doctorItems(inv *invocation) []map[string]string {
 	items := doctorItemsRaw(inv)
+	// ★ 缺口 GAP-20260927-200（批⑤ · 2026-10-13）：`credential_consistency` —— 只对拍下面两枚既有行的
+	//   判决（凭据 ⟷ 主控可达），✗ 不另起探活；真值落「凭据」那一行，其余行补齐空串（同
+	//   `artifact_commit`/`source_head` 的补键体例）。
+	consistency := doctorCredentialConsistency(items)
 	for _, it := range items {
 		if _, ok := it["artifact_commit"]; !ok {
 			it["artifact_commit"] = ""
 		}
 		if _, ok := it["source_head"]; !ok {
 			it["source_head"] = ""
+		}
+		if it["name"] == "凭据" {
+			it["credential_consistency"] = consistency
+		} else if _, ok := it["credential_consistency"]; !ok {
+			it["credential_consistency"] = ""
 		}
 	}
 	return items

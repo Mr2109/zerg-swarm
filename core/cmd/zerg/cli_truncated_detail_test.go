@@ -29,6 +29,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	zerg "github.com/Mr2109/zerg-swarm/core/cmd/zerg"
 )
@@ -80,11 +81,21 @@ func cutWarningCount(warns []string) int {
 // 随机 ⇒ 与任何真源件都不撞名，谁的正常开发都改不到它。
 func truncatedZeroHitTarget(t *testing.T, root string) string {
 	t.Helper()
+	// ★ 本枚（缺口 `GAP-20261013-25`）：本靶必须落在**仓内**（`zerg impact` 只认仓内件 ⇒ 不能挪去
+	//   `t.TempDir()`），而 `go test` 被超时/杀进程时 `t.Cleanup` **不跑** ⇒ 仓根会留
+	//   `zerg-zero-hit-*` 未跟踪目录（污染工作树与 `repo status` 读数）。治法两半（✗ 都不改靶的语义）：
+	//   ① 开工先把**上一趟留下的**同前缀目录自扫掉（自愈 · 只扫早于 1h 的，不碰本趟自己的靶）；
+	//   ② 回收失败**出声**（✗ 不静默吞错）。
+	repoSweepStaleZeroHitTargets(t, root)
 	dir, err := os.MkdirTemp(root, "zerg-zero-hit-")
 	if err != nil {
 		t.Fatalf("零命中靶：临时目录建不了（root=%s）：%v", root, err)
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	t.Cleanup(func() {
+		if rmErr := os.RemoveAll(dir); rmErr != nil {
+			t.Errorf("零命中靶：临时目录回收失败（%s）：%v", dir, rmErr)
+		}
+	})
 	name := filepath.Base(dir) + ".go"
 	p := filepath.Join(dir, name)
 	if err := os.WriteFile(p, []byte("package zqzerohit\n"), 0o644); err != nil {
@@ -95,6 +106,30 @@ func truncatedZeroHitTarget(t *testing.T, root string) string {
 		t.Fatalf("零命中靶：相对路径算不出：%v", err)
 	}
 	return filepath.ToSlash(rel)
+}
+
+// repoSweepStaleZeroHitTargets —— 自愈：把仓根下**上一趟**留下的 `zerg-zero-hit-*` 目录扫掉
+// （缺口 `GAP-20261013-25`：被杀进程的那一趟不跑 `t.Cleanup` ⇒ 残留只能靠下一趟自扫）。
+// 只扫 **mtime 早于 1 小时**的（同一趟里的其它用例自己的靶不受影响）；无残留 / 读不到 ⇒ 静默返回
+// （这是清扫不是判据）；扫不掉 ⇒ **出声**（✗ 不许把残留当没事）。
+func repoSweepStaleZeroHitTargets(t *testing.T, root string) {
+	t.Helper()
+	stale, err := filepath.Glob(filepath.Join(root, "zerg-zero-hit-*"))
+	if err != nil || len(stale) == 0 {
+		return
+	}
+	cutoff := time.Now().Add(-1 * time.Hour)
+	for _, p := range stale {
+		fi, stErr := os.Stat(p)
+		if stErr != nil || fi.ModTime().After(cutoff) {
+			continue
+		}
+		if rmErr := os.RemoveAll(p); rmErr != nil {
+			t.Errorf("零命中靶：前趟残留扫不掉（%s）：%v", p, rmErr)
+			continue
+		}
+		t.Logf("零命中靶：自愈扫掉前趟残留 %s", p)
+	}
 }
 
 // synthDetail 造一份合成 detail（负控用 · 键序无关）。

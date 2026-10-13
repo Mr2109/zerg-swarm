@@ -425,6 +425,21 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 
+	// ★ GAP-20261012-09（本单）：**同级仓件防呆** —— 件路径按主仓根解析、而该**相对路径**在某个同级仓里
+	//   真身存在、且本次未给 `--allow-sibling-repo` ⇒ 出**显式警告行**（多半是漏给旗标 = 会把文仓件
+	//   静默新建到主仓同名路径 —— scope 是目录前缀、不区分两仓）。✗ 不拒执（合法主仓同名件仍可落），
+	//   但绝不再静默：机器面 = stderr 逐字含 `sibling_missing`（缺口 GAP-20261012-09 的 want）。
+	if !siblingGiven && fileRel != "" {
+		for _, n := range devEditSiblingRepos {
+			cand := filepath.Join(filepath.Dir(root), n, filepath.FromSlash(fileRel))
+			if st, serr := os.Stat(cand); serr == nil && st.Mode().IsRegular() {
+				fmt.Fprintf(stderr, "%s: ⚠ sibling_missing —— 件 `%s` 在**同级仓 %s** 里存在（%s），而本次未给 `--allow-sibling-repo %s` ⇒ 会落成**主仓同名路径** %s（两仓分家风险 · 缺口 GAP-20261012-09）\n",
+					progName, fileRel, n, cand, n, outPath)
+				break
+			}
+		}
+	}
+
 	// ③ 作用域：提案必须存在，且**声明过**这一件
 	dir := proposalDir()
 	// ★ GAP-20260928-79：两个落点不同源 ⇒ 真写档**拒执** · 干跑档**只出声**。同源（默认态）零输出。

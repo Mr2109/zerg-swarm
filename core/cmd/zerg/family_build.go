@@ -38,6 +38,14 @@ type buildArtifactRow struct {
 // 口径诚实说明：**这一条不等于「逐件同 sha」判据已经过** —— 它给的是**对拍用的现读值**；
 // 判据要的是「`zerg build all` 产出的件与 `build-all.sh` 逐件同 sha」，那要**跑一次**，
 // 而跑一次 = 覆盖在跑的制品（换件档）⇒ 待拍。
+// buildArtifactIdentityText —— 缺口 GAP-20260927-311（批⑤ · 2026-10-13）：逐件**身份串**的机读直读口。
+//
+// 值 = 制品自身嵌入段两格的合成（`code@built`）；读不到嵌段时两格已是如实的「（无嵌入标签）」⇒
+// 本格**不回落**成 `bin/build-info.json` 的同名值（与 `artifactEmbeddedIdentity` 同一条铁律）。
+func buildArtifactIdentityText(code, built string) string {
+	return code + "@" + built
+}
+
 func cmdBuildLs(inv *invocation, stdout, stderr io.Writer) int {
 	root := repoRoot()
 	if root == "" {
@@ -80,6 +88,8 @@ func cmdBuildLs(inv *invocation, stdout, stderr io.Writer) int {
 			"version": version,
 			"code":    code,
 			"built":   built,
+			// ★ 缺口 GAP-20260927-311（批⑤ · 2026-10-13）：逐件身份串（合成视图 · 供四件同源复核一眼对拍）。
+			"identity": buildArtifactIdentityText(code, built),
 		}
 		rows = append(rows, row)
 	}

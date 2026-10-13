@@ -42,6 +42,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -364,6 +365,34 @@ func repoStatusOne(root string, inv *invocation, stdout, stderr io.Writer) int {
 		}
 	}
 	repoPrintShared(stderr, faces)
+	// ★ 本枚（缺口 `GAP-20261013-27`）：`--limit <N>` ＋ **截断自报** —— 机器面载荷随脏件数线性膨胀
+	//   （每件把整份 HEAD 版正文内联进 JSON · 第二遍重扫实测 7.8 MB / 本机现读 9.3 MB），而此前
+	//   `--limit` 被**静默吞**（旗标在册、值照收，本实现件一个字节都不读）。口径与同形面
+	//   `GAP-20261013-19`（`gap ls --limit`）**同尺**：0 / 不给 ⇒ 不分页（旧式输出与退码**逐字不动**）；
+	//   给了 ⇒ 裁行 ＋ 自报 ＋ 全量档指路（走既有出口 `markTruncated` / `truncated_detail` / `warnf`）。
+	statusTotal := len(rows)
+	statusLimitCut := false
+	if v := strings.TrimSpace(inv.flagVal("--limit")); v != "" {
+		n, lerr := strconv.Atoi(v)
+		if lerr != nil || n < 0 {
+			inv.setErr("usage", "bad_limit", "--limit 要给非负整数")
+			fmt.Fprintf(stderr, "%s: `--limit %s` 不是非负整数（本族口径 = 用法错 2 · 0 = 不分页）\n", progName, v)
+			return exitUsage
+		}
+		if n > 0 && n < statusTotal {
+			statusLimitCut = true
+			rows = rows[:n]
+		}
+	}
+	if statusLimitCut {
+		inv.markTruncated()
+		inv.warnf("已裁 %d 处（repo status 一页 %d 处 / 真命中 %d 处）", statusTotal-len(rows), len(rows), statusTotal)
+		inv.metaAddJSON("truncated_detail", fmt.Sprintf(
+			`{"cut_from":"tail","kept_items":%d,"dropped_items":%d,"total_items":%d}`, len(rows), statusTotal-len(rows), statusTotal))
+		inv.metaAddStr("full_hint", "全量档 = **去掉 `--limit`**：`"+progName+" repo status --json <字段>`")
+		fmt.Fprintf(stderr, "%s: ⚠ 本页只列前 %d 处 · 真命中 %d 处（已裁 %d 处）—— **这不是全集**；全量档：去掉 `--limit` 就是全量\n",
+			progName, len(rows), statusTotal, statusTotal-len(rows))
+	}
 	if len(rows) == 0 {
 		// 干净仓：**仍然出一行**（否则 `--json` 里 item 为空 ⇒ head/branch 就带不出去了）。
 		// 身份两格给 `—`（本行不是件）：否则 `--json mtime` 在这条命令上会**时通时不通**。

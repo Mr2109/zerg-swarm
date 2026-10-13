@@ -48,6 +48,10 @@
 //	  **缺 `--since` 时本支一个字节都不动**（默认全量的既有形态照旧）。⚠ 退码 3 的**登记**与
 //	  freshness 随件属待拍（表乙 T-PR-15/T-PR-20），不在本处。
 //
+//	· `gate ls --fingerprint` —— **门禁指纹行**的只读呈现面（缺口 `GAP-20260927-306` · 2026-10-13）：
+//	  单印「当前工作树指纹 · HEAD」（`gate_freshness.go` 的 `worktreeFingerprint` —— 与门跑那一趟
+//	  记进 `freshness.json` 的口径**同源**，✗ 不另算一份）；只读、不 exec 脚本、不改任何退码。
+//
 // 为什么**除这四处**不做 `--json`：其余三条的输出**就是**脚本的输出（逐行相同）；再包一层 JSON
 // 等于在命令面里另写一份步骤表 —— `G1-a` 明令禁止。
 package main
@@ -103,12 +107,49 @@ func gateActionNeedsScript(action string) bool {
 	return true
 }
 
+// gateRootOverride —— 从 `gate run` 的 tail 里取 `--root <目录>` 的值（缺口 `GAP-20260928-124`）。
+//
+// 病灶：`--root` 在取值名字表里 ⇒ `gate run --root X` 逐字收下却**静默忽略**（rc=0、仍跑本仓脚本），
+// 正门没有「对仓外副本跑某门」的出口。✗ 只看 `--` **之前**的形态 —— `--` 之后的 `--root` 是**单步只读
+// 透传**旗标（归 `gateRunStepPassthroughFlags`），不在这里当仓根。取不到 ⇒ 空串（行为逐字不变）。
+func gateRootOverride(args []string) string {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--" {
+			break
+		}
+		if a == "--root" {
+			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				return args[i+1]
+			}
+			return ""
+		}
+		if strings.HasPrefix(a, "--root=") {
+			return strings.TrimPrefix(a, "--root=")
+		}
+	}
+	return ""
+}
+
 func cmdGate(inv *invocation, stdout, stderr io.Writer) int {
 	root := repoRoot()
 	if root == "" {
 		fmt.Fprintf(stderr, "%s: 解析不到仓根 —— 门禁直通需要仓根（找 core/internal/version/version.go 失败）\n", progName)
 		fmt.Fprintf(stderr, "在仓内跑，或设 ZERG_REPO=<仓根>\n")
 		return exitUsage
+	}
+	// ★ GAP-20260928-124（本单）：`--root <仓外副本根>` —— 正门加「对仓外副本跑某门」的出口。
+	//   病灶：`--root` 在取值名字表里 ⇒ `gate run --root X` 逐字收下却**静默忽略**（rc=0、仍跑本仓脚本）。
+	//   新行为：`run` 的 tail 里 `--root <目录>`（`--` **之前**的形态）⇒ 用它当仓根；该根下没有自举件
+	//   ⇒ 硬错退出（✗ 不静默回落本仓 —— 「读不到不当没有」）。缺它 ⇒ 仓根、行为逐字不变。
+	if len(inv.path) > 1 && inv.path[1] == "run" {
+		if alt := gateRootOverride(inv.orig[2:]); alt != "" {
+			if st, aerr := os.Stat(filepath.Join(alt, gateScriptRel)); aerr != nil || !st.Mode().IsRegular() {
+				fmt.Fprintf(stderr, "%s: `--root %s` 指的仓外副本根下没有自举件（%s）⇒ 不给结论（退码 2）\n", progName, alt, gateScriptRel)
+				return exitUsage
+			}
+			root = alt
+		}
 	}
 	script := filepath.Join(root, gateScriptRel)
 
@@ -148,6 +189,21 @@ func cmdGate(inv *invocation, stdout, stderr io.Writer) int {
 	case "ls":
 		if inv.jsonGiven {
 			return gateLsJSON(inv, stdout, stderr, root, script)
+		}
+		// ★ 缺口 `GAP-20260927-306`（本片 · 2026-10-13）：门禁指纹行的**只读呈现面**。
+		//   病：门跑那一趟算出的「当时工作树指纹」（`worktreeFingerprint` —— 口径唯一一处实现）
+		//   只在真跑的产物（`freshness.json`）与新鲜度闸的判词里看得见，三条只读档（`--list`/
+		//   `--emit-cmd`/`--self-test`）全拿不到 ⇒ 想核「门看到的树」必须先真跑一趟。
+		//   `--fingerprint` = 单印该行（只读、不 exec 脚本、不改任何脚本退码）；算不出 ⇒ 照
+		//   新鲜度闸同规退 8「不给结论」（✗ 不把算不出当空串、✗ 不回落别的数）。
+		if len(tail) == 1 && tail[0] == "--fingerprint" {
+			fp, head, ferr := worktreeFingerprint(root)
+			if ferr != nil {
+				fmt.Fprintf(stderr, "%s: 算不出当前工作树指纹 ⇒ 不给结论（退码 8）：%v\n", progName, ferr)
+				return exitBlocked
+			}
+			fmt.Fprintf(stdout, "── 门禁指纹 · 工作树 %s · HEAD %s ──\n", fp, head)
+			return exitOK
 		}
 		// ★ 缺口 `GAP-20260927-53`（2026-10-04）：`gate ls` 的用法面无旗标，而 `--list` 出口不读筛选旗标
 		//   ⇒ 有尾参即 **fail-closed 拒执**（不 exec）。无尾参 ⇒ 原路径一字不动。判据与理由见 `gateLSRejectFlags`。
@@ -404,7 +460,10 @@ var gateLsFields = []string{"total", "scope", "mode", "step"}
 // 它是本命令**唯一的布尔格**（其余四格都是串）—— 逐字：
 // `zerg gate ls --json fast` ⇒ `{"steps":[{"fast":true},{"fast":false},…]}`。
 // ✗ 不进冻结 `fields:`（帮助/导出面与命令页一行不动，同 `name`/`gates_total` 体例）。
-var gateLsOptFields = []string{"name", "gates_total", "fast"}
+// ★ 缺口 GAP-20260926-102（批⑤ · 2026-10-13）：`reds`（最近一趟非 PASS 的步名清单）同走**可选字段层**
+//
+//	（顶层数组格 · 与 `gates_total` 同形：✗ 不进冻结 `fields:` ⇒ 帮助 / 命令页一行不动）。
+var gateLsOptFields = []string{"name", "gates_total", "fast", "reds"}
 
 // gateLsFieldLegal —— 字段是否在闭集四格内（与 `gateShowFieldLegal` 同形 · 不另写第二份口径）。
 func gateLsFieldLegal(f string) bool {
@@ -545,6 +604,7 @@ func gateLsJSON(inv *invocation, stdout, stderr io.Writer, root, script string) 
 	wantTotal := false
 	wantGatesTotal := false
 	wantFast := false
+	wantReds := false
 	rowKeys := []string{}
 	for _, f := range fields {
 		switch f {
@@ -559,6 +619,9 @@ func gateLsJSON(inv *invocation, stdout, stderr io.Writer, root, script string) 
 			// ★ 缺口 `GAP-20260927-21`（本片）：每步**是否在快速档**（名单真源 = 门脚本的 `FAST_STEPS`）。
 			wantFast = true
 			rowKeys = append(rowKeys, f)
+		case "reds":
+			// ★ 缺口 GAP-20260926-102（批⑤ · 2026-10-13）：红项清单（顶层格 · 不进 rowKeys）。
+			wantReds = true
 		}
 	}
 	// ★ 缺口 `GAP-20260927-21`（本片）：`fast` 的取数只有**一条**路 —— 步表机读面。两态都**响亮失败**，
@@ -587,6 +650,30 @@ func gateLsJSON(inv *invocation, stdout, stderr io.Writer, root, script string) 
 			return exitUsage
 		}
 	}
+	// ★ 缺口 GAP-20260926-102（批⑤ · 2026-10-13）：`--json reds` —— 最近一趟里**非 PASS** 的步名清单
+	//   （= 「本版必做几红」的单一收口面）。取数只走**既有**这条路（`gateFindLiveRun` + `gateResultsReadTSV`
+	//   —— 与 `gate results --last` 同一真源），✗ 不另跑一趟门。
+	//   最近一趟取不到 ⇒ **不给结论**（退码 8 · ✗ 不把空当读数 —— 同族 `fast` 那条铁律）。
+	redList := []string{}
+	if wantReds {
+		dir2, _, ok2, ferr2 := gateFindLiveRun()
+		if ferr2 != nil || !ok2 {
+			inv.setErr("blocked", "gate_ls_reds_no_run", "本机没有现成的门禁产物")
+			fmt.Fprintf(stderr, "%s: `--json reds` 要**最近一趟**门禁产物（`zerg gate results --last` 同一真源）—— 现读没有 ⇒ 不给结论（退码 8 · ✗ 不把空当读数）\n", progName)
+			return exitBlocked
+		}
+		rr2, _, rerr2 := gateResultsReadTSV(filepath.Join(dir2, gateResultsTSV))
+		if rerr2 != nil {
+			inv.setErr("blocked", "gate_ls_reds_unreadable", "最近一趟结果表读不到")
+			fmt.Fprintf(stderr, "%s: 最近一趟 %s 读不到（%v）⇒ 不给结论（退码 8）\n", progName, dir2, rerr2)
+			return exitBlocked
+		}
+		for _, r2 := range rr2 {
+			if r2.Status != "PASS" {
+				redList = append(redList, r2.Name)
+			}
+		}
+	}
 	var b strings.Builder
 	b.WriteString("{")
 	n := 0
@@ -599,6 +686,16 @@ func gateLsJSON(inv *invocation, stdout, stderr io.Writer, root, script string) 
 			b.WriteString(",")
 		}
 		fmt.Fprintf(&b, "\"gates_total\":%d", total)
+		n++
+	}
+	// ★ 缺口 GAP-20260926-102（批⑤ · 2026-10-13）：顶层红项清单（序 = 结果表序 · 同名同源）。
+	if wantReds {
+		if n > 0 {
+			b.WriteString(",")
+		}
+		rl, _ := json.Marshal(redList)
+		b.WriteString("\"reds\":")
+		b.Write(rl)
 		n++
 	}
 	if len(rowKeys) > 0 {

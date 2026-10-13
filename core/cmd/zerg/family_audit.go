@@ -156,6 +156,17 @@ func repoPorcelainTrackedMA(porcelain string) (paths, otherTracked []string) {
 }
 
 // cmdAuditCover —— 只报告档的入口。
+// auditCoverVerifiedText —— 缺口 GAP-20260926-56（批⑤ · 2026-10-13）：「该件有没有改动记录」的布尔直读口。
+//
+// 人面那四判词（有记录 / 无记录 / 记录过期 / 读不到）已在；机器面此前拿不到「哪些件过了验收」的直读格
+// ⇒ 收版时数不清。取值只认 `有记录` 一档（其余三档都不是「已验」· ✗ 不把「读不到」并进「有记录」）。
+func auditCoverVerifiedText(v string) string {
+	if v == auditVerdictCovered {
+		return "true"
+	}
+	return "false"
+}
+
 func cmdAuditCover(inv *invocation, stdout, stderr io.Writer) int {
 	// 第一道牙：写旗标一律拒（复用 `family_repo.go` 的写词闭集 —— 不另立第二份）。
 	if hits := repoWriteHits(inv.orig); len(hits) > 0 {
@@ -324,6 +335,8 @@ func cmdAuditCover(inv *invocation, stdout, stderr io.Writer) int {
 			"audit_last_at":          lastAt,
 			"audit_last_after_sha16": auditOrDash(lastAfter),
 			"verdict":                verdict,
+			// ★ 缺口 GAP-20260926-56（批⑤ · 2026-10-13）：`verified` —— 「有没有改动记录」的布尔直读口。
+			"verified": auditCoverVerifiedText(verdict),
 		})
 	}
 

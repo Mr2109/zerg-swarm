@@ -476,7 +476,7 @@ func gapCmdFields(cmdStr string) []string {
 //	否则一句正常的多词取值会被错并成「一个路径」。
 var gapPathValFlags = map[string]bool{"--root": true, "--path": true}
 
-// gapJoinPathTokens —— **空格安全取件形态**（★ 缺口 `GAP-20261013-326` 本笔修点）。
+// gapJoinPathTokens —— **空格安全取件形态**（★ 缺口 `GAP-20261013-22` 本笔修点（原注引的号不在账 ⇒ 按断引门建议**改指在册号** · 缺口 `GAP-20261012-29`））。
 //
 // 病（修前）：仓根含空格（`"/Volumes/" + "AHZ"/00 项目/…`）时，账内一条**不带引号**的取件判据
 // （`zerg repo status --root "/Volumes/" + "AHZ"/00 项目/模型类/Zerg-内部文档`）被切词器按空格切碎
@@ -813,7 +813,15 @@ func gapJudgePreflightWhy(cmdStr string) string {
 //	· `未知旗标` / `未知字段` / `未知参数` —— 本仓命令面解析器（`main.go` `parseInvocation`）；
 //	· `unrecognized arguments` / `the following arguments are required` —— 子件 py argparse（未知旗标 / 缺必填子命令）；
 //	· `不是一个可执行动作` / `要给动作` —— 本仓**族名 / 中间节点**档（裸族名 ⇒ 缺必填子命令 / 缺动作）。
+//	· `判据名 … 不在册` —— `gate check` 的**名字闸**（点名一个不在判据册的名字 ⇒ 恒 rc=2 · 缺口
+//	  `GAP-20261013-26`）⇒ 命令树里解析得到、真跑却不给结论 = 与上几族同病的**结构性恒非绿**。
 func gapJudgePreflightBadText(out string) string {
+	// ★ 本枚（缺口 `GAP-20261013-26`）：这一族用**两个词一起判**（`判据名` ＋ `不在册`），
+	//   ✗ 不拿裸 `不在册` 一词 —— 仓内别处也这么写（`目标模型不在册` / `key_id 不在册`），
+	//   那些是**别的语义**（「没有」不是「恒非绿」），收窄到名字闸这一族才不误伤。
+	if strings.Contains(out, "判据名") && strings.Contains(out, "不在册") {
+		return "判据名不在册"
+	}
 	for _, pat := range []string{
 		"未知旗标", "未知字段", "未知参数",
 		"unrecognized arguments", "the following arguments are required",
@@ -1224,6 +1232,31 @@ func markGapLsSelfReport(inv *invocation, rows []map[string]string, total, hits 
 	}
 }
 
+// gapLedgerFrozenText —— 缺口 GAP-20260927-322（批⑤ · 2026-10-13）：账真源的**读面冻结锚**。
+//
+// 病根：账真源是**活件**（守卫自动入账 ⇒ 两分钟就涨），而生成件 / 判据一发就旧 ⇒ 回红却归不了因。
+// 本格把「读这一页时，真源到底是哪一份」钉出来：`<sha16> · N 行 · 读于 <mtime>`（只读 · 零写）。
+// ✗ 不猜、✗ 不缓存：每次现读（`gap ls` 一趟内只付一次 —— 见调用点把结果提到循环外）。
+func gapLedgerFrozenText() string {
+	p := gapLedgerPath()
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return "（读不到：" + err.Error() + "）"
+	}
+	sum := sha256.Sum256(b)
+	n := 0
+	for _, l := range strings.Split(string(b), "\n") {
+		if strings.TrimSpace(l) != "" {
+			n++
+		}
+	}
+	at := "（mtime 读不到）"
+	if fi, e := os.Stat(p); e == nil {
+		at = fi.ModTime().Format("2006-01-02T15:04:05Z07:00")
+	}
+	return hex.EncodeToString(sum[:8]) + " · " + strconv.Itoa(n) + " 行 · 读于 " + at
+}
+
 func cmdGapLs(inv *invocation, stdout, stderr io.Writer) int {
 	// ① 用法面（在任何盘面动作之前）
 	if inv.jsonGiven && len(inv.fields) == 0 {
@@ -1340,8 +1373,24 @@ func cmdGapLs(inv *invocation, stdout, stderr io.Writer) int {
 			progName, wantSolvedKind, gapClosedText(gapSolvedKindFilterClosed))
 		return exitUsage
 	}
+	// ★ 本枚（缺口 `GAP-20261013-19`）：`--limit <N>` 解析（0 / 不给 ⇒ 不分页）。
+	//   病（现读）：本面此前**静默吞掉** `--limit`（旗标在册、值照收，本实现件一个字节都不读）
+	//   ⇒ `zerg gap ls --limit 2 --json notes` 照样全量直出（实测 1,638,745 B）被读方截断
+	//   而**没有任何自报** ⇒ 「带 / 不带全量档」在机器面上不可分辨。
+	limit := 0
+	if v := strings.TrimSpace(inv.flagVal("--limit")); v != "" {
+		n, lerr := strconv.Atoi(v)
+		if lerr != nil || n < 0 {
+			inv.setErr("usage", "bad_limit", "--limit 要给非负整数")
+			fmt.Fprintf(stderr, "%s: `--limit %s` 不是非负整数（本族口径 = 用法错 2 · 0 = 不分页）\n", progName, v)
+			return exitUsage
+		}
+		limit = n
+	}
 	wantUnit = strings.TrimRight(wantUnit, "/")
 	wantModule = strings.TrimRight(wantModule, "/")
+	// ★ 缺口 GAP-20260927-322（批⑤ · 2026-10-13）：读面冻结锚**只算一次**（提到循环外），逐行回填同值。
+	frozenAnchor := gapLedgerFrozenText()
 	rows, out := []map[string]string{}, []gapRecord{}
 	for _, r := range led.Recs {
 		if len(wantStates) > 0 && !gapIn(wantStates, r.State) {
@@ -1408,6 +1457,8 @@ func cmdGapLs(inv *invocation, stdout, stderr io.Writer) int {
 			// ★ 本枚（缺口账 `GAP-20260929-38` ①）：`--unit`/`--module` 筛得到却吐不出 ⇒ 补两格。
 			"unit":   r.Unit,
 			"module": r.Module,
+			// ★ 缺口 GAP-20260927-322（批⑤ · 2026-10-13）：`frozen` —— 读面冻结锚（整页同值 · 跑级格）。
+			"frozen": frozenAnchor,
 			// ★ 本枚（缺口账 `GAP-20260929-42` ①）：件面字段 `file` —— 该条判据逐字
 			//   `zerg gap ls --json file`；取值口与 `unit` **同一枚**（`r.Unit` · 件面路径）
 			//   ⇒ 只增一格别名，✗ 不动 unit/module 两格的取值与语义。
@@ -1421,8 +1472,22 @@ func cmdGapLs(inv *invocation, stdout, stderr io.Writer) int {
 	//   未给收窄旗标 ⇒ 一步不裁（既有三枚旗标那一档的输出与退码**一字不动**）。
 	narrowed := wantUnit != "" || wantModule != ""
 	total, hits, cut := len(out), len(out), false
-	if narrowed && total > gapLsRowCap {
-		hits, cut = gapLsRowCap, true
+	// ★ 本枚（缺口 `GAP-20261013-19`）：上限 = 收窄档的 `gapLsRowCap` ∪ `--limit` 的较小者
+	//   （不给 `--limit` 时 rowCap 与旧式**逐字同值** ⇒ 既有各档输出与退码一字不动）；
+	//   截断自报**走既有出口**（`markTruncated` / `truncated_detail` / `warnf` / `meta.total|hits`）
+	//   ⇒ 显式分页与硬顶**同源同尺**，✗ 不另算一遍 total/hits/cut。
+	rowCap, limitCut := -1, false
+	if narrowed {
+		rowCap = gapLsRowCap
+	}
+	if limit > 0 {
+		limitCut = true
+		if rowCap < 0 || limit < rowCap {
+			rowCap = limit
+		}
+	}
+	if rowCap >= 0 && total > rowCap {
+		hits, cut = rowCap, true
 		out, rows = out[:hits], rows[:hits]
 	}
 	// ★ 外写自发现（缺口 `GAP-20261005-44` 同形面 · 与同族 `gap reread` 同一套口径）：上面一切读数都
@@ -1478,6 +1543,12 @@ func cmdGapLs(inv *invocation, stdout, stderr io.Writer) int {
 			hits, total-hits, total))
 		fmt.Fprintf(stderr, "%s: ⚠ 本页只列前 %d 条 · 真命中 %d 条（已裁 %d 条）—— **这不是全集**，别据此下「有/无」结论；要收窄：--state / --prio / --impact / --unit / --module\n",
 			progName, hits, total, total-hits)
+		// ★ 本枚（缺口 `GAP-20261013-19`）：**显式分页**（`--limit`）时补「全量档」指路 ——
+		//   只加一格（`meta.full_hint`）＋ 一行 stderr，✗ 不动上面任何既有格 / 判词 / 退码。
+		if limitCut {
+			inv.metaAddStr("full_hint", "全量档 = **去掉 `--limit`**（且不加收窄旗标）：`"+progName+" gap ls --json <字段>`")
+			fmt.Fprintf(stderr, "  全量档：去掉 `--limit`（且不加收窄旗标）就是全量 —— `%s gap ls --json <字段>`\n", progName)
+		}
 	}
 	if inv.jsonGiven {
 		return selectJSONList(stdout, stderr, inv, inv.path, inv.fields, rows)
@@ -1865,6 +1936,12 @@ func cmdGapShow(inv *invocation, stdout, stderr io.Writer) int {
 		return gapShowByFile(inv, led, stdout, stderr, p)
 	}
 
+	// ③.5 ★ 本枚（缺口 `GAP-20261013-18`）：**多行读** —— ≥2 条 id 一次取全文。
+	//    只有 ≥2 条才走这一支（单条 / 零条逐字走下面的 `gapTargetOne` ⇒ 老面一字不动）。
+	if ids := gapIDsOf(inv); len(ids) > 1 {
+		return gapShowMulti(inv, led, stdout, stderr, ids)
+	}
+
 	// ③ 点名面（**恰好一条** · 账内没有这个 id ⇒ 2）—— 复用同族 `gapTargetOne`，形状一字不自创；
 	//    它自己会印「账内没有 X（账里 N 条）」+ 下一步「看账 : `zerg gap ls`」。
 	idx, rc := gapTargetOne(inv, led, stderr, "show")
@@ -1890,6 +1967,15 @@ func cmdGapShow(inv *invocation, stdout, stderr io.Writer) int {
 	}
 
 	// ⑥ 人面：**完整正文不截断**（本面存在的理由 —— `ls` 那一行只印摘要前 40 显示宽）
+	gapShowHuman(stdout, r)
+	fmt.Fprintf(stdout, "  （本面**完整正文不截断**；`gap ls` 那一行只印摘要前 40 显示宽）\n")
+	return exitOK
+}
+
+// gapShowHuman —— `gap show` 的**人面正文**（单条面与多行读**共用这一处** · 缺口 `GAP-20261013-18`）。
+//
+// ✗ 不另写第二套渲染（两套必然漂）：多行读逐条调它 ⇒ 单条面的字节输出**逐字不变**。
+func gapShowHuman(stdout io.Writer, r gapRecord) {
 	fmt.Fprintf(stdout, "缺口 id  : %s\n", r.ID)
 	fmt.Fprintf(stdout, "  指纹     : %s\n", gapShowText(r.FP))
 	fmt.Fprintf(stdout, "  优先级   : %s\n", gapShowText(r.Prio))
@@ -1925,6 +2011,49 @@ func cmdGapShow(inv *invocation, stdout, stderr io.Writer) int {
 	}
 	if len(r.Voids) > 0 {
 		fmt.Fprintf(stdout, "  作废原文 : 仍在真源里（本面默认不显示）—— 要连原文看走 `--json void_notes`\n")
+	}
+}
+
+// gapShowMulti —— `gap show <id>…`（**≥2 条**）的多行读（缺口 `GAP-20261013-18`）。
+//
+// 病（修前 · 现读）：`gap show <id1> <id2>` ⇒ rc=2「只收**恰好一条**缺口 id」（`target_arity`）
+// ⇒ 一次取多条账的全文没有正门（只能逐条跑）。
+// 治：**≥2 条**才走这一支（单条 / 零条逐字走既有 `gapTargetOne` ⇒ 老面一字不动）；
+// 逐条复用同族四处既有件：点名面 `gapFindIdx` · 越界自查 `gapOutOfRangeOne` · 渲染
+// `gapShowRow`（机器面）+ `gapShowHuman`（人面）—— ✗ 不新造第二套取值口。
+// 任一条点不到 / 越界 ⇒ 按同族口径当场退（`2` / `1`），✗ 不吞不猜。
+func gapShowMulti(inv *invocation, led gapLedger, stdout, stderr io.Writer, ids []string) int {
+	recs := []gapRecord{}
+	rows := []map[string]string{}
+	for _, id := range ids {
+		idx := gapFindIdx(led, id)
+		if idx < 0 {
+			inv.setErr("usage", "target_not_found", "账内没有 "+id)
+			fmt.Fprintf(stderr, "%s: 账内没有 %s（账里 %d 条）—— 「名给错」是**用法错** ⇒ 退码 2\n",
+				progName, id, len(led.Recs))
+			fmt.Fprintf(stderr, "  看账 : `zerg gap ls`（本命令**不建**新条目 —— 记新缺口走 `zerg gap add`）\n")
+			return exitUsage
+		}
+		r := led.Recs[idx]
+		if field, val, bad := gapOutOfRangeOne(r); bad {
+			inv.setErr("failed", "ledger_out_of_range", fmt.Sprintf("第 %d 行 %s 越界", led.No[idx], field))
+			fmt.Fprintf(stderr, "账内越界：%d %s\n", led.No[idx], field)
+			fmt.Fprintf(stderr, "  %s 的值 %q 不在闭集里（%s）—— 真源只由命令写（防呆③ 同源）\n",
+				field, val, gapClosedText(gapClosureOf(field)))
+			return exitFail
+		}
+		recs = append(recs, r)
+		rows = append(rows, gapShowRow(r))
+	}
+	inv.changed = boolPtr(false)
+	if inv.jsonGiven {
+		return selectJSONList(stdout, stderr, inv, inv.path, inv.fields, rows)
+	}
+	for i, r := range recs {
+		if i > 0 {
+			fmt.Fprintf(stdout, "\n")
+		}
+		gapShowHuman(stdout, r)
 	}
 	fmt.Fprintf(stdout, "  （本面**完整正文不截断**；`gap ls` 那一行只印摘要前 40 显示宽）\n")
 	return exitOK
@@ -4750,6 +4879,11 @@ func gapIdeaMetaAdd(inv *invocation, source string, total, hits int, poolPath st
 	inv.metaAddJSON("query", q)
 	inv.metaAddStr("query_ts", gapNow())
 	inv.metaAddStr("pool_sha16", gapLsLedgerSHA16(poolPath))
+	// ★ 本枚（缺口 `GAP-20260928-179`）：池件**绝对路径**那一格 —— 真源 `gapPoolPath()` 已有，
+	//   此前只在**错误档**（池件读不到 / 不在盘）的 stderr 上印，正常读面反而取不到 ⇒
+	//   走同族信封（`metaAddStr` · 与 `pool_sha16` 同一落点），✗ 不进冻结字段表
+	//   （与 `gap ls` 的 `truncated` 同一体例 ⇒ 无需重生成命令页）。
+	inv.metaAddStr("pool_path", poolPath)
 }
 
 // cmdGapIdeaLs —— `zerg gap idea ls`：候选池**最小读面**（只读 · 不写池、不写真源、不写审计）。
@@ -4846,6 +4980,9 @@ func cmdGapIdeaLs(inv *invocation, stdout, stderr io.Writer) int {
 	} else {
 		fmt.Fprintf(stdout, "候选池 %d 条（本次命中 %d 条）\n", len(pb.Cands), total)
 	}
+	// ★ 本枚（缺口 `GAP-20260928-179`）：读面补**池件绝对路径**一行（此前只在错误档印）——
+	//   只加一行、✗ 不动上面两行（老输出是它们的**前缀**，逐字不变）。
+	fmt.Fprintf(stdout, "  池件     : %s\n", pb.Path)
 	fmt.Fprintf(stdout, "  %s  %s  %s  %s  %s\n", pad("cid", cidw), pad("source", srcw), pad("status", stw), "落池时刻", "症状")
 	for _, c := range out {
 		fmt.Fprintf(stdout, "  %s  %s  %s  %s  %s\n",

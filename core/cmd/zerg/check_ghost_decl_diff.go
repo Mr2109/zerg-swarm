@@ -1529,6 +1529,67 @@ func gddSelfTestRoot(stdout io.Writer, root string) int {
 	casef("⑪b 负控：孙进程/父非声明 仍计未登记 ⇒ (0,3,2)", "(0, 3, 2)",
 		fmt.Sprintf("(%d, %d, %d)", rc11b, len(s111b), unreg11b), "")
 
+	// ★ 缺口 `GAP-20260927-101`：自检夹具**参数化**（作业数 / 标签集合 / 瞬态工人 / 命令行含字面 shell
+	//   各造一格）＋一条「**计数可抵消**」的成对负控。旧夹具固定成「2 launchd + 3 ps」一种形状
+	//   ⇒ 与标签集合 / 作业清单相关的改动与失效，自检一律测不出来。
+	// ⑫ 作业数 3 / 标签集合 3（无幽灵）：侧① 0 条 · 侧② 0 条 · doctor 0 条 ⇒ rc=0
+	decl3 := "# 夹具声明树（参数化 3 作业）\n" +
+		"kind\tname\t声明件\t程序\t进程特征\t归属\t处置\n" +
+		"launchd\tcom.zerg.core\t~/Library/LaunchAgents/com.zerg.core.plist\t/bin/bash scripts/svc/zerg-core-daemon.sh\tbin/zerg-core\t主控\t-\n" +
+		"launchd\tcom.zerg.agent-Mr2109\t~/Library/LaunchAgents/com.zerg.agent-Mr2109.plist\tbin/zerg-agentd --machine Mr2109\tbin/zerg-agentd\t子端\t-\n" +
+		"launchd\tcom.zerg.newjob-Mr2109\t~/Library/LaunchAgents/com.zerg.newjob-Mr2109.plist\t/bin/bash scripts/svc/zerg-newjob.sh\tbin/zerg-newjob\t新增\t-\n"
+	ps3 := "  68939     1       56:36 /repo/bin/zerg-core\n" +
+		"  14149     1 03-15:30:40 /repo/bin/zerg-agentd --host 127.0.0.1 --port 8100 --machine Mr2109\n" +
+		"  22222     1       12:00 /repo/bin/zerg-newjob --tick\n"
+	lc3 := "68939\t0\tcom.zerg.core\n14149\t0\tcom.zerg.agent-Mr2109\n22222\t0\tcom.zerg.newjob-Mr2109\n"
+	d12 := filepath.Join(tmp, "f12")
+	dp12, pp12, lp12, home12 := gddFixture(d12, decl3, ps3, lc3, []string{"com.zerg.core.plist", "com.zerg.agent-Mr2109.plist", "com.zerg.newjob-Mr2109.plist"})
+	df12 := filepath.Join(d12, "doctor.json")
+	gddWriteFile(df12, gddDoctorJSON(0, "现值面没看到「声明外」的服务进程"), 0o644)
+	rc12, s112, s212, _, _ := gddCheck(&gddCtx{root: d12, declPath: dp12, psFile: pp12, lcFile: lp12, home: home12, doctorFile: df12})
+	casef("⑫ 参数化（作业数 3 / 标签集合 3 · 无幽灵）：侧① 0 / 侧② 0 · doctor 0 ⇒ rc=0", "(0, 0, 0)",
+		fmt.Sprintf("(%d, %d, %d)", rc12, len(s112), len(s212)), "")
+
+	// ⑬ 瞬态工人（未登记幽灵）· 命令行含**字面 shell**（引号 / 分号）：侧① 2 条（1 登记 + 1 未登记）；
+	//   S2 只比已登记子集（1 条）== doctor 1 条 ⇒ rc=0。
+	pp13 := filepath.Join(tmp, "f13-ps.txt")
+	gddWriteFile(pp13, gddGoodPS+"  44444     1       09:00 /repo/bin/zerg-scoped --cmd \"a;b\" --tag 'x y'\n", 0o644)
+	df13 := filepath.Join(d1, "doctor13.json")
+	gddWriteFile(df13, gddDoctorJSON(1, ""), 0o644)
+	rc13, s113, _, _, _ := gddCheck(&gddCtx{root: d1, declPath: dp, psFile: pp13, lcFile: lp, home: home, doctorFile: df13})
+	unreg13 := 0
+	for _, it := range s113 {
+		if !it.HasReg {
+			unreg13++
+		}
+	}
+	casef("⑬ 参数化（瞬态工人 · 命令行含字面 shell）：侧① 2（1 登记 + 1 未登记）· S2 比已登记 1 == doctor 1 ⇒ rc=0",
+		"(0, 2, 1)", fmt.Sprintf("(%d, %d, %d)", rc13, len(s113), unreg13), "")
+
+	// ⑭ 成对负控「计数可抵消」：声明里**少 1 条幽灵**（3 → 2 行）＋ ps 里**多 1 条未登记作业**
+	//   （总行数仍 3 行 · 换掉了 cocoon 那行）⇒ 纯计数判据看不见；而侧① 的**已登记子集**由 1 变 0
+	//   ≠ doctor 仍报 1 条 ⇒ S2 同源漂移 ⇒ **必红**。
+	decl14 := "# 夹具声明树（少 1 声明 · 可抵消负控）\n" +
+		"kind\tname\t声明件\t程序\t进程特征\t归属\t处置\n" +
+		"launchd\tcom.zerg.core\t~/Library/LaunchAgents/com.zerg.core.plist\t/bin/bash scripts/svc/zerg-core-daemon.sh\tbin/zerg-core\t主控\t-\n" +
+		"launchd\tcom.zerg.agent-Mr2109\t~/Library/LaunchAgents/com.zerg.agent-Mr2109.plist\tbin/zerg-agentd --machine Mr2109\tbin/zerg-agentd\t子端\t-\n"
+	ps14 := "  68939     1       56:36 /repo/bin/zerg-core\n" +
+		"  14149     1 03-15:30:40 /repo/bin/zerg-agentd --host 127.0.0.1 --port 8100 --machine Mr2109\n" +
+		"  44444     1       09:00 /repo/bin/zerg-scoped --cmd \"a;b\"\n"
+	d14 := filepath.Join(tmp, "f14")
+	dp14, pp14, lp14, home14 := gddFixture(d14, decl14, ps14, gddGoodLC, []string{"com.zerg.core.plist", "com.zerg.agent-Mr2109.plist"})
+	df14 := filepath.Join(d14, "doctor14.json")
+	gddWriteFile(df14, gddDoctorJSON(1, ""), 0o644)
+	rc14, s114, _, _, _ := gddCheck(&gddCtx{root: d14, declPath: dp14, psFile: pp14, lcFile: lp14, home: home14, doctorFile: df14})
+	unreg14 := 0
+	for _, it := range s114 {
+		if !it.HasReg {
+			unreg14++
+		}
+	}
+	casef("⑭ 成对负控（计数可抵消 · 少 1 声明 + 多 1 未登记作业 ⇒ ps 行数不变）⇒ S2 已登记子集 0 ≠ doctor 1 ⇒ rc=1",
+		"(1, 1, 1)", fmt.Sprintf("(%d, %d, %d)", rc14, len(s114), unreg14), "")
+
 	then := gddReadonlyFingerprint(d1, dp)
 	now := gddReadonlyFingerprint(d1, dp)
 	casef("⑩ 只读自证：同一夹具连取两次 ⇒ 差异 0 件（检测器不乱报）", "True", gddBoolStr(gddFPEq(then, now)), "")

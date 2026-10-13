@@ -93,6 +93,8 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -820,6 +822,18 @@ func aidirecteditsGateMain(stdout, stderr io.Writer, argv []string) int {
 	}
 	rc, lines := adeCheckDir(d, tree, ats)
 	fmt.Fprintf(stdout, "门⑬ AI 直改纪律（§20.3 H1 · 回执 %s）· 仓根 %s\n", d, root)
+	// ★ 缺口 `GAP-20260927-71`：件级账（`edit_audit.jsonl`）是**活文件** —— 取证期间会被别的进程追加。
+	//   可变面必须**自报读数时点与件长**（本门取 want 的第二形态：不落冻结快照，改在输出里自报），
+	//   否则「门绿」只是那一刻的快照、可在无人改判据时自行变绿/变红。
+	if b, rerr := os.ReadFile(lpath); rerr == nil {
+		mt := ""
+		if fi, serr := os.Stat(lpath); serr == nil {
+			mt = fi.ModTime().Format("2006-01-02T15:04:05Z07:00")
+		}
+		sum := sha256.Sum256(b)
+		fmt.Fprintf(stdout, "  [自报·可变面 GAP-20260927-71] 件级账 %s · 读数时点 %s · 件长 %d B · sha16 %s\n",
+			lpath, mt, len(b), hex.EncodeToString(sum[:])[:16])
+	}
 	for _, ln := range lines {
 		fmt.Fprintf(stdout, "  %s\n", ln)
 	}

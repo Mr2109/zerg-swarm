@@ -2079,10 +2079,52 @@ func cnfAppendFile(path, extra string) {
 	_, _ = f.WriteString(extra)
 }
 
+// ══ 面名 → 面号 → 门号 登记面（缺口 `GAP-20261012-25`）═════════════════════════════════════════
+//
+// ★ 病的由来（缺口正文逐字）：本门自己用一套**面号**（面①–面⑪ 的「探测面」编号），而命令面另有
+// 一套**门号**（门⑤/门⑨/门⑪/门69 … 的真门编号）；**两套编号同形**（都是 面/门 N）⇒ 混写
+// 在同一段文字里根本无拦（已实测一处「面号被写成门号」）。
+// ⇒ 此处把**本门面号**与它**点的真门**逐条钉成一张登记面（唯一真源），并给一条只读出口
+// `--list-faces`：查「某个 面N 到底指哪一面、它点的是哪一门」不再靠通读源码。
+// ★ 范围（照实）：本表只钉**本门的面号**；门号空间的权威面是 `zerg gate ls`，✗ 不在此重抄。
+type cnfFaceReg struct {
+	no   string // 面号（本门面）
+	name string // 面名（本门面）
+	gate string // 该面取数/对拍所点的**真门**（门号 · 空 = 不点真门）
+}
+
+var cnfFaceRegistry = []cnfFaceReg{
+	{"面①", "dryrun 落点", ""},
+	{"面②", "cli-matrix must-fail", "门⑪ check-cli-contract"},
+	{"面③", "cli-contract-baseline 计数", "门⑪ check-cli-contract"},
+	{"面④", "标记表 + 两器排除", ""},
+	{"面⑤", "门73 旗标名表", "门73 check-flag-registry-parity"},
+	{"面⑥", "门⑤ error.kind 闭集", "门⑤ check-error-kinds"},
+	{"面⑦", "门⑨ 退码表 + 命名空间", "门⑨ check-exit-codes"},
+	{"面⑧", "门⑪ T5d 归属面（只报）", "门⑪ check-cli-contract"},
+	{"面⑨", "docs 生成物（只报）", ""},
+	{"面⑩", "门69 help 面冻结常量（BASELINE 六格 · 现读对拍）", "门69 check-help-shape"},
+	{"面⑪", "公开面命令 counts 键表（Cpfc · 现读对拍）", ""},
+}
+
+// cnfPrintFaceRegistry —— `--list-faces` 出口（只读 · 缺口 `GAP-20261012-25`）。
+func cnfPrintFaceRegistry(stdout io.Writer) {
+	fmt.Fprintln(stdout, "面名 → 面号 → 门号 登记面（本门 = check-newcmd-followup · 缺口 `GAP-20261012-25`）")
+	fmt.Fprintln(stdout, "★ 本门用**面号**（下表的「面①–面⑪」）—— 与**门号**（门⑤/门⑨/门⑪/门69 …）同形不同物，✗ 不许互写；门号空间的权威面 = `zerg gate ls`。")
+	for _, f := range cnfFaceRegistry {
+		g := f.gate
+		if g == "" {
+			g = "（不点真门）"
+		}
+		fmt.Fprintf(stdout, "  %s\t%s\t%s\n", f.no, f.name, g)
+	}
+	fmt.Fprintf(stdout, "共 %d 面（本门面号空间）\n", len(cnfFaceRegistry))
+}
+
 // ── 入口 ──────────────────────────────────────────────────────────────────────
 const cnfUsageText = "usage: check-newcmd-followup.py [-h] [--root ROOT] [--json]\n" +
 	"                                [--max-examples MAX_EXAMPLES]\n" +
-	"                                [--emit-baseline] [--self-test]\n"
+	"                                [--emit-baseline] [--self-test] [--list-faces]\n"
 
 const cnfHelpText = cnfUsageText +
 	"\noptional arguments:\n" +
@@ -2091,7 +2133,8 @@ const cnfHelpText = cnfUsageText +
 	"  --json\n" +
 	"  --max-examples MAX_EXAMPLES\n" +
 	"  --emit-baseline\n" +
-	"  --self-test\n"
+	"  --self-test\n" +
+	"  --list-faces          只列本门「面名 → 面号 → 门号」登记面（缺口 `GAP-20261012-25`）\n"
 
 const cnfProg = "check-newcmd-followup.py"
 
@@ -2127,6 +2170,7 @@ func cnfRepoRoot(arg *string) string {
 func checkNewcmdFollowupGateMain(stdout, stderr io.Writer, argv []string) int {
 	var rootArg *string
 	jsonOut, emit, selfTest, help := false, false, false, false
+	listFaces := false
 	maxExamples := 20
 
 	for i := 0; i < len(argv); i++ {
@@ -2140,6 +2184,8 @@ func checkNewcmdFollowupGateMain(stdout, stderr io.Writer, argv []string) int {
 			emit = true
 		case a == "--self-test":
 			selfTest = true
+		case a == "--list-faces":
+			listFaces = true
 		case a == "--root":
 			if i+1 >= len(argv) {
 				return cnfArgError(stderr, "argument --root: expected one argument")
@@ -2174,6 +2220,10 @@ func checkNewcmdFollowupGateMain(stdout, stderr io.Writer, argv []string) int {
 		}
 	}
 
+	if listFaces {
+		cnfPrintFaceRegistry(stdout)
+		return 0
+	}
 	if help {
 		fmt.Fprint(stdout, cnfHelpText)
 		return 0

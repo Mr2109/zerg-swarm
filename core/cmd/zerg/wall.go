@@ -145,6 +145,9 @@ func cmdAgentPing(inv *invocation, stdout, stderr io.Writer) int {
 		if inv.jsonGiven {
 			row := project(o, []string{"machine", "healthy", "code_version", "code_sha", "last_seen"})
 			row["via"] = via
+			// ★ 缺口 GAP-20260925-20（批⑤ · 2026-10-13）：`answered_by` —— **谁答的探活**（本档经主控查
+			//   `/api/fleet/status`，答话的是主控那一面；直连档单独走下面的端口探测支路）。
+			row["answered_by"] = "core（经主控 /api/fleet/status）"
 			return selectJSON(stdout, stderr, inv, inv.path, inv.fields, row)
 		}
 		fmt.Fprintf(stdout, "%s\thealthy=%s\tcode_version=%s\tvia=%s\n",

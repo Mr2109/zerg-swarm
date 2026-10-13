@@ -443,6 +443,16 @@ func cmdDevProposalNew(inv *invocation, stdout, stderr io.Writer) int {
 	}
 	rec.ID = nextProposalID(dir)
 	rec.Path = filepath.Join(dir, rec.ID+".json")
+	// ★ GAP-20260928-126（本单）：退点**看管** —— 路径形退点在这一步把前态**复本**落状态目录
+	//   （scratch/TMPDIR 按闲置清理后改前态仍可核 · 退点依据不随 scratch 失效）。快照落不下来 ⇒ 拒执
+	//   （fail-closed：退点依据不许静默失效）。非路径形（「方式」文本）无从快照 ⇒ 按本义收（返回空串）。
+	if keep, kerr := keepRollbackSnapshot(rec.ID, rec.Rollback); kerr != nil {
+		inv.setErr("failed", "rollback_keep_failed", kerr.Error())
+		fmt.Fprintf(stderr, "%s: 退点看管档落不下来（%v）⇒ 不给结论（退码 2 · 退点依据不许静默失效）\n", progName, kerr)
+		return exitUsage
+	} else if keep != "" {
+		fmt.Fprintf(stderr, "%s: 退点看管档 = %s（前态复本已落状态目录 rollback-keep/ · 与 scratch 清理无关 · 缺口 GAP-20260928-126）\n", progName, keep)
+	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		inv.setErr("failed", "state_dir_unwritable", err.Error())
 		fmt.Fprintf(stderr, "%s: 建不了状态目录 %s：%v\n", progName, dir, err)
@@ -1715,6 +1725,48 @@ func declaredFilesWhy(files []string) string {
 	return ""
 }
 
+// keepRollbackSnapshot —— 路径形退点的**看管**（缺口 `GAP-20260928-126`）。
+//
+// 病灶：`--rollback` 的仓外整件路径**无人看管** —— scratch/TMPDIR 按闲置清理（本机 24h 级）后
+// 改前态不可核 ⇒ 退点依据随之失效（文档引它当「能回退」的证据，真回退时却已读不到）。
+// 落法：提案这一步就把前态件的**复本**落进状态目录 `rollback-keep/`（持久位 · 不受 scratch 清理
+// 影响），文件名带提案号 ⇒ 逐提案可核。✗ 不动 `rollback_ref` 槽本身（那会撞已定的「一件一退点」
+// 口径），只**另落一份看管副本**。非路径形（schema 已认的「方式」文本）无从快照 ⇒ 返回空串（不拒）。
+func keepRollbackSnapshot(proposalID, rollback string) (string, error) {
+	v := strings.TrimSpace(rollback)
+	if v == "" || rollbackLooksLikeManifest(v) {
+		return "", nil
+	}
+	if !filepath.IsAbs(v) && !strings.ContainsRune(v, '/') {
+		return "", nil // 「方式」文本
+	}
+	st, err := os.Stat(v)
+	if err != nil || !st.Mode().IsRegular() {
+		return "", nil // 现读不可得那档由 `rollbackUsableWhy` 判死；这里只管拿得到的
+	}
+	stateDir := strings.TrimSpace(os.Getenv("ZERG_STATE_DIR"))
+	if stateDir == "" {
+		home, herr := os.UserHomeDir()
+		if herr != nil {
+			return "", fmt.Errorf("取不到 HOME ⇒ 落不了退点看管档")
+		}
+		stateDir = filepath.Join(home, ".zerg", "state")
+	}
+	keepDir := filepath.Join(stateDir, "rollback-keep")
+	if err := os.MkdirAll(keepDir, 0o755); err != nil {
+		return "", err
+	}
+	data, rerr := os.ReadFile(v)
+	if rerr != nil {
+		return "", rerr
+	}
+	dst := filepath.Join(keepDir, proposalID+"-"+filepath.Base(v))
+	if err := os.WriteFile(dst, data, 0o644); err != nil {
+		return "", err
+	}
+	return dst, nil
+}
+
 // rollbackUsableWhy —— 退点「现读可得」判定（**fail-closed** · `GAP-20261009-01`）。
 //
 // 病灶：`--rollback` 此前只判**非空** ⇒ 一个**读不到的裸名**（如 `/core__cmd__zerg__family_build.go`：
@@ -2076,6 +2128,21 @@ func canonTarget(s string) (string, string) {
 		if strings.ToUpper(id) == up {
 			return id, ""
 		}
+	}
+	// ★ GAP-20260928-121（本单）：认**缺口号形态**（`GAP-YYYYMMDD-NN`）—— 与 `--evidence` 的
+	//   「id 形状」同口径（缺口账现读**在册**才收）：M2 判据件搬运这类活在待办表里没有专格，
+	//   只能挂缺口号 ⇒ 逐条在册校验后收（✗ 不新造族名、✗ 不无条件放行）。
+	if strings.HasPrefix(up, "GAP-") {
+		led, lerr := readGapLedger()
+		if lerr != nil {
+			return "", fmt.Sprintf("缺口账读不出来（%v）⇒ target 缺口号**无法校验** ⇒ 不给结论（退码 2）", lerr)
+		}
+		for _, r := range led.Recs {
+			if strings.ToUpper(strings.TrimSpace(r.ID)) == up {
+				return r.ID, ""
+			}
+		}
+		return "", fmt.Sprintf("目标 %q 是缺口号形态却**不在账**（缺口账现读查不到）—— 回指不上既有编号", s)
 	}
 	return "", fmt.Sprintf("目标 %q 回指不上既有编号（待办 D/E/F/G 族 %d 条）", s, len(ids))
 }

@@ -776,7 +776,13 @@ type cpmHit struct {
 	sample string
 }
 
-// cpmScanPrivate = 逐模式扫**整件字节**（不给注释豁免）。
+// cpmScanPrivate = 逐模式扫整件字节 —— **纯注释行豁免**（口径与兄弟门 `check-hardcoded-private-paths`
+// 逐字同源：同件 `hcppIsComment` / `hcppCommentPrefixes`）。
+//
+// ★ 本枚（缺口 `GAP-20261013-24`）：此处此前**不给注释豁免**，而兄弟门给（它的成对正控逐字
+// 「同一路径出现在注释里 ⇒ **不许红**（防假红）」）⇒ 同一处私有面只出现在 Go 注释里时
+// 「一门放过、一门判红」。两门口径对齐 = **都跳纯注释行**（注释不编译进二进制、也不进公开面件正文）。
+// ✗ 只跳**整行**注释（行尾注释仍算命中）；✗ 不改 B3/B3e 其余判法、✗ 不动任何既有格的计数口径。
 func cpmScanPrivate(path string) []cpmHit {
 	txt, err := cpmReadText(path)
 	if err != nil {
@@ -786,10 +792,28 @@ func cpmScanPrivate(path string) []cpmHit {
 	for _, p := range cpmPrivatePatterns {
 		for _, sp := range p.find(txt) {
 			ln := strings.Count(txt[:sp[0]], "\n") + 1
+			if hcppIsComment(cpmLineAt(txt, sp[0])) {
+				continue
+			}
 			hits = append(hits, cpmHit{p.why, ln, cpmRuneSlice(txt[sp[0]:sp[1]], 60)})
 		}
 	}
 	return hits
+}
+
+// cpmLineAt —— 取字节偏移 `off` 所在的**整行**（行首到该行行尾；供注释豁免判据用）。
+func cpmLineAt(txt string, off int) string {
+	if off < 0 {
+		off = 0
+	}
+	if off > len(txt) {
+		off = len(txt)
+	}
+	start := strings.LastIndex(txt[:off], "\n") + 1
+	if end := strings.Index(txt[off:], "\n"); end >= 0 {
+		return txt[start : off+end]
+	}
+	return txt[start:]
 }
 
 // cpmPlainMatch = 明文命中真源：解码后一律回 `cpmPrivatePatterns` 判，不另立白名单。
