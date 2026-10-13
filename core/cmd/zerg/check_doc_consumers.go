@@ -3,8 +3,11 @@
 //
 // 命题（公约 §一 逐字）：任一消费判据（zerg_overview / help export / doc meta fill / doc_search）
 // 解析出的版本目录，必须是盘上**已存在**的 `v*` 目录、且含发布件（使用指南）。
+// ★ 缺口 `GAP-20260927-121` 落点面（2026-10-14）：落点**去版本号**后，稳定面「唯一份」落在
+// `<base>/现行/`（版本只当元数据）⇒ 「符」多认这一格（`现行` 须在盘 ∧ 含发布件）；旧带版本号
+// 落点（`v*`）**照旧算符**（兼容面 —— 已在盘的 `v*` 目录仍可直读 · ✗ 不静默丢）。
 //
-// 断言：逐消费者 —— dir 基名匹配 `^v[0-9.]+$` ∧ 在盘 ∧ 含发布件；**跨消费者不一致 ⇒ 报**（✗ 不静默）。
+// 断言：逐消费者 —— 基名（`^v[0-9.]+$` ∨ 稳定落点名）∧ 在盘 ∧ 含发布件；**跨消费者不一致 ⇒ 报**（✗ 不静默）。
 //
 // 退码：0 四消费者全符 · 1 有消费者不符（tri-report ⇒ 落 REPORT · 不锁提交链）· 2 取数面拿不到（不给结论）。
 //
@@ -71,7 +74,7 @@ func dcRender(readings []dcReading, base string) string {
 	if div, seq := dcDiverge(readings); div {
 		fmt.Fprintf(&b, "⚠ 跨消费者不一致（报 · 不静默）：%s\n", seq)
 	}
-	fmt.Fprintf(&b, "结论：不符 %d/%d（符 = 基名 v* ∧ 在盘 ∧ 含发布件）\n", nonConf, len(readings))
+	fmt.Fprintf(&b, "结论：不符 %d/%d（符 = （基名 v* ∨ 稳定落点 %s）∧ 在盘 ∧ 含发布件）\n", nonConf, len(readings), dcStableLandingName)
 	return b.String()
 }
 
@@ -123,7 +126,7 @@ func checkDocConsumersGateMain(stdout, stderr io.Writer, argv []string) int {
 // dcUsage —— 用法（-h/--help 走它）。
 func dcUsage(w io.Writer) {
 	fmt.Fprintf(w, "usage: %s [-h] [--self-test] [--json]\n", dcGateName)
-	fmt.Fprintf(w, "  逐消费者现读「定格」的版本目录：必须是盘上已存在的 v* 目录 ∧ 含发布件（使用指南）。\n")
+	fmt.Fprintf(w, "  逐消费者现读「定格」的落点：必须是盘上已存在的 v* 目录**或去版本号稳定落点（现行）**，且含发布件（使用指南）。\n")
 	fmt.Fprintf(w, "  退码：0 全符 · 1 有消费者不符 · 2 取数面拿不到（不给结论）。\n")
 }
 
@@ -241,6 +244,36 @@ func dcSelfTest(stdout io.Writer) int {
 	checks = append(checks,
 		dcChkBool("负控·抽件前 zerg_overview 格 = 符", before, true),
 		dcChkBool("负控·抽件后 zerg_overview 格 = 不符", after, false),
+	)
+
+	// ★ GAP-20260927-121 落点面（2026-10-14）：**去版本号稳定落点**（符号链接 → 含发布件的版本目录）
+	//   也须判「符」（is_v* 为否 —— 这正是「去版本号」）；成对负控：抽件 ⇒ 该格翻「不符」。
+	stableTarget := filepath.Join(base, "v0.0.1")
+	_ = os.MkdirAll(stableTarget, 0o755)
+	artStable := filepath.Join(stableTarget, "使用-虫族指南-20260902.md")
+	_ = os.WriteFile(artStable, []byte("guide\n"), 0o644)
+	stableLink := filepath.Join(base, dcStableLandingName)
+	_ = os.Remove(stableLink)
+	linkErr := os.Symlink(filepath.Base(stableTarget), stableLink)
+	rsStable := dcJudgeOne("a", stableLink, "")
+	checks = append(checks,
+		dcChkBool("稳定落点·符号链接建得出", linkErr == nil, true),
+		dcChkBool("稳定落点·在盘（符号链接 → 目录）", rsStable.OnDisk, true),
+		dcChkBool("稳定落点·is_v*（去版本号 ⇒ 否）", rsStable.IsVStar, false),
+		dcChkBool("稳定落点·is_stable（稳定落点名 ⇒ 是）", rsStable.IsStable, true),
+		dcChkBool("正控·稳定落点含发布件 ⇒ 判「符」", dcConforms(rsStable), true),
+	)
+	_ = os.Remove(artStable)
+	rsStableNoArt := dcJudgeOne("a", stableLink, "")
+	checks = append(checks,
+		dcChkBool("负控·稳定落点抽件后 ⇒ 翻「不符」", dcConforms(rsStableNoArt), false),
+		dcChkBool("负控·稳定落点抽件后 has_release_artifact（否）", rsStableNoArt.HasRelArt, false),
+	)
+	_ = os.Remove(stableLink)
+
+	// ★ 兼容面：旧带版本号落点（`v*` 目录）仍在盘 ⇒ 仍可直读、仍判「符」（✗ 不静默丢）。
+	checks = append(checks,
+		dcChkBool("兼容面·旧带版本号落点 v2.5.10 仍可直读（on_disk）", dcJudgeOne("a", dirOK, "").OnDisk, true),
 	)
 
 	fails := 0

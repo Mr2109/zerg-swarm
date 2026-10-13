@@ -15,3 +15,7 @@ func OverviewCurrentVersionDir() string { return currentVersionDir() }
 // ReleaseArtifactGlob —— 「已发布版」判据 glob（= releaseArtifactGlob：使用指南）；
 // 供命令面/判据现读同一份「含发布件」口径（✗ 不在包外另写一个字面量）。
 const ReleaseArtifactGlob = releaseArtifactGlob
+
+// StableLandingName —— **去版本号的稳定落点**目录名（= stableLandingName：`现行` · 缺口
+// `GAP-20260927-121` 落点面）；供命令面/判据现读同一份「稳定落点」口径（✗ 不在包外另写字面量）。
+const StableLandingName = stableLandingName

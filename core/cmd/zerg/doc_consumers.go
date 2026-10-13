@@ -33,6 +33,10 @@ import (
 // dcVStarRE —— 版本目录基名的形态判据（`^v[0-9.]+$`）。
 var dcVStarRE = regexp.MustCompile(`^v[0-9.]+$`)
 
+// dcStableLandingName —— **去版本号稳定落点**名（= `chat.StableLandingName`：`现行` · 一处真源，
+// ✗ 不在本包另写字面量）。缺口 `GAP-20260927-121` 落点面。
+var dcStableLandingName = chat.StableLandingName
+
 // dcConsumersOrder —— 消费者现读次序（固定 · 人面可读）。
 var dcConsumersOrder = []string{"zerg_overview", "help export", "doc meta fill", "doc_search"}
 
@@ -43,6 +47,7 @@ type dcReading struct {
 	Why       string // 判不了的原因（空 = 有结论）
 	OnDisk    bool   // 目录在盘上（且是目录）
 	IsVStar   bool   // 基名匹配 ^v[0-9.]+$
+	IsStable  bool   // 基名 = 稳定落点名（`现行` —— **去版本号** · 缺口 GAP-20260927-121 落点面）
 	HasRelArt bool   // 含发布件（使用指南 glob）
 }
 
@@ -57,6 +62,7 @@ func dcJudgeOne(name, dir, why string) dcReading {
 		r.OnDisk = true
 	}
 	r.IsVStar = dcVStarRE.MatchString(filepath.Base(dir))
+	r.IsStable = filepath.Base(dir) == chat.StableLandingName
 	if r.OnDisk {
 		if m, _ := filepath.Glob(filepath.Join(dir, chat.ReleaseArtifactGlob)); len(m) > 0 {
 			r.HasRelArt = true
@@ -105,8 +111,11 @@ func dcBool(v bool) string {
 	return "否"
 }
 
-// dcConforms —— 一个消费者「符公约」= is_v* ∧ 在盘 ∧ 含发布件。
-func dcConforms(r dcReading) bool { return r.IsVStar && r.OnDisk && r.HasRelArt }
+// dcConforms —— 一个消费者「符公约」=（基名 `v*` ∨ **去版本号稳定落点**）∧ 在盘 ∧ 含发布件。
+// ★ 缺口 `GAP-20260927-121` 落点面（2026-10-14）：稳定面「唯一份」的落点由带版本号的 `v*` 目录
+// 去版本号为 `<base>/现行/`（版本只当元数据、落点路径不随版本变）⇒ 「符公约」多认这一格；
+// 旧带版本号落点（`v*`）**照旧算符**（兼容面：已在盘的 `v*` 目录仍可直读 · ✗ 不静默丢）。
+func dcConforms(r dcReading) bool { return (r.IsVStar || r.IsStable) && r.OnDisk && r.HasRelArt }
 
 // docConsumersFields —— `--json` 的全部字段（K1：机器面先定）。
 var docConsumersFields = []string{"consumer", "dir", "is_vstar", "on_disk", "has_release_artifact", "note"}

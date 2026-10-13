@@ -99,22 +99,31 @@ func latestVersionDir() string {
 	return fallback
 }
 
-// currentVersionDir — **现行**版目录（缺口 `GAP-20260927-121`）。
+// stableLandingName — **去版本号的稳定落点**（缺口 `GAP-20260927-121` 落点面）。
 //
-// 为什么：旧路只按版本号 glob `v*` + 发布件判据取「读哪份档案」，而「当前版」是**管理动作**（改目录名就换版）。
-// 本函数引入**去版本号的现行指针** `<base>/现行`：
+// 落点路径本身**不随版本变**：稳定面「唯一份」落在 `<base>/现行/`（不带 `v` ⇒ 不进 glob `v*`、
+// 不增快照套数）。版本号只当**元数据**：`现行` 可以是指向某枚 `v*` 版本目录的**符号链接**
+// （链接目标 = 版本号 ⇒ 可追溯），也可以是真目录。旧带版本号落点（`v2.5.10/` 一类）**仍在盘上、
+// 仍可直读**——兼容面 ✗ 不静默丢。
+const stableLandingName = "现行"
+
+// currentVersionDir — **现行**版目录（缺口 `GAP-20260927-121`）：**稳定落点 `<base>/现行` 优先**。
 //
-//	· 指针是符号链接或目录 ⇒ 直接用它；
-//	· 指针是文本件（首行 = 目录名）⇒ 解得到在盘子目录则用它；
-//	· **缺指针 ⇒ 回退现读**（`latestVersionDir()`）—— 行为一字不改（向后兼容）。
+// 三态（顺序即优先级）：
 //
-// 这样换版只改一个指针、不用改代码；而未建指针的环境行为不变。
+//	① `<base>/现行` 在盘（目录，或**符号链接指向目录**）⇒ 直接用它 —— 落点路径不随版本变；
+//	② `<base>/现行` 是**文本件**（首行 = 目录名）⇒ 解得到在盘子目录则用它（旧形态，兼容）；
+//	③ 指针**缺** ⇒ 回退现读（`latestVersionDir()`：含发布件的最高版）—— 行为一字不改（向后兼容）；
+//	   指针**在盘却是断链**（符号链接的目标版本目录已退役 ⇒ 悬空）⇒ 按 ③ 现读到的目录**自愈重指**，
+//	   落点路径（`现行`）不变；重指不成 ⇒ 照旧落回 ③（✗ 不给空结论）。
+//
+// 这样换版只改一个指针（或让断链自愈），**落点路径本身不随版本变**；而未建指针的环境行为不变。
 func currentVersionDir() string {
 	base := zergDocsBase()
 	if base == "" {
 		return latestVersionDir()
 	}
-	ptr := filepath.Join(base, "现行")
+	ptr := filepath.Join(base, stableLandingName)
 	if st, err := os.Stat(ptr); err == nil && st.IsDir() {
 		return ptr
 	}
@@ -127,7 +136,21 @@ func currentVersionDir() string {
 			}
 		}
 	}
+	// ★ 断链自愈：`现行` **在盘**且本身是符号链接，但 `os.Stat` 已失败（目标不在盘 ⇒ 悬空），
+	//   即「稳定落点还在、只是版本目录退了役」——按现读重指，落点路径不变；重指不成 ⇒ 落回旧落点。
+	if fi, lerr := os.Lstat(ptr); lerr == nil && fi.Mode()&os.ModeSymlink != 0 {
+		if vd := latestVersionDir(); vd != "" && relinkStableLanding(ptr, vd) == nil {
+			return ptr
+		}
+	}
 	return latestVersionDir()
+}
+
+// relinkStableLanding — 把稳定落点 `ptr` 重指到版本目录 `target`（用**相对**链接 ⇒ 整棵文档树可整体搬迁）。
+// 已存在则先删再建（幂等）；建不成 ⇒ 返回底层错（调用方据此回退旧带版本号落点）。
+func relinkStableLanding(ptr, target string) error {
+	_ = os.Remove(ptr)
+	return os.Symlink(filepath.Base(target), ptr)
 }
 
 // releaseArtifactGlob — 「已发布版」的**最低证据**：目录里有发布件 = 使用指南。
