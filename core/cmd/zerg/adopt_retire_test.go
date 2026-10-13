@@ -233,10 +233,10 @@ func judgeARPending(d arDoc) []error {
 // ★ 2026-10-07 随动（退役试点 #1 · `check-build-selfclean.py`）—— 两处去掉硬钉常量 / 纳入正门那一档：
 //
 //	① 条数**现读真源**（✗ 不硬钉 3）：退场正门 `zerg script retire` 每退一件就往 `retire_ledger`
-//	   追加一条（`family_script_retire.go:595`）⇒ 台账随退场**正常增长**；硬钉「== 3」会把每一次
+//	   追加一条（`family_script_retire.go` 的 `scriptRetireAppendToArray` 调用处 · **符号锚** ✗ 不写行号）⇒ 台账随退场**正常增长**；硬钉「== 3」会把每一次
 //	   正当退场误判成红。改为：台账**非空** ＋ 已知删除面（`arDeletedPaths` 三件）逐件在册。
 //	② state 闭集**以代码为准**补一档：正门写进 ledger 的 state 是 `scriptRetireStateWord`
-//	   ＝「已登记退场（<日期>）」（`family_script_retire.go:58/590`），与历史两档「已删」「待删」并列为合法。
+//	   ＝「已登记退场（<日期>）」（`family_script_retire.go` 的 `scriptRetireStateWord` · **符号锚** ✗ 不写行号），与历史两档「已删」「待删」并列为合法。
 func judgeARRetireLedger(root string, d arDoc) []error {
 	var errs []error
 	// ① 条数现读真源（✗ 不硬钉常量）：台账非空 ＋ 已知删除面逐件在册。
@@ -575,6 +575,7 @@ func TestAdoptRetireJudgeHasTeeth(t *testing.T) {
 		"算术": len(judgeARArithmetic(d)), "决议": len(judgeARDecisions(d)), "承接": len(judgeARPending(d)),
 		"台账": len(judgeARRetireLedger(root, d)), "名单": len(judgeARExclusions(root)),
 		"itask": len(judgeARItask(root, d, mainGo, fam)),
+		"改判":    len(judgeARReclass(raw, d, mainGo, "")),
 	} {
 		if n != 0 {
 			t.Fatalf("负控前的正控就不绿：%s 判据报 %d 处", name, n)
@@ -651,6 +652,31 @@ func TestAdoptRetireJudgeHasTeeth(t *testing.T) {
 	if len(judgeARItask(root, d, cut, fam)) == 0 {
 		t.Errorf("负控⑨ 失败：删掉已开放的 `itask interval set` 子命令，⑤′ 正控没报（假绿）")
 	}
+	// 负控 ⑩（判据⑧ R3 对拍）：把 faces 现值退回 ②⇒① 改前（UI 模块 adopt 3 / internal 9）⇒ 必须报
+	//   —— 这就是「真源再变会再红」：改判记录与 faces 一脱钩当场暴露。
+	back := cloneAR(t, d)
+	for i := range back.Faces {
+		if back.Faces[i].Face == "UI 模块" {
+			back.Faces[i].Adopt, back.Faces[i].Internal = 3, 9
+		}
+	}
+	if len(judgeARReclass(raw, back, mainGo, "")) == 0 {
+		t.Errorf("负控⑩ 失败：faces 退回改前（UI 模块 3/9），判据⑧ 的对拍没报（假绿）")
+	}
+	// 负控 ⑪（判据⑧ R5 命令口）：commands 点一条命令树里没有的命令 ⇒ 必须报。
+	badCmd := arMutateReclass(t, raw, func(m map[string]interface{}) {
+		m["commands"] = []string{"zerg ui no-such-action"}
+	})
+	if len(judgeARReclass(badCmd, d, mainGo, "")) == 0 {
+		t.Errorf("负控⑪ 失败：commands 点名了命令树里没有的命令，判据⑧ 没报")
+	}
+	// 负控 ⑫（判据⑧ R6 导出物交叉）：把已退场的 ui/ 件搬回导出物 ② 的「UI 模块」段、① 段看不见 ⇒ 必须报。
+	synth := "## ① 收编为命令（75 条）\n\n### UI 模块（4 条）\n\n- `ui/src/modules/cocoon.rs` → **① 收编为命令**\n\n" +
+		"## ② 保留为内部实现（183 条）\n\n### UI 模块（8 条）\n\n" +
+		"- `ui/scripts/check-i18n.py · i18n-baseline.json · i18n_audit.py（3 件）` → **② 保留为内部实现**\n"
+	if len(judgeARReclass(raw, d, mainGo, synth)) == 0 {
+		t.Errorf("负控⑫ 失败：已退场 ui/ 件仍留在导出物 ② 节、① 节看不见，判据⑧ 没报")
+	}
 }
 
 // cloneAR —— 负控用：把真源过一遍 JSON 克隆（值语义复制，改副本不碰真件）。
@@ -715,6 +741,269 @@ func TestAdoptRetireExportMatchesTruth(t *testing.T) {
 	} else {
 		t.Logf("判据⑦ ✓ 导出物与原真源逐格相同（稿 41/145/4/83 · 落回后 %d/%d/%d/%d · 五行分面逐行）",
 			d.Tally.Adopt, d.Tally.Internal, d.Tally.Retire, d.Tally.Pending)
+	}
+}
+
+// ── 判据⑧：改判记账（②⇒①）与**现读**逐格对拍 —— 「登记面不许悄悄腐」的牙（GAP-20261014-46）────
+
+// arReclass —— 真源里 `改判…` 记录的形状（照 2026-09-21 先例：object/from/to/why/effects/registration）。
+// ★ 「收编档」（to 含 ①）另须带 commands/archived/check 三格 —— 那三格就是本判据的牙：
+//
+//	check 声明改判后的四个计数 ⇒ 谁把 faces/tally 改回去（或改了计数没同步这条），当场红。
+type arReclass struct {
+	Object       string   `json:"object"`
+	Face         string   `json:"face"`
+	From         string   `json:"from"`
+	To           string   `json:"to"`
+	Why          string   `json:"why"`
+	Effects      string   `json:"effects"`
+	Evidence     string   `json:"evidence"`
+	Commands     []string `json:"commands"`
+	Archived     []string `json:"archived"`
+	Registration string   `json:"registration"`
+	Check        *struct {
+		Face          string `json:"face"`
+		Adopt         int    `json:"adopt"`
+		Internal      int    `json:"internal"`
+		TallyAdopt    int    `json:"tally_adopt"`
+		TallyInternal int    `json:"tally_internal"`
+	} `json:"check"`
+}
+
+// arClassOf —— 四类闭集归一（① 收编 / ② 保留为内部 / ③ 退役 / ④ 待定）；不在闭集 ⇒ 空串。
+func arClassOf(s string) string {
+	for _, c := range []string{"① 收编", "② 保留为内部", "③ 退役", "④ 待定"} {
+		if strings.Contains(s, c) {
+			return c
+		}
+	}
+	return ""
+}
+
+// arExportSections —— 把导出物按顶层节（`## ①…④`）与二级子节（`### <名>（N 条）`）切成 map[顶层][子节]正文。
+func arExportSections(text string) map[string]map[string]string {
+	out := map[string]map[string]string{}
+	top, sub := "", ""
+	for _, line := range strings.Split(text, "\n") {
+		t := strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(t, "### "):
+			sub = strings.TrimSpace(strings.TrimPrefix(t, "### "))
+			if i := strings.Index(sub, "（"); i > 0 {
+				sub = sub[:i]
+			}
+			continue
+		case strings.HasPrefix(t, "## "):
+			top, sub = "", ""
+			for _, c := range []string{"①", "②", "③", "④"} {
+				if strings.Contains(t, c) {
+					top = c
+					break
+				}
+			}
+			continue
+		}
+		if top == "" || sub == "" {
+			continue
+		}
+		if out[top] == nil {
+			out[top] = map[string]string{}
+		}
+		out[top][sub] += line + "\n"
+	}
+	return out
+}
+
+// judgeARReclass —— 判据⑧：真源里的 `改判` 记账必须与**现读**逐格对齐（自重发现漂移）。六条规则：
+//
+//	R1 形状：每条 `改判` 记录须带 object/from/to/why/effects/registration；from/to ∈ 四类闭集且**换类**。
+//	R2 落点：`to` 是 ① 收编的记录**必须**带 commands/archived/check 三格（缺则「收编」无牙）。
+//	R3 ★ 对拍（牙）：check.face ∈ 五面，且 check 的四个数 == faces[该面]/tally 的**现值**
+//	   —— 谁把 faces 改回去、或改了计数没同步这条改判记录，当场报。
+//	R4 归档：archived 逐件须在 `retire_ledger` 里（收编/退场必须有档 · 台账不腐）。
+//	R5 命令口：commands 逐条须在命令树（main.go）里注册（`[]string{"<族>", "<动作>"}` 形态）
+//	   —— 防「表里写收编、命令其实不在盘」。
+//	R6 ★ 导出物交叉：`retire_ledger` 里前缀 `ui/` 的已登记退场件**不得**留在导出物 `## ②` 的 `### UI 模块` 段，
+//	   且**必须**出现在 `## ①` 的 `### UI 模块` 段（收编要看得见 · ✗ 不许靠从 ② 删掉凑绿）。导出物缺 ⇒ 该格跳过。
+func judgeARReclass(raw []byte, d arDoc, mainGo, exportText string) []error {
+	var errs []error
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &top); err != nil {
+		return []error{fmt.Errorf("判据⑧ 破：真源解不动：%v", err)}
+	}
+	inLedger := map[string]bool{}
+	for _, e := range d.RetireLedger {
+		inLedger[strings.TrimSpace(e.Object)] = true
+	}
+	n := 0
+	for k, v := range top {
+		if !strings.HasPrefix(k, "改判") {
+			continue
+		}
+		n++
+		var r arReclass
+		if err := json.Unmarshal(v, &r); err != nil {
+			errs = append(errs, fmt.Errorf("判据⑧ 破：`%s` 解不动：%v", k, err))
+			continue
+		}
+		// R1 形状。
+		for _, f := range []struct{ name, v string }{
+			{"object", r.Object}, {"from", r.From}, {"to", r.To},
+			{"why", r.Why}, {"effects", r.Effects}, {"registration", r.Registration},
+		} {
+			if strings.TrimSpace(f.v) == "" {
+				errs = append(errs, fmt.Errorf("判据⑧ 破：`%s` 的 %s 留白（改判必须有档：对象/从/到/为何/逐格影响/落点）", k, f.name))
+			}
+		}
+		cf, ct := arClassOf(r.From), arClassOf(r.To)
+		if cf == "" {
+			errs = append(errs, fmt.Errorf("判据⑧ 破：`%s` 的 from = %q 不在四类闭集", k, r.From))
+		}
+		if ct == "" {
+			errs = append(errs, fmt.Errorf("判据⑧ 破：`%s` 的 to = %q 不在四类闭集", k, r.To))
+		}
+		if cf != "" && cf == ct {
+			errs = append(errs, fmt.Errorf("判据⑧ 破：`%s` 的 from 与 to 同类（%s）—— 改判必须换类", k, ct))
+		}
+		// R2 收编档必须带三格。
+		if ct == "① 收编" {
+			if len(r.Commands) == 0 {
+				errs = append(errs, fmt.Errorf("判据⑧ 破：`%s` 收编成 ① 却没写 commands（收编必须点名命令口）", k))
+			}
+			if len(r.Archived) == 0 {
+				errs = append(errs, fmt.Errorf("判据⑧ 破：`%s` 收编成 ① 却没写 archived（原 ② 件必须有退场档）", k))
+			}
+			if r.Check == nil {
+				errs = append(errs, fmt.Errorf("判据⑧ 破：`%s` 收编成 ① 却没写 check（缺它则计数脱钩无人发现）", k))
+			}
+		}
+		// R3 ★ 对拍（牙）。
+		if r.Check != nil {
+			fi := -1
+			for i := range d.Faces {
+				if d.Faces[i].Face == r.Check.Face {
+					fi = i
+					break
+				}
+			}
+			if fi < 0 {
+				errs = append(errs, fmt.Errorf("判据⑧ 破：`%s` 的 check.face = %q 不在五面里", k, r.Check.Face))
+			} else if d.Faces[fi].Adopt != r.Check.Adopt || d.Faces[fi].Internal != r.Check.Internal {
+				errs = append(errs, fmt.Errorf("判据⑧ 破：`%s` 声明面「%s」应是 adopt=%d / internal=%d，faces 现值 %d / %d ⇒ 改判记录与 faces 脱钩",
+					k, r.Check.Face, r.Check.Adopt, r.Check.Internal, d.Faces[fi].Adopt, d.Faces[fi].Internal))
+			}
+			if d.Tally.Adopt != r.Check.TallyAdopt || d.Tally.Internal != r.Check.TallyInternal {
+				errs = append(errs, fmt.Errorf("判据⑧ 破：`%s` 声明 tally 应是 ①=%d / ②=%d，现值 %d / %d ⇒ 计数与改判记录脱钩",
+					k, r.Check.TallyAdopt, r.Check.TallyInternal, d.Tally.Adopt, d.Tally.Internal))
+			}
+		}
+		// R4 归档。
+		for _, a := range r.Archived {
+			if !inLedger[strings.TrimSpace(a)] {
+				errs = append(errs, fmt.Errorf("判据⑧ 破：`%s` 的 archived 件 %s 不在 retire_ledger（收编/退场必须有档）", k, a))
+			}
+		}
+		// R5 命令口。
+		for _, c := range r.Commands {
+			parts := strings.Fields(c)
+			if len(parts) < 2 || parts[0] != "zerg" {
+				errs = append(errs, fmt.Errorf("判据⑧ 破：`%s` 的 commands 条目 %q 不是 `zerg <族> <动作>` 形态", k, c))
+				continue
+			}
+			var lit strings.Builder
+			lit.WriteString("[]string{")
+			for i, p := range parts[1:] {
+				if i > 0 {
+					lit.WriteString(", ")
+				}
+				lit.WriteString(strconv.Quote(p))
+			}
+			lit.WriteString("}")
+			if !strings.Contains(mainGo, lit.String()) {
+				errs = append(errs, fmt.Errorf("判据⑧ 破：`%s` 声称已收编成 %q，命令树里却没有 `%s` 的注册行（表写收编、命令不在）",
+					k, c, lit.String()))
+			}
+		}
+	}
+	// R6 导出物交叉（UI 面）。
+	if strings.TrimSpace(exportText) != "" {
+		sec := arExportSections(exportText)
+		for _, e := range d.RetireLedger {
+			o := strings.TrimSpace(e.Object)
+			if !strings.HasPrefix(o, "ui/") {
+				continue
+			}
+			// 件名的匹配面：整条相对路径 **或** 基名（导出物把同目录多件写成一行 `a · b · c（N 件）`，
+			// 只按整条路径匹配会漏掉第二个起 —— 见改前态实测：`i18n_audit.py` 那一格曾被漏判）。
+			hit := func(s string) bool {
+				return strings.Contains(s, o) || strings.Contains(s, filepath.Base(o))
+			}
+			if hit(sec["②"]["UI 模块"]) {
+				errs = append(errs, fmt.Errorf("判据⑧ 破：%s 已在 retire_ledger（已登记退场），却仍留在导出物 `## ②` 的 `### UI 模块` 段 ⇒ ② 口径已过时", o))
+			}
+			if !hit(sec["①"]["UI 模块"]) {
+				errs = append(errs, fmt.Errorf("判据⑧ 破：%s 已收编却不在导出物 `## ①` 的 `### UI 模块` 段 ⇒ 收编要看得见（✗ 不许靠从 ② 删掉凑绿）", o))
+			}
+		}
+	}
+	if n == 0 {
+		errs = append(errs, errors.New("判据⑧ 破：真源里一条 `改判` 记录都没有（②⇒① 改判必须有档）"))
+	}
+	return errs
+}
+
+// arMutateReclass —— 负控用：把真源里那条带 `check` 的 `改判` 记录读成 map、交给 fn 改，再回写成 raw。
+func arMutateReclass(t *testing.T, raw []byte, fn func(map[string]interface{})) []byte {
+	t.Helper()
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &top); err != nil {
+		t.Fatalf("负控夹具：真源解不动：%v", err)
+	}
+	for k := range top {
+		if !strings.HasPrefix(k, "改判") {
+			continue
+		}
+		var m map[string]interface{}
+		if err := json.Unmarshal(top[k], &m); err != nil {
+			continue
+		}
+		if _, ok := m["check"]; !ok {
+			continue // 只动「收编档」
+		}
+		fn(m)
+		b, err := json.Marshal(m)
+		if err != nil {
+			t.Fatalf("负控夹具：重编改判记录失败：%v", err)
+		}
+		top[k] = b
+		out, err := json.Marshal(top)
+		if err != nil {
+			t.Fatalf("负控夹具：重编真源失败：%v", err)
+		}
+		return out
+	}
+	t.Fatal("负控夹具前置不成立：真源里找不到带 `check` 的改判记录")
+	return nil
+}
+
+// TestAdoptRetireReclassVsExport —— 判据⑧ 的真仓现跑（含「导出物交叉」那一格）。
+// 导出物不在（两仓分家）⇒ 该格 Skip；在则必须过。
+func TestAdoptRetireReclassVsExport(t *testing.T) {
+	root, d, raw := loadAR(t)
+	mainGo := readRepo(t, root, "core/cmd/zerg/main.go")
+	if errs := judgeARReclass(raw, d, mainGo, ""); len(errs) > 0 {
+		t.Errorf("判据⑧ 破（真源内部，%d 处）：\n  %s", len(errs), joinErrs(errs))
+	}
+	docs := zergDocsRoot(t) // 同级没有 Zerg-内部文档 时自动 Skip
+	p := filepath.Join(docs, "项目文档", "v2.5.10", "归属-收编与退役-20260920.md")
+	b, err := os.ReadFile(p)
+	if err != nil {
+		t.Skipf("导出物不在（%v）—— 两仓分家时本层不自己造它", err)
+	}
+	if errs := judgeARReclass(raw, d, mainGo, string(b)); len(errs) > 0 {
+		t.Errorf("判据⑧ 破（含导出物交叉，%d 处）：\n  %s", len(errs), joinErrs(errs))
+	} else {
+		t.Logf("判据⑧ ✓ 改判记账与 faces/tally 现值对拍一致 · 归档/命令口齐 · 导出物 ② 节无已退场的 ui/ 件、① 节可见")
 	}
 }
 

@@ -63,22 +63,22 @@
   {
    "face": "UI 模块",
    "objects": 13,
-   "adopt": 3,
-   "internal": 9,
+   "adopt": 4,
+   "internal": 8,
    "retire": 0,
    "pending": 1,
-   "why": "② 7 原样 + 1（决议① 对话视图）+ 1（决议③ 文件浏览面板 ⇒ 迁往虫茧） = 9；④ 1 = 编辑器内核 ferrite（三条硬骨头里唯一没被 10 条决议覆盖）"
+   "why": "① 3（cocoon.rs · model_registry.rs · upgrade.rs）+ 1（2026-10-14 改判 · GAP-20261014-46：UI i18n 检具 `ui/scripts/check-i18n.py · i18n_audit.py · i18n-baseline.json` ② 改判 ① —— 2 件已 Go 真搬 `check_i18n.go`/`i18n_audit.go` 并有命令口 `zerg ui i18n`/`zerg ui i18n-audit`，余 1 件 i18n-baseline.json 为该命令的输入数据「不欠」） = 4；② 7 原样 + 1（决议① 对话视图）+ 1（决议③ 文件浏览面板 ⇒ 迁往虫茧）− 1（2026-10-14 改判：i18n 检具移出 ②）= 8；④ 1 = 编辑器内核 ferrite（三条硬骨头里唯一没被 10 条决议覆盖）"
   }
  ],
  "tally": {
   "objects": 273,
-  "adopt": 74,
-  "internal": 184,
+  "adopt": 75,
+  "internal": 183,
   "retire": 3,
   "pending": 12,
   "movement": {
-   "adopt": "41 + 9（决议②）+ 3（决议⑩）+ 8（T-56 余项：标定 3 + 评测 5）+ 13（2026-10-08 评测线原 ④「维持待拍」13 件收编 ①）= 74",
-   "internal": "145 + 17（决议① HTTP）+ 1（决议① 界面）+ 3（决议③ HTTP）+ 1（决议③ 界面）+ 12（决议⑦⑧）+ 4（T-56 余项：评测线接线在跑）+ 1（2026-09-21 改判：compressor_demo ③⇒②）= 184",
+   "adopt": "41 + 9（决议②）+ 3（决议⑩）+ 8（T-56 余项：标定 3 + 评测 5）+ 13（2026-10-08 评测线原 ④「维持待拍」13 件收编 ①）+ 1（2026-10-14 改判 · GAP-20261014-46：UI i18n 检具 ②⇒①）= 75",
+   "internal": "145 + 17（决议① HTTP）+ 1（决议① 界面）+ 3（决议③ HTTP）+ 1（决议③ 界面）+ 12（决议⑦⑧）+ 4（T-56 余项：评测线接线在跑）+ 1（2026-09-21 改判：compressor_demo ③⇒②）− 1（2026-10-14 改判 · GAP-20261014-46：UI i18n 检具 ②⇒①）= 183",
    "retire": "3（2026-09-21 改判后 = `scripts/253/` 三件；compressor_demo 由 ③ 改判 ② ⇒ 已移出退役台账）",
    "pending": "83 − 71（落回量：决议 46 + T-56 余项 12 + 2026-10-08 评测线 13） = 12"
   },
@@ -1820,6 +1820,19 @@
   "why": "唯一压缩器最小示例（38 行 · 零业务 · 删了下次复现要重写）；现跑确认不进任何构建/发布面：`scripts/build/build-all.sh` 0 命中 · `publish/whitelist.txt` 0 命中 · `bin/` 无它的制品",
   "effects": "真源逐格：入口面 internal 5→6 · retire 1→0；tally internal/retire 183/4 → 184/3；退役台账 4 件 → 3 件（`scripts/253/` 三件）。机检「③ 应 4 件」同笔改为「③ 应 3 件」；Zerg-内部文档 导出物（归属-收编与退役-20260920.md）与决策表同批标注",
   "registration": "主仓 `c54fdbd8`（`scripts/公开标记.tsv` 118 → 119 行 · public=no）"
+ },
+ "改判（2026-10-14 · GAP-20261014-46 · UI i18n 检具 ②⇒①）": {
+  "object": "ui/scripts/（check-i18n.py · i18n_audit.py · i18n-baseline.json）",
+  "face": "UI 模块",
+  "from": "② 保留为内部实现",
+  "to": "① 收编为命令",
+  "why": "工具归属普查 2.5.15 §2.6② 点名该行 ② 口径已过时：3 件里 2 件已 Go 真搬（`check_i18n.go` / `i18n_audit.go`）并有命令口 `zerg ui i18n` / `zerg ui i18n-audit`，余 1 件 `ui/scripts/i18n-baseline.json` 是这两条命令的输入数据（不欠独立命令 ⇒「不欠」）⇒ 该对象整体由 ② 收编 ①。真源自身的 `retire_ledger` 早在 2026-10-08/09 就把 2 件记为「已登记退场」，faces[4] 的 ② 口径没随动 ⇒ 登记面自相矛盾；本笔按 2026-09-21 改判先例补记。",
+  "effects": "真源逐格：UI 模块面 adopt 3→4 · internal 9→8（行内和 13 不变）；tally adopt/internal 74/184 → 75/183（对象总数 273 不变）。Zerg-内部文档 导出物（归属-收编与退役-20260920.md）同批随动：该对象行由 ② 节移入 ① 节，四个总数与五个面分布与真源逐格相同（机检 judgeARExport 判据⑦ 现跑 rc=0）。",
+  "commands": ["zerg ui i18n", "zerg ui i18n-audit"],
+  "archived": ["ui/scripts/check-i18n.py", "ui/scripts/i18n_audit.py"],
+  "check": {"face": "UI 模块", "adopt": 4, "internal": 8, "tally_adopt": 75, "tally_internal": 183},
+  "evidence": "GAP-20261014-46",
+  "registration": "提案件 DEV-2821（主仓 adopt-retire.json + 机检 + Zerg-内部文档 导出物同批落 · 未提交）"
  },
  "boundaries": [
   "本表只登记**归属与判据指针**，不复制设计稿正文；四类定义仍在 §5.0（行 210–215）。",
