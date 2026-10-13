@@ -961,3 +961,13 @@ func scriptRetireEmitJSON(inv *invocation, stdout, stderr io.Writer, result, tar
 	}
 	return selectJSONList(stdout, stderr, inv, inv.path, inv.fields, []map[string]string{row})
 }
+
+//
+// ── 体量预算（2026-10-13 认账 · 缺口 `GAP-20261012-26`）────────────────────────────
+// 本实现实增 162 行（`excludes_rules.go` 20 ＋ 本件 142 · `git show --numstat 1a6b02fc`），
+// 超设计稿片 8 原估「约 70 行」约一倍 ⇒ 拍板**放宽预算**（✗ 不回炉拆步 · ✗ 不瘦身）；
+// 文档落档处 = `Zerg-内部文档/项目文档/v2.5.15/变更-v2.5.15.md` 的「script retire 体量预算认账」节。
+// 超预算成因：两处 JSON 登记面必须文本级手术（`adopt-retire.json` 是人维护件，整份 `json.Marshal`
+// 重排会刷出全件假 diff）⇒ `scriptRetireArrayRemoveEntry` 的 depth/字符串感知扫描 ＋ 逗号邻接处理
+// ＋ `json.Valid` fail-closed 占约 85 行。
+// 本块只登记口径，✗ 不动本件任何行为（函数体一字未改）。

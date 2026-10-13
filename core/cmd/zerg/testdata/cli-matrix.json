@@ -10162,6 +10162,49 @@
    "为什么不进 cases": "同上：`want_rc == 0` 的格进 must-fail 矩阵就是「稀释」⇒ 只登记在本块。Go 侧 `matrixFile.Tiers` 只认 `local`/`public` 两格 ⇒ 本块对判定口不可见；`--emit-matrix` 的增量合并逐字带上整个 `tiers` 对象 ⇒ 不会被重生成吃掉。",
    "口径": "本块登记**不许进 `cases[]`** 的绿格（`want_rc == 0`）—— `cases[]` 是 must-fail 矩阵（门⑪ `T2` 与 `cli_matrix_test.go` 都把 `want_rc == 0` 判红）。格形状与 `field_surface.乙.cells` 逐字同形（只登记 `want_rc`、**不冻结** stdout 字节数）；另立一块只因为「为什么该绿」的机理不同（那一块判 `K2` 闭集字段面，本块判**别的被静默忽略的确认档**）。"
   },
+  "succeed_cells": {
+   "cells": [
+    {
+     "argv": [
+      "code",
+      "find",
+      "zerg",
+      "--limit",
+      "1"
+     ],
+     "command": "code find",
+     "id": "code/find#--limit 1（显式取值 · 应成功基线）",
+     "want_rc": 0,
+     "why": "`code find` 的 `--limit` 是**取值旗标**：显式给值 ⇒ 只列前 1 条、退 0。本格 = 「应成功」矩阵的**基线格**（与下一格成对 · 缺口 `GAP-20260926-59`）。★ 只登记 `want_rc`、**不冻结** stdout 字节数（命中数为环境量、随仓涨落）。"
+    },
+    {
+     "argv": [
+      "code",
+      "find",
+      "zerg",
+      "--limit"
+     ],
+     "command": "code find",
+     "id": "code/find#--limit 裸给（值被静默吞 · 现行退 0 = 本类缺陷的可见格）",
+     "want_rc": 0,
+     "why": "**裸值旗标被静默吞**的标本（缺口 `GAP-20260926-59` 的题面）：`--limit` 后面**没有值**时本版**不报未知/缺值**，而是**静默回落**到默认页（退 0）。这正是「must-fail 矩阵结构上看不见」的假绿形态 ⇒ 本「应成功」矩阵把它**冻成可见格**：谁把本行为改成「缺值 ⇒ 退 2」或别的码，本格当场判红（改行为必须同批改这一格）。★ 只钉 `want_rc`，**不冻结**字节数。"
+    },
+    {
+     "argv": [
+      "gate",
+      "ls",
+      "--json",
+      "fast"
+     ],
+     "command": "gate ls",
+     "id": "gate/ls#--json fast（取值旗标显式取值 · 应成功）",
+     "want_rc": 0,
+     "why": "`gate ls --json fast` = 取值旗标 `--json` 的**显式取值**形态 ⇒ 退 0 ＋ 机读面；与 `cases[]` 里 `--json 不给字段` 的 must-fail 格成对。★ 只钉 `want_rc`，字节数随步数涨落、**不冻结**。"
+    }
+   ],
+   "为什么不进 cases": "同上：`want_rc == 0` 的格进 must-fail 矩阵就是「稀释」⇒ 只登记在本块。判定口 = 门⑪ `T7`（`clicTierCells` 递归收 `tiers.*.cells`，逐格两遍现跑核 `want_rc`）⇒ 本块**对判定口可见**。",
+   "口径": "本块 = **「应成功」矩阵**（缺口 `GAP-20260926-59` · 拍板 2026-10-13）：登记**应当成功**（`want_rc == 0`）的格 —— 含「裸值旗标被静默吞」这类**现行行为**。`cases[]` 是 must-fail 矩阵（`want_rc == 0` 被门⑪ `T2` 与 `cli_matrix_test.go` 判红）⇒ 本类格只登记在本块。格形状与 `green_cells.cells` **逐字同形**（只登记 `want_rc`、**不冻结** stdout 字节数）；与 `green_cells` 的分别 = 本块由 `T7` **逐格现跑核 `want_rc`**（可见），`green_cells` 是 declaration-only。"
+  },
   "local": {
    "judge": "仓根有 `bin/` ⇒ 本机档（判据唯一一处：`core/cmd/zerg/cli_matrix_test.go` 的 `matrixTier()`）",
    "where": "本件 `cases[].want_rc` / `cases[].want_stdout_bytes`（既有两列，语义与取值**一字未动**）",
