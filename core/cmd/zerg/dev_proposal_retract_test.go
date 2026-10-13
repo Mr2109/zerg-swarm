@@ -12,6 +12,10 @@
 //	负控① 作废后再建新提案 ⇒ 号**不复用**（新件拿新号 ≠ 作废号）；作废件仍在盘（既有 O_EXCL 档：同路径被拒）。
 //	负控② 缺 `--yes` / 缺理由 / 裸给旗标 / 提案不存在 / 两别名同给 ⇒ 按既有档拒（rc=2 · **零写**：
 //	      件逐字节不变 · 无审计行）。
+//
+// ★ GAP-20261014-66（2026-10-14 追加 · 同件第二枚牙）：`TestDevProposalDryRunYesConflict` —— `dev proposal` 的四条
+// 写面命令（`new` / `new --batch` / `--void` / `revise`）在 `--dry-run` 与 `--yes` **同给**时必须退 2
+// （`detail=dry_run_yes_conflict`）；成对负控 = 单独 `--dry-run` 仍退 0 且零落件。
 package main_test
 
 import (
@@ -238,5 +242,99 @@ func TestDevProposalRetractVoid(t *testing.T) {
 	if oerr == nil {
 		f.Close()
 		t.Errorf("同号路径竟可再建（既有 O_EXCL 档失效）")
+	}
+}
+
+// TestDevProposalDryRunYesConflict —— ★ GAP-20261014-66（本单 · 运行时牙）：`dev proposal` 的四条
+// 写面命令（`new` / `new --batch` / `--void` / `revise`）在 `--dry-run` 与 `--yes` **同给**时
+// 必须退 2 且点 `detail=dry_run_yes_conflict` —— 让「件粒度 token 判」与**运行时**同尺。
+//
+//	病灶（立牙前的现读）：四条命令各自先跑 `--dry-run` 支并 `return exitOK`（早退），
+//	`writeGuardYes` 里那句 `dryRunYesConflict` **永远走不到** ⇒ 同给时静默吞 `--yes`（rc=0）。
+//	成对负控：单独 `--dry-run` 仍退 0（不误伤）· 且**一个提案件都不落**（零副作用）。
+func TestDevProposalDryRunYesConflict(t *testing.T) {
+	proposalEvidenceDir(t)
+	ids, err := contract.DevTargets()
+	if err != nil || len(ids) == 0 {
+		t.Fatalf("回指清单读不出来：%v", err)
+	}
+	dir := t.TempDir()
+	t.Setenv("ZERG_PROPOSAL_DIR", dir)
+	t.Setenv("ZERG_EDIT_AUDIT", filepath.Join(t.TempDir(), "edit_audit.jsonl"))
+
+	// 夹具：先真建一枚提案（`--void` / `revise` 要有可审查物才走得到同给判定）。
+	rc, out, errb := runProposalNew(t, "--title", "同给档夹具", "--target", "待办:"+ids[0],
+		"--goal", "g", "--evidence", proposalEvidenceInLedger, "--rollback", "r", "--criterion", testCriterion)
+	if rc != 0 {
+		t.Fatalf("夹具提案提不出来：rc=%d · stderr=%s", rc, errb)
+	}
+	id := strings.TrimSpace(out)
+	if id == "" {
+		t.Fatalf("夹具提案没拿到 id（stdout=%q）", out)
+	}
+	countProps := func() int {
+		ents, derr := os.ReadDir(dir)
+		if derr != nil {
+			t.Fatal(derr)
+		}
+		n := 0
+		for _, e := range ents {
+			if strings.HasSuffix(e.Name(), ".json") {
+				n++
+			}
+		}
+		return n
+	}
+
+	// batch 件：一格合法（键 = 单片档旗标名去 `--`）。
+	batch := filepath.Join(t.TempDir(), "batch.json")
+	if werr := os.WriteFile(batch, []byte(`[{"title":"t","target":"待办:`+ids[0]+`","goal":"g","evidence":["`+
+		proposalEvidenceInLedger+`"],"rollback":"r","criterion":"`+testCriterion+`",`+
+		`"file":["core/cmd/zerg/family_dev.go"]}]`), 0o644); werr != nil {
+		t.Fatal(werr)
+	}
+
+	same := []struct {
+		name string
+		argv []string
+	}{
+		{"new", []string{"new", "--dry-run", "--yes", "--title", "t", "--target", "待办:" + ids[0], "--goal", "g",
+			"--evidence", proposalEvidenceInLedger, "--rollback", "r", "--criterion", testCriterion}},
+		{"new --batch", []string{"new", "--batch", batch, "--dry-run", "--yes"}},
+		{"--void", []string{"--void", id, "--reason", "同给档探针", "--dry-run", "--yes"}},
+		{"revise", []string{"revise", id, "--criterion", testCriterion, "--dry-run", "--yes"}},
+	}
+	before := countProps()
+	for _, c := range same {
+		rc, out, errb := retractRun(t, c.argv...)
+		if rc != 2 {
+			t.Errorf("%s · `--dry-run` 与 `--yes` 同给 ⇒ rc=%d（要 2 = 用法错）· stdout=%q · stderr=%q", c.name, rc, out, errb)
+			continue
+		}
+		if !strings.Contains(errb, "dry_run_yes_conflict") {
+			t.Errorf("%s · 退因不是本判定（stderr 里没有 detail=dry_run_yes_conflict）：%q", c.name, errb)
+		}
+	}
+	if after := countProps(); after != before {
+		t.Errorf("四条同给命令落了件（同给必须**零副作用**）：提案件数 %d → %d", before, after)
+	}
+
+	// 负控（成对）：单独 `--dry-run` 仍退 0 —— 不误伤 · 且零落件。
+	for _, c := range []struct {
+		name string
+		argv []string
+	}{
+		{"new", []string{"new", "--dry-run", "--title", "t", "--target", "待办:" + ids[0], "--goal", "g",
+			"--evidence", proposalEvidenceInLedger, "--rollback", "r", "--criterion", testCriterion}},
+		{"--void", []string{"--void", id, "--reason", "同给档探针", "--dry-run"}},
+		{"revise", []string{"revise", id, "--criterion", testCriterion, "--dry-run"}},
+	} {
+		rc, out, errb := retractRun(t, c.argv...)
+		if rc != 0 {
+			t.Errorf("负控 · 单独 `--dry-run`（%s）⇒ rc=%d（要 0 · 不许误伤）· stdout=%q · stderr=%q", c.name, rc, out, errb)
+		}
+	}
+	if after := countProps(); after != before {
+		t.Errorf("负控档落了件：提案件数 %d → %d", before, after)
 	}
 }

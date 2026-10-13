@@ -17,7 +17,10 @@
 package main_test
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -106,4 +109,114 @@ func TestDevProposalRollbackManifestPerFile(t *testing.T) {
 		"--rollback", `{"core/cmd/zerg/main.go":"/no/such/before.go"}`)...); rc != 2 || !strings.Contains(e, "读不到") {
 		t.Errorf("值读不到 ⇒ rc=%d（要 2）、stderr 要点名「读不到」：%q", rc, e)
 	}
+}
+
+// ---- ★ 缺口 `GAP-20260928-126`（②半 · 只读出口）--------------------------------------------
+//
+// 病灶（缺口逐字）：`dev proposal new` 的 `--rollback` 收的是**仓外整件路径**，而该路径无人看管
+// （scratch 清理后改前态不可核）。①半（写面 `keepRollbackSnapshot`）已把前态**复本**落进状态目录
+// `rollback-keep/`，但**读不回来** ⇒ 「退点依据可核」立不出判据。本件判 ②半（只读出口
+// `rollbackKeepReadout` · 由 `dev proposal show` 印出）：
+//
+//	① 路径形 ＋ 看管档在盘 ⇒ show 印出**档路径 · 字节 · sha256**，且该 sha 与**独立现算**的盘上件逐字相同；
+//	② 只读：跑 show 前后，看管目录 / 提案目录的件名清单逐字不变（不建目录、不写件）；
+//	③ 反例（成对）：看管档被删 ⇒ **明说「无」并点名不可核**（✗ 不是恒绿的那一行）；「方式」文本退点 ⇒ 明说不落看管副本。
+func TestDevProposalRollbackKeepReadout(t *testing.T) {
+	proposalEvidenceDir(t)
+	ids, err := contract.DevTargets()
+	if err != nil || len(ids) == 0 {
+		t.Fatalf("回指清单读不出来：%v", err)
+	}
+	stateDir := os.Getenv("ZERG_STATE_DIR")
+	t.Setenv("ZERG_PROPOSAL_DIR", t.TempDir())
+
+	// 仓外前态件（夹具 · 写面会把它的复本落进 <状态目录>/rollback-keep/）
+	pre := filepath.Join(t.TempDir(), "before.go")
+	body := []byte("package x\n// 前态\n")
+	if err := os.WriteFile(pre, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	base := []string{"--title", "看管出口", "--target", "待办:" + ids[0], "--goal", "g",
+		"--evidence", "GAP-20260927-254", "--criterion", testCriterion}
+	rc, out, errb := runProposalNew(t, append(append([]string{}, base...), "--rollback", pre)...)
+	if rc != 0 {
+		t.Fatalf("带路径形退点的提案 ⇒ rc=%d（要 0）· stderr=%s", rc, errb)
+	}
+	id := gap70ProposalID(out, errb)
+	if id == "" {
+		t.Fatalf("成功时应给提案 id · stdout=%q stderr=%q", out, errb)
+	}
+
+	// ① 读面印出**写面写下的真态**：档路径 · 字节 · sha256（与独立现算的盘上件逐字相同）
+	sum := sha256.Sum256(body)
+	wantSHA := hex.EncodeToString(sum[:])
+	keep := filepath.Join(stateDir, "rollback-keep", id+"-"+filepath.Base(pre))
+	if st, err := os.Stat(keep); err != nil || !st.Mode().IsRegular() {
+		t.Fatalf("①半（写面）该落下的看管档不在盘：%s（%v）", keep, err)
+	}
+	var so, se strings.Builder
+	if rc := zerg.RunForTest([]string{"dev", "proposal", "show", id}, &so, &se); rc != 0 {
+		t.Fatalf("show %s ⇒ rc=%d · stderr=%s", id, rc, se.String())
+	}
+	if got := so.String(); !strings.Contains(got, "退点看管") || !strings.Contains(got, keep) ||
+		!strings.Contains(got, fmt.Sprintf("%d 字节", len(body))) || !strings.Contains(got, "sha256 "+wantSHA) {
+		t.Errorf("读面没把看管档真态读出来（要档路径＋字节＋sha256 %s）：\n%s", wantSHA, got)
+	}
+
+	// ② 只读：连跑两遍 show，件名清单逐字不变（不建目录、不写件）
+	before := strings.Join(dirNames(t, stateDir), " · ")
+	var so2, se2 strings.Builder
+	if rc := zerg.RunForTest([]string{"dev", "proposal", "show", id}, &so2, &se2); rc != 0 {
+		t.Fatalf("show（第二遍）⇒ rc=%d", rc)
+	}
+	if after := strings.Join(dirNames(t, stateDir), " · "); after != before {
+		t.Errorf("读面动了盘（跑 show 前后件名清单不等）：\n前:%s\n后:%s", before, after)
+	}
+
+	// ③ 反例（成对）：看管档被删 ⇒ **明说「无」＋不可核**（✗ 不许恒绿）
+	if err := os.Remove(keep); err != nil {
+		t.Fatal(err)
+	}
+	var so3, se3 strings.Builder
+	if rc := zerg.RunForTest([]string{"dev", "proposal", "show", id}, &so3, &se3); rc != 0 {
+		t.Fatalf("show（无档态）⇒ rc=%d", rc)
+	}
+	if got := so3.String(); !strings.Contains(got, "**无**") || !strings.Contains(got, "不可核") {
+		t.Errorf("看管档不在盘时应**明说无档 ＋ 不可核**（造不出反例的判据 = 永真）：\n%s", got)
+	}
+
+	// ③′ 反例：「方式」文本退点 ⇒ 明说**不落**看管副本（按其本义收）
+	rc, out, errb = runProposalNew(t, append(append([]string{}, base...), "--rollback", "git revert")...)
+	if rc != 0 {
+		t.Fatalf("「方式」文本退点 ⇒ rc=%d（要 0）· stderr=%s", rc, errb)
+	}
+	if id2 := gap70ProposalID(out, errb); id2 != "" {
+		var so4, se4 strings.Builder
+		if rc := zerg.RunForTest([]string{"dev", "proposal", "show", id2}, &so4, &se4); rc != 0 {
+			t.Fatalf("show %s ⇒ rc=%d", id2, rc)
+		}
+		if got := so4.String(); !strings.Contains(got, "非路径形") || !strings.Contains(got, "不落") {
+			t.Errorf("「方式」文本退点应明说**不落**看管副本：\n%s", got)
+		}
+	}
+}
+
+// dirNames —— 看管目录 ＋ 提案目录的件名清单（只读快照 · 用来判「读面有没有动盘」）。
+func dirNames(t *testing.T, stateDir string) []string {
+	t.Helper()
+	var out []string
+	for _, d := range []string{filepath.Join(stateDir, "rollback-keep"), os.Getenv("ZERG_PROPOSAL_DIR")} {
+		ents, err := os.ReadDir(d)
+		if err != nil {
+			if os.IsNotExist(err) {
+				out = append(out, d+"=(无此目录)")
+				continue
+			}
+			t.Fatalf("读不了 %s：%v", d, err)
+		}
+		for _, e := range ents {
+			out = append(out, filepath.Join(d, e.Name()))
+		}
+	}
+	return out
 }

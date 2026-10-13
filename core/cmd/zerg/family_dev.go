@@ -420,6 +420,11 @@ func cmdDevProposalNew(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s: 解析不到状态目录（HOME 取不到 · 可用 ZERG_PROPOSAL_DIR 指定）⇒ 不给结论\n", progName)
 		return exitBlocked
 	}
+	// ★ GAP-20261014-66（本单 · 闸前移）：共享判定必须在**早退之前**跑 —— 排在下面那条 `--dry-run` 支
+	//   之后就永远走不到（同给时先 `return exitOK` ⇒ `--yes` 被静默吞；件粒度 token 判绿 ≠ 运行时真拦）。
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
 	// `--dry-run`：只出件、**零副作用**（三态里的第一态，照 §九 M3 C4；不写任何文件）
 	if inv.dryRun {
 		if inv.jsonGiven {
@@ -739,6 +744,11 @@ func cmdDevProposalNewBatch(inv *invocation, stdout, stderr io.Writer) int {
 			return rc
 		}
 	}
+	// ★ GAP-20261014-66（本单 · 闸前移）：共享判定必须在**早退之前**跑 —— 排在下面那条 `--dry-run` 支
+	//   之后就永远走不到（同给时先 `return exitOK` ⇒ `--yes` 被静默吞；件粒度 token 判绿 ≠ 运行时真拦）。
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
 	// ⑤ 干跑档：全验已过 ⇒ 只回执「将建 N 枚」，零写（与单片档 `--dry-run` 同一条口径）
 	if inv.dryRun {
 		fmt.Fprintf(stdout, "（--dry-run）批量档：将建 **%d** 枚提案（逐格全验已过 · 零写入 · 未触主控 · 未写仓）\n", len(synths))
@@ -932,6 +942,11 @@ func cmdDevProposalRetract(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "无变化 %s · **已在作废位**（void:true · 幂等命中：不写件、不写审计）\n", id)
 		return exitOK
 	}
+	// ★ GAP-20261014-66（本单 · 闸前移）：共享判定必须在**早退之前**跑 —— 排在下面那条 `--dry-run` 支
+	//   之后就永远走不到（同给时先 `return exitOK` ⇒ `--yes` 被静默吞；件粒度 token 判绿 ≠ 运行时真拦）。
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
 	// ⑦ `--dry-run`：只出计划件、零副作用（与同族 `new`/`revise` 同一条三态口径）。
 	if inv.dryRun {
 		if inv.jsonGiven {
@@ -1115,6 +1130,9 @@ func cmdDevProposalShow(inv *invocation, stdout, stderr io.Writer) int {
 				fmt.Fprintf(stdout, "      %s → %s（%s）\n", k, m[k], mark)
 			}
 		}
+		// ★ GAP-20260928-126（本单 · 只读出口）：退点**看管档**的盘上真态 —— `new` 写面落下的前态复本
+		//   由读面读出来（档在不在盘 / 字节 / sha256 / 与退点件现值对拍）。**只读**：不建目录、不写件。
+		rollbackKeepReadout(stdout, r)
 		fmt.Fprintf(stdout, "  判据   : %s\n", orDash(r.Criterion))
 		fmt.Fprintf(stdout, "  提出者 : %s（kind=%s%s）\n", r.Subject, r.SubjectKind, eggSuffix(r.EggID))
 		fmt.Fprintf(stdout, "  批准者 : %s（kind=%s）—— 「提 ≠ 批」两个字段 · 批只人给（§九 M18 C4）\n",
@@ -1225,6 +1243,11 @@ func cmdDevProposalRevise(inv *invocation, stdout, stderr io.Writer) int {
 			continue
 		}
 		rec.Files = append(rec.Files, f)
+	}
+	// ★ GAP-20261014-66（本单 · 闸前移）：共享判定必须在**早退之前**跑 —— 排在下面那条 `--dry-run` 支
+	//   之后就永远走不到（同给时先 `return exitOK` ⇒ `--yes` 被静默吞；件粒度 token 判绿 ≠ 运行时真拦）。
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
 	}
 	// ④ `--dry-run`：只出计划件、零副作用（与单片 `new` 同一条三态口径）
 	if inv.dryRun {
@@ -1725,34 +1748,75 @@ func declaredFilesWhy(files []string) string {
 	return ""
 }
 
-// keepRollbackSnapshot —— 路径形退点的**看管**（缺口 `GAP-20260928-126`）。
+// rollbackKeepDir —— 退点看管档的目录（**唯一真源**：写面落档、读面读档都走它 —— 两端不许各拼一份）。
+//
+// 解析口径与状态目录同源：`ZERG_STATE_DIR` 优先，缺省 `~/.zerg/state` ⇒ `<状态目录>/rollback-keep/`。
+func rollbackKeepDir() (string, error) {
+	stateDir := strings.TrimSpace(os.Getenv("ZERG_STATE_DIR"))
+	if stateDir == "" {
+		home, herr := os.UserHomeDir()
+		if herr != nil {
+			return "", fmt.Errorf("取不到 HOME ⇒ 解析不了退点看管档目录")
+		}
+		stateDir = filepath.Join(home, ".zerg", "state")
+	}
+	return filepath.Join(stateDir, "rollback-keep"), nil
+}
+
+// rollbackKeepName —— 看管档的文件名（**写读同源**：`<提案 id>-<前态件文件名>`）。
+func rollbackKeepName(proposalID, refPath string) string {
+	return proposalID + "-" + filepath.Base(refPath)
+}
+
+// rollbackKeepApplies —— 该退点在**形态上**有没有看管档（路径形 ⇒ true；「方式」文本 / 清单形态 ⇒ false）。
+//
+// 「路径形」判据与写面逐字同口径（同一枚 `rollbackLooksLikeManifest` ＋ 同一条 `IsAbs`/`/` 判定）——
+// 读写两端共用这一处，✗ 不许各拼一份（同族血证：格式的读写两端各写一份必长歪）。
+func rollbackKeepApplies(rollback string) bool {
+	v := strings.TrimSpace(rollback)
+	if v == "" || rollbackLooksLikeManifest(v) {
+		return false
+	}
+	return filepath.IsAbs(v) || strings.ContainsRune(v, '/')
+}
+
+// rollbackKeepExpect —— 形态上有档时，它在盘上的**路径**（目录与文件名都与写面同源 ⇒ 读面不会指错件）。
+// ★ 状态目录解析不出来 ⇒ ok=false（读面照实说「读不到」；✗ 读面**不**据此拒执任何东西 —— 拒执那一档
+// 只属于写面，见下）。
+func rollbackKeepExpect(proposalID, rollback string) (string, bool) {
+	if !rollbackKeepApplies(rollback) {
+		return "", false
+	}
+	dir, err := rollbackKeepDir()
+	if err != nil {
+		return "", false
+	}
+	return filepath.Join(dir, rollbackKeepName(proposalID, strings.TrimSpace(rollback))), true
+}
+
+// keepRollbackSnapshot —— 路径形退点的**看管**（缺口 `GAP-20260928-126` ①半 · 写面）。
 //
 // 病灶：`--rollback` 的仓外整件路径**无人看管** —— scratch/TMPDIR 按闲置清理（本机 24h 级）后
 // 改前态不可核 ⇒ 退点依据随之失效（文档引它当「能回退」的证据，真回退时却已读不到）。
 // 落法：提案这一步就把前态件的**复本**落进状态目录 `rollback-keep/`（持久位 · 不受 scratch 清理
 // 影响），文件名带提案号 ⇒ 逐提案可核。✗ 不动 `rollback_ref` 槽本身（那会撞已定的「一件一退点」
 // 口径），只**另落一份看管副本**。非路径形（schema 已认的「方式」文本）无从快照 ⇒ 返回空串（不拒）。
+//
+// ★ 配套**只读出口** = `rollbackKeepReadout`（由 `dev proposal show` 印出）—— 只落档不给读路 ⇒「退点依据
+// 可核」这条判据立不出来（本缺口的**②半**）。两端共用 `rollbackKeepDir`/`rollbackKeepName`。
 func keepRollbackSnapshot(proposalID, rollback string) (string, error) {
+	if !rollbackKeepApplies(rollback) {
+		return "", nil // 非路径形（「方式」文本 / 清单形态）无从快照
+	}
 	v := strings.TrimSpace(rollback)
-	if v == "" || rollbackLooksLikeManifest(v) {
-		return "", nil
-	}
-	if !filepath.IsAbs(v) && !strings.ContainsRune(v, '/') {
-		return "", nil // 「方式」文本
-	}
 	st, err := os.Stat(v)
 	if err != nil || !st.Mode().IsRegular() {
 		return "", nil // 现读不可得那档由 `rollbackUsableWhy` 判死；这里只管拿得到的
 	}
-	stateDir := strings.TrimSpace(os.Getenv("ZERG_STATE_DIR"))
-	if stateDir == "" {
-		home, herr := os.UserHomeDir()
-		if herr != nil {
-			return "", fmt.Errorf("取不到 HOME ⇒ 落不了退点看管档")
-		}
-		stateDir = filepath.Join(home, ".zerg", "state")
+	keepDir, derr := rollbackKeepDir()
+	if derr != nil {
+		return "", fmt.Errorf("取不到 HOME ⇒ 落不了退点看管档")
 	}
-	keepDir := filepath.Join(stateDir, "rollback-keep")
 	if err := os.MkdirAll(keepDir, 0o755); err != nil {
 		return "", err
 	}
@@ -1760,11 +1824,78 @@ func keepRollbackSnapshot(proposalID, rollback string) (string, error) {
 	if rerr != nil {
 		return "", rerr
 	}
-	dst := filepath.Join(keepDir, proposalID+"-"+filepath.Base(v))
+	dst := filepath.Join(keepDir, rollbackKeepName(proposalID, v))
 	if err := os.WriteFile(dst, data, 0o644); err != nil {
 		return "", err
 	}
 	return dst, nil
+}
+
+// rollbackKeepReadout —— 退点看管档的**只读出口**（缺口 `GAP-20260928-126` ②半）。
+//
+// 病灶（缺口逐字）：写面把前态复本落进 `rollback-keep/` 之后**读不回来** —— `dev proposal show`
+// 只回显退点串，谁也不知道那份副本还在不在盘、还是不是原样 ⇒ 「退点依据可核」立不出判据
+// （唯一能看见它的地方是 `new` 那一刻的 stderr，出了那一刻就再也读不到）。
+//
+// 本函数**只读**（`stat` ＋ 读盘 ＋ 读目录 —— **不建目录、不写任何件**），把盘上真态逐字读出来：
+//
+//	① 路径形 ＋ 看管档在盘 ⇒ 档路径 · 字节 · sha256 ＋ 与**退点件现值**对拍（一致 / 已改 / 原件已不在盘）；
+//	② 路径形 ＋ 看管档不在盘 ⇒ **明说「无」并点名退点依据不可核**（✗ 不静默略过 —— 略过就分不出
+//	   「本来没有档」与「读面没印」这一对）；
+//	③ 非路径形（「方式」文本）/ 清单形态 ⇒ 明说写面**不落**看管副本（按其本义收）。
+//
+// ★ 三态**都印**：只印「有档」那一态 = 永真判据（造不出反例）—— 本函数的反例就是 ②③ 两态。
+func rollbackKeepReadout(w io.Writer, rec proposalRecord) {
+	const head = "  ★ 退点看管（只读真态 · 缺口 GAP-20260928-126）："
+	v := strings.TrimSpace(rec.Rollback)
+	if v == "" {
+		fmt.Fprintf(w, "%s退点为空（非空那一档由 `rollback_required` 在提出时判死）\n", head)
+		return
+	}
+	if rollbackLooksLikeManifest(v) {
+		n := 0
+		if m, ok := rollbackManifestOf(v); ok {
+			n = len(m)
+		}
+		fmt.Fprintf(w, "%s清单形态（%d 件）⇒ 写面**不落**看管副本（逐件按前态件原路径核 · 见上行「退点清单」）\n", head, n)
+		return
+	}
+	dst, ok := rollbackKeepExpect(rec.ID, v)
+	if !ok {
+		fmt.Fprintf(w, "%s非路径形（「方式」文本 `%s`）⇒ 无从快照 · 写面不落看管副本（按其本义收）\n", head, v)
+		return
+	}
+	ksha, kbytes, kerr := sha256File(dst)
+	if kerr != nil {
+		fmt.Fprintf(w, "%s**无**（%s 不在盘 / 读不到 ⇒ 退点依据**不可核**：原件一旦被 scratch 清理，改前态取不回）\n",
+			head, dst)
+	} else {
+		fmt.Fprintf(w, "%s%s（%d 字节 · sha256 %s）\n", head, dst, kbytes, ksha)
+		switch osha, obytes, oerr := sha256File(v); {
+		case oerr != nil:
+			fmt.Fprintf(w, "      与退点件现值对拍：原件 %s **已不在盘**（正是 GAP-20260928-126 要救的那一态 ⇒ 改前态由看管档供）\n", v)
+		case osha == ksha:
+			fmt.Fprintf(w, "      与退点件现值对拍：原件在盘（%d 字节 · sha256 %s）⇒ **一致**（看管档 = 原件现值）\n", obytes, osha)
+		default:
+			fmt.Fprintf(w, "      与退点件现值对拍：原件在盘（%d 字节 · sha256 %s）⇒ **不一致**（原件在提出之后被改过 ⇒ 看管档 = 提出那一刻的改前态，回退以看管档为准）\n", obytes, osha)
+		}
+	}
+	// 读盘真源（✗ 不只看推出来的那一个名字）：该提案名下的**其余**看管档照实列出 ——
+	// 退点串后来被 `revise` 改过时，早先落下的档仍看得见（否则读面会「看不见自己写下的东西」）。
+	if keepDir, derr := rollbackKeepDir(); derr == nil {
+		if ents, eerr := os.ReadDir(keepDir); eerr == nil {
+			others := []string{}
+			for _, e := range ents {
+				if nm := e.Name(); nm != filepath.Base(dst) && strings.HasPrefix(nm, rec.ID+"-") {
+					others = append(others, nm)
+				}
+			}
+			sort.Strings(others)
+			if len(others) > 0 {
+				fmt.Fprintf(w, "      该提案名下另有看管档 %d 份（读盘真源）：%s\n", len(others), strings.Join(others, " · "))
+			}
+		}
+	}
 }
 
 // rollbackUsableWhy —— 退点「现读可得」判定（**fail-closed** · `GAP-20261009-01`）。
