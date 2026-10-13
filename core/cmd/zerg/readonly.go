@@ -146,11 +146,20 @@ func cmdAPILs(inv *invocation, stdout, stderr io.Writer) int {
 		return rc
 	}
 	rows := []map[string]string{}
+	seen := map[string]bool{}
 	for _, it := range asList(resp["capabilities"]) {
 		if o := asObj(it); o != nil {
 			rows = append(rows, project(o, []string{"name", "endpoint", "desc", "example"}))
+			if k := liveEndpointKey(cell(o["endpoint"])); k != "" {
+				seen[k] = true
+			}
 		}
 	}
+	// ★ 2026-10-14（2.5.15 波1 · 批 2「HTTP 端点投影」）：② 保留为内部实现的端点，命令面**只做投影**
+	//   ⇒ 现读面之后追加本表里**尚未出现过**的那些（按 (方法, 路径) 去重 ⇒ 同一端点只出一次）。
+	//   底层注册面（`chat_handlers.go` / `zerg-core/main.go` / `gateway.go`）**一个字节不改**；表与注册面
+	//   的一致性（含出处锚 `件:行`）由 `api_internal_endpoints_test.go` 逐条现读核对。✗ 不开 `api call`。
+	rows = append(rows, apiInternalLsRows(seen)...)
 	return listCmd(inv, stdout, stderr, []string{"name", "endpoint", "desc"}, rows)
 }
 
@@ -167,6 +176,7 @@ func cmdAPIOpenAPI(inv *invocation, stdout, stderr io.Writer) int {
 	}
 	sort.Strings(names)
 	rows := []map[string]string{}
+	seen := map[string]bool{}
 	for _, p := range names {
 		for _, m := range []string{"get", "post", "put", "patch", "delete"} {
 			op := asObj(asObj(paths[p])[m])
@@ -178,8 +188,12 @@ func cmdAPIOpenAPI(inv *invocation, stdout, stderr io.Writer) int {
 				"method":  strings.ToUpper(m),
 				"summary": cell(op["summary"]),
 			})
+			seen[apiEndpointKey(m, p)] = true
 		}
 	}
+	// ★ 2026-10-14（2.5.15 波1 · 批 2「HTTP 端点投影」）：② 端点同批进路径面（口径与 `api ls` 同一条）——
+	//   现读 `paths` 之后追加本表里尚未出现过的 (方法, 路径)，去重键相同 ⇒ 两面同一端点只出一次。
+	rows = append(rows, apiInternalOpenAPIRows(seen)...)
 	return listCmd(inv, stdout, stderr, []string{"path", "method", "summary"}, rows)
 }
 
