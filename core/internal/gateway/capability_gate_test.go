@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/Mr2109/zerg-swarm/core/internal/config"
+	"github.com/Mr2109/zerg-swarm/core/internal/contract"
 	"github.com/Mr2109/zerg-swarm/core/internal/modelreg"
 	"github.com/Mr2109/zerg-swarm/core/internal/store"
 )
@@ -279,5 +280,111 @@ func TestFileCapabilitySource_TempDir(t *testing.T) {
 	var ge *CapabilityGateError
 	if !errors.As(err, &ge) || ge.Reason != modelreg.CapReasonNoEvidence {
 		t.Fatalf("应 fail-closed 且原因 %s，实际 %v", modelreg.CapReasonNoEvidence, err)
+	}
+}
+
+// ⑤（`GAP-20261014-62` 两态 · 波3 片10）路由表 id ⟷ 快照 id 的桥。
+//
+// 病：网关在请求里看到的目标名是**路由表 id**（fleet.yaml 的 models 键，形如
+// `example-35b-v2`），而记录与能力快照按**快照 id**（形如 `example-35b-v2-1-5-35b-q4-k-m`）命名。
+// 只按目标名逐字比 `row.ID` ⇒ 永远命中不到 ⇒ 门槛对任何必需能力恒 fail-closed
+// （`Reason=no_snapshot`）⇒ 正门永远拒视觉，只能绕开网关直连引擎端点。
+//
+// 本用例的输入**只来自两样实测 / 在册产物**，✗ 不造恒真快照：
+//
+//	① 在册真源 `contract.ModelIDMap()` 里的一条**显式**条目（`registry_id ↔ fleet_ids`）——
+//	   这就是「视觉能力在哪台机、哪个引擎上被证过」的接线真源；
+//	② 一次真探测的**产物形状**：`modelreg.WriteCapabilitySnapshot` 写出的
+//	   `<记录>.capabilities.json`（vision=true · engines=[llama.cpp]）。
+//
+// 两态：接上桥 ⇒ 正门收（态甲）；未映射 / 目标引擎未证过 ⇒ 仍拒（态乙 / 态丙）。
+func TestFileCapabilitySource_FleetIDViaTruthSource(t *testing.T) {
+	m, err := contract.ModelIDMap()
+	if err != nil || len(m.Entries) == 0 {
+		t.Fatalf("id 规范化真源不可用（%v）—— 本用例的前提", err)
+	}
+	e := m.Entries[0]
+	registryID, fleetID := e.RegistryID, e.FleetIDs[0]
+	if registryID == fleetID {
+		t.Fatalf("真源首条的 registry_id 与 fleet_id 同名（%q）—— 本用例要的是两套命名不同的那一对", registryID)
+	}
+
+	// ── 名册侧：一条记录（id = 快照 id）＋ 一次探测产出的能力快照兄弟文件 ──
+	root := t.TempDir()
+	rec := &modelreg.Record{
+		Schema:     modelreg.SchemaV1,
+		ID:         registryID,
+		Digest:     "sha256:" + strings.Repeat("a", 64),
+		Files:      []modelreg.File{{Role: "weights", Name: e.Weights, SHA256: strings.Repeat("b", 64), Size: 1}},
+		License:    modelreg.License{SPDX: "Apache-2.0", Commercial: "yes"},
+		State:      "known",
+		Modalities: map[string][]string{"in": {"text", "image"}, "out": {"text"}},
+	}
+	st := modelreg.NewStore(root)
+	if _, err := st.Put(rec, false); err != nil {
+		t.Fatalf("落真实记录失败：%v", err)
+	}
+	rep := &modelreg.ProbeReport{
+		Engine: "llama.cpp",
+		Capabilities: []modelreg.Capability{
+			{Name: "vision", Value: true, Source: "probed", Evidence: modelreg.EvidenceVision, Engines: []string{"llama.cpp"}},
+		},
+	}
+	if _, err := modelreg.WriteCapabilitySnapshot(st.PathFor(rec), rec, rep); err != nil {
+		t.Fatalf("写能力快照失败：%v", err)
+	}
+
+	// ── 路由表侧：目标名 = 路由表 id，backend = llama-server（规范化 ⇒ llama.cpp）──
+	fleet := map[string]config.FleetNode{"node-a": {Host: "<cluster-ip>", Port: 8100}}
+	// 路由表里另有一行**真源里没有、名册里也没有**的目标（态丙的负控：不许因上了桥就放宽）。
+	const unlinked = "未接线目标"
+	g := &Gateway{
+		config: &config.FleetConfig{
+			Models: map[string][]config.ModelCandidate{
+				fleetID: {
+					{Host: "local", Backend: "llama-server", File: "/m/" + e.Weights},
+				},
+				unlinked: {
+					{Host: "local", Backend: "llama-server", File: "/m/未接线.gguf"},
+				},
+			},
+			Fleet: fleet,
+		},
+		roundRobin:     map[string]int{},
+		store:          store.NewStore(),
+		modelsRootPath: root,
+	}
+
+	// 态甲：路由表 id 经真源接到快照 ⇒ 正门收（改前此处必报 no_snapshot）。
+	route, err := g.pickRoute(fleetID, "", "", "vision")
+	if err != nil {
+		t.Fatalf("路由表 id %q 应经 id 规范化真源接到快照 %q（正门收），实际被拒：%v", fleetID, registryID, err)
+	}
+	if route.Host != "local" {
+		t.Fatalf("应选被证过 vision 的 llama.cpp 候选（local），实际 %s", route.Host)
+	}
+
+	// 态乙（不许放宽）：换到目标引擎未证过 vision 的机器 ⇒ 仍拒。
+	gOnly := &Gateway{
+		config: &config.FleetConfig{
+			Models: map[string][]config.ModelCandidate{fleetID: {
+				{Host: "node-a", Backend: "vllm", File: "/m/" + e.Weights},
+			}},
+			Fleet: fleet,
+		},
+		roundRobin:     map[string]int{},
+		store:          store.NewStore(),
+		modelsRootPath: root,
+	}
+	_, err = gOnly.pickRoute(fleetID, "", "", "vision")
+	var ge *CapabilityGateError
+	if err == nil || !errors.As(err, &ge) || ge.Reason != modelreg.CapReasonOtherEngineOnly {
+		t.Fatalf("目标引擎 vllm 未被证过 vision 仍须拒（%s），实际 %v", modelreg.CapReasonOtherEngineOnly, err)
+	}
+
+	// 态丙（不许放宽）：路由表里有这行、但真源里没有、名册里也没有 ⇒ 仍 no_snapshot。
+	_, err = g.pickRoute(unlinked, "", "", "vision")
+	if err == nil || !errors.As(err, &ge) || ge.Reason != modelreg.CapReasonNoSnapshot {
+		t.Fatalf("未映射目标须仍 %s，实际 %v", modelreg.CapReasonNoSnapshot, err)
 	}
 }

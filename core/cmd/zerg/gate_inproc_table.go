@@ -32,6 +32,7 @@ var gateCheckGoEntry = map[string]func(stdout, stderr io.Writer, argv []string) 
 	"check-build-selfclean":                 buildSelfcleanGateMain,
 	"check-build-tags":                      checkBuildTagsGateMain,
 	"check-bypass-idioms":                   checkBypassIdiomsGateMain,
+	"check-capability-bridge":               capabilityBridgeGateMain,
 	"check-ci-package-parity":               ciPackageParityGateMain,
 	"check-cli-contract":                    cliContractGateMain,
 	"check-cli-ownership":                   checkCliOwnershipGateMain,

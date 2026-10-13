@@ -6,6 +6,7 @@ import (
 	"log"
 	"strings"
 
+	"github.com/Mr2109/zerg-swarm/core/internal/contract"
 	"github.com/Mr2109/zerg-swarm/core/internal/modelreg"
 )
 
@@ -49,24 +50,49 @@ func newFileCapabilitySource(root string) *fileCapabilitySource {
 //   - 记录坏 / 快照坏 / 读失败 → (nil, err)（由门槛按 fail-closed + 留痕处理）。
 //
 // 同 id 多版本时取 List() 的第一条（List 已按 (id, version) 排序，确定）。
+//
+// ★ GAP-20261014-62：目标名有**两套命名** —— 网关在请求里看到的是**路由表 id**（fleet.yaml 的
+// models 键，形如 `example-35b-v2`），而记录与其能力快照按**快照 id** 命名（形如
+// `example-35b-v2-1-5-35b-q4-k-m`）。只按目标名逐字比 `row.ID` ⇒ 永远命中不到 ⇒ 门槛对任何必需能力
+// 恒 fail-closed（Reason=no_snapshot）⇒ **正门永远拒视觉**，只能绕开网关直连引擎端点。
+// 桥＝显式真源 `contract.ModelIDMap()`（`registry_id ↔ fleet_ids`，只认显式条目、不模糊匹配）
+// ——与 `/api/fleet/models` 的 `registry_id`（api/handlers.go）、`zerg ask --capability` 的接线
+// 是**同一份真源**，本处只是把它接到网关这一侧。
+// 真源读不动 ⇒ 只留痕 + 退回逐字比（缺口 = 未知，仍 fail-closed），绝不因此放宽。
 func (f *fileCapabilitySource) CapabilitySnapshot(model string) (*modelreg.CapabilitySnapshotArtifact, error) {
 	st := modelreg.NewStore(f.root)
 	rows, err := st.List()
 	if err != nil {
 		return nil, fmt.Errorf("list model registry: %w", err)
 	}
-	for _, row := range rows {
-		if row.ID != model {
-			continue
+	// 目标名 → 候选记录 id 集：先按目标名逐字比（既有语义，一字不动），再经 id 规范化真源
+	// 补上它对应的**快照 id**（两套命名之间的桥，见本函数上方 ★ 注）。
+	targets := []string{model}
+	if m, merr := contract.ModelIDMap(); merr == nil {
+		if rid, ok := m.RegistryIDForFleet(model); ok && rid != model {
+			targets = append(targets, rid)
 		}
-		if row.Err != "" {
-			return nil, fmt.Errorf("record %s/%s unreadable: %s", row.ID, row.Version, row.Err)
+	} else {
+		log.Printf("🚧 capability gate: id 规范化真源读不动（%v）—— 只按目标名 %q 逐字比（缺口 = 未知，仍 fail-closed）", merr, model)
+	}
+	for _, target := range targets {
+		for _, row := range rows {
+			if row.ID != target {
+				continue
+			}
+			if row.Err != "" {
+				return nil, fmt.Errorf("record %s/%s unreadable: %s", row.ID, row.Version, row.Err)
+			}
+			snap, serr := modelreg.LoadCapabilitySnapshot(modelreg.CapabilitySnapshotPath(row.Path))
+			if serr != nil {
+				return nil, fmt.Errorf("load capability snapshot for %s: %w", model, serr)
+			}
+			if target != model {
+				log.Printf("🧭 capability gate: 目标名 %q 经 id 规范化真源接到快照记录 %q（快照来源件 = %s）",
+					model, row.ID, modelreg.CapabilitySnapshotPath(row.Path))
+			}
+			return snap, nil
 		}
-		snap, serr := modelreg.LoadCapabilitySnapshot(modelreg.CapabilitySnapshotPath(row.Path))
-		if serr != nil {
-			return nil, fmt.Errorf("load capability snapshot for %s: %w", model, serr)
-		}
-		return snap, nil
 	}
 	return nil, nil
 }

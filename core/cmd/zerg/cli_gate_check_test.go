@@ -165,8 +165,19 @@ func TestGateCheckDryRunFullTableZeroSideEffect(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &env); err != nil {
 		t.Fatalf("--json 不是合法包封：%v · %q", err, out)
 	}
-	if env.Count != 2 || env.Resolved != 2 || len(env.Entries) != 2 {
-		t.Fatalf("count/resolved/entries 要 == 名录件数 2：%+v", env)
+	// ★ 缺口 GAP-20261012-15：`count` = **名册 N = B ∪ A** 的件数（清书面与名解析面同口径）——
+	//   B = 夹具里那 2 件（目录派生）；A = inproc 键表（真搬 Go 体在册 · 与夹具根无关）⇒
+	//   期望值改由**现读两张表**现算（✗ 不再写死 2：表一长旧写法必假红，且验不出 B∪A 并集）。
+	want := map[string]bool{"one": true, "two": true}
+	for k := range gateCheckGoEntry {
+		want[k] = true
+	}
+	for k := range gateCheckClassEntry {
+		want[k] = true
+	}
+	wantN := len(want)
+	if env.Count != wantN || env.Resolved != wantN || len(env.Entries) != wantN {
+		t.Fatalf("count/resolved/entries 要 == 名册件数 %d（名册 N = B ∪ A）：%+v", wantN, env)
 	}
 	if !env.DryRun {
 		t.Errorf("--dry-run ⇒ dry_run 标记为真：%+v", env)
@@ -331,8 +342,12 @@ func TestGateCheckGoEntryTableComplete(t *testing.T) {
 	// ★ 2026-10-13（承接项 ①-6 · 本单）：发布验收三条升格真门，入表 +3
 	//
 	//	（check-publish-accept-lsremote / -fsck / -rollback · 见 core/cmd/zerg/check_publish_accept.go）⇒ 185→188。
-	if got := len(gateCheckGoEntry); got != 188 {
-		t.Fatalf("进程内 Go 表项数要 == 188，得到 %d", got)
+	// ★ 2026-10-14（缺口 GAP-20261014-62 · 本单）：能力闸快照来源面判据件入表 +1
+	//
+	//	（check-capability-bridge · 见 core/cmd/zerg/check_capability_bridge.go · 网关侧路由表 id → 快照 id
+	//	必经桥映射）⇒ 188→189。
+	if got := len(gateCheckGoEntry); got != 189 {
+		t.Fatalf("进程内 Go 表项数要 == 189，得到 %d", got)
 	}
 	// ★ 放宽（2026-10-07 退役批）：旧不变量「表键必在名录」⇒「表键 ⇒ 名录 **或** inproc 键 二者其一」。
 	//   退役件（py 已 `git rm`）只余 inproc 那一路（family_gate_check.go 的 inproc 兜底 ⇒ rc=0）；

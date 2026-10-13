@@ -27,10 +27,12 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/Mr2109/zerg-swarm/core/internal/config"
+	"github.com/Mr2109/zerg-swarm/core/internal/contract"
 	"github.com/Mr2109/zerg-swarm/core/internal/gateway/orchestrator"
 	"github.com/Mr2109/zerg-swarm/core/internal/modelreg"
 	"github.com/Mr2109/zerg-swarm/core/internal/store"
@@ -227,5 +229,116 @@ func TestForwardToBackend_FailoverReGatesWithRequired(t *testing.T) {
 	}
 	if code, status := classifyRouteError(err); code != "capability_unavailable" || status != http.StatusBadRequest {
 		t.Fatalf("分类应为 capability_unavailable/400，实际 %s/%d", code, status)
+	}
+}
+
+// ③（`GAP-20261014-62` 两态 · 波3 片10 · 端到端）带图请求走正门 `handleRequest`：
+// 有**实测产物驱动**的合法快照（名册侧真记录 ＋ 探测产出的 `<记录>.capabilities.json`，
+// vision=true · engines=[llama.cpp]）⇒ 正门**收**，且请求**真发到**引擎端点；
+// 缺快照 / 目标引擎未证过 ⇒ 仍 400 `capability_unavailable`（⇐ 同一枚用例的负控，见文件末）。
+//
+// 关键在**目标名的两套命名**：路由表 id（`example-35b-v2`）⟷ 快照 id（`example-35b-v2-1-5-35b-q4-k-m`），
+// 桥 = 在册真源 `contract.ModelIDMap()`（本用例的两侧取值就取自该真源，✗ 不写死、✗ 不造恒真快照）。
+func TestImageRequestThroughGateway_FleetIDViaTruthSource(t *testing.T) {
+	m, err := contract.ModelIDMap()
+	if err != nil || len(m.Entries) == 0 {
+		t.Fatalf("id 规范化真源不可用（%v）—— 本用例的前提", err)
+	}
+	e := m.Entries[0]
+	registryID, fleetID := e.RegistryID, e.FleetIDs[0]
+	if registryID == fleetID {
+		t.Fatalf("真源首条的 registry_id 与 fleet_id 同名（%q）—— 本用例要的是两套命名不同的那一对", registryID)
+	}
+
+	// ── 名册侧：真记录（id = 快照 id）＋ 一次探测产出的能力快照兄弟文件 ──
+	root := t.TempDir()
+	rec := &modelreg.Record{
+		Schema:     modelreg.SchemaV1,
+		ID:         registryID,
+		Digest:     "sha256:" + strings.Repeat("a", 64),
+		Files:      []modelreg.File{{Role: "weights", Name: e.Weights, SHA256: strings.Repeat("b", 64), Size: 1}},
+		License:    modelreg.License{SPDX: "Apache-2.0", Commercial: "yes"},
+		State:      "known",
+		Modalities: map[string][]string{"in": {"text", "image"}, "out": {"text"}},
+	}
+	st := modelreg.NewStore(root)
+	if _, err := st.Put(rec, false); err != nil {
+		t.Fatalf("落真实记录失败：%v", err)
+	}
+	if _, err := modelreg.WriteCapabilitySnapshot(st.PathFor(rec), rec, &modelreg.ProbeReport{
+		Engine: "llama.cpp",
+		Capabilities: []modelreg.Capability{
+			{Name: "vision", Value: true, Source: "probed", Evidence: modelreg.EvidenceVision, Engines: []string{"llama.cpp"}},
+		},
+	}); err != nil {
+		t.Fatalf("写能力快照失败：%v", err)
+	}
+
+	// ── 引擎侧：假上游端点（收到请求 = 这一次请求**真发出去**了）──
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"chatcmpl_img","object":"chat.completion","created":1,"model":"vision",` +
+			`"choices":[{"index":0,"message":{"role":"assistant","content":"我看到了图"},"finish_reason":"stop"}],` +
+			`"usage":{"total_tokens":3}}`))
+	}))
+	defer srv.Close()
+	host, port := hostPort(t, srv.URL)
+
+	g := &Gateway{
+		config: &config.FleetConfig{
+			Models: map[string][]config.ModelCandidate{
+				fleetID: {{Host: "node-a", Backend: "llama-server", File: "/m/" + e.Weights}},
+			},
+			Fleet: map[string]config.FleetNode{"node-a": {Host: host, Port: port}},
+		},
+		roundRobin:     map[string]int{},
+		store:          store.NewStore(),
+		modelsRootPath: root,
+		client:         &http.Client{Timeout: 5 * time.Second},
+	}
+
+	// ── 正门：带图请求（结构化 image_url 部件 ⇒ 必需能力 vision）──
+	body := `{"model":"` + fleetID + `","messages":[{"role":"user","content":[` +
+		`{"type":"text","text":"描述这张图"},` +
+		`{"type":"image_url","image_url":{"url":"data:image/png;base64,AAAA"}}]}]}`
+	got := doHandle(g, body)
+
+	if got.Code != http.StatusOK {
+		t.Fatalf("有实测产物驱动的合法快照（%s ⟷ %s）时，带图请求必须走通正门（200），实际 %d，body=%s",
+			fleetID, registryID, got.Code, got.Body.String())
+	}
+	if strings.Contains(got.Body.String(), "capability_unavailable") {
+		t.Fatalf("不应再报能力闸拒绝，实际 body=%s", got.Body.String())
+	}
+	if atomic.LoadInt32(&hits) == 0 {
+		t.Fatal("请求没有真发到引擎端点（正门放行却未转发 = 静默丢图）")
+	}
+	if !strings.Contains(got.Body.String(), "我看到了图") {
+		t.Fatalf("应把引擎的回答原样带回，实际 body=%s", got.Body.String())
+	}
+
+	// ── 负控①（不许放宽）：目标引擎未证过 vision（vllm）⇒ 同一条带图请求仍 400 ──
+	gOnly := &Gateway{
+		config: &config.FleetConfig{
+			Models: map[string][]config.ModelCandidate{
+				fleetID: {{Host: "node-a", Backend: "vllm", File: "/m/" + e.Weights}},
+			},
+			Fleet: map[string]config.FleetNode{"node-a": {Host: host, Port: port}},
+		},
+		roundRobin:     map[string]int{},
+		store:          store.NewStore(),
+		modelsRootPath: root,
+		client:         &http.Client{Timeout: 5 * time.Second},
+	}
+	before := atomic.LoadInt32(&hits)
+	blocked := doHandle(gOnly, body)
+	if blocked.Code != http.StatusBadRequest || !strings.Contains(blocked.Body.String(), "capability_unavailable") {
+		t.Fatalf("目标引擎 vllm 未被证过 vision，仍须 400 capability_unavailable，实际 %d body=%s",
+			blocked.Code, blocked.Body.String())
+	}
+	if atomic.LoadInt32(&hits) != before {
+		t.Fatal("被门槛拦下的请求不得发到引擎端点")
 	}
 }
