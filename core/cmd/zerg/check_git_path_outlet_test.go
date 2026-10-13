@@ -278,7 +278,7 @@ func TestGpoSelftestAllPass(t *testing.T) {
 	if !gpoSelftest(&b) {
 		t.Fatalf("自检未全过：\n%s", b.String())
 	}
-	if !strings.Contains(b.String(), "自检 27 格 · 失败 0 格") {
+	if !strings.Contains(b.String(), "自检 28 格 · 失败 0 格") {
 		t.Fatalf("自检格数/失败数与预期不符：\n%s", b.String())
 	}
 }

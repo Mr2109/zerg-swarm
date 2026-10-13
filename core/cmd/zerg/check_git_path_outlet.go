@@ -89,12 +89,14 @@ var gpoTextAllow = []gpoTextAllowEntry{
 		Reason:      "帮助串：这一处是把「复跑判据」印给用户看的**文字**（`b.WriteString` 的常量），不是 argv —— 没有哪台机器会去跑它，故不产生转义名。",
 		Replacement: "若要真给可复跑命令，交由「命令串产地」统一（另批）；本门不判文字面。",
 	},
-	{
-		Path: "scripts/gates/check-publish-face-sync.py", Rule: "GPO-F1",
-		Anchor:      "print(\"✗ " + gpoGitTok + " " + gpoNLsFiles + " 失败：%s（rc=%d）",
-		Reason:      "消息串：`r.returncode != 0` 分支里的报错文本；真调用在**上一行**且已带 `-c " + gpoKeyLower + "=false`（同件 L102）。",
-		Replacement: "无需改：真调用已合规。",
-	},
+	// ── 2026-10-14 · 退场摘行（本单）：`scripts/gates/check-publish-face-sync.py` 的原文字面登记 ──
+	//    py 真身已于 `76bf7e4ea`（尾笔一：退场删除面 40 件）离盘，Go 真搬件在盘
+	//    （`core/cmd/zerg/check_publish_face_sync.go`；退场登记见 contract/adopt-retire.json 的
+	//    retire_ledger · object = scripts/gates/check-publish-face-sync.py）⇒ 该条登记随之**悬空**
+	//    （校验报 rc=2「件在盘上不存在（悬空登记）」）。原锚所指的那处消息串已随件离盘，
+	//    全仓现读已无该字面（Go 半的取数面走 os.ReadDir / 合规 argv ⇒ 本门扫面里无对应裸调文字面）
+	//    ⇒ 按退场纪律**摘行**：✗ 不另立替身登记（登记一条不存在的命中 = 死条目），
+	//       ✗ 也不按「补回」处理（该件是被 Go 真搬替掉的退役件，补回会与退场账打架）。
 	// ── 2026-10-02 · M2 py→Go 端口补齐（与 py 侧 TEXT_ALLOW 逐字同族同因）───────────
 	//    这五条与上面 py 侧三条**同因**：命中行是**消息串**（非 argv），真调用已合规
 	//    （`-z` 或 `-C`+`-c core.quotepath=false`+`-z`）。⑷⑸ 文案对现实现已陈旧（实走
@@ -131,6 +133,27 @@ var gpoTextAllow = []gpoTextAllowEntry{
 		Anchor:      "门94 公开标记表时点对拍：理由列「未跟踪」↔ " + gpoGitTok + " " + gpoNLsFiles + " 现读",
 		Reason:      "步骤名文字面：`add_step` 印给用户看的**步骤名**（引号内的常量），不是 argv —— 没有哪台机器会去跑它；真取数走被点名的 `check-public-marks-tracked-parity.py`（该件自带 " + gpoGitTok + " " + gpoNLsFiles + " 现读对拍）。",
 		Replacement: "无需改：真调用在 check-public-marks-tracked-parity.py；本行只是步骤名里的字面。",
+	},
+	// ── 2026-10-14 · 悬空登记摘行后浮出的 3 条**真命中**（此前被 rc=2 遮蔽）逐条登记 ──
+	//    三处命中行都是**消息串 / 用法串 / 夹具文本**（non-argv），没有哪台机器会去执行它们 ⇒ 不产生转义名。
+	//    每条锚都取自现读原文（校验器逐条验锚在不在件里 ⇒ 锚一变就变红，不会静默失效）。
+	{
+		Path: "core/cmd/zerg/check_retire_consistency.go", Rule: "GPO-F1",
+		Anchor:      "现读   : " + gpoGitTok + " " + gpoNLsFiles + " 共 %d 件",
+		Reason:      "报告行消息串（`out = append(out, fmt.Sprintf(…))`）：真取数在同件 L387 且三锚点齐（`-C` + `-c " + gpoKeyLower + "=false` + `" + gpoFZ + "`）⇒ 本行只是印给人看的现读读数文本。",
+		Replacement: "无需改：真调用已合规（带 `" + gpoFZ + "` 并按 NUL 切分）；本行只是报告文本里的字面。",
+	},
+	{
+		Path: "core/cmd/zerg/family_code.go", Rule: "GPO-F3",
+		Anchor:      gpoKeyUpper + "=false -- " + gpoNLsFiles,
+		Reason:      "用法/帮助串（`zerg code git-two-way` 缺参时的报错文本，`<k=v 或 -开关>` 的**例子**）：non-argv，没有哪台机器会去跑它 ⇒ 大写拼法不外泄为转义面。改文案会牵动帮助面冻结常量与命令页（门69/门73 的那两把尺）⇒ 另批。",
+		Replacement: "无需改：本行只是用法串里的示例字面（要统一拼法 = 帮助面变更，另开窗同批重刷）。",
+	},
+	{
+		Path: "core/cmd/zerg/family_publish_snapshot_native_test.go", Rule: "GPO-F1",
+		Anchor:      "run: " + gpoGitTok + " " + gpoNStatus + " " + gpoFPorcelain,
+		Reason:      "测试夹具文本（合成 GitHub workflow 的 YAML 行，落在测试里的字符串常量）：non-argv，夹具本身不执行该行 ⇒ 不产生转义名。",
+		Replacement: "无需改：本行只是夹具 YAML 文本里的字面。",
 	},
 }
 
@@ -1255,6 +1278,16 @@ func gpoSelftest(out io.Writer) bool {
 		Reason: "夹具：证明登记锚定的是那一处文字", Replacement: "夹具（无需改）",
 	}}
 	caseFn("⑩ 登记负控：缺锚 ⇒ 校验报出（无锚=整件豁免=不许）", gpoPyStrBool(true), gpoPyStrBool(len(gpoValidateTextAllow(d10, true)) >= 1))
+	gpoTextAllow = savedT
+
+	// ⑩′ 登记负控：**悬空登记**（登记件不在盘）⇒ 校验必报（退场遗留的登记不许静默放行）
+	gpoTextAllow = []gpoTextAllowEntry{{
+		Path: "scripts/gates/__悬空夹具-不在盘__.py", Rule: "GPO-F1",
+		Anchor: "x", Reason: "夹具：证明退场遗留的悬空登记仍会被拦", Replacement: "夹具（无需改）",
+	}}
+	gpoDangling := gpoValidateTextAllow(d10, true)
+	caseFn("⑩′ 登记负控：件不在盘（悬空登记）⇒ 校验报出且逐字含「悬空登记」", gpoPyStrBool(true),
+		gpoPyStrBool(strings.Contains(strings.Join(gpoDangling, "\n"), "悬空登记")))
 	gpoTextAllow = savedT
 
 	// ⑪ 全量字段 `hits_all`

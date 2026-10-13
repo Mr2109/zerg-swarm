@@ -152,6 +152,9 @@ type gcrFace struct {
 	dirtySuffix bool
 	head        string
 	moved       []string
+	// workDirty —— 源码面**工作树**里未提交的改动（含未跟踪件 · 只看 gcrSourceFaceRels）。
+	// `git diff <sha>..HEAD` 只看得见已提交历史 ⇒ 这一格补上未提交漂移（GAP-20261014-64）。
+	workDirty []string
 }
 
 type gcrData struct {
@@ -1065,6 +1068,37 @@ func gcrSourceFaceState(root, commit string) (gcrFace, string) {
 			fact.moved = append(fact.moved, s)
 		}
 	}
+	// ── 源码面**工作树**（未提交改动 · 含未跟踪件 · GAP-20261014-64）────────────
+	// 上面那条 `git diff <sha>..HEAD` 只比**已提交**历史 —— 工作树里未提交的源码改动
+	// （改了命令面却既没提交、也没重编 `bin/`）在旧判定里是盲区 ⇒ 命令页相对新源码
+	// 已陈旧却仍报绿（陈旧假绿）。这里把 `git status --porcelain -uall` 现读算进源码面：
+	// **源码面工作树不干净 ⇒ 不许报绿**（✗ 不放宽）。
+	//
+	//	· 只认源码面路径（gcrSourceFaceRels）；运行期落点（如
+	//	  scripts/gates/judge-run-ledger.jsonl · 每跑一门就追加）不在此列 ⇒ 不误红。
+	//	· `-c core.quotepath=false` 免疫件名转义（门68 口径 · 五类件名面须带免疫开关）。
+	args = []string{"-C", root, "-c", "core.quotepath=false", "status", "--porcelain", "-uall", "--"}
+	args = append(args, gcrSourceFaceRels...)
+	rc, out, errOut = gcrRunCmd("git", args)
+	if rc != 0 {
+		return gcrFace{}, fmt.Sprintf("`git status --porcelain` 退码 %d（%s）⇒ 源码面工作树取不到，判不了",
+			rc, gcrRuneHead(gcrPyStrip(gcrCoalesce(errOut, out)), 200))
+	}
+	for _, l := range gcrPySplitlines(out) {
+		if gcrPyStrip(l) == "" {
+			continue
+		}
+		// porcelain v1 每行 `XY <路径>`（状态码两列 + 一个空格）⇒ 第 4 字节起是路径。
+		// ★ **不先剥行首空格**：未暂存改动的 X 列本身就是空格（` M path`），
+		//   先 strip 会把状态位吃掉、路径整体错位一位。
+		p := l
+		if len(l) > 3 {
+			p = gcrPyStrip(l[3:])
+		} else {
+			p = gcrPyStrip(l)
+		}
+		fact.workDirty = append(fact.workDirty, p)
+	}
 	return fact, ""
 }
 
@@ -1479,6 +1513,12 @@ func gcrCheck(root string, pages *gcrPages, targets []string) []string {
 		errs = append(errs, fmt.Sprintf("身份行对拍（`Q-211`）：现跑件那个提交（`%s`）之后**源码面**又动过 %d 件（%s）⇒ `bin/` 旧了（页与现跑件**同源过期** —— 这一格就是它的牙：重编 + 重生成）",
 			face.sha, len(face.moved), strings.Join(gcrHead3(face.moved), " / ")))
 	}
+	// GAP-20261014-64：`git diff <sha>..HEAD` 只看得见**已提交**历史 ⇒ 工作树里未提交的
+	// 源码改动（旧判定盲区）在此判红 —— 命令页顶多与**现跑件**同源，证明不了与**源码面**一致。
+	if len(face.workDirty) > 0 {
+		errs = append(errs, fmt.Sprintf("身份行对拍（`Q-211`）：现跑件那个提交（`%s`）之后**源码面工作树**还有 %d 处**未提交**改动（%s）⇒ 命令页只能证明与**现跑件**同源，不能证明与**源码面**一致（源码已漂 · 须先提交/或确认无源码漂移，再 `--only-cli` 重编 + 重生成）",
+			face.sha, len(face.workDirty), strings.Join(gcrHead3(face.workDirty), " / ")))
+	}
 	pageSet := map[string]bool{}
 	for _, n := range d.namesPage {
 		pageSet[n] = true
@@ -1767,12 +1807,17 @@ func gcrRun(stdout, stderr io.Writer, argv []string) int {
 		movedStr = fmt.Sprintf("%d 件改动（%s…）", len(d.sourceFace.moved),
 			strings.Join(gcrHead3(d.sourceFace.moved), " / "))
 	}
+	workStr := "无"
+	if len(d.sourceFace.workDirty) > 0 {
+		workStr = fmt.Sprintf("%d 件（%s…）", len(d.sourceFace.workDirty),
+			strings.Join(gcrHead3(d.sourceFace.workDirty), " / "))
+	}
 	dirty := "无"
 	if d.sourceFace.dirtySuffix {
 		dirty = "有"
 	}
-	fmt.Fprintf(stdout, "  身份行对拍（`Q-211`）：现跑件 %s · 源码面自 `%s` 起 %s · 脏树后缀 %s\n",
-		d.liveIdent.line, d.sourceFace.sha, movedStr, dirty)
+	fmt.Fprintf(stdout, "  身份行对拍（`Q-211`）：现跑件 %s · 源码面自 `%s` 起 已提交 %s · 工作树未提交 %s · 脏树后缀 %s\n",
+		d.liveIdent.line, d.sourceFace.sha, movedStr, workStr, dirty)
 	for _, lr := range [][2]string{{"zh", gcrZHRel}, {"en", gcrENRel}} {
 		loc, rel := lr[0], lr[1]
 		p := gcrPyJoin(root, rel)
