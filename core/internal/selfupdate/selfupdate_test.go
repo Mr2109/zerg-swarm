@@ -318,12 +318,20 @@ func TestResolveUpdateRemote_PrefersEnv(t *testing.T) {
 	}
 }
 
-func TestResolveUpdateRemote_FallsBackToPublicURLWhenNoOrigin(t *testing.T) {
+func TestResolveUpdateRemote_FallsBackToLocalAuthoritativeRepo(t *testing.T) {
 	dir := t.TempDir()
 	gitRun(t, dir, "init", "-q")
 	t.Setenv("ZERG_UPDATE_REMOTE", "")
+	if got := ResolveUpdateRemote(dir); got != dir {
+		t.Fatalf("无 origin 时应回落到**本机权威仓**（检出自身），✗ 不是公开源：got %q want %q", got, dir)
+	}
+}
+
+func TestResolveUpdateRemote_PublicURLOnlyWhenNotGitCheckout(t *testing.T) {
+	dir := t.TempDir() // 非 git 检出：公开 URL 只剩这一格兜底
+	t.Setenv("ZERG_UPDATE_REMOTE", "")
 	if got := ResolveUpdateRemote(dir); got != DefaultPublicRepoURL {
-		t.Fatalf("无 origin 时应回落到内置公开仓 URL：got %q want %q", got, DefaultPublicRepoURL)
+		t.Fatalf("仅非 git 检出才回落内置公开仓 URL：got %q want %q", got, DefaultPublicRepoURL)
 	}
 }
 

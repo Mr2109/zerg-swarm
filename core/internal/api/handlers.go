@@ -1312,6 +1312,14 @@ func (h *Handlers) ModelsHandler(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, response)
 }
 
+// modelLoadUnknown —— 该机加载状态**判不了**时的取值（闭集第三个字面 · 与 `fleet_health.go` 的
+// `VersionUnknown` / `OriginUnknown` **同一口径**：缺 ≠ 未加载）。
+//
+// ★ GAP-20261004-11（C13 · 按机聚合四格统一口径 · 2026-10-13 拍板）：「不可用机器不参与聚合 ·
+// 缺数据返回 unknown」。该机**没有心跳快照**（机器不可用 / 没上报）时，旧写法报 `未加载` ——
+// 那是**拿缺数据当结论**（卵面 `GAP-20260926-08` 已立过同一条铁律：「取不到不许塌成 未加载」）。
+const modelLoadUnknown = "unknown"
+
 // ModelDetailHandler 模型详情（Mr2109 2026-08-27——UI 右栏: 简介 + 适配器所有选项 + 启动状态）
 // GET /api/models/{name}——fleet 配置全字段（=适配器选项）+ 本机加载状态
 func (h *Handlers) ModelDetailHandler(w http.ResponseWriter, r *http.Request) {
@@ -1325,13 +1333,19 @@ func (h *Handlers) ModelDetailHandler(w http.ResponseWriter, r *http.Request) {
 		writeErrorCode(w, http.StatusNotFound, "MODEL_NOT_FOUND", "模型不存在: "+name)
 		return
 	}
-	c := cands[0]
+	// ★ GAP-20261004-11（C13）**不可用机器不参与聚合**：候选机里先挑「有该机心跳快照」（＝有数据）
+	// 的那一台；一处都没有 ⇒ 回落 `cands[0]`（形状与取值零变化，只把「按机聚合」落成一条判据）。
+	// 旧写法先固定取 `cands[0]` 再判状态 ⇒ 首台不可用时，后面那台的真数据被无视。
+	c := h.firstReportingCandidate(cands)
 	// 3c（2026-09-16）：加载状态改读**该机器的心跳快照**（本机角色退役 ⇒ 不再有 LocalBack 可问；
 	// 本机那一台 = 名为 node-local 的普通子端，其驻留与 node-a 一样经心跳上报）。
-	status := "未加载"
+	// ★ GAP-20261004-11（C13）**缺数据返回 unknown**：三态 = 已加载 / 未加载 / modelLoadUnknown；
+	// 只有**读到该机快照**才谈得上 已加载/未加载。旧键 `loaded`（bool）与其余字段一字不动 ⇒ 兼容口径不破。
+	status := modelLoadUnknown
 	loaded := false
 	if h.Store != nil {
 		if snap := h.Store.GetSnapshot(c.Host); snap != nil {
+			status = "未加载" // 有数据且没在跑 —— 这才是真的「未加载」
 			if snap.Model != nil && *snap.Model == name {
 				loaded = true
 			}
@@ -1419,6 +1433,21 @@ func (h *Handlers) ModelStartHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "name": name, "host": host, "status": "已提交加载（子端接管）"})
+}
+
+// firstReportingCandidate 取该模型**第一个有该机心跳快照**的候选（GAP-20261004-11 · C13）。
+//
+// 口径「不可用机器不参与聚合」：快照在 = 那台机在报（可用）；缺快照 = 不可用 / 没上报 ⇒ 跳过。
+// 一处都没有 ⇒ 回落 `cands[0]`（保持既有形状与既有取值，✗ 不另造第四种答案）。
+func (h *Handlers) firstReportingCandidate(cands []config.ModelCandidate) config.ModelCandidate {
+	if h != nil && h.Store != nil {
+		for _, c := range cands {
+			if h.Store.GetSnapshot(c.Host) != nil {
+				return c
+			}
+		}
+	}
+	return cands[0]
 }
 
 // firstCandidateNode 取该模型的第一个"在机群里有节点信息"的候选（3c：手动启动/停止改为转发到子端）。

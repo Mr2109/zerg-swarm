@@ -553,7 +553,17 @@ func gapWriteFaceWhy(cmdStr string) string {
 		return ""
 	}
 	cmd, rest := resolve(fields)
-	if cmd == nil || cmd.danger == nil {
+	if cmd == nil {
+		return ""
+	}
+	// ★ 缺口 `GAP-20261005-34`（门禁面 P1 · 本枚）：**非危险档也要看一眼透传型** —— 原样透传型
+	//   （`cmd.passthrough`）**不是**危险档（现读 `gate` 族节点 `danger=nil`）⇒ 旧写法
+	//   「`cmd.danger == nil` ⇒ 直接放行」会**漏放**它（真跑一次把整条 `precommit-gates.sh`
+	//   拉起来 · 含 shard go-test）。共口 = `gapPassthroughWhy`（✗ 不各闸各写一份）。
+	if why := gapPassthroughWhy(cmdStr); why != "" {
+		return why
+	}
+	if cmd.danger == nil {
 		return ""
 	}
 	if hasDryRunFlag(fields) {
@@ -599,6 +609,40 @@ func gapWriteFaceWhy(cmdStr string) string {
 	return fmt.Sprintf("判据 %q 落在**写面**（危险档 %s · 它会动：%s）且没带 `--dry-run` —— "+
 		"写命令在进程内真跑会**真写盘**，跑它看 rc 也拿不到关于缺口的结论 ⇒ 不执行、不给结论（退码 8）",
 		strings.Join(fields, " "), cmd.danger.Level, cmd.danger.Effect)
+}
+
+// gapPassthroughWhy —— **只读闸共口**：该判据是否落在命令树里的「**原样透传型**」（`cmd.passthrough`
+// —— 旗标与位置参数**逐字交给被包的脚本**）⇒ 真跑会拉起脚本 / 门跑等重活。非空 = 不执行；
+// 空串 = 不是透传型（**≠ 可跑** —— 写面那一支与命令树解析那一支照旧各判各的）。
+//
+// 病（缺口 `GAP-20261005-34` · P1 · 门禁面）：同族两道只读闸（`gapWriteFaceWhy` /
+// `gapRegressRefuse`）此前**只认危险档**（现读旧判据行：`if cmd == nil || cmd.danger == nil
+// { return "" }`），对透传型**无分支** ⇒ 一条 `zerg gate run --step … --only-step` 型判据被判
+// 「可跑」收下，真跑一次就把整条 `precommit-gates.sh` 门跑起来（含 shard go-test）。同族第三道
+// 闸 `gapRereadWhy`（`family_gap_reread.go:219`）早已补严这一档 ⇒ 本共口把三处口径并成**同一条**
+// （✗ 不各写一份 —— 三份必然漂）。★ `gapRereadWhy` 里那条内联判定**行为已对**，本枚不动它
+// （✗ 不为统一而白改一件；本函数就是它那条判定的共口形态 · 判词同源）。
+//
+// ★ 本函数**只管非危险档**：`cmd.danger != nil` ⇒ 一律返回空串，交由写面那一支点名（同
+// `gapRereadWhy` 的次序 —— 先 danger、后 passthrough）⇒ `gate check <写档判据名>` 的拒词一字
+// 不动；`gate check <只读判据名>` 仍由 `gateCheckReadJudgeEscape` 放行（`gate check` 节点自带
+// `passthrough`，但那一档是**真只读**）。
+func gapPassthroughWhy(cmdStr string) string {
+	fields := gapCmdFields(cmdStr)
+	if len(fields) == 0 {
+		return ""
+	}
+	if filepath.Base(fields[0]) == progName {
+		fields = fields[1:]
+	}
+	if len(fields) == 0 {
+		return ""
+	}
+	cmd, _ := resolve(fields)
+	if cmd == nil || !cmd.passthrough || cmd.danger != nil {
+		return ""
+	}
+	return "**原样透传型**（旗标与位置参数逐字交给被包的脚本 ⇒ 会真跑脚本 / 门跑等重活 ⇒ 不执行）"
 }
 
 // gapDangerReadOnlyActions —— 危险档登记面**自身**声明的「只读动作」闭集（动作名 → true）。
@@ -7133,6 +7177,12 @@ func gapRegressRefuse(r gapRecord) string {
 	}
 	if m := gapVerifyOneMetaHit(r.VerifyCmd); m != "" {
 		return fmt.Sprintf("含 shell 元字符 %q（只跑「那一格命令本身」· 不拼 shell 串）", m)
+	}
+	// ★ 缺口 `GAP-20261005-34`（本枚 · 门禁面 P1）：**原样透传型**排在最前 —— 它真跑会拉起脚本 /
+	//   门跑等重活（`gapWriteFaceWhy` 现在也拒它）⇒ 先点名「透传型」这个**真因**，别让写面那句
+	//   话顶替（同族 `gapRereadWhy` 也是这一档，判词同源 = `gapPassthroughWhy`）。
+	if why := gapPassthroughWhy(r.VerifyCmd); why != "" {
+		return "原样透传型判据（旗标与位置参数逐字交给被包的脚本 ⇒ 真跑会拉起脚本 / 门跑等重活）"
 	}
 	if gapWriteFaceWhy(r.VerifyCmd) != "" {
 		return "写面判据（危险档且没带 `--dry-run` ⇒ 真跑会真写盘）"

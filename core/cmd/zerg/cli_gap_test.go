@@ -392,10 +392,17 @@ func TestGapFamily_BoilerplateRejected(t *testing.T) {
 // 真跑却恒退 2」的判据照样入库、且永远变不绿。治：写侧**真跑一次取 rc** —— rc=2 且错文点名
 // 未知旗标 / 未知字段 / 缺必填子命令 ⇒ 拒收；其余 rc（0 / 1 / 8 一类有鉴别力的读数）⇒ 收。
 //
-// 两态（拒收）：① 缺必填子命令（`zerg fleet logs` 真跑 rc=2 · `the following arguments are required: command`）
-// ② 未知 `--json` 字段（`zerg version --json nosuchfield-zz` 真跑 rc=2 · `未知字段 "nosuchfield-zz"`）
+// 两态（拒收）：① 未知 `--json` 字段（`zerg gate results --json scope` 真跑 rc=2 · `未知字段 "scope"`）
+// ② 未知 `--json` 字段（另一条件 · `zerg version --json nosuchfield-zz` 真跑 rc=2 · `未知字段`）
 // ⇒ 各 rc=2、点名「现跑预检」、真源不动。负控（放行）：真跑得动的判据（`zerg version --json name`
 // rc=0）⇒ rc=0 能进。判的是**进程退码**与其自己那档的拒绝理由（✗ 不卡死整句汉字）。
+//
+// ★ 缺口 `GAP-20261005-34`（本单 DEV-2742）改了**闸的次序**：`gapWriteFaceWhy` 现在对
+// **原样透传型**（`cmd.passthrough`）也有分支 ⇒ 透传型判据在**静态闸**（`gapJudgeArgv`）就被拒，
+// **到不了**本档「现跑预检」（这是**加严**：本档要**真跑**才出判词，而透传型真跑＝拉起被包脚本）。
+// ⇒ 本件的态①夹具由 `zerg fleet logs`（**透传型** · 旧时靠本档拒）换成 `zerg gate results --json scope`
+// （**非透传** · 同样 rc=2 且点名「未知字段」⇒ 仍走本档）；旧夹具另立一格「态①′」钉住**新**归属：
+// 它现在由透传闸拒（rc=2 且点名「原样透传型」）—— 覆盖不丢、归属如实。
 func TestGapFamily_PreflightRejected(t *testing.T) {
 	_, ledger, _ := gapEnv(t)
 
@@ -405,13 +412,22 @@ func TestGapFamily_PreflightRejected(t *testing.T) {
 			"--repro-cmd", "go test ./... -run X", "--verify-cmd", verify, "--yes"}
 	}
 
-	// 态①：缺必填子命令（`zerg fleet logs` 真跑 rc=2）⇒ 2 并点名「现跑预检」
-	rc, _, errb := gapRun(t, base("现跑预检-缺子命令", "zerg fleet logs")...)
+	// 态①：未知 `--json` 字段（`zerg gate results --json scope` 真跑 rc=2 · `未知字段`）⇒ 2 并点名「现跑预检」
+	rc, _, errb := gapRun(t, base("现跑预检-未知字段", "zerg gate results --json scope")...)
 	if rc != 2 {
-		t.Errorf("缺必填子命令 ⇒ 2，得到 %d · %s", rc, errb)
+		t.Errorf("未知 json 字段 ⇒ 2，得到 %d · %s", rc, errb)
 	}
 	if !strings.Contains(errb, "现跑预检") || !strings.Contains(errb, "--verify-cmd") {
 		t.Errorf("拒收判词要点名「现跑预检」与 --verify-cmd，得到 %q", errb)
+	}
+	// 态①′（本单 DEV-2742 新归属）：同一条旧夹具 `zerg fleet logs` 是**原样透传型** ⇒ 现在由
+	// **静态闸**拒（在透传闸那一档），仍 rc=2、点名「原样透传型」与 `--verify-cmd`（✗ 不放行）。
+	rc, _, errb = gapRun(t, base("透传型判据", "zerg fleet logs")...)
+	if rc != 2 {
+		t.Errorf("透传型判据 ⇒ 2，得到 %d · %s", rc, errb)
+	}
+	if !strings.Contains(errb, "原样透传型") || !strings.Contains(errb, "--verify-cmd") {
+		t.Errorf("透传型拒收判词要点名「原样透传型」与 --verify-cmd，得到 %q", errb)
 	}
 	// 态②：未知 `--json` 字段（`zerg version --json nosuchfield-zz` 真跑 rc=2 · `未知字段`）⇒ 2
 	rc, _, errb = gapRun(t, base("现跑预检-未知字段", "zerg version --json nosuchfield-zz")...)

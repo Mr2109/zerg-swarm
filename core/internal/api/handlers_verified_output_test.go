@@ -83,3 +83,66 @@ func TestModelDetailHandlerVerifiedStateAdditive(t *testing.T) {
 		t.Fatalf(`加性出参未承载：verified_where 要 "edge-node"，实得 %s`, rep["verified_where"])
 	}
 }
+
+// ── GAP-20261004-11（C13 · 按机聚合四格统一口径）的回归牙 ──────────────────────────
+//
+// 口径（2026-10-13 拍板，与「同源判定三态」同一句）：**不可用机器不参与聚合 · 缺数据返回 unknown**。
+//
+// 两态（本用例就是那颗牙）：
+//
+//	改前（`c := cands[0]` ＋ `status := "未加载"`）⇒ 探针① 报 `未加载`（**拿缺数据当结论的假值**）⇒ 本用例红
+//	改后                                              ⇒ 探针① 报 `unknown`
+//
+// 正控两条（**可用机器零回退**）：探针② 首台无数据、次台有数据且已加载 ⇒ 状态由**有数据那台**说了算；
+// 探针③ 首台有数据且没在跑 ⇒ 仍是 `未加载`（本机可用机器行为一字未变）。
+func TestModelDetailHandlerLoadStateUnknownWhenMachineDataMissing(t *testing.T) {
+	h := &Handlers{
+		Config: &config.FleetConfig{
+			Models: map[string][]config.ModelCandidate{
+				"M-Multi": {{Host: "node-a", Backend: "ds4-server", File: "/a.gguf", MemGb: 1},
+					{Host: "node-b", Backend: "ds4-server", File: "/b.gguf", MemGb: 1}},
+			},
+			Fleet: map[string]config.FleetNode{"node-a": {}, "node-b": {}},
+		},
+		Store: store.NewStore(),
+	}
+	r := chi.NewRouter()
+	r.Get("/api/models/{name}", h.ModelDetailHandler)
+	detail := func() map[string]json.RawMessage {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/api/models/M-Multi", nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("GET /api/models/M-Multi 应 200，实得 %d body=%s", w.Code, w.Body.String())
+		}
+		var m map[string]json.RawMessage
+		if err := json.Unmarshal(w.Body.Bytes(), &m); err != nil {
+			t.Fatalf("响应 JSON 解析失败: %v body=%s", err, w.Body.String())
+		}
+		return m
+	}
+
+	// 探针① 两台候选都没有心跳快照（＝不可用 / 缺数据）⇒ `unknown`，✗ 不许拿 `未加载` 冒充。
+	p1 := detail()
+	if string(p1["status"]) != `"unknown"` {
+		t.Fatalf("缺数据必须报 unknown（✗ 不许拿「未加载」冒充）：status=%s", p1["status"])
+	}
+	if string(p1["host"]) != `"node-a"` {
+		t.Fatalf("一处都没有数据时应回落 cands[0]（node-a）：host=%s", p1["host"])
+	}
+
+	// 探针② 不可用机器不参与聚合：node-a 无快照、node-b 在报且已加载 ⇒ 判决落到 node-b。
+	h.Store.ReceiveHeartbeat(store.HeartbeatRequest{Machine: "node-b", Models: []string{"M-Multi"}})
+	p2 := detail()
+	if string(p2["host"]) != `"node-b"` || string(p2["status"]) != `"已加载"` {
+		t.Fatalf("有数据那台要参与聚合（host=node-b / status=已加载）：host=%s status=%s", p2["host"], p2["status"])
+	}
+
+	// 探针③ 正控（可用机器零回退）：node-a 在报但没有这枚 ⇒ 仍是 `未加载`。
+	h.Store.ReceiveHeartbeat(store.HeartbeatRequest{Machine: "node-a", Models: []string{}})
+	p3 := detail()
+	if string(p3["host"]) != `"node-a"` || string(p3["status"]) != `"未加载"` {
+		t.Fatalf("可用机器（有快照、没在跑）必须仍是 `未加载`：host=%s status=%s", p3["host"], p3["status"])
+	}
+}

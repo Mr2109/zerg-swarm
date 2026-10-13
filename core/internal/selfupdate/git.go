@@ -144,15 +144,30 @@ func (g Git) OriginRevID(ref string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// DefaultPublicRepoURL —— 更新取源的**内置默认**：公开镜像仓（匿名可拉，无需凭据）。
+// DefaultPublicRepoURL —— 更新取源的**内置公开仓 URL**（匿名可拉，无需凭据）。
 //
 // 2026-09-13 真机只读验收发现的问题：私有权威仓**没有 `origin`**（它一直是独立仓），
 // 而取源原先只认 "origin" ⇒ `zerg update` 在真机上一次都跑不通。沙箱里的玩具仓恰好配了
 // origin，所以套件全绿也验不出来 —— 平台/环境常量类的缺口，必须拿真仓跑一次才现形。
+//
+// ★ 2026-10-13（GAP-20261013-02 拍板「本机步取源 = 本地权威仓」）：它**不再是**「无 origin」
+// 那一档的默认 —— 见 `ResolveUpdateRemote` 的 ③/④。留着它只为「`repoDir` 根本不是 git 检出」
+// 那一格兜底（那一格 `Run` 早已 fail-closed 拒绝，不会拿它去 fetch 换装）。
 const DefaultPublicRepoURL = "https://github.com/Mr2109/zerg-swarm.git"
 
-// ResolveUpdateRemote —— 取源解析顺序：① 环境变量 ZERG_UPDATE_REMOTE
-// ② 已配置的 `origin`（尊重本机既有配置）③ 内置公开仓 URL（设计稿口径：匿名拉公开仓）。
+// ResolveUpdateRemote —— 取源解析顺序（2026-10-13 · GAP-20261013-02）：
+//
+//	① 环境变量 `ZERG_UPDATE_REMOTE` —— 机群编排显式注入的那一档（本机步 / 远程步都走它）；
+//	② 已配置的 `origin`（尊重本机既有配置）；
+//	③ **本机权威仓 = 检出自身** —— 私有权威仓没有 `origin` 的实况下，宁可拿「检出自身」当取源
+//	   （两端同一个 sha ⇒ 自然判「无需更新」），✗ 也**绝不**落公开源：公开镜像是过滤重写史，
+//	   与私有史**互不为祖先**，取了它就是把本机换成公开旧版（`GAP-20261013-11/-12` 两道守卫
+//	   都拦不住 —— 守卫比的是「源 ↔ 本地」，而「源本身就是公开旧版」发生在守卫之前）。
+//	④ `DefaultPublicRepoURL` —— **仅当** `repoDir` 不是 git 检出时兜底。
+//
+// ★ 为什么 ③ 不先判「这台机是不是权威仓」：取源解析拿不到那件事的权威判据（只有环境变量与
+// 远端名两样），而「检出自身」在任何一台机上都是**本机手上这一版代码** —— 它永远不是公网旧版，
+// 正是本条要保的性质。要跨机取源就显式给 ①（机群编排正是这么做的）。
 func ResolveUpdateRemote(repoDir string) string {
 	if v := strings.TrimSpace(os.Getenv("ZERG_UPDATE_REMOTE")); v != "" {
 		return v
@@ -161,6 +176,9 @@ func ResolveUpdateRemote(repoDir string) string {
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 	if out, err := cmd.Output(); err == nil && strings.TrimSpace(string(out)) != "" {
 		return "origin"
+	}
+	if isGitCheckout(repoDir) {
+		return repoDir
 	}
 	return DefaultPublicRepoURL
 }
