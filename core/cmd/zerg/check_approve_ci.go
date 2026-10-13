@@ -63,7 +63,109 @@ var caciCIFace = []string{caciPyJoin("publish", "ci", "ci.yml"), caciPyJoin("pub
 
 var caciCIFobidden = []string{"zerg approve new", "zerg approve keygen", "approve keygen --", "operator.key"}
 
-var caciDevdocsTail = caciPyJoin("项目文档", "v2.5.11")
+// caciDocSeg —— 开发文档树段（`项目文档`）。以常量拼装 ⇒ 本件源码里不出现
+// 「<树段字面> ＋ 版本目录字面」的连续形态（门125 `check-devdocs-root-single-source` 的扫描面）。
+const caciDocSeg = "项目文档"
+
+// caciDevdocsTailFor —— 开发文档版本面尾段（`项目文档/vX.Y.Z`）—— ★ **零版本字面量**
+// （GAP-20260927-88：原为写死的 `v2.5.11` ⇒ 换版静默过期）。
+//
+// 版号**现读唯一真源**（`core/internal/version/version.go` 的 `const Version`，与门①
+// `check-doc-cmds` 的 `dcmdCurrentVersion` 同读法）：真源指向的版本目录若在取源根下**且含本门
+// 要读的口径件** ⇒ 就用它（默认档跟收版走 —— 与 `GAP-20260926-209` 先例同口径）。
+// 真源目录缺该件（本门读的是**历史钉版**口径件，未必被承接进当前版）⇒ 在取源根下**按件名**
+// 定位版本目录（版本号最大者）—— 仍不写任何版本字面量。
+//
+// 两处都取不到 ⇒ ok=false（**缺件不猜**：调用方按「未取数」报 rc=2，✗ 不当绿）。
+func caciDevdocsTailFor(root, sibling, doc string) (string, bool) {
+	if ver, ok := dcmdCurrentVersion(root); ok {
+		if caciExists(caciPyJoin(sibling, caciDocSeg, ver, doc)) {
+			return caciPyJoin(caciDocSeg, ver), true
+		}
+	}
+	if d, ok := caciVersionDirWithFile(sibling, doc); ok {
+		return caciPyJoin(caciDocSeg, d), true
+	}
+	return "", false
+}
+
+// caciVersionDirWithFile —— 在 `<sibling>/<树段>` 下**按件名定位**版本目录：候选须是
+// `v<数字>[.数字…]` 目录**且含该件**，取版本号最大者（逐段数字比 ⇒ ✗ 不比字典序）。
+// 一个都定位不到 ⇒ ok=false（缺件不猜）。
+func caciVersionDirWithFile(sibling, doc string) (string, bool) {
+	base := caciPyJoin(sibling, caciDocSeg)
+	ents, err := os.ReadDir(base)
+	if err != nil {
+		return "", false
+	}
+	best := ""
+	var bestKey []int
+	for _, e := range ents {
+		name := e.Name()
+		if !e.IsDir() || !caciIsVersionDirName(name) || !caciExists(caciPyJoin(base, name, doc)) {
+			continue
+		}
+		key := caciVersionKey(name)
+		if best == "" || caciVersionKeyLess(bestKey, key) {
+			best, bestKey = name, key
+		}
+	}
+	if best == "" {
+		return "", false
+	}
+	return best, true
+}
+
+// caciIsVersionDirName —— `v<数字>[.<数字…>]` 形态的版本目录名（✗ 不吃别的段）。
+func caciIsVersionDirName(name string) bool {
+	if !strings.HasPrefix(name, "v") || len(name) < 2 {
+		return false
+	}
+	for _, r := range name[1:] {
+		if (r < '0' || r > '9') && r != '.' {
+			return false
+		}
+	}
+	return true
+}
+
+// caciVersionKey —— 版本目录名 ⇒ 逐段数字键（`v2.5.11` ⇒ `[2 5 11]`）。
+func caciVersionKey(name string) []int {
+	segs := strings.Split(strings.TrimPrefix(name, "v"), ".")
+	out := make([]int, 0, len(segs))
+	for _, s := range segs {
+		n := 0
+		for _, r := range s {
+			if r < '0' || r > '9' {
+				break
+			}
+			n = n*10 + int(r-'0')
+		}
+		out = append(out, n)
+	}
+	return out
+}
+
+// caciVersionKeyLess —— 逐段数字比（缺段补 0）。
+func caciVersionKeyLess(a, b []int) bool {
+	n := len(a)
+	if len(b) > n {
+		n = len(b)
+	}
+	for i := 0; i < n; i++ {
+		x, y := 0, 0
+		if i < len(a) {
+			x = a[i]
+		}
+		if i < len(b) {
+			y = b[i]
+		}
+		if x != y {
+			return x < y
+		}
+	}
+	return false
+}
 
 const caciDocName = "口径-CI永不人签-20260923.md"
 
@@ -622,7 +724,13 @@ func caciDevdocsRootOf(root, given string, givenSet bool) string {
 	if sibling == "" {
 		sibling = caciPyJoin(caciPyDirname(root), "Zerg-内部文档")
 	}
-	return caciPyJoin(sibling, caciDevdocsTail)
+	tail, ok := caciDevdocsTailFor(root, sibling, caciDocName)
+	if !ok {
+		// ★ 缺件不猜（GAP-20260927-88）：取源根下定位不到本门口径件的版本目录 ⇒
+		// 交「版本面之上一级」给下游，由它按「未取数」报 rc=2（✗ 不回落到写死的版本目录）。
+		return caciPyJoin(sibling, caciDocSeg)
+	}
+	return caciPyJoin(sibling, tail)
 }
 
 // ── 自检（先自证会红，再扫真目标）──────────────────────────────────────────────

@@ -1108,9 +1108,12 @@ var vsReReviewDate = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 var vsDerivedDefaultSites = []vsSiteEnt{
 	{"scripts/gates/check-doc-freshness.py", `os\.path\.join\(sibling, "项目文档", "(v[0-9.]+)"\)`, "pinned", "v2.5.10", "乙·沿革/引证：v2.5.10 是文档面上一次定稿版（改真源 2.5.13 破 devdocs:meta/freshness D1 两阻断步）· Mr2109 2026-10-08 拍·GAP-20260927-89", "2026-10-08"},
 	{"core/cmd/zerg/check_doc_meta.go", `\{"docs/项目文档/(v[0-9.]+)/"`, "pinned", "v2.5.10", "FORMAL_PREFIX 首棵（面登记 · 沿革同上）", "2026-10-08"},
-	{"core/cmd/zerg/check_approve_ci.go", `caciDevdocsTail = caciPyJoin\("项目文档", "(v[0-9.]+)"\)`, "pinned", "v2.5.11", "乙·引证：口径-CI永不人签-20260923.md 实际只在 v2.5.11（他版 0 份）", "2026-10-08"},
-	{"core/cmd/zerg/check_approve_closedset.go", `cacsDevdocsTail = caciPyJoin\("项目文档", "(v[0-9.]+)"\)`, "pinned", "v2.5.11", "乙·引证：S2 单向铁律台账实际只在 v2.5.11", "2026-10-08"},
-	{"core/cmd/zerg/check_approve_freeze.go", `cafrDocsVer\s+= "(v[0-9.]+)"`, "pinned", "v2.5.11", "乙·引证：缺口-命令面-20260922.md 顶账 16 条实际只在 v2.5.11", "2026-10-08"},
+	// ★ 2026-10-14（GAP-20260927-88）：原此处另有三条 **pinned** 位点 ——
+	// `core/cmd/zerg/check_approve_{ci,closedset,freeze}.go` 的开发文档面**默认根版本尾段**
+	// （旧值写死 `v2.5.11`）。那三处已收口为**现读版本真源**推导（族共享助手
+	// `caciDevdocsTailFor`：真源目录优先、缺则按口径件名在取源根下定位、两处皆缺 ⇒ 不给结论）
+	// ⇒ 件内**零版本字面量可捕获** ⇒ 本登记册**摘除**这三条。该面的单一真源判据改由门125
+	// `check-devdocs-root-single-source`（判据件默认根 ⟷ 版号真源 对拍）承担。
 }
 
 // vsCheckDerivedDefaults —— R7：派生默认层版本位点登记册。

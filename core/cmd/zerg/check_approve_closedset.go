@@ -70,7 +70,10 @@ const cacsPyExe = "/usr/bin/python3"
 const cacsExitSpawnFail = 127
 
 var cacsRegistryRel = caciPyJoin("core", "internal", "contract", "registry.json")
-var cacsDevdocsTail = caciPyJoin("项目文档", "v2.5.11")
+
+// ★ 2026-10-14（GAP-20260927-88）：原常量 `cacsDevdocsTail`（值 = 写死的版本目录 `v2.5.11`）
+// 是一处**默认根硬写版本**（换版静默过期）⇒ 收口为**现读版本真源**推导，见族共享助手
+// `caciDevdocsTailFor`（定义在 check_approve_ci.go）。本件源码里不再有版本目录字面量。
 
 const cacsLedgerFile = "登记表-档位闭集与契约槽-20260923.md"
 
@@ -353,7 +356,13 @@ func cacsDevdocsRootOf(root, given string, givenSet bool) string {
 	if sibling == "" {
 		sibling = caciPyJoin(caciPyDirname(root), "Zerg-内部文档")
 	}
-	return caciPyJoin(sibling, cacsDevdocsTail)
+	tail, ok := caciDevdocsTailFor(root, sibling, cacsLedgerFile)
+	if !ok {
+		// ★ 缺件不猜（GAP-20260927-88）：定位不到登记表所在版本目录 ⇒ 交「版本面之上一级」，
+		// 由下游按「未取数」报 rc=2（✗ 不回落到写死的版本目录）。
+		return caciPyJoin(sibling, caciDocSeg)
+	}
+	return caciPyJoin(sibling, tail)
 }
 
 // cacsRunCmd：跑一条命令面（stdin=DEVNULL · 追加 ZERG_STATE_DIR）⇒ (rc, rcNone, stdout, stderr)。

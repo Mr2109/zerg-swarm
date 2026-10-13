@@ -265,8 +265,10 @@ func TestCacsPinnedTruthAndToolchain(t *testing.T) {
 	if cacsPyExe != "/usr/bin/python3" {
 		t.Fatalf("python3 未钉 /usr/bin/python3（GAP-20261001-61）：%q", cacsPyExe)
 	}
-	if got := filepath.ToSlash(cacsDevdocsTail); got != "项目文档/v2.5.11" {
-		t.Fatalf("开发文档面尾段漂移：%q", got)
+	// ★ GAP-20260927-88：本门尾段不再写死版本 ⇒ 本格改判 **缺件不猜**（取源根与口径件都没有
+	// ⇒ 不许给出尾段）；「跟真源 / 件名定位」两态见 TestCacsDevdocsTailFollowsTrueSource。
+	if got, ok := caciDevdocsTailFor(t.TempDir(), t.TempDir(), cacsLedgerFile); ok {
+		t.Fatalf("取源根与口径件都缺时不该给出尾段，实得 %q", got)
 	}
 	if len(cacsJSONFields) != 0 {
 		t.Fatalf("本门无机器读面 ⇒ 字段表必须为空（唯真源 cacsJSONFields）")
@@ -448,3 +450,67 @@ func cacsUseProbe(t *testing.T) {
 }
 
 var _ = io.Discard
+
+// ── ★ GAP-20260927-88（本笔）：开发文档面尾段**现读版本真源**、✗ 不写死版本字面量 ──
+// 四态（成对 · 负控在先）：
+//
+//	① 真源 9.9.9 + 口径件在 `<取源根>/项目文档/v9.9.9/` ⇒ 跟到 v9.9.9（**跟真源**）；
+//	② 真源取不到（version.go 缺）而件在 v9.9.9 ⇒ 按件名定位回 v9.9.9（✗ 不写死任何版本）；
+//	③ 真源改值 8.8.8、件仍在 v9.9.9 ⇒ 件在哪版尾段就是哪版（**真源改值仍能跟随**的唯一合法来源）；
+//	④ 真源改值 8.8.8 **且** 件已承接进 v8.8.8 ⇒ 跟新真源（跟随的硬证）；两处皆缺 ⇒ ok=false（缺件不猜）。
+func TestCacsDevdocsTailFollowsTrueSource(t *testing.T) {
+	// mk：fixture 仓（真源可写）；ver == "" ⇒ 不落 version.go（模拟真源取不到）
+	mk := func(t *testing.T, ver string) (root, sibling string) {
+		t.Helper()
+		root, sibling = t.TempDir(), t.TempDir()
+		if ver == "" {
+			return root, sibling
+		}
+		vdir := filepath.Join(root, "core", "internal", "version")
+		if err := os.MkdirAll(vdir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		body := "package version\n\nconst Version = \"" + ver + "\"\n"
+		if err := os.WriteFile(filepath.Join(vdir, "version.go"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return root, sibling
+	}
+	// place：把口径件放进 `<取源根>/项目文档/<ver>/`
+	place := func(t *testing.T, sibling, ver string) {
+		t.Helper()
+		d := filepath.Join(sibling, "项目文档", ver)
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(d, cacsLedgerFile), []byte("x\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// ② 真源取不到 + 件在 v9.9.9 ⇒ 件名定位
+	rootNo, sibNo := mk(t, "")
+	place(t, sibNo, "v9.9.9")
+	if got, ok := caciDevdocsTailFor(rootNo, sibNo, cacsLedgerFile); !ok || filepath.ToSlash(got) != "项目文档/v9.9.9" {
+		t.Fatalf("② 件名定位失败：got=%q ok=%v", got, ok)
+	}
+	// ① 真源 9.9.9 + 件在 v9.9.9 ⇒ 跟真源
+	root, sib := mk(t, "9.9.9")
+	place(t, sib, "v9.9.9")
+	if got, ok := caciDevdocsTailFor(root, sib, cacsLedgerFile); !ok || filepath.ToSlash(got) != "项目文档/v9.9.9" {
+		t.Fatalf("① 未跟真源：got=%q ok=%v", got, ok)
+	}
+	// ③ 真源改值 8.8.8、件仍在 v9.9.9 ⇒ 尾段仍 = v9.9.9（定位不猜、✗ 不写死）
+	root8, _ := mk(t, "8.8.8")
+	if got, ok := caciDevdocsTailFor(root8, sib, cacsLedgerFile); !ok || filepath.ToSlash(got) != "项目文档/v9.9.9" {
+		t.Fatalf("③ 真源改值后尾段漂移：got=%q ok=%v", got, ok)
+	}
+	// ④ 件承接进 v8.8.8 ⇒ 跟新真源
+	place(t, sib, "v8.8.8")
+	if got, ok := caciDevdocsTailFor(root8, sib, cacsLedgerFile); !ok || filepath.ToSlash(got) != "项目文档/v8.8.8" {
+		t.Fatalf("④ 真源改值未跟随：got=%q ok=%v", got, ok)
+	}
+	// 缺件不猜（负控）：真源在、件两处皆缺 ⇒ 不许给结论
+	if got, ok := caciDevdocsTailFor(root, t.TempDir(), cacsLedgerFile); ok {
+		t.Fatalf("缺件仍给出尾段：%q", got)
+	}
+}

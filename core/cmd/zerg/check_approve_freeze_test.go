@@ -18,7 +18,9 @@ func cafrSetup(t *testing.T) cafrEnv {
 	t.Helper()
 	tmp := t.TempDir()
 	repo := filepath.Join(tmp, "repo")
-	docs := filepath.Join(tmp, "Zerg-内部文档", "项目文档", cafrDocsVer)
+	// ★ GAP-20260927-88：夹具用中性版本目录名（任意值 —— 本套用例一律显式传 `--docs-root`，
+	// 不走版本真源推导那一支）。
+	docs := filepath.Join(tmp, "Zerg-内部文档", "项目文档", "v9.9.9")
 	for _, d := range []string{
 		filepath.Join(repo, "core", "cmd", "zerg", "testdata"),
 		docs,

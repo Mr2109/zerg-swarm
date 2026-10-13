@@ -101,7 +101,6 @@ var cafrExpectedFields = []string{"tool", "approver", "approved_at", "scope", "n
 var cafrHelpRows = []string{"zerg approve ls", "zerg approve show"}
 
 const (
-	cafrDocsVer      = "v2.5.11"
 	cafrGapDoc       = "缺口-命令面-20260922.md"
 	cafrLedgerAnchor = "R-11"
 	cafrGapMax       = 16 // `v2.5.11` 顶账 16 条（`G-01`–`G-16`）
@@ -417,7 +416,13 @@ func cafrDocsRootOf(repo, given string) string {
 	if sibling == "" {
 		sibling = cafrPyJoin(filepath.Dir(repo), "Zerg-内部文档")
 	}
-	return cafrPyJoin(sibling, "项目文档", cafrDocsVer)
+	// ★ GAP-20260927-88：版本目录尾段**现读版本真源**（✗ 不再写死版本字面量）。
+	tail, ok := caciDevdocsTailFor(repo, sibling, cafrGapDoc)
+	if !ok {
+		// 缺件不猜：定位不到台账所在版本目录 ⇒ 交「版本面之上一级」，由下游按「未取数」报 rc=2。
+		return cafrPyJoin(sibling, caciDocSeg)
+	}
+	return cafrPyJoin(sibling, tail)
 }
 
 // cafrReadings —— 三面 + 台账（py `read_all` 的返回 dict）。
@@ -621,7 +626,8 @@ func cafrSelfTest(stdout io.Writer, repo, docsRoot string) bool {
 		bad++
 	}
 	// ⑥ 负控：面缺 ⇒ 未取数（rc=2 那条口径）
-	nodocs := cafrPyJoin(os.TempDir(), "zerg-approve-freeze-nodocs", "Zerg-内部文档", "项目文档", cafrDocsVer)
+	// 自检⑥ 的「面缺」夹具：一个**不存在**的版本面根（✗ 不引用版本真源、✗ 不写版本目录字面量）。
+	nodocs := cafrPyJoin(os.TempDir(), "zerg-approve-freeze-nodocs", "Zerg-内部文档", "项目文档", "无此版本目录")
 	if missing, why2 := cafrReadAll(repo, nodocs); missing == nil && strings.Contains(why2, "Zerg-内部文档") {
 		fmt.Fprintf(stdout, "   ✓ ⑥ 负控：Zerg-内部文档 根缺 ⇒ 未取数（%s）⇒ 不许当绿\n", why2)
 		ok++
