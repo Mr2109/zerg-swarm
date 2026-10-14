@@ -146,6 +146,47 @@ func TestCliOwnershipSelfTest(t *testing.T) {
 	}
 }
 
+// TestCliOwnershipGoClass —— ★ 类 B（Go 真身件 · 缺口 `GAP-20261012-16` 的 Go 真身面）两态：
+// 命令树 `run:` 链可达 ⇒ 绿；**无人调用**的真身件 ⇒ 红 ＋ 逐字点名；哑化命令树那行 ⇒ 两件都红
+// （证判据真读命令树 · ✗ 不是恒绿）；且**类 A（闭集 py/sh）判面一字未动**（原候选面仍是 py/sh）。
+func TestCliOwnershipGoClass(t *testing.T) {
+	root := t.TempDir()
+	ccoWriteT(t, root, "core/cmd/zerg/main.go",
+		"package main\n\nvar commands = []*command{\n\t{path: []string{\"foo\"}, run: cmdFoo},\n}\n")
+	ccoWriteT(t, root, "core/cmd/zerg/family_a_native.go",
+		"package main\n\nfunc cmdFoo() int { return aNative() }\n\nfunc aNative() int { return 0 }\n")
+	ccoWriteT(t, root, "core/cmd/zerg/family_b_native.go", "package main\n\nfunc bNative() int { return 0 }\n")
+
+	files, natives, ok := ccoScanGo(root)
+	if !ok || len(natives) != 2 {
+		t.Fatalf("类 B 候选面应恰 2 件（`*_native.go`；✗ 不吃 main.go），得 ok=%v natives=%v", ok, natives)
+	}
+	wired, red := ccoJudgeGo(files, natives)
+	want := "core/cmd/zerg/family_b_native.go 未接 inproc 标准路由（Go 真身件 · 从命令树 `run:` 符号沿同包顶层符号调用链**未引用**它）"
+	if wired != 1 || len(red) != 1 || !ccoHas(red, want) {
+		t.Fatalf("类 B 判决不符：已接=%d 未接=%v（want 1 / 点名 %q）", wired, red, want)
+	}
+	res := ccoJudge(root, map[string]bool{}, map[string]bool{}, map[string]scriptRetireExc{})
+	if res.Rc != 1 || res.GoTotal != 2 || res.GoWired != 1 {
+		t.Fatalf("经 ccoJudge 应 rc=1 且 GoTotal=2/GoWired=1，得 rc=%d %d/%d", res.Rc, res.GoTotal, res.GoWired)
+	}
+	// 类 A 判面一字未动：同根加一件闭集 py ⇒ 候选面仍只收 py/sh。
+	ccoWriteT(t, root, "thing.py", "print(1)\n")
+	if resA := ccoJudge(root, map[string]bool{}, map[string]bool{}, map[string]scriptRetireExc{}); resA.Total != 1 {
+		t.Fatalf("类 A 候选面应仍只收 py/sh（1 件），得 %d ⇒ 原判面被改动了", resA.Total)
+	}
+	// 哑化（拿掉命令树那行 `run:`）⇒ 两件都红 ⇒ 与上态成对（✗ 禁恒绿）。
+	ccoWriteT(t, root, "core/cmd/zerg/main.go", "package main\n\nvar commands = []*command{}\n")
+	files2, natives2, _ := ccoScanGo(root)
+	wired2, red2 := ccoJudgeGo(files2, natives2)
+	if wired2 != 0 || len(red2) != 2 {
+		t.Fatalf("哑化命令树应 已接 0 / 未接 2，得 %d / %d", wired2, len(red2))
+	}
+	if wired == wired2 || len(red) == len(red2) {
+		t.Fatalf("成对断言失败：两态同读数（已接 %d/%d · 未接 %d/%d）⇒ 判据不真读命令树", wired, wired2, len(red), len(red2))
+	}
+}
+
 // TestCliOwnershipUsage —— 用法档：未知旗标 / 两档互斥 / `-h` ⇒ 退码与文案。
 func TestCliOwnershipUsage(t *testing.T) {
 	if rc, _, _ := ccoRunT(t, "--nope"); rc != 2 {

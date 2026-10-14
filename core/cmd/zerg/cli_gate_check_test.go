@@ -346,8 +346,12 @@ func TestGateCheckGoEntryTableComplete(t *testing.T) {
 	//
 	//	（check-capability-bridge · 见 core/cmd/zerg/check_capability_bridge.go · 网关侧路由表 id → 快照 id
 	//	必经桥映射）⇒ 188→189。
-	if got := len(gateCheckGoEntry); got != 189 {
-		t.Fatalf("进程内 Go 表项数要 == 189，得到 %d", got)
+	// ★ 2026-10-14（缺口 GAP-20261014-67 · 本单）：两侧同名模型 mem_gb 对拍门判据件入表 +1
+	//
+	//	（check-mem-gb-parity · 见 core/cmd/zerg/check_mem_gb_parity.go · 主控 fleet.yaml ⟷ 本机子端注册表
+	//	逐同名模型比 mem_gb · 两侧都标口径才放行）⇒ 189→190。
+	if got := len(gateCheckGoEntry); got != 190 {
+		t.Fatalf("进程内 Go 表项数要 == 190，得到 %d", got)
 	}
 	// ★ 放宽（2026-10-07 退役批）：旧不变量「表键必在名录」⇒「表键 ⇒ 名录 **或** inproc 键 二者其一」。
 	//   退役件（py 已 `git rm`）只余 inproc 那一路（family_gate_check.go 的 inproc 兜底 ⇒ rc=0）；

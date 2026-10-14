@@ -38,6 +38,19 @@
 // 三前缀 · 只认 `.py`/`.sh` 后缀）。★ 逐目录的「判据类/非判据类」细分与 evals/build 的去向由 AlltoGo-② 逐族
 // 收编另账；本门起手按闭集全量判、`tri-report` 只报告（先看命中、三分类收敛，再考虑升档）。
 //
+// ★★ 类 B（2026-10-14 补 · 缺口 `GAP-20261012-16` 的 Go 真身面）—— 「**Go 真身件未接命令树入口**」：
+// 原候选闭集只认 py/sh ⇒ 「core 有完整 Go 真身却无命令树入口」这件事**结构上不在它的面内**
+// （账内现读边界逐字：「该门治 py/sh 闭集件的 inproc 路由，Go 真身入口面不在其候选闭集内 ⇒ 只覆盖一半」）。
+// 类 B 判决 = **从命令树 `run:` 符号沿同包顶层符号调用链可达**（＝该真身在进程内被命令面调得到）：
+//
+//	· 候选 = `core/cmd/zerg/*_native.go`（**件名词缀约定**：本族 Go 真身件一律 `*_native.go`，
+//	  如 `family_mirror_public_native.go` / `family_publish_verify_native.go`）——薄面 · ✗ 不把该目录
+//	  下全部 `.go` 收进候选（那会退化成「什么都收」，判据不再有鉴别力）。
+//	· `run:` 符号 = 命令树条目的 `run: <符号>`（`main.go` 的 commands 表）；调用链 = 件 → 它**调用形**
+//	  引用的同包顶层符号 → 定义该符号的件（BFS 到不动点 · 只走**非测试**件）。
+//	· 判词照旧写「**未接 inproc 标准路由**」（✗ 禁「打不着/不可达」）；✗ 不为类 B 开第二个放行口 ——
+//	  例外名册/退场台账的真源闭集**只收 py/sh**（`scriptRetireInClosedSet`）⇒ Go 件本就登不进去。
+//
 // 旗标（家族同型 · 先现读 `check_lang_freeze.go` 对齐）：`--check`（**默认** · 只读）｜`--self-test`｜
 // `--root <根>`。三档互斥（`--check` / `--self-test`）。
 //
@@ -57,6 +70,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -66,6 +80,16 @@ const (
 	ccoJudgeKey = "check-cli-ownership"
 	// ccoProg —— 件名（报话前缀）。
 	ccoProg = "check-cli-ownership"
+
+	// ── 类 B（Go 真身件）取数面的常量 ──
+	// ccoGoDirRel —— Go 真身件所在目录（仓内相对 · ✗ 不写死任何件名）。
+	ccoGoDirRel = "core/cmd/zerg"
+	// ccoSuffixNative —— Go 真身件的**件名词缀**（本族约定：`family_*_native.go`）。
+	ccoSuffixNative = "_native.go"
+	// ccoSuffixTest —— 测试件后缀（✗ 不进判据面：测试里被调到 ≠ 命令面接上了）。
+	ccoSuffixTest = "_test.go"
+	// ccoSuffixGo —— Go 件后缀。
+	ccoSuffixGo = ".go"
 )
 
 // ccoKeyOf —— 键 = 件名去末段扩展名（`filepath.Base` 减 `filepath.Ext`）。
@@ -182,12 +206,15 @@ func ccoLoadRetire(root string) (map[string]scriptRetireExc, map[string]bool, bo
 
 // ccoResult —— 一次判定的读数（纯函数出口 · 负控可断言）。
 type ccoResult struct {
-	Rc      int      // 0 绿 / 1 红 / 2 无候选
-	Total   int      // 候选件数
-	Green   int      // 键 ∈ inproc（标准路由）
-	Cleared int      // 键 ∈ 台账（销账放行）
-	Excused []string // 例外放行（逐条理由）
-	Red     []string // 未接标准路由（逐条点名）
+	Rc       int      // 0 绿 / 1 红 / 2 无候选
+	Total    int      // 候选件数
+	Green    int      // 键 ∈ inproc（标准路由）
+	Cleared  int      // 键 ∈ 台账（销账放行）
+	Excused  []string // 例外放行（逐条理由）
+	Red      []string // 未接标准路由（逐条点名 · 类 A ＋ 类 B 合并）
+	GoScanOK bool     // 类 B 取数面到位（`core/cmd/zerg/` 目录读得到）
+	GoTotal  int      // 类 B 候选件数（`*_native.go`）
+	GoWired  int      // 类 B 已接命令树 `run:` 链的件数
 }
 
 // ccoJudge —— 三态判定（**纯函数** · 只看传入的真源 ⇒ 负控可喂空表 / 合成件）。
@@ -214,10 +241,125 @@ func ccoJudge(root string, inproc map[string]bool, led map[string]bool, exc map[
 			}
 		}
 	}
+	// ── 类 B（Go 真身件 · `core/cmd/zerg/*_native.go`）：判决 = 从命令树 run: 符号沿同包顶层符号调用链可达 ──
+	if files, natives, ok := ccoScanGo(root); ok {
+		res.GoScanOK = true
+		res.GoTotal = len(natives)
+		wired, goRed := ccoJudgeGo(files, natives)
+		res.GoWired = wired
+		res.Red = append(res.Red, goRed...)
+	}
 	if len(res.Red) > 0 {
 		res.Rc = 1
 	}
 	return res
+}
+
+// ── 类 B：Go 真身件（`core/cmd/zerg/*_native.go`）──────────────────────────────────
+//
+// 判决口径（**逐字** · ✗ 谢绝语义失真）：真身件「接上了」= **从命令树 `run:` 符号沿同包顶层符号
+// 调用链可达** —— 即命令面真调得到它（本族的调用面全是进程内调用，没有 py/sh 那种「键入 inproc
+// 分发表」的第二形态）。判词仍写「未接 inproc 标准路由」（✗ 禁「打不着/不可达」）。
+//
+// ★ 为什么按**件名后缀**收候选（而不是「该目录下所有 `.go`」）：本族 Go 真身件的成文约定就是
+// `*_native.go`（6 件 · 见件头），逐件都由命令树某条 `run:` 链承接；把闭集放宽到「所有 .go」
+// 会让 700+ 件全成候选、判据当场失去鉴别力（＝把判据放宽成「什么都收」）。
+var (
+	// ccoGoFuncRE —— 顶层 func 声明（含方法：`func (r T) Name(`）⇒ 取符号名。
+	ccoGoFuncRE = regexp.MustCompile(`(?m)^func\s+(?:\([^)]*\)\s*)?([A-Za-z_][A-Za-z0-9_]*)\s*\(`)
+	// ccoGoRunRE —— 命令树条目的 `run: <符号>`。
+	ccoGoRunRE = regexp.MustCompile(`\brun:\s*([A-Za-z_][A-Za-z0-9_]*)`)
+	// ccoGoCallRE —— 调用形引用（`Name(`）⇒ 件级调用面。
+	ccoGoCallRE = regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_]*)\s*\(`)
+)
+
+// ccoScanGo —— 现读类 B 取数面：`<根>/core/cmd/zerg` 下的**非测试** `.go` 件（件名 → 正文），
+// 以及其中 `*_native.go` 的候选件清单（仓内相对路径 · 升序）。目录读不到 ⇒ ok=false。
+func ccoScanGo(root string) (map[string]string, []string, bool) {
+	dir := filepath.Join(root, filepath.FromSlash(ccoGoDirRel))
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, nil, false
+	}
+	files := map[string]string{}
+	var natives []string
+	for _, e := range ents {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ccoSuffixGo) || strings.HasSuffix(name, ccoSuffixTest) {
+			continue
+		}
+		b, rerr := os.ReadFile(filepath.Join(dir, name))
+		if rerr != nil {
+			continue
+		}
+		files[name] = string(b)
+		if strings.HasSuffix(name, ccoSuffixNative) {
+			natives = append(natives, ccoGoDirRel+"/"+name)
+		}
+	}
+	sort.Strings(natives)
+	return files, natives, true
+}
+
+// ccoGoWired —— 从命令树 `run:` 符号出发、沿「件 → 它调用形引用的同包顶层符号 → 定义该符号的件」
+// 做件级 BFS（到不动点）⇒ 可达件集。纯函数（只看传入的件表 ⇒ 负控可喂合成件）。
+func ccoGoWired(files map[string]string) map[string]bool {
+	symOf := map[string]string{}
+	for name, src := range files {
+		for _, m := range ccoGoFuncRE.FindAllStringSubmatch(src, -1) {
+			if _, dup := symOf[m[1]]; !dup {
+				symOf[m[1]] = name
+			}
+		}
+	}
+	callOf := map[string]map[string]bool{}
+	for name, src := range files {
+		set := map[string]bool{}
+		for _, m := range ccoGoCallRE.FindAllStringSubmatch(src, -1) {
+			if _, ok := symOf[m[1]]; ok {
+				set[m[1]] = true
+			}
+		}
+		callOf[name] = set
+	}
+	reach := map[string]bool{}
+	var q []string
+	for _, src := range files {
+		for _, m := range ccoGoRunRE.FindAllStringSubmatch(src, -1) {
+			if f, ok := symOf[m[1]]; ok && !reach[f] {
+				reach[f] = true
+				q = append(q, f)
+			}
+		}
+	}
+	for len(q) > 0 {
+		f := q[0]
+		q = q[1:]
+		for sym := range callOf[f] {
+			if g := symOf[sym]; g != "" && !reach[g] {
+				reach[g] = true
+				q = append(q, g)
+			}
+		}
+	}
+	return reach
+}
+
+// ccoJudgeGo —— 类 B 判决（**纯函数**）：返回 (已接件数, 未接逐条点名)。候选清单与件表都由调用方给
+// ⇒ 负控可哑化「命令树 `run:` 行」造两态。
+func ccoJudgeGo(files map[string]string, natives []string) (int, []string) {
+	reach := ccoGoWired(files)
+	wired := 0
+	var red []string
+	for _, rel := range natives {
+		if reach[filepath.Base(rel)] {
+			wired++
+			continue
+		}
+		red = append(red, fmt.Sprintf(
+			"%s 未接 inproc 标准路由（Go 真身件 · 从命令树 `run:` 符号沿同包顶层符号调用链**未引用**它）", rel))
+	}
+	return wired, red
 }
 
 // ccoHas —— 逐字命中一行（自检断言用）。
@@ -246,9 +388,21 @@ func ccoCheck(root string, stdout, stderr io.Writer) int {
 	}
 	inproc := ccoInprocKeys()
 	res := ccoJudge(root, inproc, led, exc)
+	if res.GoScanOK && res.GoTotal == 0 {
+		fmt.Fprintf(stderr, "%s: 类 B 扫到 0 件候选（%s/*_native.go）⇒ **空 ≠ 缺**，不给结论（rc=2）\n",
+			ccoProg, ccoGoDirRel)
+		return 2
+	}
 	fmt.Fprintf(stdout, "── CLI 归属门（存量件是否走 inproc 标准路由）── %s\n", ccoJudgeKey)
-	fmt.Fprintf(stdout, "判据臂键表 %d 键｜候选 %d 件（闭集 py/sh）｜绿 %d · 销账放行 %d · 例外放行 %d · 未接 %d\n",
-		len(inproc), res.Total, res.Green, res.Cleared, len(res.Excused), len(res.Red))
+	fmt.Fprintf(stdout, "判据臂键表 %d 键｜候选 %d 件（闭集 py/sh）｜绿 %d · 销账放行 %d · 例外放行 %d\n",
+		len(inproc), res.Total, res.Green, res.Cleared, len(res.Excused))
+	if res.GoScanOK {
+		fmt.Fprintf(stdout, "类 B Go 真身件 %d 件（%s/*_native.go）｜接命令树 run 链 %d · 未接 %d\n",
+			res.GoTotal, ccoGoDirRel, res.GoWired, res.GoTotal-res.GoWired)
+	} else {
+		fmt.Fprintf(stdout, "类 B Go 真身件：%s/ 目录读不到 ⇒ 本类跳过（✗ 不当绿）\n", ccoGoDirRel)
+	}
+	fmt.Fprintf(stdout, "未接合计 %d 件（明细见上 · 逐条判词只点名真未接的件）\n", len(res.Red))
 	for _, l := range res.Red {
 		fmt.Fprintf(stdout, "  %s\n", l)
 	}
@@ -333,6 +487,39 @@ func ccoSelfTest(stdout, stderr io.Writer) int {
 		rc6 == 2 && strings.Contains(e6.String(), "读不到退场真源"),
 		fmt.Sprintf("期望 rc=2 且报「读不到退场真源」，得 rc=%d err=%q", rc6, e6.String()))
 	_ = os.RemoveAll(miss)
+
+	// ── ⑧⑨⑩ 类 B（Go 真身件）：仓外临时树里合成一份「命令树 + 两个真身件」，再**哑化命令树**造第二态 ──
+	tmpGo, gerr := os.MkdirTemp("", "cco-selftest-go-")
+	if gerr != nil {
+		tmpGo = os.TempDir()
+	} else {
+		defer os.RemoveAll(tmpGo)
+	}
+	writeFile(tmpGo, "core/cmd/zerg/main.go",
+		"package main\n\nvar commands = []*command{\n\t{path: []string{\"foo\"}, run: cmdFoo},\n}\n")
+	writeFile(tmpGo, "core/cmd/zerg/family_a_native.go",
+		"package main\n\nfunc cmdFoo(stdout, stderr io.Writer, argv []string) int { return aNative(stdout, stderr, argv) }\n"+
+			"\nfunc aNative(stdout, stderr io.Writer, argv []string) int { return 0 }\n")
+	writeFile(tmpGo, "core/cmd/zerg/family_b_native.go",
+		"package main\n\nfunc bNative(stdout, stderr io.Writer, argv []string) int { return 0 }\n")
+	filesGo, nativesGo, okGo := ccoScanGo(tmpGo)
+	wiredGo, redGo := ccoJudgeGo(filesGo, nativesGo)
+	report("庚' 类 B 候选面 = `*_native.go` 两件（✗ 不吃 main.go）", okGo && len(nativesGo) == 2,
+		fmt.Sprintf("期望候选 2 件，得 ok=%v 候选=%d", okGo, len(nativesGo)))
+	report("辛' 类 B：被命令树 `run:` 链调到的真身件 ⇒ 绿（不计红）", wiredGo == 1 && len(redGo) == 1,
+		fmt.Sprintf("期望 已接 1 / 未接 1，得 已接=%d 未接=%v", wiredGo, redGo))
+	wantGoRed := "core/cmd/zerg/family_b_native.go 未接 inproc 标准路由（Go 真身件 · 从命令树 `run:` 符号沿同包顶层符号调用链**未引用**它）"
+	report("壬' 类 B：无人调用的真身件 ⇒ 必红 ＋ 逐字点名", ccoHas(redGo, wantGoRed),
+		fmt.Sprintf("期望点名 %q，得 %v", wantGoRed, redGo))
+	writeFile(tmpGo, "core/cmd/zerg/main.go", "package main\n\nvar commands = []*command{}\n")
+	filesGo2, nativesGo2, _ := ccoScanGo(tmpGo)
+	wiredGo2, redGo2 := ccoJudgeGo(filesGo2, nativesGo2)
+	report("癸' 类 B 哑化（拿掉命令树那行 `run:`）⇒ 两件都红（证判据真读命令树）",
+		wiredGo2 == 0 && len(redGo2) == 2,
+		fmt.Sprintf("期望 已接 0 / 未接 2，得 已接=%d 未接=%d", wiredGo2, len(redGo2)))
+	report("子' 类 B 成对：命令树在(绿1红1) ≠ 命令树哑化(绿0红2)",
+		wiredGo != wiredGo2 && len(redGo) != len(redGo2),
+		fmt.Sprintf("两态同读数 已接=%d/%d 未接=%d/%d ⇒ 无鉴别力", wiredGo, wiredGo2, len(redGo), len(redGo2)))
 
 	// ⑦ 现读真表非空（防呆 · 证 ccoInprocKeys 真取到同包表）
 	report("己 现读判据臂键表非空", len(ccoInprocKeys()) > 0,

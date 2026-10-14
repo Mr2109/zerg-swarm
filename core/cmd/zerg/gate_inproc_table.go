@@ -98,6 +98,7 @@ var gateCheckGoEntry = map[string]func(stdout, stderr io.Writer, argv []string) 
 	"check-manifest-freshness-profile":      checkManifestFreshnessProfileGateMain,
 	"check-manifest-freshness-two-criteria": checkManifestFreshnessTwoCriteriaGateMain,
 	"check-marks-coverage-parity":           checkMarksCoverageParityGateMain,
+	"check-mem-gb-parity":                   checkMemGBParityGateMain,
 	"check-mkdir-temp-cleanup":              checkMkdirTempCleanupGateMain,
 	"check-model-size-anchor":               checkModelSizeAnchorGateMain,
 	"check-multirepo-summary":               checkMultirepoSummaryGateMain,

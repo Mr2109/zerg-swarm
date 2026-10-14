@@ -418,7 +418,7 @@ func csfProbeHelpShape(root string, stderr io.Writer) *csfFace {
 		if !okL || !okB || fl != gl || fb != gb {
 			f.staleAdd(fmt.Sprintf("%s lines/bytes", it.key),
 				fmt.Sprintf("%s/%sB", csfPctS(bm["lines"]), csfPctS(bm["bytes"])),
-				fmt.Sprintf("%d/%dB", gl, gb), "改命令树用法串 ⇒ 门69 红")
+				fmt.Sprintf("%d/%dB", gl, gb), "改命令树用法串 ⇒ 字节漂仅观察（不进 rc）；真红走闸A 逐字覆盖/闸B 无重复＋行数常量")
 		}
 	}
 	return f
