@@ -768,6 +768,11 @@ func cmdConfigReload(inv *invocation, stdout, stderr io.Writer) int {
 		models = append(models, m)
 	}
 	sort.Strings(models)
+	// ★ 门98（`check-dryrun-yes-conflict-coverage`）调用点粒度：`--dry-run` 与 `--yes` 同给 ⇒ 共享判定
+	//   必须在任何盘面动作**之前**跑（同给时先早退/先写 ⇒ `--yes` 被静默吞或 `--dry-run` 被无视）。
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
 	// ② 干跑：只校验 + 出计划件（**一个请求都不发**）
 	if inv.dryRun {
 		fmt.Fprintln(stdout, "计划件（--dry-run · 零副作用 —— 未执行、未改任何状态）")

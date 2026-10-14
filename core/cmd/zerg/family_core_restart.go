@@ -496,6 +496,11 @@ func coreRestartKickstart() error {
 
 // cmdCoreRestart —— `zerg core restart --confirm=<主机名> --yes [--dry-run]`（D3 · 三态）。
 func cmdCoreRestart(inv *invocation, stdout, stderr io.Writer) int {
+	// ★ 门98（`check-dryrun-yes-conflict-coverage`）调用点粒度：`--dry-run` 与 `--yes` 同给 ⇒ 共享判定
+	//   必须在任何盘面动作**之前**跑（同给时先早退/先写 ⇒ `--yes` 被静默吞或 `--dry-run` 被无视）。
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
 	host := planHost()
 
 	// ① `--dry-run`：计划件 · 零副作用 —— 三态里**唯一会返回 0** 的那一态（§九 M3 C4）。

@@ -140,6 +140,11 @@ func cmdRepoCommit(inv *invocation, stdout, stderr io.Writer) int {
 	// ★ `logDir` 不在这里拼：真跑那一支（④）用 `os.MkdirTemp` **原子新建**（理由见那里）——
 	//   拼在这里建会让上面这一支（`--dry-run`：**零副作用**）也落一个临时目录。
 
+	// ★ 门98（`check-dryrun-yes-conflict-coverage`）调用点粒度：`--dry-run` 与 `--yes` 同给 ⇒ 共享判定
+	//   必须在任何盘面动作**之前**跑（同给时先早退/先写 ⇒ `--yes` 被静默吞或 `--dry-run` 被无视）。
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
 	// ② 干跑（默认按三态；`--dry-run` 或确认档不齐都只出计划件）
 	if inv.dryRun || !inv.yes {
 		fmt.Fprintln(stdout, "计划件（--dry-run · 零副作用 —— 未暂存、未提交、未跑门禁）")

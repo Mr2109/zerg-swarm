@@ -192,6 +192,11 @@ func cmdPublishRun(inv *invocation, stdout, stderr io.Writer) int {
 			}
 		}
 	}
+	// ★ 门98（`check-dryrun-yes-conflict-coverage`）调用点粒度：`--dry-run` 与 `--yes` 同给 ⇒ 共享判定
+	//   必须在任何盘面动作**之前**跑（同给时先早退/先写 ⇒ `--yes` 被静默吞或 `--dry-run` 被无视）。
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
 	// `--check-excludes-parity`：只跑对拍闸（旧壳语义 · 零副作用 · 不走 D3 确认）。
 	if inv.hasFlag("--check-excludes-parity") {
 		return publishPublicNative(inv, stdout, stderr, ppRunOpts{Out: out, CheckParity: true})

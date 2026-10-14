@@ -106,6 +106,11 @@ func cmdDocMetaFill(inv *invocation, stdout, stderr io.Writer) int {
 		by = "（未声明）"
 	}
 
+	// ★ 门98（`check-dryrun-yes-conflict-coverage`）调用点粒度：`--dry-run` 与 `--yes` 同给 ⇒ 共享判定
+	//   必须在任何盘面动作**之前**跑（同给时先早退/先写 ⇒ `--yes` 被静默吞或 `--dry-run` 被无视）。
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
 	// ① 落点（用法面先判：**在任何盘面动作之前**）—— 判不了按 fail-closed 退 8，用法错退 2。
 	root, why, status := docFillRoot(scope, strings.TrimSpace(inv.flagVal("--docs-ver")))
 	if status != okStatus {

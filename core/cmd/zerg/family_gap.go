@@ -2884,6 +2884,11 @@ func cmdGapVerify(inv *invocation, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 
+	// ★ 门98（`check-dryrun-yes-conflict-coverage`）调用点粒度：`--dry-run` 与 `--yes` 同给 ⇒ 共享判定
+	//   必须在任何盘面动作**之前**跑（同给时先早退/先写 ⇒ `--yes` 被静默吞或 `--dry-run` 被无视）。
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
 	// ② 缺 `--yes`（且非 `--dry-run`）：照设计稿 §二.3 ② —— **跑判据、印判决**，但**一个字不写**；rc=2。
 	//    ⚠ 确认档先判（fail-closed）：真源读不到也仍是 2 —— 已经拒执了，不许把「判不了」升成别的码。
 	if !inv.dryRun && !inv.yes {
@@ -3425,6 +3430,11 @@ func cmdGapBackfillUnit(inv *invocation, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 
+	// ★ 门98（`check-dryrun-yes-conflict-coverage`）调用点粒度：`--dry-run` 与 `--yes` 同给 ⇒ 共享判定
+	//   必须在任何盘面动作**之前**跑（同给时先早退/先写 ⇒ `--yes` 被静默吞或 `--dry-run` 被无视）。
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
 	// ② 缺 `--yes`（且非 `--dry-run`）：fail-closed **rc=2**，计划件走 stderr（件头 ④ 逐字同款）。
 	//    ⚠ 判在**读真源之前**：确认档不齐 ⇒ 一行都不读、一行都不写（从不提问、也不替人猜）。
 	if !inv.dryRun && !inv.yes {
@@ -5058,6 +5068,11 @@ func cmdGapIdeaAdd(inv *invocation, stdout, stderr io.Writer) int {
 	cand.FP = sha256Of([]byte(source + "\x00" + raw))[:12]
 	poolPath := gapPoolPath()
 
+	// ★ 门98（`check-dryrun-yes-conflict-coverage`）调用点粒度：`--dry-run` 与 `--yes` 同给 ⇒ 共享判定
+	//   必须在任何盘面动作**之前**跑（同给时先早退/先写 ⇒ `--yes` 被静默吞或 `--dry-run` 被无视）。
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
 	// ② 缺 `--yes`（且非 `--dry-run`）：fail-closed rc=2，计划件走 stderr（同族写面口径）。
 	if !inv.dryRun && !inv.yes {
 		fmt.Fprintf(stderr, "%s: 缺 `--yes`（D2 档 · 本族写面口径）—— 落池面一个字节不写\n", progName)
@@ -5308,6 +5323,11 @@ func cmdGapIdeaSweep(inv *invocation, stdout, stderr io.Writer) int {
 	eventsPath := control.GuardEventPath()
 	poolPath := gapPoolPath()
 
+	// ★ 门98（`check-dryrun-yes-conflict-coverage`）调用点粒度：`--dry-run` 与 `--yes` 同给 ⇒ 共享判定
+	//   必须在任何盘面动作**之前**跑（同给时先早退/先写 ⇒ `--yes` 被静默吞或 `--dry-run` 被无视）。
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
 	// ① 缺 `--yes`（且非 `--dry-run`）：fail-closed rc=2，计划件走 stderr（同族写面口径）；
 	//    次序排在两条「读不出来」前置**之前**（同族 `GAP-20260928-175`）。
 	if !inv.dryRun && !inv.yes {
@@ -5919,6 +5939,11 @@ func cmdGapIdeaDiscard(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s: `--json` 要给逗号分隔的字段（本族口径 = 用法错 2）\n", progName)
 		fmt.Fprintf(stderr, "可选字段: %s\n", strings.Join(gapIdeaDiscardFields, ","))
 		return exitUsage
+	}
+	// ★ 门98（`check-dryrun-yes-conflict-coverage`）调用点粒度：`--dry-run` 与 `--yes` 同给 ⇒ 共享判定
+	//   必须在任何盘面动作**之前**跑（同给时先早退/先写 ⇒ `--yes` 被静默吞或 `--dry-run` 被无视）。
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
 	}
 	// ★ GAP-20260928-175：D2 确认档**前移到池读取之前**（先判用法、再碰目标）—— 此前池不在盘时，
 	//   缺 `--yes` 被池存在性检查（退码 8）抢先吞掉。本档只判旗标、与池内容无关 ⇒ 单点判在这里。

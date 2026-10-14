@@ -195,6 +195,11 @@ func publishAcceptRun(inv *invocation, stdout, stderr io.Writer) int {
 		}
 	}
 
+	// ★ 门98（`check-dryrun-yes-conflict-coverage`）调用点粒度：`--dry-run` 与 `--yes` 同给 ⇒ 共享判定
+	//   必须在任何盘面动作**之前**跑（同给时先早退/先写 ⇒ `--yes` 被静默吞或 `--dry-run` 被无视）。
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
 	// ── 跑 8 条（逐条 rc AND · 每一格标出判据来自 ㈤v2 哪一条）──
 	results := make([]paccResult, 0, len(publishAcceptSteps))
 	rcs := make([]int, 0, len(publishAcceptSteps))

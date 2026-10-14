@@ -269,6 +269,11 @@ func cmdBuildPassthrough(inv *invocation, stdout, stderr io.Writer) int {
 	//   而 publish preflight 的闸④/⑥ 判的就是那个目录（判不了 ⇒ 不给结论 ⇒ 发布链无路可走）。
 	//   风险面 = 覆盖 `bin/` 里的在跑制品（属既定「换件直换、重启主控不必问」的授权面）。
 	//   ✗ 只开 `release` 这一条：`build all`（默认全套）/`--only core`/`--only compat` 仍一律拒执。
+	// ★ 门98（`check-dryrun-yes-conflict-coverage`）调用点粒度：`--dry-run` 与 `--yes` 同给 ⇒ 共享判定
+	//   必须在任何盘面动作**之前**跑（同给时先早退/先写 ⇒ `--yes` 被静默吞或 `--dry-run` 被无视）。
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
 	if action == "release" && !inv.manifestOnly {
 		openForExec = true
 		effect = "打包发布件（布局三件：dist 目录 + 校验 + 清单）—— 内含全量构建，会覆盖 `bin/` 里的在跑制品"
