@@ -268,12 +268,18 @@ check_toolchain() {
     toolchain_guidance "$pin"
     exit 7
   fi
-  # 两模块钉住一致性（core/agent）——门禁脚本若在树里就顺手跑一次
-  if [ -f "$TREE/scripts/gates/check-gotoolchain.py" ]; then
-    python3 "$TREE/scripts/gates/check-gotoolchain.py" "$TREE" >/dev/null 2>&1 \
-      || die 'core/agent 两模块的工具链钉住不一致（scripts/gates/check-gotoolchain.py 未过）' 7
-    say '   ✅ 两模块工具链钉住一致（check-gotoolchain.py）'
-  fi
+  # 两模块钉住一致性（core/agent）★ 2026-10-15（F27 · 清「守 -f ⇒ 静默跳过」形态）：
+  #   旧写法守 `-f "$TREE/scripts/gates/check-gotoolchain.py"` —— 该 py 已随 2026-10-07 退役批退场
+  #   （登记 core/internal/contract/adopt-retire.json；Go 真搬 core/cmd/zerg/check_gotoolchain.go ·
+  #   inproc 键 check-gotoolchain）⇒ 守卫恒假、整段**无声放过**（最坏形态：件不在了但没声）。
+  #   改法照退役批体例**调 Go 继任件**：② 阶段树里还没编 bin/zerg（它在 ③ 构建之后才出现）⇒
+  #   用上面刚核验过的 go 工具链**现编现跑**树内源码版；判据退码非 0（1 门禁红 / 2 不给结论）
+  #   ⇒ **显式 fail-closed**（rc=7 · ✗ 不静默跳过 · ✗ 不放行）。
+  local grc=0
+  ( cd "$TREE/core" && go run ./cmd/zerg gate check check-gotoolchain "$TREE" ) >/dev/null 2>&1 || grc=$?
+  [ "$grc" -eq 0 ] \
+    || die "core/agent 两模块的工具链钉不住 / 判据取不到结论（zerg gate check check-gotoolchain rc=${grc}）" 7
+  say '   ✅ 两模块工具链钉住一致（Go 半 · zerg gate check check-gotoolchain）'
   return 0
 }
 

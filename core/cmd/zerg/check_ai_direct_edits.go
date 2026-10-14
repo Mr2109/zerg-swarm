@@ -34,10 +34,23 @@
 //	修法（两半同批 · 与 py 逐条对齐）= 把**件级账的主仓写轮行**（`event == "edit"` 且非 `sibling_repo`）
 //	当第二个判据源，只做**轮级/覆盖**对账（**不**做逐件匹配 —— 两账无公共键：件级 vs 轮级）：
 //
-//	· **R5a（假 · 写轮对账）**：每一「说动过仓」的页，其**轮窗**（前页回执之后、本页 `created_at` 之前）
-//	  内件级账必须有 ≥1 主仓写轮行；无 ⇒ 红。★ 页 `created_at` **早于件级账最早一行** ⇒ 本腿**不上判**
-//	  （件级账判不了它 —— 不许拿缺账当红）。
+//	· **R5a（假 · 写轮对账 · 代拍口径 GAP-20261015-05）**：每一「说动过仓」的页，其**轮窗**
+//	  （前页回执之后、本页 `created_at` 之前）内件级账必须有 ≥1 主仓写轮行（**轮窗腿** · 旧断言原样）；
+//	  轮窗空 ⇒ 再逐件看该页 `--file` 清单里的**源码面**件（**件级腿**）：该件有 ≤ 页时刻的 `dev edit` 行
+//	  （即「上一回执以来 ∪ 该件最近一次 dev edit」）⇒ 放行，无 ⇒ 红。
+//	  · **生成面**（门/器产出的派生件：`docs/**`·`publish/docs/**`·`项目文档/**`·契约/兼容/门清单等
+//	    注册表·矩阵·台账·`Cargo.lock`·词表·探针物料）与 **删除面**（件**已不在 `git ls-files`**，
+//	    删除走 `git rm`）**只报告 · 不进 rc** —— 两类结构上永远没有 `dev edit` 行。
+//	  · 页证据里**没有可解析的 `--file` 清单** ⇒ 件面判不了 ⇒ 按旧口径落红（旧断言不放宽）。
+//	  · **署名面分流（L1 · 用户已拍）**：本门 want = 「**AI** 绕正门直写」—— 该轮提交信息带
+//	    `由:` trailer 且值**非 AI 面**（人署名）⇒ **只报告、不进 rc**；带 AI 面署名（`Hermes`/`父代理`）
+//	    或**取不到署名**（无 trailer / 未声明 / git 取不到）⇒ **仍红**（fail-closed，✗ 默认放行）。
+//	    ★ git 的 `%an`/`%cn` **不是**判据面（全仓一律 `Mr2109` ⇒ 零鉴别力）。
+//	  ★ 页 `created_at` **早于件级账最早一行** ⇒ 本腿**不上判**（件级账判不了它 —— 不许拿缺账当红）。
+
 //	· **R5b（漏 · 覆盖自证）**：件级账里最新主仓写轮**晚于**最新回执 ⇒ **rc=2 判不了**（不得报绿）。
+//	  ★ F35（拍定 A1）：回执页**无任何 `created_at`** ⇒ 无时间基准可比 ⇒ **亦判 rc=2**
+//	    —— ✗ 不得静默跳过该支报绿（旧行为：rc=0 且印不实的「双向对账 ✓」）。
 //
 //	对拍面（本次新增 · 仓外夹具两态逐字）：R5a 红格（单页早于件级账起点 ⇒ 不上判 · 两页且后页该窗零写轮 ⇒ 红）·
 //	R5b 空窗格（件级账最新写轮晚于最新回执 ⇒ 2）· sibling 行不上判格 · 空件级账格。
@@ -100,6 +113,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -219,22 +233,186 @@ func adeLoadCommandTree(root string) (map[string]bool, string) {
 	return names, ""
 }
 
+// ── R5a 的件面判定（代拍口径 · GAP-20261015-05）────────────────────────────────
+//
+// 件分三面：**源码面**（进 R5a 判决）· **生成面**（只报告）· **删除面**（只报告）。两面的「为什么」：
+//   · 生成面 = 门/器/导出器产出的派生件 —— 文档面（`docs/**`·`publish/docs/**`·`项目文档/**`）、
+//     契约/兼容/门清单等注册表·矩阵·台账（`core/internal/contract/**` · `cli-matrix.json` 一类
+//     `*.json|*.jsonl`）、词表（`styles/config/vocabularies/**`）、探针物料（`scripts/sandbox-probes/**`）、
+//     `Cargo.lock`、缺失总账/公开标记。它们由正门命令**生成**、不经 `dev edit` ⇒ 通篇零 `edit` 行；
+//     判它必假阳（旧口径 81 条里 153 件次即此类）。
+//   · 删除面 = 该件**已不在 `git ls-files`**（退役删除）—— `dev edit` 没有删件模式，删除走 `git rm`
+//     ⇒ 结构上也不产生 `edit` 行（旧口径 81 条里 20 件次即此类）。
+//   · 非 git 面（仓外夹具 / `git` 不可用）⇒ 退「件不在盘」这一档（仍只报告，✗ 不吃判决）。
+
+// adePageLedger —— R5 两腿的读数面：轮级（`ats`）＋ 件级（`file` → 该件的主仓写轮行时刻）＋ 件面判定用的仓根。
+type adePageLedger struct {
+	ats  []string            // 轮级面：全部主仓写轮行时刻（升序）
+	file map[string][]string // 件级面：`file` → 该件全部主仓写轮行时刻（升序）
+	root string              // 件面判定用：`git -C root ls-files`
+}
+
+// adeGenFaceRE —— **生成面**判据（见上三条「为什么」）。
+var adeGenFaceRE = regexp.MustCompile(
+	`^(docs|publish/docs|项目文档)/` +
+		`|^core/internal/contract/` +
+		`|^styles/config/vocabularies/` +
+		`|^scripts/sandbox-probes/` +
+		`|(^|/)(cli-matrix|judge-registry|judge-run-ledger|affected-map|lang-freeze-baseline` +
+		`|cli-contract-baseline|dangling-refs-registry|doc-cmds-baseline|newcmd-paths-baseline` +
+		`|judge-adoption|keep-marks-registry|gate-coverage\.config|gate-check-write-tools|compat)` +
+		`\.(json|jsonl)$` +
+		`|Cargo\.lock$` +
+		`|(^|/)(缺口总账|公开标记)[^/]*\.(md|tsv)$`)
+
+// adeTrackedSet —— `git -C root ls-files`（仓内件全集 · 件面判定真源）。`ok=false` ⇒ 非 git 面 ⇒ 退盘上存在性。
+func adeTrackedSet(root string) (map[string]bool, bool) {
+	if root == "" {
+		return nil, false
+	}
+	out, err := exec.Command("git", "-C", root, "ls-files", "-z", "--full-name").Output()
+	if err != nil {
+		return nil, false
+	}
+	s := map[string]bool{}
+	for _, p := range strings.Split(string(out), "\x00") {
+		if p != "" {
+			s[p] = true
+		}
+	}
+	return s, true
+}
+
+// adeFileFace —— 单件分面：`del`（已不在仓）· `gen`（生成面）· `src`（源码面 · 只有它进 R5a 判决）。
+func adeFileFace(root, p string, tracked map[string]bool, useGit bool) string {
+	if useGit {
+		if !tracked[p] {
+			return "del"
+		}
+	} else if _, err := os.Stat(filepath.Join(root, p)); err != nil {
+		return "del"
+	}
+	if adeGenFaceRE.MatchString(p) {
+		return "gen"
+	}
+	return "src"
+}
+
+// ── 署名面（★ L1 · GAP-20261015-05 追加 · 用户已拍口径）：本门 want = 「**AI** 绕正门直写」——
+// **非 AI（人）的直改不在 want 内** ⇒ 只报告、不进 rc。判据面 = 该轮提交信息里的 `由:` trailer
+// （`zerg repo commit` 按 `--by` 落 —— 真源 `family_repo_commit.go` 的 `commitMessageTemplate`）。
+//
+//	· **git 的 author/committer ✗ 不是判据面**：本仓「AI 改动由人提交」（AI 无提交权），
+//	  现读全仓 AI/人提交的 `%an`/`%cn` 一律 `Mr2109` ⇒ 零鉴别力（✗ 别拿它当署名）。
+//	· **取值集合**（现读：全部 113 笔带 trailer 的提交）: **AI 面** = 值以 `Hermes`（如
+//	  `Hermes (AI)` / `Hermes(…)`）或 `父代理` 开头；**非 AI 面** = 其它显式署名（`Mr2109` / `Mr2109` …）。
+//	· **取不到署名**（无 `由:` trailer｜值为未声明占位｜git 取不到）⇒ **fail-closed 判红**（✗ 默认放行）。
+var adeAISigRE = regexp.MustCompile(`^(Hermes|父代理|egg)`)
+
+// adeSigUndeclared —— `zerg repo commit` 在 `--only/--removed` 档缺 `--by` 时落的占位（= 未声明）。
+const adeSigUndeclared = "（未声明）"
+
+// adeSigIsAI —— 署名值是否 AI 面（前缀精确匹配 · 取值集合见上）。
+func adeSigIsAI(v string) bool { return adeAISigRE.MatchString(strings.TrimSpace(v)) }
+
+// adeCommitSig —— 读一笔提交的署名（提交信息里的 `由:` trailer 值）。ok=false ⇒ 取不到。
+func adeCommitSig(root, sha string) (string, bool) {
+	if root == "" || sha == "" {
+		return "", false
+	}
+	out, err := exec.Command("git", "-C", root, "log", "-1", "--format=%B", sha).Output()
+	if err != nil {
+		return "", false
+	}
+	for _, ln := range strings.Split(string(out), "\n") {
+		ln = strings.TrimRight(ln, "\r")
+		if !strings.HasPrefix(ln, "由:") {
+			continue
+		}
+		v := strings.TrimSpace(ln[len("由:"):])
+		if v == "" || v == adeSigUndeclared {
+			return "", false // 未声明 ⇒ 取不到署名（fail-closed）
+		}
+		return v, true
+	}
+	return "", false
+}
+
+// adeRoundSig —— 该轮的署名（逐笔提交取第一枚带 `由:` trailer 的值）。ok=false ⇒ 取不到。
+func adeRoundSig(root string, shas []string) (string, bool) {
+	for _, s := range shas {
+		if v, ok := adeCommitSig(root, s); ok {
+			return v, true
+		}
+	}
+	return "", false
+}
+
+// adePageFiles —— 页证据里的 `--file` 件清单（`zerg repo commit --file a b c …`）。
+//
+// 取 `--file` 之后、下一个 `--旗标` 之前的词；词须是路径形（Unicode 字母/数字/`_./-` 且含 `/` 或 `.`）
+// —— 中文路径照收（`docs/zh/参考-命令行.md`），中文夹注（含全角括号一类）自然落选。★ ✗ 不做前缀/通配匹配。
+var (
+	adeFileFlagRE = regexp.MustCompile(`--file\s+`)
+	adePathTokRE  = regexp.MustCompile(`^[\p{L}\p{N}_./\\-]+$`)
+)
+
+func adePageFiles(ev string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, loc := range adeFileFlagRE.FindAllStringIndex(ev, -1) {
+		for _, t := range strings.Fields(ev[loc[1]:]) {
+			if strings.HasPrefix(t, "--") {
+				break
+			}
+			if !adePathTokRE.MatchString(t) {
+				continue
+			}
+			if !strings.Contains(t, "/") && !strings.Contains(t, ".") {
+				continue
+			}
+			if !seen[t] {
+				seen[t] = true
+				out = append(out, t)
+			}
+		}
+	}
+	return out
+}
+
+// adeNames —— 只报告行里的件名枚举（空 ⇒ 空串；多则前 6 件 ＋ 「… 另 N 件」防报话爆行）。
+func adeNames(xs []string) string {
+	if len(xs) == 0 {
+		return ""
+	}
+	ys := append([]string(nil), xs...)
+	sort.Strings(ys)
+	const adeNameCap = 6
+	if len(ys) > adeNameCap {
+		return "（" + strings.Join(ys[:adeNameCap], " · ") + fmt.Sprintf(" · … 另 %d 件）", len(ys)-adeNameCap)
+	}
+	return "（" + strings.Join(ys, " · ") + "）"
+}
+
 // ── py `check_dir(d, tree)` → (rc, lines) ───────────────────────────────────
 
-// adeLoadLedger —— py `load_ledger(path)`：件级账主仓写轮行时刻（升序）+ 读不出来的错误串。
+// adeLoadLedger —— py `load_ledger(path)` 的读面（扩展）：主仓写轮行时刻（轮级 · 升序）
+// ＋ 逐件写轮行时刻（件级 · `file` → 该件全部主仓写轮行时刻升序）+ 读不出来的错误串。
 //
 // 真源 = `edit_audit.jsonl` 里 `event == "edit"` 且**非** `sibling_repo`（= 落主仓相对路径件）的行；
-// 只需 `at`（ISO-8601 · 同形 ⇒ 字典序即时序）。`at` 缺失的行跳过。err 非空 ⇒ 调用方按 rc=2 落（缺账不当绿）。
-func adeLoadLedger(path string) ([]string, string) {
+// 只需 `at`（ISO-8601 · 同形 ⇒ 字典序即时序）与 `file`（件级腿用）。`at` 缺失的行跳过。
+// err 非空 ⇒ 调用方按 rc=2 落（缺账不当绿）。
+func adeLoadLedger(path string) ([]string, map[string][]string, string) {
 	fi, err := os.Stat(path)
 	if err != nil || fi.IsDir() {
-		return nil, fmt.Sprintf("件级账读不出来（%s）：件不存在", path)
+		return nil, nil, fmt.Sprintf("件级账读不出来（%s）：件不存在", path)
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Sprintf("件级账读不出来（%s）：%v", path, err)
+		return nil, nil, fmt.Sprintf("件级账读不出来（%s）：%v", path, err)
 	}
 	var ats []string
+	byFile := map[string][]string{}
 	for _, ln := range strings.Split(string(b), "\n") {
 		ln = strings.TrimSpace(ln)
 		if ln == "" {
@@ -253,13 +431,19 @@ func adeLoadLedger(path string) ([]string, string) {
 		a := strings.TrimSpace(adeGetStr(o, "at"))
 		if a != "" {
 			ats = append(ats, a)
+			if f := strings.TrimSpace(adeGetStr(o, "file")); f != "" {
+				byFile[f] = append(byFile[f], a)
+			}
 		}
 	}
 	sort.Strings(ats)
-	return ats, ""
+	for _, v := range byFile {
+		sort.Strings(v)
+	}
+	return ats, byFile, ""
 }
 
-func adeCheckDir(d string, tree map[string]bool, ledger []string) (int, []string) {
+func adeCheckDir(d string, tree map[string]bool, lg *adePageLedger) (int, []string) {
 	fi, err := os.Stat(d)
 	if err != nil || !fi.IsDir() {
 		return 2, []string{fmt.Sprintf("⛔ 不给结论：回执目录不存在（%s）—— 没有回执 ≠ 绿（§20.3 H3）", d)}
@@ -278,10 +462,13 @@ func adeCheckDir(d string, tree map[string]bool, ledger []string) (int, []string
 		return 2, []string{fmt.Sprintf("⛔ 不给结论：回执目录里 0 页（%s）—— 没有回执 ≠ 绿（§20.3 H3）", d)}
 	}
 	var errs []string
+	var report []string
 	type adePage struct {
 		name string
 		ca   string
 		ncom int
+		ev   string
+		shas []string
 	}
 	var pages []adePage
 	for _, name := range ents {
@@ -338,11 +525,11 @@ func adeCheckDir(d string, tree map[string]bool, ledger []string) (int, []string
 				}
 			}
 		}
-		pages = append(pages, adePage{name: name, ca: strings.TrimSpace(adeGetStr(r, "created_at")), ncom: commits})
+		pages = append(pages, adePage{name: name, ca: strings.TrimSpace(adeGetStr(r, "created_at")), ncom: commits, ev: evtext, shas: adeListStrings(r, "commits")})
 	}
 	// ── R5：回执账（轮级）⟷ 件级账（件级）双向对账（GAP-20260927-81 的两半）────────────
-	if len(ledger) > 0 {
-		firstAt := ledger[0]
+	if lg != nil && len(lg.ats) > 0 {
+		firstAt := lg.ats[0]
 		stampSet := map[string]bool{}
 		for _, pg := range pages {
 			if pg.ca != "" {
@@ -354,7 +541,10 @@ func adeCheckDir(d string, tree map[string]bool, ledger []string) (int, []string
 			stamps = append(stamps, s)
 		}
 		sort.Strings(stamps)
-		// R5a（假）：说动过仓的页，其「轮窗」内件级账须有 ≥1 主仓写轮行。
+		tracked, useGit := adeTrackedSet(lg.root)
+		// R5a（假 · 轮窗腿 ＋ 件级腿 · 代拍口径 GAP-20261015-05）：说动过仓的页，先在「轮窗」内要件级账有
+		// ≥1 主仓写轮行（旧断言原样）；轮窗空 ⇒ 再逐件看 `--file` 清单里的**源码面**件有没有 ≤ 页时刻的
+		// `dev edit` 行。生成面/删除面**只报告 · 不进 rc**（两类结构上没有 `dev edit` 行）。
 		for _, pg := range pages {
 			if pg.ncom <= 0 || pg.ca == "" {
 				continue
@@ -369,28 +559,85 @@ func adeCheckDir(d string, tree map[string]bool, ledger []string) (int, []string
 				}
 			}
 			win := 0
-			for _, a := range ledger {
+			for _, a := range lg.ats {
 				if (lo == "" || a > lo) && a <= pg.ca {
 					win++
 				}
 			}
-			if win == 0 {
-				loDisp := lo
-				if loDisp == "" {
-					loDisp = "件级账起点"
-				}
+			loDisp := lo
+			if loDisp == "" {
+				loDisp = "件级账起点"
+			}
+			if win > 0 {
+				continue // 轮窗腿放行（旧断言原样保留）
+			}
+			files := adePageFiles(pg.ev)
+			if len(files) == 0 {
+				// 页证据里没有可解析的 `--file` 清单 ⇒ 件面判不了 ⇒ 按旧口径（轮窗）落红 · 旧断言不放宽。
 				errs = append(errs, fmt.Sprintf("R5a **假绿绕行**：%s 说动过仓（commits=%d 条）而件级账在这一轮"+
 					"（%s 之后、%s 之前）**没有任何主仓写轮行** ⇒ 不是走命令面写的"+
 					"（§20.3 H1：执行只能走命令面）", pg.name, pg.ncom, loDisp, pg.ca))
+				continue
+			}
+			var src, gen, dele []string
+			for _, f := range files {
+				switch adeFileFace(lg.root, f, tracked, useGit) {
+				case "gen":
+					gen = append(gen, f)
+				case "del":
+					dele = append(dele, f)
+				default:
+					src = append(src, f)
+				}
+			}
+			if len(src) == 0 {
+				report = append(report, fmt.Sprintf("R5a·只报告（生成面/删除面 · ✗ 不进 rc）：%s 动过仓（commits=%d 条 · "+
+					"轮窗 %s → %s 内零主仓写轮行）· 生成面 %d 件%s · 删除面 %d 件%s —— 两类结构上没有 `dev edit` 行"+
+					"（生成面 = 门/器产出的派生件；删除面 = 件已不在 `git ls-files`）",
+					pg.name, pg.ncom, loDisp, pg.ca, len(gen), adeNames(gen), len(dele), adeNames(dele)))
+				continue
+			}
+			var miss []string
+			for _, f := range src {
+				covered := false
+				for _, a := range lg.file[f] {
+					if a <= pg.ca {
+						covered = true
+						break
+					}
+				}
+				if !covered {
+					miss = append(miss, f)
+				}
+			}
+			if len(miss) > 0 {
+				sort.Strings(miss)
+				missTxt := strings.Join(miss, " · ")
+				// ★ 署名面分流（L1）：want = 「**AI** 绕正门直写」—— 该轮署名**非 AI**（人）⇒ 只报告、不进 rc。
+				if sig, ok := adeRoundSig(lg.root, pg.shas); ok && !adeSigIsAI(sig) {
+					report = append(report, fmt.Sprintf("R5a·只报告（非 AI 署名 · ✗ 不进 rc）：%s 动过仓（commits=%d 条 · "+
+						"源码面件在轮窗（%s 之后、%s 之前）零主仓写轮行、也**没有 ≤ 页时刻的 `dev edit` 行**）：%s —— "+
+						"该轮署名为「%s」（**非 AI 面** · 本门 want = 「AI 绕正门直写」，人直改不在 want 内）",
+						pg.name, pg.ncom, loDisp, pg.ca, missTxt, sig))
+				} else {
+					sigTxt := "该轮**取不到署名**（无 `由:` trailer ⇒ fail-closed）"
+					if ok && adeSigIsAI(sig) {
+						sigTxt = fmt.Sprintf("该轮署名为「%s」（**AI 面**）", sig)
+					}
+					errs = append(errs, fmt.Sprintf("R5a **假绿绕行**：%s 说动过仓（commits=%d 条）而**源码面**件在轮窗"+
+						"（%s 之后、%s 之前）零主仓写轮行、件级账里也**没有 ≤ 页时刻的 `dev edit` 行**："+
+						"%s ⇒ 不是走命令面写的（§20.3 H1：执行只能走命令面）；%s",
+						pg.name, pg.ncom, loDisp, pg.ca, missTxt, sigTxt))
+				}
 			}
 		}
 	}
 	if len(errs) > 0 {
-		return 1, errs
+		return 1, append(errs, report...)
 	}
 	// R5b（漏）：件级账里最新主仓写轮晚于最新回执 ⇒ 回执账没覆盖 ⇒ 判不了（不得报绿）。
-	if len(ledger) > 0 {
-		newestAt := ledger[len(ledger)-1]
+	if lg != nil && len(lg.ats) > 0 {
+		newestAt := lg.ats[len(lg.ats)-1]
 		stampSet := map[string]bool{}
 		for _, pg := range pages {
 			if pg.ca != "" {
@@ -402,22 +649,58 @@ func adeCheckDir(d string, tree map[string]bool, ledger []string) (int, []string
 			stamps = append(stamps, s)
 		}
 		sort.Strings(stamps)
-		if len(stamps) > 0 && newestAt > stamps[len(stamps)-1] {
+		// ★ F35（2026-10-15 真修 · 拍定 A1 · 最小幅）：回执页**无任何 `created_at`** ⇒ 没有时间基准可比 ⇒
+		// 覆盖自证不可用 ⇒ **亦判 rc=2（不给结论）**。旧实现 `len(stamps) > 0 && …` 在该形态下整支跳过 ⇒
+		// rc=0 且印出一句**不实**的「R5 轮级账 ⟷ 件级账双向对账 ✓（… ≤ 最新回执）」（根本没有回执时间可比）。
+		// ✗ 不得折绿、✗ 不得折 rc=1 —— 与本门「取不到 ⇒ 判不了」同向（fail-closed）。
+		if len(stamps) == 0 {
+			return 2, append([]string{fmt.Sprintf("⛔ 不给结论（R5b 覆盖自证）：回执 %d 页**无任何 `created_at`** ⇒ "+
+				"没有时间基准可比，而件级账里 %d 个主仓写轮无从自证 ⇒ 覆盖自证不可用，本门判不了"+
+				"（旧行为在这报绿＝假绿 · F35 拍定 A1）", len(pages), len(lg.ats))}, report...)
+		}
+		if newestAt > stamps[len(stamps)-1] {
 			late := 0
-			for _, a := range ledger {
+			for _, a := range lg.ats {
 				if a > stamps[len(stamps)-1] {
 					late++
 				}
 			}
-			return 2, []string{fmt.Sprintf("⛔ 不给结论（R5b 覆盖自证）：件级账里最新主仓写轮 %s **晚于**最新回执 %s —— "+
+			// ★ F23（2026-10-15 真修 · 最小幅）：判不了（rc=2）**也要**把已经算出来的 R5a 观测印出来 ——
+			// 旧实现把 report 丢在这一支（现读面只剩这一行「不给结论」），谁都判不出「R5a 还剩几条红 /
+			// 几条只报告」（收口批实测：真仓现读 1 行 ⟷ 把件级账截到最新回执那一刻之后 55 行 ＋ rc=0）。
+			// ✗ 不动判据：rc 仍 2 · R5a/R5b 的判决与红项一字未改，只把已算出的只报告行一并印出。
+			return 2, append([]string{fmt.Sprintf("⛔ 不给结论（R5b 覆盖自证）：件级账里最新主仓写轮 %s **晚于**最新回执 %s —— "+
 				"有 %d 个主仓写轮没有任何回执覆盖 ⇒ 回执账断供，本门判不了"+
-				"（旧行为在这报绿＝假绿 · GAP-20260927-81）", newestAt, stamps[len(stamps)-1], late)}
+				"（旧行为在这报绿＝假绿 · GAP-20260927-81）", newestAt, stamps[len(stamps)-1], late)}, report...)
+		}
+	}
+	// ★ F41（2026-10-15 · 扩 F35／拍定 A1 到邻接两处 fail-open 面 · 最小幅）：**任一回执页无 `created_at`** ⇒
+	// 该页没有时间基准可比 ⇒ R5a 的轮窗腿／件级腿与 R5b 的覆盖自证都**判不了它**。
+	// 旧实现只在「**全部**页无戳」（`len(stamps) == 0` · 上面 F35 那一支）时出声；下面两形态都够不着：
+	//   ① **混有戳页**（≥1 页带 `created_at` ⇒ `len(stamps) > 0`，F35 支不触发）⇒ 无戳页在 R5a 被
+	//      `pg.ca == ""` **整页跳过**；② **件级账空**（`len(lg.ats) == 0` ⇒ 上面两个
+	//      `lg != nil && len(lg.ats) > 0` 块整块不进）⇒ 连 F35 支都够不着。⇒ 该无戳页被**静默放过**，
+	// 门可报 rc=0「零直改纪律全过」＝假绿。本例**亦判 rc=2（不给结论）且出声**，✗ 不得折绿、
+	// ✗ 不得折 rc=1 —— 与 F35 同向（取不到时间基准 ⇒ 判不了 · fail-closed）。
+	// ✗ 不动 R5a／R5b 既有判据与报话；✗ 不碰「**空件级账 ＋ 全带戳页** ⇒ rc=0」那一支（自检⑮ 立的成文口径）。
+	{
+		noStampPages := 0
+		for _, pg := range pages {
+			if pg.ca == "" {
+				noStampPages++
+			}
+		}
+		if noStampPages > 0 {
+			return 2, append([]string{fmt.Sprintf("⛔ 不给结论（R5b 覆盖自证）：回执 %d 页里有 %d 页**无 `created_at`** ⇒ "+
+				"没有时间基准可比 ⇒ 覆盖自证不可用，本门判不了（旧行为在这报绿＝假绿 · F41 扩 F35 拍定 A1）",
+				len(pages), noStampPages)}, report...)
 		}
 	}
 	lines := []string{fmt.Sprintf("回执 %d 页逐页过：H1 零直改 ✓ · H3 五格 ✓ · 件名 ✓ · 命令面调用可解析 ✓", len(ents))}
-	if len(ledger) > 0 {
+	lines = append(lines, report...)
+	if lg != nil && len(lg.ats) > 0 {
 		lines = append(lines, fmt.Sprintf("R5 轮级账 ⟷ 件级账双向对账 ✓（主仓写轮 %d 行 · 最新 %s ≤ 最新回执）",
-			len(ledger), ledger[len(ledger)-1]))
+			len(lg.ats), lg.ats[len(lg.ats)-1]))
 	}
 	return 0, lines
 }
@@ -533,6 +816,30 @@ func adeListLen(r map[string]any, k string) int {
 		return len(t)
 	}
 	return 0
+}
+
+// adeListStrings —— `commits` 里的 sha 串（`adeListLen` 的字符串投影 · 署名面逐笔取 trailer 用）。
+func adeListStrings(r map[string]any, k string) []string {
+	v, ok := r[k]
+	if !ok || v == nil {
+		return nil
+	}
+	switch t := v.(type) {
+	case string:
+		if t == "" {
+			return nil
+		}
+		return []string{t}
+	case []any:
+		var out []string
+		for _, x := range t {
+			if s, ok := x.(string); ok && s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	}
+	return nil
 }
 
 // ── py `refuse_json_without_machine_face(argv)` ─────────────────────────────
@@ -671,12 +978,12 @@ func adeSelfTest(stdout io.Writer) int {
 		_ = os.WriteFile(path, []byte(b.String()), 0o644)
 		return path
 	}
-	ledAt := func(path string) []string {
-		ats, err := adeLoadLedger(path)
+	ledAt := func(path string) *adePageLedger {
+		ats, byFile, err := adeLoadLedger(path)
 		if err != "" {
 			fails = append(fails, "自检 件级账夹具读不出来："+err)
 		}
-		return ats
+		return &adePageLedger{ats: ats, file: byFile, root: tmp}
 	}
 	// ⑪ 负控 R5a（假绿绕行）：手改后补一条含**任意** zerg 调用的回执 ⇒ 1（GAP-20260927-81）
 	n8 := mkdir("n8")
@@ -723,6 +1030,32 @@ func adeSelfTest(stdout io.Writer) int {
 		fails = append(fails, fmt.Sprintf("自检⑮ 空件级账 + 页早于其起点 ⇒ 应 rc=0（不上判），实测 %d", rc))
 	}
 
+	// ⑯ 负控 R5b（覆盖自证 · **无戳页** · F35 拍定 A1）：回执页**无任何 `created_at`** ⇒ 没有时间基准可比
+	//     ⇒ **亦判 rc=2（不给结论）**，✗ 不得静默跳过该支报绿（旧行为：rc=0 且印不实的「双向对账 ✓」）。
+	n13 := mkdir("n13")
+	mk(n13, "R-20260920T000009.json", good("R-20260920T000009", map[string]any{"created_at": ""}))
+	led13 := led(filepath.Join(tmp, "n13-ledger.jsonl"), []string{"2026-09-21T09:00:00+08:00"}, "")
+	if rc, _ := adeCheckDir(n13, map[string]bool{"gate": true}, ledAt(led13)); rc != 2 {
+		fails = append(fails, fmt.Sprintf("自检⑯ 无戳页应 rc=2（覆盖自证 · 无时间基准 · 判不了），实测 %d", rc))
+	}
+	// ⑰ 负控 R5a／覆盖自证（F41 · 邻接 fail-open 面①）：**混有无戳页**（≥1 页带 created_at、另有页无）
+	//     ⇒ 无戳页在 R5a 被 `pg.ca == ""` **整页跳过** ⇒ 旧行为 rc=0＝假绿；本例**亦判 rc=2（判不了）且出声**。
+	n14 := mkdir("n14")
+	mk(n14, "R-20260920T100000.json", good("R-20260920T100000", map[string]any{
+		"created_at": "2026-09-20T10:00:00+08:00", "evidence": []any{"zerg dev edit --proposal DEV-1"}}))
+	mk(n14, "R-20260920T110000.json", good("R-20260920T110000", map[string]any{"created_at": ""}))
+	led14 := led(filepath.Join(tmp, "n14-ledger.jsonl"), []string{"2026-09-20T09:00:00+08:00"}, "")
+	if rc, _ := adeCheckDir(n14, map[string]bool{"gate": true, "dev": true}, ledAt(led14)); rc != 2 {
+		fails = append(fails, fmt.Sprintf("自检⑰ 混有无戳页应 rc=2（判不了 · R5a 整页跳过＝假绿），实测 %d", rc))
+	}
+	// ⑱ 负控 覆盖自证（F41 · 邻接 fail-open 面②）：**件级账空 ＋ 无戳页** ⇒ R5a／R5b 两块整块不进 ⇒ 旧行为 rc=0；
+	//     本例**亦判 rc=2（判不了）且出声**（✗ 不碰「空账 ＋ 全带戳页 ⇒ rc=0」那一支 · 自检⑮）。
+	n15 := mkdir("n15")
+	mk(n15, "R-20260920T100000.json", good("R-20260920T100000", map[string]any{"created_at": ""}))
+	led15 := led(filepath.Join(tmp, "n15-ledger.jsonl"), nil, "")
+	if rc, _ := adeCheckDir(n15, map[string]bool{"gate": true}, ledAt(led15)); rc != 2 {
+		fails = append(fails, fmt.Sprintf("自检⑱ 空件级账 + 无戳页应 rc=2（判不了），实测 %d", rc))
+	}
 	if len(fails) > 0 {
 		fmt.Fprintf(stdout, "门⑬ 自检失败 %d 条：\n", len(fails))
 		for _, f := range fails {
@@ -730,7 +1063,7 @@ func adeSelfTest(stdout io.Writer) int {
 		}
 		return 1
 	}
-	fmt.Fprintln(stdout, "门⑬ 自检全过：3 正控 + 10 负控 + 2 空转（成对负控）")
+	fmt.Fprintln(stdout, "门⑬ 自检全过：3 正控 + 13 负控 + 2 空转（成对负控）")
 	return 0
 }
 
@@ -815,12 +1148,12 @@ func aidirecteditsGateMain(stdout, stderr io.Writer, argv []string) int {
 	if lpath == "" {
 		lpath = adeDefaultLedger()
 	}
-	ats, lerr := adeLoadLedger(lpath)
+	ats, byFile, lerr := adeLoadLedger(lpath)
 	if lerr != "" {
 		fmt.Fprintf(stdout, "⛔ 不给结论：%s\n", lerr)
 		return 2
 	}
-	rc, lines := adeCheckDir(d, tree, ats)
+	rc, lines := adeCheckDir(d, tree, &adePageLedger{ats: ats, file: byFile, root: root})
 	fmt.Fprintf(stdout, "门⑬ AI 直改纪律（§20.3 H1 · 回执 %s）· 仓根 %s\n", d, root)
 	// ★ 缺口 `GAP-20260927-71`：件级账（`edit_audit.jsonl`）是**活文件** —— 取证期间会被别的进程追加。
 	//   可变面必须**自报读数时点与件长**（本门取 want 的第二形态：不落冻结快照，改在输出里自报），

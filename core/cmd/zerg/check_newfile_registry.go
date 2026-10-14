@@ -183,6 +183,7 @@ var gnrFaces = []string{
 	"⑥失败文案面",
 	"⑧家目录批准件",
 	"⑨.sh门面清册",
+	"⑩三列对拍",
 	"口径差栏",
 	"自指",
 }
@@ -1556,6 +1557,7 @@ type gnrNJ struct{ face, item, why string }
 type gnrCounts struct {
 	R1, R2, R3, R5 int
 	R7             int
+	R8             int
 	R4             *int
 	R6             *int
 }
@@ -1592,6 +1594,8 @@ type gnrRes struct {
 	//   扫描面自身为空（零执行探针）⇒ denScanEmpty ⇒ 仍判不了（rc=2）。
 	denFromBaseline bool
 	denScanEmpty    bool
+	// ★ 面⑩ 三列对拍（件跟踪态 ↔ 挂门态 ↔ 文档声明）读数
+	face3 gnr3ColRes
 }
 
 // gnrBaselineFingerprint —— ③ B1-3：现读件集的稳定指纹（排序逐行 · 纯内容派生 · 禁 mtime / 禁读盘序）。
@@ -1845,6 +1849,99 @@ func gnrRunSync(stdout, stderr io.Writer, root string, yes bool, baseline string
 	return 0
 }
 
+// ── 面⑩ 三列对拍（件跟踪态 ↔ 挂门态 ↔ 文档声明）· 只读 ──────────────────────
+// 本面 = `GAP-20260927-117` ＋ `GAP-20260927-225`（面①②）同门新落的**对拍面**。
+//
+// 口径（本单落依据 · ✗ 不改 want 含义 · ✗ 不放宽任何已有断言）：
+//
+//	候选集 = 盘上 `scripts/**` 件（与分母/面① 同源：`gnrScanLedgerFace`）。
+//	三列读数（逐件）：
+//	  件跟踪态 = `git ls-files -- scripts` 命中（仓非 git 工作树 ⇒ 本面**只报告** · ✗ 不当红）
+//	  挂门态   = 件被步骤表 `add_step` 行点名（仓根相对路径 **或** basename · 沿用面③ 的双判）
+//	  文档声明 = `scripts/公开标记.tsv` 有该件行
+//	判红（计入 `bad` ⇒ **阻断档** rc=1 · **报告档**仍 rc=0 · ✗ 不把整仓卡死）：
+//	  盘上 ∧ 挂门 ∧ ¬文档声明 ⇒ 缺「文档声明」列（件已挂门而文档面无声明 = 件与在册文字脱钩）
+//	提示（✗ 不进 `bad` · ✗ 不当错）：
+//	  ¬件跟踪态 ⇒ 缺「件跟踪态」列（未跟踪判据件 · 927-225 面②）；挂门 ∧ ¬件在盘 ⇒ 缺「件在盘」列
+type gnr3ColRes struct {
+	judged    bool
+	badDecl   []string
+	hintTrack []string
+	hintDisk  []string
+}
+
+// gnrScriptRefRE —— 步骤行里 `scripts/…` 形态的件路径（面⑩ 的「挂门点名但件离盘」提示用）。
+var gnrScriptRefRE = regexp.MustCompile(`scripts/[A-Za-z0-9_./-]+\.(py|sh)`)
+
+// gnrGitTrackedSet —— `git ls-files -- scripts` 的跟踪集（仓非 git / 读不到 ⇒ ok=false）。
+func gnrGitTrackedSet(root string) (map[string]bool, bool) {
+	rc, out, _ := gnrGit(root, "ls-files", "--", "scripts")
+	if rc != 0 {
+		return nil, false
+	}
+	set := map[string]bool{}
+	for _, f := range out {
+		set[f] = true
+	}
+	return set, true
+}
+
+// gnrThreeColCheck —— 逐件三列对拍（只读 · ✗ 不写任何件 · 输出行序 = 件名码位序）。
+func gnrThreeColCheck(root string, ledgerFace map[string]bool, marks map[string]string, stepLines []string) gnr3ColRes {
+	out := gnr3ColRes{badDecl: []string{}, hintTrack: []string{}, hintDisk: []string{}}
+	tracked, ok := gnrGitTrackedSet(root)
+	out.judged = ok
+	rel := []string{}
+	for k := range ledgerFace {
+		rel = append(rel, k)
+	}
+	sort.Strings(rel)
+	for _, f := range rel {
+		wired := false
+		base := filepath.Base(f)
+		for _, ln := range stepLines {
+			if !strings.Contains(ln, gnrAddStep) {
+				continue
+			}
+			if strings.Contains(ln, f) || strings.Contains(ln, base) {
+				wired = true
+				break
+			}
+		}
+		declared := false
+		if marks != nil {
+			_, declared = marks[f]
+		}
+		if wired && !declared {
+			out.badDecl = append(out.badDecl, f)
+		}
+		if ok && !tracked[f] {
+			out.hintTrack = append(out.hintTrack, f)
+		}
+	}
+	if stepLines != nil {
+		cand := map[string]bool{}
+		for _, ln := range stepLines {
+			for _, m := range gnrScriptRefRE.FindAllString(ln, -1) {
+				cand[m] = true
+			}
+		}
+		disk := map[string]bool{}
+		for k := range ledgerFace {
+			disk[k] = true
+		}
+		miss := []string{}
+		for m := range cand {
+			if !disk[m] {
+				miss = append(miss, m)
+			}
+		}
+		sort.Strings(miss)
+		out.hintDisk = miss
+	}
+	return out
+}
+
 func gnrAudit(root string, newFiles []string, newSet bool, inv string, invSet bool, baseline string) *gnrRes {
 	res := &gnrRes{items: map[string][]string{}, problems: []string{}, notJudged: []gnrNJ{}}
 	ledgerFace := gnrScanLedgerFace(root)
@@ -1977,6 +2074,9 @@ func gnrAudit(root string, newFiles []string, newSet bool, inv string, invSet bo
 		shExtra = gnrSortedSetDiff(shDisk, shRoster)   // py `sorted(sh_disk - sh_roster)`（盘上有 · 未进清册）
 	}
 
+	// ★ 面⑩ 三列对拍（GAP-20260927-117 ＋ GAP-20260927-225 面①②）：盘上件 ×（件跟踪态/挂门态/文档声明）
+	res.face3 = gnrThreeColCheck(root, ledgerFace, marks, stepLines)
+
 	// 机器面：逐面「真源读到了没有」（面自身判不了 ⇒ BLOCKED；读到但整跑无结论 ⇒ UNKNOWN）
 	res.faceJudged = map[string]bool{
 		"①公开标记表":   marks != nil,
@@ -1986,6 +2086,7 @@ func gnrAudit(root string, newFiles []string, newSet bool, inv string, invSet bo
 		"⑤两器排除表":   excludes != nil && drops != nil,
 		"⑥失败文案面":   fixed != nil,
 		"⑨.sh门面清册": shDisk != nil && shRoster != nil,
+		"⑩三列对拍":    res.face3.judged,
 	}
 
 	type faceCheck struct {
@@ -2097,7 +2198,7 @@ func gnrAudit(root string, newFiles []string, newSet bool, inv string, invSet bo
 		r6n = &v
 	}
 	res.counts = &gnrCounts{R1: len(r1), R2: len(r2), R3: len(r3), R4: r4n, R5: len(r5), R6: r6n,
-		R7: len(shMissing) + len(shExtra)}
+		R7: len(shMissing) + len(shExtra), R8: len(res.face3.badDecl)}
 	res.items["R1"], res.items["R2"], res.items["R3"] = r1, r2, r3
 	if r4 == nil {
 		r4 = []string{}
@@ -2264,7 +2365,7 @@ func gnrVerdict(res *gnrRes, strict bool, faces []string) (int, int, int) {
 		return 2, 0, 0
 	}
 	c := res.counts
-	bad := c.R1 + c.R2 + c.R3 + c.R5 + c.R7 // R4 / R6 = 单列旁栏（写死边界：不进退码）；R7 = ⑨.sh门面清册
+	bad := c.R1 + c.R2 + c.R3 + c.R5 + c.R7 + c.R8 // R4 / R6 = 单列旁栏（不进退码）；R7 = ⑨.sh门面清册；R8 = ⑩三列对拍
 	unjudged := len(res.notJudged) + len(res.problems)
 	if c.R4 == nil {
 		unjudged++
@@ -2377,6 +2478,20 @@ func gnrRun(stdout io.Writer, root string, newFiles []string, newSet bool, inv s
 		for _, f := range res.shExtra {
 			fmt.Fprintf(stdout, "     ✗ %s  ← 盘上有但没进 `SH_GATES`（须同批登记进 `real-gates.sh` · GAP-20261003-06）\n", f)
 		}
+	}
+	// ★ 面⑩ 三列对拍（件跟踪态 ↔ 挂门态 ↔ 文档声明 · 盘上 `scripts/**` 件 · 报告档不接闸）
+	fmt.Fprintf(stdout, "  面⑩ 三列对拍（件跟踪态 ↔ 挂门态 ↔ 文档声明 · 盘上 `scripts/**` 件 · **报告档**）：%d\n", c.R8)
+	if !res.face3.judged {
+		fmt.Fprintln(stdout, "     · 只报告：非 git 工作树 ⇒ 「件跟踪态」判不了（✗ 不当红）")
+	}
+	for _, f := range res.face3.badDecl {
+		fmt.Fprintf(stdout, "     ✗ %s ← 缺「文档声明」列（挂门点名 · `scripts/公开标记.tsv` 无行）\n", f)
+	}
+	for _, f := range res.face3.hintTrack {
+		fmt.Fprintf(stdout, "     · %s ← 提示：缺「件跟踪态」列（git 未跟踪 · 不当错 · GAP-20260927-225）\n", f)
+	}
+	for _, f := range res.face3.hintDisk {
+		fmt.Fprintf(stdout, "     · %s ← 提示：挂门点名但件离盘（不当错）\n", f)
 	}
 	selfIn := gnrContains(res.newFiles, gnrSelfRel)
 	fmt.Fprintf(stdout, "  ★ 自指：本门自身 %s —— 在分母内：%s · 面①：%s · 面②：%s · 面③：%s · 面④：见上「面④」那几行（台账 tsv 里暂无它 · 唯一写入口是仓外 D2 写面（仅需 `--yes`））· 面⑤：%s\n",
@@ -2617,6 +2732,8 @@ func gnrCntIface(c *gnrCounts, which string) interface{} {
 		return *c.R6
 	case "R7":
 		return c.R7
+	case "R8":
+		return c.R8
 	}
 	return nil
 }
@@ -2647,6 +2764,8 @@ func gnrFaceCount(res *gnrRes, name string) (int, bool) {
 		return *c.R6, true
 	case "⑨.sh门面清册":
 		return c.R7, true
+	case "⑩三列对拍":
+		return c.R8, true
 	}
 	return 0, false
 }
@@ -2687,6 +2806,16 @@ func gnrBuildFaceStates(res *gnrRes) gnrJObj {
 		st = append(st, gnrJField{"⑨.sh门面清册", "FAIL"})
 	} else {
 		st = append(st, gnrJField{"⑨.sh门面清册", "PASS"})
+	}
+	// ⑩三列对拍：整跑短路 ⇒ UNKNOWN；非 git 工作树 ⇒ REPORT（判不了跟踪态 · ✗ 不当红）；否则按 R8 定 FAIL/PASS
+	if unknownAll {
+		st = append(st, gnrJField{"⑩三列对拍", "UNKNOWN"})
+	} else if n, _ := gnrFaceCount(res, "⑩三列对拍"); n != 0 {
+		st = append(st, gnrJField{"⑩三列对拍", "FAIL"})
+	} else if !res.face3.judged {
+		st = append(st, gnrJField{"⑩三列对拍", "REPORT"})
+	} else {
+		st = append(st, gnrJField{"⑩三列对拍", "PASS"})
 	}
 	// 参照读数 · 不并入判红；台账口径扫面缺 ⇒ 参照读数也判不了
 	if res.ledgerCnt == nil {
@@ -2768,6 +2897,12 @@ func gnrFaceDetail(res *gnrRes, st gnrJObj) gnrJObj {
 		{"清册悬空", gnrListOrNil(res.shMissing)},
 		{"盘上未登记", gnrListOrNil(res.shExtra)},
 	})
+	add("⑩三列对拍", gnrJObj{
+		{"缺登记", gnrCntIface(c, "R8")},
+		{"缺声明列", gnrListOrNil(res.face3.badDecl)},
+		{"未跟踪提示", gnrListOrNil(res.face3.hintTrack)},
+		{"离盘提示", gnrListOrNil(res.face3.hintDisk)},
+	})
 	out = append(out, gnrJField{"口径差栏", gnrDiffFace(res)})
 	return out
 }
@@ -2808,7 +2943,7 @@ func gnrVerdictText(res *gnrRes, rc int) string {
 		return "判不了 ⇒ 不给结论（rc=2）"
 	}
 	c := res.counts
-	bad := c.R1 + c.R2 + c.R3 + c.R5 + c.R7
+	bad := c.R1 + c.R2 + c.R3 + c.R5 + c.R7 + c.R8
 	unjudged := len(res.notJudged) + len(res.problems)
 	if c.R4 == nil {
 		unjudged++
@@ -2952,7 +3087,9 @@ const (
 
 var gnrFixtureStub = "REGISTRY_REL = \"" + gnrStubRegRel + "\"\n\n\ndef scan_hits(root):\n    return {\"" + gnrProbeRel + "\"}, None\n"
 
-const gnrFixtureMarks = "文件\tpublic\t理由\nscripts/old.sh\tno\t夹具存量件\n"
+const gnrFixtureMarks = "文件\tpublic\t理由\nscripts/old.sh\tno\t夹具存量件\n" +
+	"scripts/gates/check-semantics-stub.py\tno\t夹具判据件（步骤表点名 ⇒ 面⑩ 三列对拍须有声明列）\n" +
+	"scripts/gates/check-public-marks.py\tno\t夹具判据件（同上）\n"
 
 const gnrFixtureCov = `{
   "scan": {"script_globs": ["scripts/*.sh", "scripts/*.py", "scripts/sandbox/*.sh"],
@@ -3410,6 +3547,69 @@ func gnrSelfTest(stdout io.Writer) int {
 		addCheck("⑨·负控乙 悬空 ⇒ strict rc=1", 1, rcMs, rcMs == 1)
 		okD := stP == "PASS" && stE == "FAIL"
 		addCheck("⑨·区分度 同一夹具只差一件：相等 ⇒ PASS · 盘上多一件 ⇒ FAIL（成对）", 1, gnrB2i(okD), okD)
+	}
+
+	// (F) ★ 面⑩ 三列对拍（件跟踪态 ↔ 挂门态 ↔ 文档声明）成对正负控 —— GAP-20260927-117 ＋ 225 面①②
+	colExtra := "scripts/sandbox/col-extra.sh"
+	colRun := func(extra, tracked, gitRepo bool) *gnrRes {
+		root, err := os.MkdirTemp("", "gnr-selftest-")
+		if err != nil {
+			return nil
+		}
+		defer os.RemoveAll(root)
+		gnrBuildFixture(nil, root, probe, map[string]bool{"①": true, "②": true, "③": true, "⑤": true})
+		steps := "add_step \"gates\" tri \"门Ω 三列对拍夹具\" bash " + probe + "\n"
+		if extra {
+			os.WriteFile(filepath.Join(root, colExtra), []byte("#!/usr/bin/env bash\necho x\n"), 0o644)
+			steps += "add_step \"gates\" tri \"门Ω 三列对拍夹具·二\" bash " + colExtra + "\n"
+		}
+		if f, e := os.OpenFile(filepath.Join(root, gnrStepsRel), os.O_APPEND|os.O_WRONLY, 0o644); e == nil {
+			f.WriteString(steps)
+			f.Close()
+		}
+		os.WriteFile(filepath.Join(root, "inv.tsv"), []byte("件\n"+probe+"\n"), 0o644)
+		if gitRepo {
+			env := append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.com",
+				"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.com")
+			gd := func(a ...string) {
+				cmd := exec.Command("git", append([]string{"-C", root}, a...)...)
+				cmd.Env = env
+				cmd.Run()
+			}
+			gd("init", "-q")
+			gd("add", "-A")
+			if !tracked {
+				gd("reset", "-q", "--", probe)
+			}
+			gd("commit", "-q", "-m", "base")
+		}
+		return gnrAudit(root, []string{probe}, true, "inv.tsv", true, "")
+	}
+	resG := colRun(false, true, true)  // 三列一致
+	resB := colRun(true, true, true)   // 缺「文档声明」列（col-extra.sh 挂门但未声明 · probe 已声明 ⇒ bad 只由 R8 驱动）
+	resU := colRun(false, false, true) // 未跟踪（提示 · 不当错）
+	resN := colRun(false, true, false) // 非 git ⇒ 只报告
+	if resG != nil && resB != nil && resU != nil && resN != nil {
+		stG := gnrJGet(gnrBuildFaceStates(resG), "⑩三列对拍")
+		stB := gnrJGet(gnrBuildFaceStates(resB), "⑩三列对拍")
+		stN := gnrJGet(gnrBuildFaceStates(resN), "⑩三列对拍")
+		okG := stG == "PASS" && len(resG.face3.badDecl) == 0
+		addCheck("⑩·正控 三列一致（跟踪∧挂门∧声明）⇒ state=PASS", 1, gnrB2i(okG), okG)
+		rcGs, _, _ := gnrVerdict(resG, true, nil)
+		addCheck("⑩·正控 三列一致 ⇒ strict rc=0（不误红）", 0, rcGs, rcGs == 0)
+		okB := stB == "FAIL" && len(resB.face3.badDecl) == 1 && resB.face3.badDecl[0] == colExtra
+		addCheck("⑩·负控甲 缺「文档声明」列 ⇒ FAIL 且逐字点名该件缺在哪一列", 1, gnrB2i(okB), okB)
+		rcBs, _, _ := gnrVerdict(resB, true, nil)
+		addCheck("⑩·负控甲 缺列 ⇒ 阻断档 rc=1（有牙 · 只由 R8 驱动）", 1, rcBs, rcBs == 1)
+		rcBr, _, _ := gnrVerdict(resB, false, nil)
+		addCheck("⑩·负控甲 报告档 rc=0（面 FAIL 但只报告 · ✗ 不把整仓卡死）", 0, rcBr, rcBr == 0)
+		okD := stG == "PASS" && stB == "FAIL"
+		addCheck("⑩·区分度 同一夹具只差一格声明：齐 ⇒ PASS · 缺 ⇒ FAIL（成对）", 1, gnrB2i(okD), okD)
+		okU := len(resU.face3.badDecl) == 0 && len(resU.face3.hintTrack) == 1 && resU.face3.hintTrack[0] == probe
+		rcUs, _, _ := gnrVerdict(resU, true, nil)
+		addCheck("⑩·负控乙 未跟踪件 ⇒ 提示「缺件跟踪态」但**不进 bad**（strict 仍 rc=0 · 不当错）", 1, gnrB2i(okU && rcUs == 0), okU && rcUs == 0)
+		okN := stN == "REPORT" && !resN.face3.judged
+		addCheck("⑩·非 git 工作树 ⇒ 面只报告（判不了跟踪态 · ✗ 不当红）", 1, gnrB2i(okN), okN)
 	}
 
 	fmt.Fprintln(stdout, "── 自检（合成夹具 · 成对 · 不扫真仓）──")

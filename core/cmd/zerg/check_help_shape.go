@@ -1136,9 +1136,9 @@ type chsFaceBl struct {
 type chsBaselineSet map[string]chsFaceBl
 
 var chsBaseline = chsBaselineSet{
-	"help --all":     {HasLines: true, Lines: 410, HasBytes: true, Bytes: 224537},
-	"help":           {HasLines: true, Lines: 295, HasBytes: true, Bytes: 73292, HasLast: true, Last: "      非交互用 `--token-stdin`；详见 `zerg help credentials`）。"},
-	"help dangerous": {HasLines: true, Lines: 118, HasBytes: true, Bytes: 45208, HasRows: true, Rows: 106, HasTail: true, Tail: "上表 106 条：**已开放 93 条**（确认档齐就真执行 —— 逐条见上行标记）；**未开放 13 条**（真跑一律**拒执**、退码 2 = 不给结论，只有 `--dry-run` 出计划件 = 退码 0）。"},
+	"help --all":     {HasLines: true, Lines: 423, HasBytes: true, Bytes: 231502},
+	"help":           {HasLines: true, Lines: 305, HasBytes: true, Bytes: 75986, HasLast: true, Last: "      非交互用 `--token-stdin`；详见 `zerg help credentials`）。"},
+	"help dangerous": {HasLines: true, Lines: 121, HasBytes: true, Bytes: 46419, HasRows: true, Rows: 109, HasTail: true, Tail: "上表 109 条：**已开放 96 条**（确认档齐就真执行 —— 逐条见上行标记）；**未开放 13 条**（真跑一律**拒执**、退码 2 = 不给结论，只有 `--dry-run` 出计划件 = 退码 0）。"},
 	"help config":    {HasLines: true, Lines: 21, HasBytes: true, Bytes: 1748},
 }
 

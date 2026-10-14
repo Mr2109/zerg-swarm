@@ -797,6 +797,25 @@ func cmdPublishVerifyFamily(inv *invocation, stdout, stderr io.Writer) int {
 	return cmdPublishVerify(inv, stdout, stderr)
 }
 
+// ── 命令树登记（本单）：`zerg publish snapshot-self-test` 的**宿主桥** ────────────────────────
+//
+// 真身 = `family_publish_snapshot_native.go:publishSnapshotSelfTestNative`（旧 py
+// `scripts/build/publish-snapshot-self-test.py` 205 行的 Go 真身 · rc/stdout/stderr 三面逐字对拍）。
+// 原状「真身在盘、命令树**无**入口」⇒ `zerg publish snapshot-self-test …` 一律 rc=2（逐字
+// `"publish snapshot-self-test" 是族名/中间节点`）—— 缺口 `GAP-20261012-16`（门 `check-cli-ownership`
+// 类 B「未接 inproc 标准路由」余 1 件的正解）。
+//
+// ★ 为什么桥在本件（同 `cmdPublishVerifyFamily`/`cmdPublishMirror` 那条理由）：门78
+// `check-newcmd-followup` 面④ 要求「新增 path 的实现件**已在** `scripts/公开标记.tsv`」——
+// 真身件**不在**该表；本件是**已登记**（`public=yes` · `scripts/公开标记.tsv:160`）的宿主 ⇒
+// `main.go` 的 `run:` 指向本桥，**零新表行**（✗ 不登记未跟踪的真身件）。
+//
+// 本桥**只转发**（✗ 不重写真身任何一段 · ✗ 不改退码口径）：把命令面路径之后的实参**逐字**交
+// 真身自带 argv 解析面（`--job`/`--json` 由真身自己认 —— 命令面不复刻第二套旗标表）。
+func cmdPublishSnapshotSelfTestFamily(inv *invocation, stdout, stderr io.Writer) int {
+	return publishSnapshotSelfTestNative(repoRoot(), stdout, stderr, publishMirrorTail(inv))
+}
+
 // ── 片3（本单 · C12 接线）：`zerg publish mirror` 的**宿主桥** ────────────────────────────────
 //
 // 真身 = `family_mirror_public_native.go:mirrorPublicNative`（旧壳 `publish/mirror-public.sh` 的

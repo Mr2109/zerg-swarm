@@ -193,3 +193,78 @@ func TestSswPySplitLinesAndReadText(t *testing.T) {
 		t.Fatalf("readtext=%q err=%v", s, err)
 	}
 }
+
+// TestSswTierDiffPortGap21 —— 档位反向差集（缺口 `GAP-20260927-21`）· 合成夹具成对负控。
+func TestSswTierDiffPortGap21(t *testing.T) {
+	base := "add_step gates \"门A a（阻断）\" tri \"${REPO_ROOT}\" \"cmd-a\"\n" +
+		"add_step gates \"门B b（阻断）\" tri \"${REPO_ROOT}\" \"cmd-b\"\n" +
+		"add_step docs \"docs: X（只报告）\" tri-report \"${REPO_ROOT}\" \"cmd-x\"\n" +
+		"FAST_STEPS=(\n  \"门A a（阻断）\"\n)\n"
+	steps, _ := sswScan(base)
+
+	// 正控：门B 在声明位 ⇒ 0 违例
+	if got := sswTierDiff(base, steps, []string{"门B b（阻断）"}); len(got) != 0 {
+		t.Fatalf("正控：期望 0 违例，实得 %d: %v", len(got), got)
+	}
+	// 负控·静默排除：门B 两边都不在
+	miss := sswTierDiff(base, steps, nil)
+	if n := len(miss); n != 1 {
+		t.Fatalf("负控·静默排除：期望恰 1 违例（下限 1），实得 %d: %v", n, miss)
+	}
+	if !strings.Contains(miss[0], "门B b（阻断）") || !strings.Contains(miss[0], "静默排除") {
+		t.Fatalf("负控·静默排除·点名：%v", miss)
+	}
+	// 负控·冗余：声明位写一条在快档里的 ⇒ 1 违例
+	dup := sswTierDiff(base, steps, []string{"门B b（阻断）", "门A a（阻断）"})
+	if n := len(dup); n != 1 {
+		t.Fatalf("负控·冗余：期望恰 1 违例，实得 %d: %v", n, dup)
+	}
+	if !strings.Contains(dup[0], "冗余") {
+		t.Fatalf("负控·冗余·点名：%v", dup)
+	}
+	// 负控·失指：声明位写一条非默认集步 ⇒ 1 违例
+	mis := sswTierDiff(base, steps, []string{"门B b（阻断）", "门Z z（阻断）"})
+	if n := len(mis); n != 1 {
+		t.Fatalf("负控·失指：期望恰 1 违例，实得 %d: %v", n, mis)
+	}
+	if !strings.Contains(mis[0], "失指") {
+		t.Fatalf("负控·失指·点名：%v", mis)
+	}
+	// 退回：表件无 `FAST_STEPS` 数组 ⇒ nil（逐字退回旧行为）
+	if got := sswTierDiff(sswGood, steps, nil); len(got) != 0 {
+		t.Fatalf("退回（无 FAST_STEPS）：%v", got)
+	}
+	// FAST_STEPS 解析：有 / 无两态
+	if fs := sswParseFastSteps(base); len(fs) != 1 || fs[0] != "门A a（阻断）" {
+		t.Fatalf("sswParseFastSteps(base)=%v", fs)
+	}
+	if fs := sswParseFastSteps(sswGood); len(fs) != 0 {
+		t.Fatalf("sswParseFastSteps(no array)=%v", fs)
+	}
+}
+
+// TestSswTierEndToEnd —— 入口端到端（`--file` 夹具 · 声明位缺席 → 补齐 两态）。
+func TestSswTierEndToEnd(t *testing.T) {
+	dir := t.TempDir()
+	f := filepath.Join(dir, "t.sh")
+	body := "add_step gates \"门A a（阻断）\" tri \"${REPO_ROOT}\" \"cmd-a\"\n" +
+		"add_step gates \"门B b（阻断）\" tri \"${REPO_ROOT}\" \"cmd-b\"\n" +
+		"FAST_STEPS=(\n  \"门A a（阻断）\"\n)\n"
+	if err := os.WriteFile(f, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// 声明位缺席 ⇒ 门B 未声明 ⇒ rc=1 且点名
+	rc, out, _ := sswRunMain(t, "--file", f)
+	if rc != 1 || !strings.Contains(out, "门B b（阻断）") || !strings.Contains(out, "静默排除") {
+		t.Fatalf("缺声明位 rc=%d out=%q", rc, out)
+	}
+	// 补上声明位 ⇒ rc=0 且印「档位反向差集」行
+	if err := os.WriteFile(filepath.Join(dir, "fast-excluded.txt"),
+		[]byte("# 声明位（夹具）\n门B b（阻断）\t理由\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rc, out, errb := sswRunMain(t, "--file", f)
+	if rc != 0 || errb != "" || !strings.Contains(out, "✓ 档位反向差集：默认集阻断步 2 ⊆ 快档 1 ∪ 声明位 1") {
+		t.Fatalf("补声明位 rc=%d out=%q err=%q", rc, out, errb)
+	}
+}

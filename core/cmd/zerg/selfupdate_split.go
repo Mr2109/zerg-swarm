@@ -67,12 +67,31 @@ func updateWordSplitViolations(spec *contract.SelfUpdateSpec, cmds []updateCmdSh
 		text := c.Path + " · " + c.Summary + " · " + c.Usage
 		for _, w := range spec.NearSynonymForbidden {
 			if strings.Contains(text, w) {
-				out = append(out, fmt.Sprintf("%s 里出现近义动词 %q（§3.3 N2：不许用近义动词分指两事）", c.Path, w))
+				out = append(out, fmt.Sprintf("%s 的%s里出现近义动词 %q（§3.3 N2：不许用近义动词分指两事）", c.Path, nearSynonymSegments(w, c), w))
 				break
 			}
 		}
 	}
 	return out
+}
+
+// nearSynonymSegments —— 命中的**是哪一段**（路径段 / 概要 / 用法串）：判词要能点名「件·段·词」，
+// 否则「哪一段脏」只能人翻。多段同中 ⇒ 逐段并列（✗ 不隐藏其中一段）。
+func nearSynonymSegments(w string, c updateCmdShape) string {
+	var segs []string
+	if strings.Contains(c.Path, w) {
+		segs = append(segs, "路径段")
+	}
+	if strings.Contains(c.Summary, w) {
+		segs = append(segs, "概要")
+	}
+	if strings.Contains(c.Usage, w) {
+		segs = append(segs, "用法串")
+	}
+	if len(segs) == 0 {
+		return "文本"
+	}
+	return strings.Join(segs, "·")
 }
 
 func findShape(cmds []updateCmdShape, path string) *updateCmdShape {
@@ -89,8 +108,9 @@ func strOf(v any) string {
 	return s
 }
 
-// updateSplitViolations —— 扫**真命令树**（同一份真源，不另抄）。
-func updateSplitViolations(spec *contract.SelfUpdateSpec) []string {
+// updateSplitShapes —— 从**真命令树**取形状（唯一取法：`updateSplitViolations` 与门⑤ 的 N2
+// 子判据共用一处，✗ 不各抄一份）。
+func updateSplitShapes() []updateCmdShape {
 	cs := []updateCmdShape{}
 	for _, c := range commands {
 		src := ""
@@ -99,21 +119,19 @@ func updateSplitViolations(spec *contract.SelfUpdateSpec) []string {
 		}
 		cs = append(cs, updateCmdShape{Path: strings.Join(c.path, " "), Summary: c.summary, Usage: c.usage, DangerSource: src})
 	}
-	return updateWordSplitViolations(spec, cs)
+	return cs
+}
+
+// updateSplitViolations —— 扫**真命令树**（同一份真源，不另抄）。
+func updateSplitViolations(spec *contract.SelfUpdateSpec) []string {
+	return updateWordSplitViolations(spec, updateSplitShapes())
 }
 
 // updateSplitViolationsWith —— 在**真命令树**上叠加若干条覆盖（同路径的替换、新路径的追加）。
 // 负控要的正是这个：只把「那一格」改坏，其余整棵树保持原样 —— 否则负控自己会造出
 // 「命令树里找不到命令」这类**无关**命中，判词就不干净了（首次落地时就是这么被自己绊倒的）。
 func updateSplitViolationsWith(spec *contract.SelfUpdateSpec, overrides []updateCmdShape) []string {
-	cs := []updateCmdShape{}
-	for _, c := range commands {
-		src := ""
-		if c.danger != nil {
-			src = c.danger.Source
-		}
-		cs = append(cs, updateCmdShape{Path: strings.Join(c.path, " "), Summary: c.summary, Usage: c.usage, DangerSource: src})
-	}
+	cs := updateSplitShapes()
 	for _, o := range overrides {
 		replaced := false
 		for i := range cs {

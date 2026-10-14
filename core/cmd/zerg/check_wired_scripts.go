@@ -1610,6 +1610,7 @@ var cwsWhitelist = []cwsWLEntry{
 	//   ⇒ 本白名单条目**下架**（件离盘 ⇒ 门自检 ⑧d「删件后必须同步下架」）。
 	{"fleet-relay.sh", "零命令位引用（登记 · 非死件 · 新口径）：机群镜像中继；被 `scripts/sandbox/test-relay-sandbox.sh` 以变量 `RELAY` 调用（变量间接），其余点名在注释／文案里 ⇒ 非命令位字面 ⇒ 零引用。活件保留。", "2026-10-08"},
 	{"zerg-core-daemon.sh", "零命令位引用（登记 · 非死件 · 新口径）：launchd 托管的启动包装；由 `deploy/服务声明.tsv` 的 `/bin/bash …`（绝对解释器 · TSV 声明列）与 plist 引用（绝对解释器不在本门启动器表＋非命令位文件面）⇒ 零引用。活件保留（com.zerg.core 的被调入口）。", "2026-10-08"},
+	{"zerg-dbbackup\u002Esh", "零命令位引用（登记 · 非死件 · 新口径）：A 类 launchd 托管的**库备份调度包装**（T4①）；由 `deploy/服务声明.tsv` 的一行（绝对解释器 `/bin/bash` ＋ 本件路径 · TSV 声明列）与仓外 plist（`~/Library/LaunchAgents/com.zerg.dbbackup.plist` 的 `ProgramArguments`）引用 —— 绝对解释器不在本门启动器表 ＋ 非命令位文件面 ⇒ 零引用。活件保留（com.zerg.dbbackup 的被调入口；与同目录 launchd 包装一类）。★ 同批依门① 先例（`scripts/gates/gate-coverage.config.json` 2026-10-14 同件登记）。", "2026-10-15"},
 }
 
 var cwsSuggest = map[string]cwsSuggestT{

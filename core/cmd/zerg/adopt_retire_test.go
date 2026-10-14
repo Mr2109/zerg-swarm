@@ -30,6 +30,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -1252,11 +1253,14 @@ func TestAdoptRetireItaskIntervalSetFourStates(t *testing.T) {
 	bin := zergBinaryFromSource(t)
 
 	var gotPath, gotBody string
+	var gotMu sync.Mutex
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/api/internal-tasks/health-check/interval":
 			b, _ := io.ReadAll(r.Body)
+			gotMu.Lock()
 			gotPath, gotBody = r.URL.Path, string(b)
+			gotMu.Unlock()
 			w.WriteHeader(200)
 			fmt.Fprint(w, `{"success":true,"id":"health-check","hours":6,"message":"ok","state":{}}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/internal-tasks/intervals":
@@ -1293,13 +1297,18 @@ func TestAdoptRetireItaskIntervalSetFourStates(t *testing.T) {
 	if rc, out, _ := run("itask", "interval", "set", "health-check", "--hours", "6", "--dry-run"); rc != 0 || !strings.Contains(out, "计划件") {
 		t.Errorf("② --dry-run：rc=%d（要 0）· stdout 里没计划件：%q", rc, out)
 	}
+	gotMu.Lock()
 	gotPath, gotBody = "", ""
+	gotMu.Unlock()
 	rc, out, errb := run("itask", "interval", "set", "health-check", "--hours", "6", "--confirm=testhost", "--yes")
 	if rc != 0 {
 		t.Errorf("③ --yes：rc=%d（要 0）· stderr=%s", rc, errb)
 	}
-	if gotPath != "/api/internal-tasks/health-check/interval" || gotBody != `{"hours":6}` {
-		t.Errorf("③ 合成主控收到的请求不对：path=%q body=%q（要 path=/api/internal-tasks/health-check/interval · body={\"hours\":6}）", gotPath, gotBody)
+	gotMu.Lock()
+	gotPathSeen, gotBodySeen := gotPath, gotBody
+	gotMu.Unlock()
+	if gotPathSeen != "/api/internal-tasks/health-check/interval" || gotBodySeen != `{"hours":6}` {
+		t.Errorf("③ 合成主控收到的请求不对：path=%q body=%q（要 path=/api/internal-tasks/health-check/interval · body={\"hours\":6}）", gotPathSeen, gotBodySeen)
 	}
 	if !strings.Contains(out, "6") {
 		t.Errorf("③ 落地值回读没报出 6：stdout=%q", out)
@@ -1324,11 +1333,14 @@ func TestAdoptRetireItaskModeSetFourStates(t *testing.T) {
 	bin := zergBinaryFromSource(t)
 
 	var gotPath, gotBody string
+	var gotMu sync.Mutex
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/api/internal-tasks/health-check/mode":
 			b, _ := io.ReadAll(r.Body)
+			gotMu.Lock()
 			gotPath, gotBody = r.URL.Path, string(b)
+			gotMu.Unlock()
 			w.WriteHeader(200)
 			fmt.Fprint(w, `{"success":true,"id":"health-check","auto_run":false,"message":"ok","state":{}}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/internal-tasks/modes":
@@ -1365,13 +1377,18 @@ func TestAdoptRetireItaskModeSetFourStates(t *testing.T) {
 	if rc, out, _ := run("itask", "mode", "set", "health-check", "--off", "--dry-run"); rc != 0 || !strings.Contains(out, "计划件") {
 		t.Errorf("② --dry-run：rc=%d（要 0）· stdout 里没计划件：%q", rc, out)
 	}
+	gotMu.Lock()
 	gotPath, gotBody = "", ""
+	gotMu.Unlock()
 	rc, out, errb := run("itask", "mode", "set", "health-check", "--off", "--confirm=testhost", "--yes")
 	if rc != 0 {
 		t.Errorf("③ --yes：rc=%d（要 0）· stderr=%s", rc, errb)
 	}
-	if gotPath != "/api/internal-tasks/health-check/mode" || gotBody != `{"auto_run":false}` {
-		t.Errorf("③ 合成主控收到的请求不对：path=%q body=%q（要 path=/api/internal-tasks/health-check/mode · body={\"auto_run\":false}）", gotPath, gotBody)
+	gotMu.Lock()
+	gotPathSeen, gotBodySeen := gotPath, gotBody
+	gotMu.Unlock()
+	if gotPathSeen != "/api/internal-tasks/health-check/mode" || gotBodySeen != `{"auto_run":false}` {
+		t.Errorf("③ 合成主控收到的请求不对：path=%q body=%q（要 path=/api/internal-tasks/health-check/mode · body={\"auto_run\":false}）", gotPathSeen, gotBodySeen)
 	}
 	if !strings.Contains(out, "false") {
 		t.Errorf("③ 落地值回读没报出 false：stdout=%q", out)

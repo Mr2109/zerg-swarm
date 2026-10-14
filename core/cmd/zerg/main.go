@@ -2085,6 +2085,29 @@ func init() {
 			run:         cmdPublishMirror,
 		},
 		{
+			// ── 命令树登记（本单）：`zerg publish snapshot-self-test` —— 发布链 Go 半余件接入命令面 ──
+			// 真身 = `family_publish_snapshot_native.go:publishSnapshotSelfTestNative`（旧 py
+			// `scripts/build/publish-snapshot-self-test.py` 205 行的 Go 真身）：把 `publish/ci/*.yml`
+			// 里的 `run:` 步骤在**公开快照目录**上原样跑一遍（判据真源就是那两件 yml · 本件不另写判据）。
+			// 原状「真身在盘、命令树无入口」⇒ 一律 rc=2 —— 缺口 `GAP-20261012-16`（门 `check-cli-ownership`
+			// 类 B「未接 inproc 标准路由」余 1 件的正解）。
+			// ★ run 指向**已登记宿主** `ui_start.go` 的桥 `cmdPublishSnapshotSelfTestFamily`（门78
+			// `check-newcmd-followup` 面④：真身件不在 `scripts/公开标记.tsv` ⇒ 经已登记宿主转发）。
+			// ★ `passthrough: true`（同 `publish mirror`）：`--job`/`--json` 逐字交真身自己的 argv 解析面。
+			// ★ 字段表 = 真身 `--json` 的五格顶层键，必须写成 `[]string{…}` **字面量**（契约脚本 `FIELDS_RE`
+			// 只认字面量 · 同 `net probe`/`publish tree has` 那条纪律）。
+			path:        []string{"publish", "snapshot-self-test"},
+			kind:        "PublishSnapshotSelfTest",
+			summary:     "公开快照自测（**本地** · 把 `publish/ci/*.yml` 的 `run:` 步骤在公开快照目录上原样跑一遍 · 判据真源 = 那两件 yml · 真身 `family_publish_snapshot_native.go`；入口只转发）",
+			usage:       "zerg publish snapshot-self-test <快照目录> [--job <作业>] [--json <字段>]",
+			arity:       "any",
+			args:        []string{"快照目录（公开快照的根 —— 不是目录/不存在 ⇒ 2）"},
+			fields:      []string{"pass", "fail", "skip", "snapshot_has_git", "wall_secs"},
+			endpoint:    "",
+			passthrough: true,
+			run:         cmdPublishSnapshotSelfTestFamily,
+		},
+		{
 			// 组4 §二.4 `W-51`（`研-禁:134` `R-21` 归绿核心）· 任务单序133 · 与组3 `Q-025` 同条：
 			// 归绿判据逐字「指定 commit 的必需检查集合全部 `success`、且没有一个 `skipped`」，
 			// 读数带 `head_sha` —— 「**人贴屏不算判据**」⇒ 本命令是那张图的**只读**机器面
@@ -2306,6 +2329,74 @@ func init() {
 			fields:   eggActFields,
 			endpoint: "POST /api/control/unload（控制层既有路由 · 命令面不新开一条路）",
 			run:      cmdEggStop,
+		},
+		// ---- 卵开工 · 卵7①（2026-10-15）：卵族**具名入口** —— `zerg egg <info|verify|gc|expand|release>` ----
+		// 落件 = `core/cmd/zerg/family_egg.go`（薄壳 · 逐字转发已落能力 —— ✗ 命令层不重写逻辑）：
+		//   · `verify` → `zerg_egg_verify.go` 的 `zegvVerifyEntry`（逐段并行 sha256 ＋ 内容寻址校验缓存 ·
+		//     卵3① 已落 —— 此前只有 passthrough 的 `cocoon verify` 打得到）；
+		//   · `info` / `gc` / `expand` / `release` → `core/internal/store/eggstore`（名册 / 引用图 / GC /
+		//     CoW 展开 / 解引用 · 卵2 已落 —— 该包件头自注逐字「本包纯库件、零 CLI 接线」⇒ 命令面此前打不着）。
+		// ★ 卵库根 = `--root <目录>`（**已在旗标名字表上** ⇒ ✗ 不新开旗标；缺省 `~/.zerg/eggs`）。
+		// ★ 危险档照同族先例 `core db`（`family_core_db.go`）：`gc` = D3（真删不可逆 ⇒ `--confirm=<卵库根>`
+		//   与 `--yes` **同时到**）· `expand` / `release` = D2（`--yes`）· 三条各有 `--dry-run` 计划件（零副作用）。
+		// ★ 族名口径（延续 main.go 里既有那条自注）：`egg` **既有**的 `ls`/`show`/`run`/`stop`/`pin`/`unpin`
+		//   是【虫卵（沙箱 / 容器）投影面】（远端只读投影 ＋ 控制面写面），与本次这五条**不同对象** ——
+		//   本批只**增**五条（✗ 不动既有任何一条的用法串与退码）。`ls` 那一格**已被占用**
+		//   ⇒ 卵库名册清单落 `zerg egg info` 的无参档（名册态），✗ 不新造同路径第二条。
+		{
+			path:    []string{"egg", "info"},
+			kind:    "EggInfo",
+			summary: "卵库档案 / 名册态（只读：给卵名 ⇒ 名册行 ＋ 引用格；不给 ⇒ 全册清单 —— 转发 `eggstore` 的名册与引用图）",
+			usage:   "zerg egg info [<卵名>] [--root <卵库根>] [--json <字段>]",
+			arity:   "any",
+			args:    []string{"卵名（可省 ⇒ 报卵库名册态）"},
+			fields:  []string{"action", "root", "root_source", "egg", "sha256", "state", "path", "bytes", "refs", "complete", "blocks", "added_at", "updated_at", "count", "verdict"},
+			run:     cmdEggInfo,
+		},
+		{
+			path:    []string{"egg", "verify"},
+			kind:    "EggVerify",
+			summary: "校验一枚卵包（逐段并行 sha256 ＋ 内容寻址校验缓存 —— 转发 `zerg_egg_verify.go` 的 `zegvVerifyEntry` · ✗ 命令层不重写判据）",
+			usage:   "zerg egg verify <卵包.egg> [--json <字段>]",
+			arity:   "any",
+			args:    []string{"卵包 .egg 件"},
+			fields:  []string{"action", "path", "size_bytes", "segments", "data_bytes", "align", "cache_hit", "problem_count", "problems", "verdict"},
+			run:     cmdEggVerify,
+		},
+		{
+			path:    []string{"egg", "gc"},
+			danger:  &dangerSpec{dangerD3, "卵库根", "真删卵件（**只在引用计数归零且态可回收时**）—— 删前 `--dry-run` 出计划件；件被删即不可逆（须重取）", "设计 §16.2 · §13.1 · §14.4 M1 · 任务单 卵2② / 卵7① · 同族先例 `core db`（D3 ＋ `--confirm`）", true, dangerScopeOutRepo},
+			opened:  true,
+			kind:    "EggGc",
+			summary: "卵库回收（引用计数归零才真删 · 报「已释放」只认 df；D3：`--dry-run` 零副作用 · 真跑要 `--confirm=<卵库根>` ＋ `--yes`）",
+			usage:   "zerg egg gc [--root <卵库根>] [--dry-run | --confirm=<卵库根> --yes] [--json <字段>]",
+			arity:   "any",
+			fields:  []string{"action", "root", "root_source", "dry_run", "deleted", "deleted_count", "pinned", "pinned_count", "df_before", "df_after", "freed_bytes_df", "freed_source", "nominal_bytes_not_freed", "nominal_note", "note", "verdict"},
+			run:     cmdEggGC,
+		},
+		{
+			path:    []string{"egg", "expand"},
+			danger:  &dangerSpec{dangerD2, "卵名", "展开一枚卵到落点（CoW 整文件 clone ＋ 登记同一条引用 ⇒ 卵的引用计数 ＋1）—— 可逆：`egg release` 删件并解引用即回原态", "设计 §13.1 · §16.2 · 任务单 卵2② · 同族先例 `core db backup`（D2 ＋ `--yes`）", false, dangerScopeOutRepo},
+			opened:  true,
+			kind:    "EggExpand",
+			summary: "展开一枚卵（先登记引用 → 再 CoW 整文件落件 · 展开物纳入**同一**引用计数；D2 写面：`--dry-run` 出计划件 · 真跑要 `--yes`）",
+			usage:   "zerg egg expand <卵名> <引用者 id> <落点> [--kind expansion|clone] [--root <卵库根>] [--dry-run | --yes] [--json <字段>]",
+			arity:   "any",
+			args:    []string{"卵名", "引用者 id", "落点（展开物 / 副本的落盘路径）"},
+			fields:  []string{"action", "root", "root_source", "egg", "ref", "kind", "dst", "tier", "cow", "bytes", "refs_after", "refs_now", "dur_ms", "fell_back", "dry_run", "dst_exists", "egg_known", "egg_state", "egg_complete", "egg_src", "note", "verdict"},
+			run:     cmdEggExpand,
+		},
+		{
+			path:    []string{"egg", "release"},
+			danger:  &dangerSpec{dangerD2, "卵名", "删掉展开物 / 副本件并解掉那一条引用（`eggstore.ReleaseExpansion` · 先删件 → 再解引用）—— 可逆：`egg expand` 重新展开即回原态", "设计 §16.2 · §14.4 M1 · 任务单 卵2② · 同族先例 `core db prune`（D2 ＋ `--yes`）", false, dangerScopeOutRepo},
+			opened:  true,
+			kind:    "EggRelease",
+			summary: "删前解引用（删副本件 ＋ 解引用 · **只有归零后才允许 `egg gc` 真删**；D2 写面：`--dry-run` 出计划件 · 真跑要 `--yes`）",
+			usage:   "zerg egg release <卵名> <引用者 id> [<副本路径>] [--root <卵库根>] [--dry-run | --yes] [--json <字段>]",
+			arity:   "any",
+			args:    []string{"卵名", "引用者 id", "副本路径（可省 ⇒ 只解引用、不删件）"},
+			fields:  []string{"action", "root", "root_source", "egg", "ref", "path", "released", "refs_left", "refs_now", "zero", "df_before", "df_after", "freed_bytes_df", "freed_source", "nominal_note", "path_exists", "dry_run", "note", "verdict"},
+			run:     cmdEggRelease,
 		},
 		// ---- 批 D · T-49 内部任务引擎族 `itask`（§7.1 P8 · §5.1 九条端点）----
 		{
@@ -3586,6 +3677,24 @@ func init() {
 			endpoint: "",
 			run:      cmdGapExport,
 		},
+		{
+			// ★ 缺口 `GAP-20261013-20`（F30 接线 · 2026-10-15）：`gap diff` —— 缺口账**差集面**（只读对拍）。
+			// 实现件 = `family_gap_diff.go:cmdGapDiff`。两份**外部件**（账 jsonl / `gap export` 人面片段）逐格对拍
+			// ⇒ 三类差（仅左 · 仅右 · 同 id 不同体 · 逐条点名到 id ＋ 哪一格）。退码 **0/1/2**：
+			// 0 = 无差异 · 1 = 有差异（逐条点名）· 2 = 输入取不到 / 格式不对 / 用法错（**不给结论**）。
+			// ★ 与同族「真源读不到 ⇒ 8」**不同码**：本面是两份**外部件**的对拍，缺件 / 坏件属**前置/用法面**
+			// （派单口径 = 2 ⇒ `exitUsage`）。用法串须写明 `--out`（本命令认它）。
+			// ★ `--out <件路径>` 落**报告件**（D2 写面 · ✗ 不写真源、不写审计）：`--dry-run` ⇒ 计划件走 stdout
+			// ＋ 一个字节不落（rc 仍照真跑 0/1）；缺 `--yes` ⇒ 2（fail-closed）。
+			path:    []string{"gap", "diff"},
+			kind:    "GapDiff",
+			summary: "缺口账**差集面**（只读）：两份账 / 两份导出对拍 ⇒ 三类差（仅左 · 仅右 · 同 id 不同体），逐条点名到 id ＋ 哪一格",
+			usage:   "zerg gap diff <左件> <右件> [--json <字段>] [--out <件路径> [--dry-run|--yes]]",
+			arity:   "any",
+			args:    []string{"左件 · 右件（各一份账 jsonl 或 `gap export` 人面片段）"},
+			fields:  gapDiffFields,
+			run:     cmdGapDiff,
+		},
 		// ★ 两条**状态写面**（2026-09-26 · 缺口账 `Q-239`：「`gap` 族只有 4 个动作 ⇒ 改态/写口径
 		//   没有正门」）。照同族写面（`add` / `verify`）的式样：`--dry-run` 恒 0 / 缺 `--yes`
 		//   fail-closed 2 / 审计先落盘（写不进就不写真源）/ `--by`-`--yes`-`--json` 习惯逐字沿用。
@@ -4068,6 +4177,28 @@ func init() {
 			fields:   []string{"result", "target", "rows_live", "rows_added", "rows_removed", "rows_unchanged", "rows_changed", "rows_changed_named", "rows_changed_cells", "declared_line", "declared_line_live", "in_sync"},
 			endpoint: "",
 			run:      cmdScriptInventoryVerifyFamily,
+		},
+		// ---- F37（2026-10-15）：`fs` 族（乙档 · 用户已拍 · 族名照账面 want 逐字）----------------
+		// ★ 本笔**只接 `fs unprotected` 一条**（`hidden-faces` 半归 F44 ⇒ ✗ 不碰 `family_fs.go`）。
+		// 族名与子动作名照账面三条 want 原文（`GAP-20260927-223`/`-224`/`-225` 的 ③ 长线逐字写
+		// `zerg fs unprotected` / `zerg fs hidden-faces`）⇒ 零口径改名。
+		// ★ 分工（用户 2026-10-15 拍定）：`zerg repo status` 管「本仓面现状」（七栏不动）·
+		//   `zerg fs` 管「**盘 ⟷ 版本面的差**」（含被忽略面 ＋ 体量排行）。
+		// ★ 判据一字不落本表项：判据核心 = `family_fs.go:fsUnprotectedCore`（F38 已落 · 本笔只接线 ·
+		//   ✗ 不改判据语义 · ✗ 不落第二套判脏口径 —— 真源仍全在 git 自己那一面：
+		//   `git ls-files --others`（未跟踪 ∩ 盘上在）＋ `git check-ignore`（未被忽略））。
+		// ★ 体量口径 = 降序前 50（`fsUnprotectedDefaultTop`）· 覆盖树 = 全仓（显式排除首段
+		//   `bin`/`dist`/`.git`）。退码原样转出核心三态：0 无件 / 1 有件（逐件点名）/ 2 不给结论。
+		// ★ ✗ 不新增旗标（usage 只列既有的 `--json` ⇒ 门73 旗标名表零改动 · usageDeclaresFlag 无新增落点）。
+		{
+			path:    []string{"fs", "unprotected"},
+			kind:    "FsUnprotected",
+			summary: "列**未保护件**（盘上有 / 版本面无 / 未被忽略 —— 真源全走 git 自己那一面）· 只读 · 体量降序取前 50（覆盖全仓 · 排除 `bin`/`dist`/`.git`）· 退码 0 无件 / 1 有件（逐件点名）/ 2 不给结论",
+			usage:   "zerg fs unprotected [--json <字段>]",
+			arity:   "none",
+			args:    []string{"（不收位置参数 —— 仓根取现读工作树：「盘 ⟷ 版本面的差」是**本仓**的读数 · ✗ 不开 `--root`）"},
+			fields:  []string{"path", "bytes", "kind"},
+			run:     cmdFSUnprotected,
 		},
 	}
 	// 群级只读（§十二 `P-066`）：这些命令「无目标 = 读全群」是**定义**，不是遗漏。
@@ -6115,4 +6246,45 @@ func cmdHelp(inv *invocation, stdout, stderr io.Writer) int {
 		}
 	}
 	return exitOK
+}
+
+// cmdFSUnprotected —— `zerg fs unprotected` 的命令面**薄壳**（F37 接线 · 2026-10-15）。
+//
+// ★ 判据一行都不落本函数：判据核心 = `family_fs.go:fsUnprotectedCore`（F38 已落 · 提案 `DEV-2976`）。
+// 本层只做三件事：① 用法面（`--json` 字段面）② 转发判据核心 ③ 人面 / 机读面（同一份结论）。
+// ★ 退码原样转出核心三态（0 无件 / 1 有件 / 2 不给结论）—— ✗ 不在此另取一档、✗ 不放宽断言。
+// ★ 本函数**不新报任何 `error.kind` / `error.detail`**（甲档棘轮：新增取值**或新增站点**即红 ⇒
+//
+//	门⑤ 的登记面归另一路）：用法面 / 不给结论面一律照 dispatch 既有口径 —— 出 stderr 判词 ＋ 退 2。
+//
+// 落点说明（照同族先例 `family_gap_diff.go:cmdGapDiff` 同形；本笔落 `main.go` 是任务单硬边界：
+// `core/cmd/zerg/family_fs.go` 的 `hidden-faces` 半正由另单（F44）在改 ⇒ 本笔 ✗ 不碰那件）。
+func cmdFSUnprotected(inv *invocation, stdout, stderr io.Writer) int {
+	// ① 用法面：给了 `--json` 而没给字段 ⇒ 用法错 2（不给结论 —— 与同族 `gap diff` / `repo status` 同口径）。
+	if inv.jsonGiven && len(inv.fields) == 0 {
+		fmt.Fprintf(stderr, "%s: `--json` 要给逗号分隔的字段（本命令口径 = 用法错 2）\n", progName)
+		if c := find(inv.path); c != nil {
+			fmt.Fprintf(stderr, "可选字段: %s\n", strings.Join(c.fields, ","))
+		}
+		return exitUsage
+	}
+	// ② 判据核心（只读 · 零写盘）：入参零值 ⇒ 仓根走 `repoRoot()`、体量取默认前 50。
+	res, rc := fsUnprotectedCore(fsUnprotectedOpts{})
+	if rc == exitUsage {
+		// 2 = 不给结论（仓根解析不到 / 非 git 工作树 / git 真源取不到）⇒ ✗ 不假绿。
+		fmt.Fprintf(stderr, "%s: 判据真源取不到（仓根 / git 工作树 / git 真源）⇒ **不给结论**（退码 2 · ✗ 不假绿）\n", progName)
+		fmt.Fprintf(stderr, "（真源 = `git ls-files --others`（未跟踪 ∩ 盘上在）与 `git check-ignore`（未被忽略）—— 任一取不到就不下结论）\n")
+		return exitUsage
+	}
+	// ③ 机读面 / 人面：同一份结论出两个面（✗ 不各写各的）。
+	if inv.jsonGiven {
+		inv.changed = boolPtr(false)
+		if ec := selectJSONList(stdout, stderr, inv, inv.path, inv.fields, fsUnprotectedRows(res)); ec != exitOK {
+			return ec
+		}
+		return rc
+	}
+	inv.changed = boolPtr(false)
+	fsUnprotectedHuman(stdout, res)
+	return rc
 }

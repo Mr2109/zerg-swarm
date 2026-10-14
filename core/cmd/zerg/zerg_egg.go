@@ -57,7 +57,9 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
+	"unicode/utf8"
 )
 
 // ---- 常量（逐字照 py 顶部）------------------------------------------------------------------
@@ -116,6 +118,9 @@ type zegEntryJSON struct {
 	Size   int64  `json:"size"`
 	SHA256 string `json:"sha256"`
 	Mode   int    `json:"mode"`
+	// MediaType —— ★ 卵1① 的**段类型声明**（OCI 三档闭集 · 可加面键）。★ 用 `omitempty`：
+	// 空串**不落 JSON** ⇒ 旧形态（未标）产出的字节逐字不变（后向兼容）。
+	MediaType string `json:"mediaType,omitempty"`
 }
 
 type zegIndexJSON struct {
@@ -135,16 +140,22 @@ type zegIndex struct {
 	Tool      zegToolJSON
 	CreatedAt string
 	Entries   []zegEntryJSON
+	// ★ 卵1① 的**登记面**（读端填；✗ 不是拒执）：未标 `mediaType` 的段 / 闭集外的 `mediaType`。
+	// 照 OCI「MUST NOT error on encountering a mediaType that is unknown」⇒ 两档都**放行**，
+	// 但必须**登记并印出**（✗ 不许静默当已标）。
+	UnlabeledMedia []string
+	UnknownMedia   []string
 }
 
 // zegEntry —— 打包期的条目（多一个内部 `src`，**不进 JSON**）。
 type zegEntry struct {
-	Path   string
-	Off    int64
-	Size   int64
-	SHA256 string
-	Mode   int
-	src    string
+	Path      string
+	Off       int64
+	Size      int64
+	SHA256    string
+	Mode      int
+	MediaType string // ★ 卵1① 写端算出的段类型（与读端同一张 `zegSegMediaType`）
+	src       string
 }
 
 // ---- 小工具（逐字照 py）---------------------------------------------------------------------
@@ -211,6 +222,340 @@ func zegPyBytesRepr(b []byte) string {
 	return sb.String()
 }
 
+// ---- ★ 卵1①：段语义对齐 OCI `mediaType`（**纯声明** · §9.11② / §16.1 · §十九 #11）----------------
+//
+// ★ **纯声明** ✗ 别读成实现：本段只加「**段 → `mediaType` 字符串**」这一层**声明 ＋ 判读**，
+// ✗ 不引 ORAS / registry、✗ 不实现拉取、✗ 不换后端（换 erofs / OCI 是另一批，见 §9.11⑤）。
+//
+// 语义照 OCI Image Spec 三档（manifest / config / layer）逐段对号；`mediaType` 属 `§11.2`
+// 不变量 7 的**可加面（compat）** ⇒ 旧读端必须「**忽略且不报错**」（照 OCI 逐字
+// 「MUST NOT error on encountering a `mediaType` that is unknown」）⇒ 读端遇**未标 / 闭集外**
+// 一律 **放行 ＋ 登记**（✗ 不 error）；只有「**闭集内却与该段 `path` 推出的类不符**」才拒
+// —— 那正是 `§11.2` 不变量 7.3「**禁同一键换语义**」。
+const (
+	// zegMediaManifest —— OCI `manifest` 档（索引与签名段：段表 / 逐段 sha256 / 整体签名 / 版本）。
+	zegMediaManifest = "application/vnd.oci.image.manifest.v1+json"
+	// zegMediaConfig —— OCI `config` 档（契约段 / 配方段：封闭策略 / 绑定 / 参数 / 标定档案）。
+	zegMediaConfig = "application/vnd.oci.image.config.v1+json"
+	// zegMediaLayer —— OCI `layer` 档（引擎段 / 权重段：引擎二进制与依赖库 / 模型权重）。
+	zegMediaLayer = "application/vnd.oci.image.layer.v1.tar"
+)
+
+// zegSegMediaType —— `§9.1` **五段** → OCI 三档的**逐类映射表**（★ 本文件**唯一真源**：
+// **写端算 `mediaType`**（`zegMediaTypeOfPath`）与 **读端判读**（`zegMediaTypeClosedSet`）都读这一张
+// ⇒ 「**双向校验**」＝ 两侧同表逐条对拍）。
+var zegSegMediaType = []struct {
+	Seg   string
+	Class string
+	Media string
+	Why   string
+}{
+	{Seg: "索引与签名段", Class: "manifest", Media: zegMediaManifest,
+		Why: "段表（偏移/长度/页对齐）、逐段 sha256、整体签名、版本 —— 即 OCI 的 manifest 档"},
+	{Seg: "契约段", Class: "config", Media: zegMediaConfig,
+		Why: "封闭策略、绑定映射、环境/限额、引擎入口 —— 配置语义 ⇒ OCI config 档"},
+	{Seg: "配方段", Class: "config", Media: zegMediaConfig,
+		Why: "适配器、运行配方、参数、标定档案 —— 配置语义 ⇒ OCI config 档"},
+	{Seg: "引擎段", Class: "layer", Media: zegMediaLayer,
+		Why: "引擎二进制 ＋ 依赖库 —— 内容层 ⇒ OCI layer 档"},
+	{Seg: "权重段", Class: "layer", Media: zegMediaLayer,
+		Why: "模型 GGUF / safetensors —— 内容层 ⇒ OCI layer 档"},
+}
+
+// zegMediaTypeClosedSet —— `mediaType` **闭集**（取值 → OCI 类名）。★ 闭集外**不算已知类**：
+// 照 OCI 放行 ＋ 登记（见本段头注），✗ 不 error。
+func zegMediaTypeClosedSet() map[string]string {
+	m := make(map[string]string, len(zegSegMediaType))
+	for _, r := range zegSegMediaType {
+		m[r.Media] = r.Class
+	}
+	return m
+}
+
+// zegSegOfPath —— 段路径 → `§9.1` 五段之一（**写端与读端同一套**；✗ 不随平台/时间取值）。
+// 序敏感：先**契约面**（入口名 / contract 目录）→ 再**引擎面**（扩展名 / 引擎名）→ 再**权直面**
+// （张量扩展名 / model 目录）→ 其余**一律配方段**（配置类语义最保守的归属 ⇒ 未知件不会误判成层）。
+func zegSegOfPath(rel string) string {
+	base := strings.ToLower(filepath.Base(rel))
+	lower := strings.ToLower(filepath.ToSlash(rel))
+	ext := strings.ToLower(filepath.Ext(base))
+	if strings.HasPrefix(lower, "contract/") || strings.Contains(lower, "/contract/") {
+		return "契约段"
+	}
+	switch base {
+	case "policy.json", "contract.json", "bindings.json", "limits.json", "engine.json", "enclosure.json":
+		return "契约段"
+	}
+	switch ext {
+	case ".so", ".dylib", ".dll":
+		return "引擎段"
+	}
+	if strings.HasPrefix(lower, "engine/") || strings.Contains(lower, "/engine/") ||
+		base == "zerg-engine" || base == "llama-server" || base == "ds4-server" {
+		return "引擎段"
+	}
+	switch ext {
+	case ".gguf", ".safetensors", ".onnx", ".pt", ".pth":
+		return "权重段"
+	}
+	if strings.HasPrefix(lower, "model/") || strings.Contains(lower, "/model/") ||
+		strings.HasPrefix(lower, "weights/") || strings.Contains(lower, "/weights/") {
+		return "权重段"
+	}
+	return "配方段"
+}
+
+// zegMediaTypeOfPath —— 段路径 → `mediaType`（**写端写入用**；读端判读走 `zegMediaTypeClosedSet`）。
+func zegMediaTypeOfPath(rel string) string {
+	seg := zegSegOfPath(rel)
+	for _, r := range zegSegMediaType {
+		if r.Seg == seg {
+			return r.Media
+		}
+	}
+	return zegMediaConfig // 不可达（表里恒含五段）；兜底取配置类（✗ 不落空串）
+}
+
+// ---- ★ 卵1②：路径拒绝口径（**规则表 ＋ 检查器** · `§11.2` 新增第 8 条 · §15.8 L25/L26 · §十九 #26）----
+//
+// ★ 本段 = 拍定口径的**机检物**：一张**逐条具名**的规则表 ＋ 一个检查器，**打包端 / 读端 / 重建端
+// 三处同表**（＝「**双向校验**」）；★ 能真跑：人造恶意路径 ⇒ **逐类必拒且点名规则**
+// （见 `zegFormatSelfTest` 与 `TestZergEggMediaPathFourStates`）。规则口径逐字照 `§十九` #26 的拍定：
+// **NFC 相对路径 · 拒特殊文件〔硬链 / 设备 / FIFO / socket〕· mode 安全子集 · 双向校验 ·
+// `O_NOFOLLOW|O_EXCL`**。
+type zegPathRule struct {
+	Name string // 规则名（**拒执报话点名它** ⇒ 机器可判「哪一类」）
+	Why  string
+	Bad  func(rel string) bool
+}
+
+// zegWindowsReserved —— Windows 保留名（照 §十九 #26 逐字「Windows 保留名」）。
+var zegWindowsReserved = map[string]bool{
+	"con": true, "prn": true, "aux": true, "nul": true,
+	"com1": true, "com2": true, "com3": true, "com4": true, "com5": true,
+	"com6": true, "com7": true, "com8": true, "com9": true,
+	"lpt1": true, "lpt2": true, "lpt3": true, "lpt4": true, "lpt5": true,
+	"lpt6": true, "lpt7": true, "lpt8": true, "lpt9": true,
+}
+
+// zegHasCombiningMark —— 是否含**组合记号**（Unicode `Mn` 的主用区段）。★ 本仓硬线「✗ 不引入新依赖」
+// ⇒ **不引** `golang.org/x/text/unicode/norm`，改用**fail-closed 近似**：规范化（NFC）后的路径**不该**
+// 含这些区段的组合记号（CVE-2026-59890 的 NFC/NFD 归一化碰撞正是靠 NFD 形态绕过）。
+func zegHasCombiningMark(s string) bool {
+	for _, r := range s {
+		switch {
+		case r >= 0x0300 && r <= 0x036F, // Combining Diacritical Marks
+			r >= 0x1AB0 && r <= 0x1AFF, // Combining Diacritical Marks Extended
+			r >= 0x1DC0 && r <= 0x1DFF, // Combining Diacritical Marks Supplement
+			r >= 0x20D0 && r <= 0x20FF, // Combining Diacritical Marks for Symbols
+			r >= 0xFE20 && r <= 0xFE2F: // Combining Half Marks
+			return true
+		}
+	}
+	return false
+}
+
+// zegSegsOf —— `path` 按 `/` 切段（规则表内部用；✗ 不走 `path` 包 —— 那是本机分隔符）。
+func zegSegsOf(rel string) []string { return strings.Split(rel, "/") }
+
+// zegAnySeg —— 任一段满足 `f` 即真。
+func zegAnySeg(rel string, f func(s string) bool) bool {
+	for _, s := range zegSegsOf(rel) {
+		if f(s) {
+			return true
+		}
+	}
+	return false
+}
+
+// zegPathRules —— **索引里 `path` 必须过**的规则表（逐条独立 ⇒ 命中即点名；✗ 不合成一个大判断）。
+var zegPathRules = []zegPathRule{
+	{Name: "path_empty", Why: "空路径", Bad: func(rel string) bool { return rel == "" }},
+	{Name: "path_absolute", Why: "绝对路径（禁）", Bad: func(rel string) bool { return strings.HasPrefix(rel, "/") }},
+	{Name: "path_windows_drive", Why: "盘符（`C:` 一类）",
+		Bad: func(rel string) bool {
+			return len(rel) > 1 && rel[1] == ':' &&
+				((rel[0] >= 'a' && rel[0] <= 'z') || (rel[0] >= 'A' && rel[0] <= 'Z'))
+		}},
+	{Name: "path_unc", Why: "UNC 形（`//` 或 `\\`）",
+		Bad: func(rel string) bool { return strings.HasPrefix(rel, "//") || strings.HasPrefix(rel, "\\") }},
+	{Name: "path_backslash", Why: "反斜杠（Windows 分隔符混入）",
+		Bad: func(rel string) bool { return strings.Contains(rel, "\\") }},
+	{Name: "path_nul", Why: "含 NUL 字节", Bad: func(rel string) bool { return strings.ContainsRune(rel, 0) }},
+	{Name: "path_dotdot", Why: "段里出现 `..`",
+		Bad: func(rel string) bool { return zegAnySeg(rel, func(s string) bool { return s == ".." }) }},
+	{Name: "path_not_normalized", Why: "非规范化形（`.` 段 / 空段 / 尾斜杠 —— `Clean(rel) != rel`）",
+		Bad: func(rel string) bool { return filepath.Clean(rel) != rel }},
+	{Name: "path_trailing_dot_space", Why: "段以点或空格结尾（Windows 会把它们吃掉 ⇒ 归一化碰撞）",
+		Bad: func(rel string) bool {
+			return zegAnySeg(rel, func(s string) bool {
+				return s != "" && (strings.HasSuffix(s, ".") || strings.HasSuffix(s, " "))
+			})
+		}},
+	{Name: "path_windows_reserved", Why: "Windows 保留名（CON / PRN / AUX / NUL / COM1-9 / LPT1-9）",
+		Bad: func(rel string) bool {
+			return zegAnySeg(rel, func(s string) bool {
+				head := s
+				if i := strings.IndexByte(head, '.'); i >= 0 {
+					head = head[:i]
+				}
+				return zegWindowsReserved[strings.ToLower(head)]
+			})
+		}},
+	{Name: "path_not_utf8", Why: "不是合法 UTF-8", Bad: func(rel string) bool { return !utf8.ValidString(rel) }},
+	{Name: "path_not_nfc", Why: "非 NFC 形态（含组合记号 —— NFC/NFD 归一化碰撞的病灶）",
+		Bad: func(rel string) bool { return zegHasCombiningMark(rel) }},
+}
+
+// zegModeSafeSet —— `mode` **安全子集**（`§11.2` 新增第 8 条：只存安全子集 · 禁 setuid/setgid/sticky）。
+var zegModeSafeSet = map[int]bool{0o644: true, 0o755: true, 0o700: true}
+
+// zegRuleRefuse —— **具名拒**（Tier ＋ 规则名 ＋ 依据 ＋ 主体）。★ 报话格式**唯一**：
+// `拒：<主体> —— 命中规则 <规则名>（<依据>）` ⇒ 机器面（测试 / 自检 / 门）能逐类点名。
+func zegRuleRefuse(tier, rule, why, subject string) *zegRefusal {
+	return &zegRefusal{Tier: tier, Msg: fmt.Sprintf("拒：%s —— 命中规则 %s（%s）", subject, rule, why)}
+}
+
+// zegRefusePath —— 按 `zegPathRules` 逐条判一条索引里的 `path`；命中 ⇒ **具名拒**（D9 · 点名规则）。
+// 返回 nil ⇒ 该段 `path` 合法。★ **打包端 / 读端 / 重建端三处都调它**（＝双向校验）。
+func zegRefusePath(rel string) error {
+	for _, r := range zegPathRules {
+		if r.Bad(rel) {
+			return zegRuleRefuse("D9", r.Name, r.Why, fmt.Sprintf("段 path %q（须为规范化 NFC 相对路径）", rel))
+		}
+	}
+	return nil
+}
+
+// zegFsRule —— **文件系统级**规则（只看路径串看不出来 ⇒ 必须 `lstat`）。
+type zegFsRule struct {
+	Name string
+	Why  string
+}
+
+// zegFsRules —— 特殊文件 / 硬链 / mode 安全子集（逐字照 `§十九` #26：「拒特殊文件〔硬链 / 设备 /
+// FIFO / socket〕· mode 安全子集」）。
+var zegFsRules = []zegFsRule{
+	{Name: "fs_symlink", Why: "符号链接（v1 不支持符号链接：TOCTOU 穿越的经典载体）"},
+	{Name: "fs_device", Why: "设备文件（块设备 / 字符设备）"},
+	{Name: "fs_fifo", Why: "FIFO（命名管道）"},
+	{Name: "fs_socket", Why: "socket"},
+	{Name: "fs_hardlink", Why: "硬链接（nlink > 1：同 inode 多路入口 ⇒ 越界写的载体）"},
+	{Name: "fs_mode_unsafe", Why: "mode 不在安全子集（只许 0644 / 0755 / 0700，禁 setuid / setgid / sticky）"},
+}
+
+// zegFsWhy —— 取规则依据（✗ 不静默回落空串：取不到就逐字点名规则名本身）。
+func zegFsWhy(rule string) string {
+	for _, r := range zegFsRules {
+		if r.Name == rule {
+			return r.Why
+		}
+	}
+	return rule
+}
+
+// zegRefuseEntryMode —— 逐条 `zegFsRules` 判一个 `os.FileInfo`（**打包端与重建端共用**；lstat 来的
+// 那个 ⇒ ✗ 不跟随符号链接）。命中 ⇒ 具名拒（D9）。
+func zegRefuseEntryMode(li os.FileInfo, subject string) error {
+	m := li.Mode()
+	switch {
+	case m&os.ModeSymlink != 0:
+		return zegRuleRefuse("D9", "fs_symlink", zegFsWhy("fs_symlink"), subject)
+	case m&os.ModeDevice != 0:
+		return zegRuleRefuse("D9", "fs_device", zegFsWhy("fs_device"), subject)
+	case m&os.ModeNamedPipe != 0:
+		return zegRuleRefuse("D9", "fs_fifo", zegFsWhy("fs_fifo"), subject)
+	case m&os.ModeSocket != 0:
+		return zegRuleRefuse("D9", "fs_socket", zegFsWhy("fs_socket"), subject)
+	case !m.IsRegular():
+		// 其余非常规件一律按设备档拒（fail-closed：✗ 不给未知形态留口子）。
+		return zegRuleRefuse("D9", "fs_device", zegFsWhy("fs_device"), subject)
+	}
+	if st, ok := li.Sys().(*syscall.Stat_t); ok && st.Nlink > 1 {
+		return zegRuleRefuse("D9", "fs_hardlink", zegFsWhy("fs_hardlink"), subject)
+	}
+	if m&(os.ModeSetuid|os.ModeSetgid|os.ModeSticky) != 0 || !zegModeSafeSet[int(m.Perm())] {
+		return zegRuleRefuse("D9", "fs_mode_unsafe", zegFsWhy("fs_mode_unsafe"), subject)
+	}
+	return nil
+}
+
+// zegRefuseSourceEntry —— 打包端对**源件**的检查（`lstat` ⇒ 逐条具名拒）。
+func zegRefuseSourceEntry(fp string) error {
+	li, err := os.Lstat(fp)
+	if err != nil {
+		return err
+	}
+	return zegRefuseEntryMode(li, fp)
+}
+
+// zegRebuildTarget —— 重建端落点的**唯一取法**：先过路径规则表，再断言「解出来的落点仍在根内」
+// （**第二个可穿点** —— ✗ 不许只靠打包端；`§十九` #26 的「双向校验」）。
+func zegRebuildTarget(root, rel string) (string, error) {
+	if err := zegRefusePath(rel); err != nil {
+		return "", err
+	}
+	clean := filepath.Clean(filepath.Join(root, filepath.FromSlash(rel)))
+	rootClean := filepath.Clean(root)
+	if clean != rootClean && !strings.HasPrefix(clean, rootClean+string(os.PathSeparator)) {
+		return "", zegRuleRefuse("D9", "rebuild_escapes_root", "重建落点解出来跑到根外（第二个可穿点）",
+			fmt.Sprintf("段 %q ⇒ %s", rel, clean))
+	}
+	return clean, nil
+}
+
+// zegOpenRebuildTarget —— 重建端落件的**唯一开件点**：`O_NOFOLLOW|O_EXCL`（`§11.2` 新增第 8 条）。
+// 已存在 ⇒ 先 `lstat` 断言「普通件 ＋ 非符号链接 ＋ 非特殊件 ＋ 非硬链」（✗ **不跟随符号链接**），
+// 再以 `O_NOFOLLOW|O_TRUNC` 重开；不存在 ⇒ `O_NOFOLLOW|O_EXCL` **原子建**（✗ 静默覆盖盘上非普通件）。
+func zegOpenRebuildTarget(tgt string) (*os.File, error) {
+	if li, err := os.Lstat(tgt); err == nil {
+		if rerr := zegRefuseEntryMode(li, tgt); rerr != nil {
+			return nil, rerr
+		}
+		return os.OpenFile(tgt, os.O_RDWR|os.O_TRUNC|syscall.O_NOFOLLOW, 0o644)
+	}
+	return os.OpenFile(tgt, os.O_RDWR|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o644)
+}
+
+// zegAuditIndexEntries —— 读端的**逐段审计**（`§11.2` 新增第 8 条 ＋ 不变量 7）：
+//
+//	① `path` 逐条过 `zegPathRules`（命中 ⇒ 具名拒 D9）；
+//	② `mode` 必须在**安全子集**内（禁 setuid / setgid / sticky）；
+//	③ `mediaType` —— 未标 / 闭集外 ⇒ **放行 ＋ 登记**（照 OCI「MUST NOT error」）；
+//	   闭集内却与该段 `path` 推出的类不符 ⇒ 拒（`§11.2` 不变量 7.3「**禁同一键换语义**」）。
+//
+// ★ 登记面写回 `idx`（`UnlabeledMedia` / `UnknownMedia`）⇒ 命令面（`info` / `verify`）逐字印出
+// （✗ 不静默当已标 —— `§十九` #5 的「登记」在卵族命令面的落点）。
+func zegAuditIndexEntries(idx *zegIndex) error {
+	closed := zegMediaTypeClosedSet()
+	for _, e := range idx.Entries {
+		if err := zegRefusePath(e.Path); err != nil {
+			return err
+		}
+		if !zegModeSafeSet[e.Mode] {
+			return zegRuleRefuse("D9", "fs_mode_unsafe", zegFsWhy("fs_mode_unsafe"),
+				fmt.Sprintf("段 %q 的 mode=%#o", e.Path, e.Mode))
+		}
+		mt := strings.TrimSpace(e.MediaType)
+		if mt == "" {
+			idx.UnlabeledMedia = append(idx.UnlabeledMedia, e.Path)
+			continue
+		}
+		class, known := closed[mt]
+		if !known {
+			idx.UnknownMedia = append(idx.UnknownMedia, e.Path+"="+mt)
+			continue
+		}
+		want, ok := closed[zegMediaTypeOfPath(e.Path)]
+		if !ok || want != class {
+			return zegRuleRefuse(zegTierSurface, "mediaType_class_mismatch",
+				"同一个 `mediaType` 键换了语义：取值声明的 OCI 类与该段 path 推出的类不符（§11.2 不变量 7.3）",
+				fmt.Sprintf("段 %q 的 mediaType=%q（声明类 %s，path 推出类 %s）", e.Path, mt, class, want))
+		}
+	}
+	return nil
+}
+
 // ---- 收集条目 -------------------------------------------------------------------------------
 
 // zegCollectEntries —— 遍历源目录出条目（**顺序确定**：目录与文件都排序 · ✗ 与 py 逐字同构）。
@@ -245,16 +590,19 @@ func zegCollectEntries(src string) ([]*zegEntry, error) {
 		sort.Strings(files)
 		for _, fn := range files {
 			fp := filepath.Join(dir, fn)
-			if li, lerr := os.Lstat(fp); lerr == nil && li.Mode()&os.ModeSymlink != 0 {
-				return fmt.Errorf("v1 不支持符号链接：%s", fp)
-			}
 			rel, rerr := filepath.Rel(src, fp)
 			if rerr != nil {
 				return rerr
 			}
 			rel = filepath.ToSlash(rel)
-			if strings.HasPrefix(rel, "..") {
-				return fmt.Errorf("越界路径：%s", rel)
+			// ★ 卵1② 打包端**第一道**：路径串规则表（与读端 `zegParseIndex`、重建端 `zegRebuildTarget`
+			// **同表** ⇒ 「双向校验」）。
+			if err := zegRefusePath(rel); err != nil {
+				return err
+			}
+			// ★ 卵1② 打包端**第二道**：`lstat`（**不跟随**）⇒ 特殊文件 / 硬链 / mode 安全子集，逐条具名拒。
+			if err := zegRefuseSourceEntry(fp); err != nil {
+				return err
 			}
 			st, serr := os.Stat(fp)
 			if serr != nil {
@@ -265,11 +613,12 @@ func zegCollectEntries(src string) ([]*zegEntry, error) {
 				return herr
 			}
 			entries = append(entries, &zegEntry{
-				Path:   rel,
-				Size:   st.Size(),
-				SHA256: sha,
-				Mode:   int(st.Mode().Perm()),
-				src:    fp,
+				Path:      rel,
+				Size:      st.Size(),
+				SHA256:    sha,
+				Mode:      int(st.Mode().Perm()),
+				MediaType: zegMediaTypeOfPath(rel), // ★ 卵1① 写端：与读端**同一张**表
+				src:       fp,
 			})
 		}
 		for _, dn := range dirs {
@@ -300,7 +649,7 @@ func zegMarshalIndex(entries []*zegEntry, align int, now string) ([]byte, error)
 	}
 	ej := make([]zegEntryJSON, 0, len(entries))
 	for _, e := range entries {
-		ej = append(ej, zegEntryJSON{Path: e.Path, Off: e.Off, Size: e.Size, SHA256: e.SHA256, Mode: e.Mode})
+		ej = append(ej, zegEntryJSON{Path: e.Path, Off: e.Off, Size: e.Size, SHA256: e.SHA256, Mode: e.Mode, MediaType: e.MediaType})
 	}
 	idx := zegIndexJSON{
 		Magic:     zegMagic,
@@ -425,8 +774,9 @@ func zegParseIndex(path string) (*zegIndex, error) {
 	if string(magic) != zegMagic {
 		return nil, fmt.Errorf("magic 不符（不是 %s 文件）：%s", zegMagic, zegPyBytesRepr(magic))
 	}
-	if ver != zegFormatVer {
-		return nil, fmt.Errorf("格式版本不支持：%d", ver)
+	// ★ 卵6：**主号闸**（前向拒 D2 —— 含「签名块 v2 ＝ 主号 2 ⇒ 旧读端必拒」；过旧拒 D3）。
+	if err := zegCompatGateMainVersion(ver, zegVersionSitePrefix); err != nil {
+		return nil, err
 	}
 	if !zegIsPow2(align) || align < zegMinAlign {
 		return nil, fmt.Errorf("前缀里的 align 不合理：%d", align)
@@ -436,6 +786,12 @@ func zegParseIndex(path string) (*zegIndex, error) {
 	}
 	body := make([]byte, n)
 	if _, err := io.ReadFull(f, body); err != nil {
+		return nil, err
+	}
+	// ★ 卵6：**索引体兼容闸**（不可变面/可加面二分类 ＋ `min_readable` 牙 ＋「禁同键换语义」）——
+	// 必须跑在 `json.Unmarshal` **之前**：同一键换类（如 `align` 由 number 变成 string）会让结构化解码
+	// 直接吐一句无名的类型错 ⇒ 档位点不出来、也点不出「该升主号」（见 `zerg_egg_version.go`）。
+	if _, err := zegCompatGateIndexBody(body); err != nil {
 		return nil, err
 	}
 	var raw zegIndexJSON
@@ -451,14 +807,20 @@ func zegParseIndex(path string) (*zegIndex, error) {
 	if !zegIsPow2(raw.Align) || raw.Align < zegMinAlign {
 		return nil, fmt.Errorf("align 字段不合理：%d", raw.Align)
 	}
-	return &zegIndex{
+	idx := &zegIndex{
 		Magic:     raw.Magic,
 		Version:   raw.Version,
 		Align:     raw.Align,
 		Tool:      raw.Tool,
 		CreatedAt: raw.CreatedAt,
 		Entries:   raw.Entries,
-	}, nil
+	}
+	// ★ 卵1② ＋ 卵1①：读端**逐段审计**（path / mode / mediaType 三道）—— 这是「双向校验」的另一半；
+	// 跑在结构化解码之后、返回之前（拒 ⇒ 具名 `*zegRefusal`，点名档位与规则）。
+	if err := zegAuditIndexEntries(idx); err != nil {
+		return nil, err
+	}
+	return idx, nil
 }
 
 // ---- 分块可续传拷贝 -------------------------------------------------------------------------
@@ -593,17 +955,19 @@ func zegVerify(path, rebuildInto string) ([]string, *zegIndex, error) {
 		}
 		defer rf.Close()
 		for _, e := range idx.Entries {
-			tgt := filepath.Join(rebuildInto, filepath.FromSlash(e.Path))
+			// ★ 卵1② 重建端：落点走 `zegRebuildTarget`（路径规则表 ＋ 根内断言）＋
+			// `zegOpenRebuildTarget`（`O_NOFOLLOW|O_EXCL`）⇒ **第二个可穿点也加固**。
+			tgt, terr := zegRebuildTarget(rebuildInto, e.Path)
+			if terr != nil {
+				return nil, nil, terr
+			}
 			if err := os.MkdirAll(filepath.Dir(tgt), 0o755); err != nil {
 				return nil, nil, err
 			}
 			if _, err := rf.Seek(e.Off, io.SeekStart); err != nil {
 				return nil, nil, err
 			}
-			if err := os.WriteFile(tgt, nil, 0o644); err != nil {
-				return nil, nil, err
-			}
-			g, err := os.OpenFile(tgt, os.O_RDWR|os.O_TRUNC, 0o644)
+			g, err := zegOpenRebuildTarget(tgt)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -646,12 +1010,21 @@ func zegCmdInfo(stdout io.Writer, path string) int {
 	fmt.Fprintf(stdout, "  magic=%s version=%d align=%d（%d KiB）\n", idx.Magic, idx.Version, idx.Align, idx.Align/1024)
 	fmt.Fprintf(stdout, "  产出工具=%s %s  产出时间=%s\n", idx.Tool.Name, idx.Tool.Version, idx.CreatedAt)
 	fmt.Fprintf(stdout, "  段数=%d  文件大小=%.1f KiB\n", len(idx.Entries), float64(fi.Size())/1024)
+	// ★ 卵1①：索引与签名段自身的声明（OCI manifest 档 —— 段表即该段）。
+	fmt.Fprintf(stdout, "  索引段 mediaType=%s（OCI manifest）\n", zegMediaManifest)
 	for _, e := range idx.Entries {
 		sha := e.SHA256
 		if len(sha) > 16 {
 			sha = sha[:16]
 		}
-		fmt.Fprintf(stdout, "    - %-40s %9d B  off=%d  %s\n", e.Path, e.Size, e.Off, sha)
+		// ★ 卵1①：逐段**多印** `mediaType=`（取值落 OCI 闭集内）；未标 ⇒ 逐字「未标 mediaType」
+		//（✗ 不许静默当已标 —— 照 OCI 放行但必须登记）。
+		mt := strings.TrimSpace(e.MediaType)
+		if mt == "" {
+			mt = "未标 mediaType（登记）"
+		}
+		fmt.Fprintf(stdout, "    - %-40s %9d B  off=%d  %s  mediaType=%s  seg=%s\n",
+			e.Path, e.Size, e.Off, sha, mt, zegSegOfPath(e.Path))
 	}
 	return exitOK
 }
@@ -832,6 +1205,327 @@ func zegSelfTest(stdout, stderr io.Writer) int {
 	return exitOK
 }
 
+// zegFormatSelfTest —— 卵1①②（格式与工具面）的自检：**四态亲测 ＋ 四枚负控**
+// （✗ 不与旧档 / 卵3① / 卵6 三行混行 —— 四行分开印）。
+//
+//	态① 正常卵 ⇒ **写端表的 `mediaType`** ⟷ **读端判读**逐条一致（两侧同表逐条对拍）
+//	态② `mediaType` 缺失 / 闭集外 ⇒ **照 OCI 放行 ＋ 登记**（✗ 不 error）
+//	态③ 恶意路径逐类 ⇒ **必拒且点名规则**（`../` · 绝对 · 盘符 · 空段 · NUL · 尾随点 · 保留名 · 反斜杠 · 非 NFC）
+//	态④ 「同键换语义」（`mediaType` 在闭集内、却与该段 `path` 推出的类不符）⇒ **拒** 且点名档位
+//	负控 A：同一份「未标」输入走**不审计**的旧形态 ⇒ **放行**（＝证明这道牙不是永真）
+//	负控 B：合法树 pack → verify（重建）⇒ 重建内容与源**逐字节同**（拒执不得伤正路）
+//	负控 C：`setuid` 源件 ⇒ 拒 `fs_mode_unsafe`
+//	负控 D：符号链接源件 ⇒ 拒 `fs_symlink`
+func zegFormatSelfTest(stdout, stderr io.Writer) int {
+	t, err := os.MkdirTemp("", "zerg-egg-format-selftest")
+	if err != nil {
+		fmt.Fprintf(stderr, "%s: %v\n", zegProg, err)
+		return exitFail
+	}
+	defer os.RemoveAll(t) // 自回收（TMPDIR 前后 delta=0）
+
+	src := filepath.Join(t, "tree")
+	for _, d := range []string{"model", "tokenizer"} {
+		if err := os.MkdirAll(filepath.Join(src, d), 0o755); err != nil {
+			return zegSelfFail(stderr, err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(src, "config.json"), []byte("{\"arch\":\"format-selftest\"}"), 0o644); err != nil {
+		return zegSelfFail(stderr, err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "tokenizer", "tokenizer.json"), []byte("{\"v\":1}"), 0o644); err != nil {
+		return zegSelfFail(stderr, err)
+	}
+	for _, i := range []int{1, 2} {
+		buf := make([]byte, 4096)
+		if _, err := rand.Read(buf); err != nil {
+			return zegSelfFail(stderr, err)
+		}
+		if err := os.WriteFile(filepath.Join(src, "model", fmt.Sprintf("w-%d.safetensors", i)), buf, 0o644); err != nil {
+			return zegSelfFail(stderr, err)
+		}
+	}
+	egg := filepath.Join(t, "format.egg")
+	entries, err := zegPack(src, egg, 4096, "2000-01-01T00:00:00Z")
+	if err != nil {
+		return zegSelfFail(stderr, err)
+	}
+	entryN := len(entries)
+
+	// clone —— 复制一枚卵并把**索引体**按 `edit` 改过（段偏移一位不动）。
+	clone := func(name string, edit func(ents []map[string]json.RawMessage) error) (string, error) {
+		p := filepath.Join(t, name)
+		d, rerr := os.ReadFile(egg)
+		if rerr != nil {
+			return "", rerr
+		}
+		if werr := os.WriteFile(p, d, 0o644); werr != nil {
+			return "", werr
+		}
+		rerr = zegVerRebuildEgg(p, func(idx []byte) ([]byte, error) {
+			var m map[string]json.RawMessage
+			if uerr := json.Unmarshal(idx, &m); uerr != nil {
+				return nil, uerr
+			}
+			var ents []map[string]json.RawMessage
+			if uerr := json.Unmarshal(m["entries"], &ents); uerr != nil {
+				return nil, uerr
+			}
+			if eerr := edit(ents); eerr != nil {
+				return nil, eerr
+			}
+			eb, merr := json.Marshal(ents)
+			if merr != nil {
+				return nil, merr
+			}
+			m["entries"] = eb
+			return json.Marshal(m)
+		}, 0)
+		if rerr != nil {
+			return "", rerr
+		}
+		return p, nil
+	}
+	bodyOf := func(p string) []byte {
+		d, rerr := os.ReadFile(p)
+		if rerr != nil {
+			return nil
+		}
+		n := zegIdxLenOf(d)
+		dl := len(d)
+		if n <= 0 || zegHeaderPrefix+n > dl {
+			return nil
+		}
+		return d[zegHeaderPrefix : zegHeaderPrefix+n]
+	}
+	putPath := func(ents []map[string]json.RawMessage, i int, p string) error {
+		qb, qerr := json.Marshal(p)
+		if qerr != nil {
+			return qerr
+		}
+		ents[i]["path"] = json.RawMessage(qb)
+		return nil
+	}
+	findEntry := func(ents []map[string]json.RawMessage, want string) int {
+		for i, e := range ents {
+			var p string
+			if json.Unmarshal(e["path"], &p) == nil && p == want {
+				return i
+			}
+		}
+		return -1
+	}
+	// 态③ 的九类恶意路径（逐类一条规则 ⇒ 拒执必须点名它）。
+	malicious := []struct {
+		Name string
+		Path string
+		Rule string
+	}{
+		{Name: "..", Path: "../etc/passwd", Rule: "path_dotdot"},
+		{Name: "绝对", Path: "/etc/passwd", Rule: "path_absolute"},
+		{Name: "盘符", Path: "C:/windows/system32", Rule: "path_windows_drive"},
+		{Name: "空段", Path: "a//b", Rule: "path_not_normalized"},
+		{Name: "NUL", Path: "a\x00b", Rule: "path_nul"},
+		{Name: "尾随点", Path: "a.", Rule: "path_trailing_dot_space"},
+		{Name: "保留名", Path: "con.txt", Rule: "path_windows_reserved"},
+		{Name: "反斜杠", Path: "a\\b", Rule: "path_backslash"},
+		{Name: "非NFC", Path: "cafe\u0301.json", Rule: "path_not_nfc"},
+	}
+
+	// ---- 态①：写端 ⟷ 读端 `mediaType` 逐条一致 ----
+	idx, err := zegParseIndex(egg)
+	if err != nil {
+		return zegSelfFail(stderr, err)
+	}
+	unlabeled0 := len(idx.UnlabeledMedia)
+	unknown0 := len(idx.UnknownMedia)
+	if unlabeled0 != 0 || unknown0 != 0 {
+		return zegSelfFail(stderr, fmt.Errorf("态① 新打的卵不该有未标/未知 mediaType：未标=%v 未知=%v",
+			idx.UnlabeledMedia, idx.UnknownMedia))
+	}
+	entriesN := len(idx.Entries)
+	if entriesN != entryN {
+		return zegSelfFail(stderr, fmt.Errorf("态① 段数对不上：写端 %d ⟷ 读端 %d", entryN, entriesN))
+	}
+	for i, e := range idx.Entries {
+		want := zegMediaTypeOfPath(e.Path)
+		if e.MediaType != want {
+			return zegSelfFail(stderr, fmt.Errorf("态① 段 %q 的 mediaType=%q ≠ 表推出 %q", e.Path, e.MediaType, want))
+		}
+		if entries[i].MediaType != e.MediaType {
+			return zegSelfFail(stderr, fmt.Errorf("态① 写端 ⟷ 读端不一致：段 %q 写 %q 读 %q", e.Path, entries[i].MediaType, e.MediaType))
+		}
+	}
+
+	// ---- 态②：未标 / 闭集外 ⇒ 放行 ＋ 登记（✗ 不 error）----
+	oldEgg, err := clone("old.egg", func(ents []map[string]json.RawMessage) error {
+		for i := range ents {
+			delete(ents[i], "mediaType")
+		}
+		return nil
+	})
+	if err != nil {
+		return zegSelfFail(stderr, err)
+	}
+	oldIdx, oerr := zegParseIndex(oldEgg)
+	if oerr != nil {
+		return zegSelfFail(stderr, fmt.Errorf("态② 未标 mediaType 竟被拒（✗ 照 OCI 应放行）：%v", oerr))
+	}
+	unlabeledOld := len(oldIdx.UnlabeledMedia)
+	unknownOld := len(oldIdx.UnknownMedia)
+	if unlabeledOld != entryN || unknownOld != 0 {
+		return zegSelfFail(stderr, fmt.Errorf("态② 未标档登记面不对：未标 %d（应 %d）未知 %d", unlabeledOld, entryN, unknownOld))
+	}
+	unkEgg, err := clone("unk.egg", func(ents []map[string]json.RawMessage) error {
+		ents[0]["mediaType"] = json.RawMessage("\"application/vnd.zerg.weights.v9+unknown\"")
+		rest := len(ents)
+		for i := 1; i < rest; i++ {
+			delete(ents[i], "mediaType")
+		}
+		return nil
+	})
+	if err != nil {
+		return zegSelfFail(stderr, err)
+	}
+	unkIdx, uerr := zegParseIndex(unkEgg)
+	if uerr != nil {
+		return zegSelfFail(stderr, fmt.Errorf("态② 闭集外 mediaType 竟被拒（✗ 照 OCI 应放行）：%v", uerr))
+	}
+	unknownUnk := len(unkIdx.UnknownMedia)
+	unlabeledUnk := len(unkIdx.UnlabeledMedia)
+	if unknownUnk != 1 || unlabeledUnk != entryN-1 {
+		return zegSelfFail(stderr, fmt.Errorf("态② 未知类登记面不对：未知 %d（应 1）未标 %d（应 %d）",
+			unknownUnk, unlabeledUnk, entryN-1))
+	}
+
+	// ---- 态③：恶意路径逐类必拒且点名规则 ----
+	for i, mc := range malicious {
+		name, rule, badPath := mc.Name, mc.Rule, mc.Path
+		badEgg, cerr := clone(fmt.Sprintf("bad-%d.egg", i), func(ents []map[string]json.RawMessage) error {
+			return putPath(ents, 0, badPath)
+		})
+		if cerr != nil {
+			return zegSelfFail(stderr, cerr)
+		}
+		if bodyOf(badEgg) == nil {
+			return zegSelfFail(stderr, fmt.Errorf("态③ %s 取不到索引体（夹具坏）", name))
+		}
+		_, perr := zegParseIndex(badEgg)
+		if perr == nil {
+			return zegSelfFail(stderr, fmt.Errorf("态③ 恶意路径 %s（%q）竟被放行", name, badPath))
+		}
+		ref, ok := perr.(*zegRefusal)
+		if !ok || ref.Tier != "D9" || !strings.Contains(ref.Msg, rule) {
+			return zegSelfFail(stderr, fmt.Errorf("态③ %s 拒了但没点名 D9/规则 %s：%v", name, rule, perr))
+		}
+	}
+
+	// ---- 态④：同键换语义（闭集内却与该段 path 推出的类不符）⇒ 必拒 ----
+	semEgg, err := clone("sem.egg", func(ents []map[string]json.RawMessage) error {
+		j := findEntry(ents, "config.json")
+		if j < 0 {
+			return fmt.Errorf("夹具里找不到 config.json 段")
+		}
+		qb, qerr := json.Marshal(zegMediaLayer)
+		if qerr != nil {
+			return qerr
+		}
+		ents[j]["mediaType"] = json.RawMessage(qb)
+		return nil
+	})
+	if err != nil {
+		return zegSelfFail(stderr, err)
+	}
+	_, semErr := zegParseIndex(semEgg)
+	if semErr == nil {
+		return zegSelfFail(stderr, fmt.Errorf("态④ 同键换语义竟被放行（✗ 闭集内但类不符必须拒）"))
+	}
+	semRef, ok := semErr.(*zegRefusal)
+	if !ok || semRef.Tier != zegTierSurface || !strings.Contains(semRef.Msg, "mediaType_class_mismatch") {
+		return zegSelfFail(stderr, fmt.Errorf("态④ 拒了但没点名 %s/mediaType_class_mismatch：%v", zegTierSurface, semErr))
+	}
+
+	// ---- 负控 A：同一份「未标」输入走**不审计**的旧形态 ⇒ 放行（＝本牙非永真）----
+	oldBody := bodyOf(oldEgg)
+	if oldBody == nil {
+		return zegSelfFail(stderr, fmt.Errorf("负控 A 取不到未标档索引体（夹具坏）"))
+	}
+	auditOld, aerr := zegCompatGateIndexBody(oldBody)
+	if aerr != nil {
+		return zegSelfFail(stderr, fmt.Errorf("负控 A 前提不成立：不审计的兼容闸在未标档上竟报错：%v", aerr))
+	}
+	var probe zegIndexJSON
+	if jerr := json.Unmarshal(oldBody, &probe); jerr != nil {
+		return zegSelfFail(stderr, fmt.Errorf("负控 A 前提不成立：不审计的结构化解码在未标档上竟失败：%v", jerr))
+	}
+
+	// ---- 负控 B：合法树 pack → verify（重建）⇒ 重建内容与源逐字节同 ----
+	rebuilt := filepath.Join(t, "rebuilt")
+	probs, _, verr := zegVerify(egg, rebuilt)
+	if verr != nil {
+		return zegSelfFail(stderr, verr)
+	}
+	probN := len(probs)
+	if probN != 0 {
+		return zegSelfFail(stderr, fmt.Errorf("负控 B 干净卵重建报问题：%v", probs))
+	}
+	for _, e := range entries {
+		a, _ := os.ReadFile(filepath.Join(src, filepath.FromSlash(e.Path)))
+		b, _ := os.ReadFile(filepath.Join(rebuilt, filepath.FromSlash(e.Path)))
+		if sha256.Sum256(a) != sha256.Sum256(b) {
+			return zegSelfFail(stderr, fmt.Errorf("负控 B 重建内容不同：%s", e.Path))
+		}
+	}
+
+	// ---- 负控 C：`setuid` 源件 ⇒ 拒 `fs_mode_unsafe` ----
+	csrc := filepath.Join(t, "csrc")
+	if err := os.MkdirAll(csrc, 0o755); err != nil {
+		return zegSelfFail(stderr, err)
+	}
+	cf := filepath.Join(csrc, "f.bin")
+	if err := os.WriteFile(cf, []byte("x"), 0o644); err != nil {
+		return zegSelfFail(stderr, err)
+	}
+	if err := os.Chmod(cf, 0o644|os.ModeSetuid); err != nil {
+		return zegSelfFail(stderr, err)
+	}
+	_, cerrC := zegPack(csrc, filepath.Join(t, "c.egg"), 4096, "")
+	if cerrC == nil {
+		return zegSelfFail(stderr, fmt.Errorf("负控 C setuid 源件竟被打包（✗ 必须拒）"))
+	}
+	if !strings.Contains(cerrC.Error(), "fs_mode_unsafe") {
+		return zegSelfFail(stderr, fmt.Errorf("负控 C 拒了但没点名 fs_mode_unsafe：%v", cerrC))
+	}
+
+	// ---- 负控 D：符号链接源件 ⇒ 拒 `fs_symlink` ----
+	dsrc := filepath.Join(t, "dsrc")
+	if err := os.MkdirAll(dsrc, 0o755); err != nil {
+		return zegSelfFail(stderr, err)
+	}
+	real := filepath.Join(dsrc, "real.bin")
+	if err := os.WriteFile(real, []byte("y"), 0o644); err != nil {
+		return zegSelfFail(stderr, err)
+	}
+	if err := os.Symlink(real, filepath.Join(dsrc, "link.bin")); err != nil {
+		return zegSelfFail(stderr, err)
+	}
+	_, cerrD := zegPack(dsrc, filepath.Join(t, "d.egg"), 4096, "")
+	if cerrD == nil {
+		return zegSelfFail(stderr, fmt.Errorf("负控 D 符号链接源件竟被打包（✗ 必须拒）"))
+	}
+	if !strings.Contains(cerrD.Error(), "fs_symlink") {
+		return zegSelfFail(stderr, fmt.Errorf("负控 D 拒了但没点名 fs_symlink：%v", cerrD))
+	}
+
+	addKeys := len(auditOld.AdditiveEntryKeys)
+	segN := len(zegSegMediaType)
+	clsN := len(zegMediaTypeClosedSet())
+	malN := len(malicious)
+	fmt.Fprintf(stdout, "self-test（卵1 格式与工具面）通过（4 态 ＋ 4 负控）：① 写端 ⟷ 读端 mediaType 逐条一致（%d 段 · 映射表 %d 段 %d 类）· ② 未标 %d 段 / 未知 %d 段 ⇒ 照 OCI 放行 ＋ 登记（✗ 不 error）· ③ 恶意路径 %d 类逐类必拒且点名规则 · ④ 「同键换语义」mediaType 闭集内却与 path 推出的类不符 ⇒ 拒[%s] 且点名 mediaType_class_mismatch · 负控 A 未标输入走不审计旧形态 ⇒ 放行（牙非永真 · 兼容闸登记可加面段键 %d 个）· 负控 B 合法树 rebuild 逐字节同 · 负控 C setuid 源件 ⇒ 拒[fs_mode_unsafe] · 负控 D 符号链接源件 ⇒ 拒[fs_symlink]\n",
+		entryN, segN, clsN, unlabeledOld, unknownUnk, malN, zegTierSurface, addKeys)
+	return exitOK
+}
+
 func zegSelfFail(stderr io.Writer, err error) int {
 	fmt.Fprintf(stderr, "%s: 自检失败：%v\n", zegProg, err)
 	return exitFail
@@ -850,9 +1544,12 @@ type zegArgs struct {
 	selfTest    bool
 	chunkSize   int
 	nowVal      string
+	// workers —— 卵3① 的**隐藏取旗标**（`--workers N` · 照 `--now` 的同款：✗ 不进帮助面 ⇒ 不污染 `-h` 对拍）。
+	// 0 ＝ 自动档（并发度 `W = clamp(ceil(D/h), 1, NumCPU)` · `h` 由内存探针现测）。
+	workers int
 }
 
-var zegOpts = []string{"--align", "--rebuild-into", "--self-test", "--chunk-size", "--help", "--now"}
+var zegOpts = []string{"--align", "--rebuild-into", "--self-test", "--chunk-size", "--help", "--now", "--workers"}
 
 // zegResolveOpt —— 精确命中优先；否则唯一前缀；多命中 ⇒ 歧义串；零命中 ⇒ ""。
 func zegResolveOpt(name string) (string, string) {
@@ -954,6 +1651,16 @@ func zegParseArgv(argv []string) (*zegArgs, string) {
 					return nil, fmt.Sprintf("argument %s: expected one argument", name)
 				}
 				a.nowVal = v
+			case "--workers":
+				v, ok := take()
+				if !ok {
+					return nil, fmt.Sprintf("argument %s: expected one argument", name)
+				}
+				n, werr := strconv.Atoi(v)
+				if werr != nil {
+					return nil, fmt.Sprintf("argument --workers: invalid int value: '%s'", v)
+				}
+				a.workers = n
 			}
 			continue
 		}
@@ -999,7 +1706,18 @@ func zergEggGateMain(stdout, stderr io.Writer, argv []string) int {
 		return exitUsage
 	}
 	if a.selfTest {
-		return zegSelfTest(stdout, stderr)
+		// 旧档（py 真搬面 · 10 项）先跑；★ 再跑卵3① 的并行＋缓存档、卵6 的版本与兼容档、
+		// 卵1 的格式与工具面档（**四行分开印** ⇒ 前三行契约读数一字不动 · ✗ 不许漂）。
+		if rc := zegSelfTest(stdout, stderr); rc != exitOK {
+			return rc
+		}
+		if rc := zegvSelfTest(stdout, stderr); rc != exitOK {
+			return rc
+		}
+		if rc := zegVersionSelfTest(stdout, stderr); rc != exitOK {
+			return rc
+		}
+		return zegFormatSelfTest(stdout, stderr)
 	}
 	switch a.cmd {
 	case "pack":
@@ -1043,14 +1761,16 @@ func zergEggGateMain(stdout, stderr io.Writer, argv []string) int {
 		fmt.Fprintf(stdout, "✓ 目标与索引一致（本次写 %d/%d 块）\n", wrote, n)
 		return exitOK
 	case "verify":
-		probs, idx, err := zegVerify(a.a, a.rebuildInto)
+		// ★ 卵3①：走 `zerg_egg_verify.go` 的**并行 ＋ 内容寻址缓存**入口（判据/问题串与旧档同源 ·
+		// 逐字节一致由 `TestZergEggVerifyParallelMatchesSingle` 钉着）。旧档 `zegVerify` 仍是行为真源。
+		res, err := zegvVerifyEntry(stdout, a.a, a.rebuildInto, a.workers)
 		if err != nil {
 			fmt.Fprintf(stderr, "%s: %v\n", zegProg, err)
 			return exitFail
 		}
-		if len(probs) > 0 {
-			fmt.Fprintf(stdout, "✗ 校验失败 %d 项：\n", len(probs))
-			for _, p := range probs {
+		if len(res.Problems) > 0 {
+			fmt.Fprintf(stdout, "✗ 校验失败 %d 项：\n", len(res.Problems))
+			for _, p := range res.Problems {
 				fmt.Fprintf(stdout, "   - %s\n", p)
 			}
 			return exitFail
@@ -1059,7 +1779,25 @@ func zergEggGateMain(stdout, stderr io.Writer, argv []string) int {
 		if a.rebuildInto != "" {
 			suffix = "，已重建到 " + a.rebuildInto
 		}
-		fmt.Fprintf(stdout, "✓ 校验通过（%d 段，align=%d）%s\n", len(idx.Entries), idx.Align, suffix)
+		mark := ""
+		if res.CacheHit {
+			mark = " " + zegvCacheMark
+		}
+		fmt.Fprintf(stdout, "✓ 校验通过（%d 段，align=%d）%s%s\n", len(res.Index.Entries), res.Index.Align, mark, suffix)
+		// ★ 卵1① 的**登记面**印出（✗ 不静默当已标）：未标 / 闭集外的 `mediaType` 照 OCI **放行**
+		// 但必须逐字点名。★ 命中缓存档是**空壳索引**（无 entries）⇒ 本段不印（口径见 `zegvShellIndex`）。
+		if res.Index != nil {
+			unlabeled := len(res.Index.UnlabeledMedia)
+			unknown := len(res.Index.UnknownMedia)
+			if unlabeled > 0 {
+				fmt.Fprintf(stdout, "· 未标 mediaType %d 段（已登记 · 照 OCI「MUST NOT error」放行）：%s\n",
+					unlabeled, strings.Join(res.Index.UnlabeledMedia, " · "))
+			}
+			if unknown > 0 {
+				fmt.Fprintf(stdout, "· 未知 mediaType %d 段（已登记 · 照 OCI 放行）：%s\n",
+					unknown, strings.Join(res.Index.UnknownMedia, " · "))
+			}
+		}
 		return exitOK
 	}
 	fmt.Fprint(stdout, zegHelpText)

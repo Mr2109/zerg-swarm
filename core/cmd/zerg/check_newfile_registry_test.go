@@ -182,7 +182,7 @@ func TestCheckNewfileRegistryGatePort(t *testing.T) {
 
 	// ── 清单 / 自检 / 帮助 / 用法错 ─────────────────────────────────────
 	rcST, outST, _ := gnrRunT(t, "--self-test")
-	if rcST != 0 || !strings.Contains(outST, "自检结论: 全过（断言 48 条 · 失败 0）") {
+	if rcST != 0 || !strings.Contains(outST, "自检结论: 全过（断言 56 条 · 失败 0）") {
 		t.Fatalf("--self-test 失败：得 rc=%d out=%s", rcST, outST)
 	}
 	rcH, outH, _ := gnrRunT(t, "-h")
@@ -232,12 +232,12 @@ func TestCheckNewfileRegistryMachineFace(t *testing.T) {
 			t.Fatalf("--json 失败：缺顶层键 %q", k)
 		}
 	}
-	if ef, _ := obj["expected_faces"].([]interface{}); len(ef) != 10 {
-		t.Fatalf("--json 失败：expected_faces 应 10 面，得 %v", obj["expected_faces"])
+	if ef, _ := obj["expected_faces"].([]interface{}); len(ef) != 11 {
+		t.Fatalf("--json 失败：expected_faces 应 11 面，得 %v", obj["expected_faces"])
 	}
 	fs, _ := obj["face_states"].(map[string]interface{})
-	if len(fs) != 10 {
-		t.Fatalf("--json 失败：face_states 应 10 键，得 %v", fs)
+	if len(fs) != 11 {
+		t.Fatalf("--json 失败：face_states 应 11 键，得 %v", fs)
 	}
 	cnt, _ := obj["counts"].(map[string]interface{})
 	for _, s := range []string{"PASS", "FAIL", "BLOCKED", "REPORT", "UNKNOWN", "HOST-REQUIRED"} {
@@ -247,8 +247,8 @@ func TestCheckNewfileRegistryMachineFace(t *testing.T) {
 	}
 	// ★ 面⑧ host-bound：单列 HOST-REQUIRED · 不计 pass/fail · 暴露计数
 	fr, _ := obj["face_records"].(map[string]interface{})
-	if fr == nil || len(fr) != 10 {
-		t.Fatalf("--json 失败：face_records 应 10 面，得 %v", fr)
+	if fr == nil || len(fr) != 11 {
+		t.Fatalf("--json 失败：face_records 应 11 面，得 %v", fr)
 	}
 	r8, _ := fr["⑧家目录批准件"].(map[string]interface{})
 	if r8 == nil || r8["state"] != "HOST-REQUIRED" || r8["reason_code"] != "SKIPPED-HOST-BOUND" || r8["decided"] != false {
@@ -287,7 +287,7 @@ func TestCheckNewfileRegistryMachineFace(t *testing.T) {
 		last = i
 	}
 	fsOrder := []string{`"①公开标记表":`, `"②干跑登记":`, `"③门①两张真源":`, `"④脚本台账":`,
-		`"⑤两器排除表":`, `"⑥失败文案面":`, `"⑧家目录批准件":`, `"⑨.sh门面清册":`, `"口径差栏":`, `"自指":`}
+		`"⑤两器排除表":`, `"⑥失败文案面":`, `"⑧家目录批准件":`, `"⑨.sh门面清册":`, `"⑩三列对拍":`, `"口径差栏":`, `"自指":`}
 	last = -1
 	for _, k := range fsOrder {
 		i := strings.Index(out, k)

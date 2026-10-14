@@ -57,6 +57,8 @@
 //	  `sswReadText`）—— ✗ 不用 `strings.Split(text,"\n")`（会漏 `\r`/`\v`/`\f`/`\u2028` 等 py 行界）。
 //	· 路径拼接走自写 `sswPyJoin`（✗ 不用 `filepath.Join`：`..`/绝对后段/空段三态不同）。
 //	· argparse 面**含前缀缩写**（`--f`/`--self-` 等唯一前缀收；`--s`/`--self` 歧义报错），逐格与 py 对齐。
+//	· ★ **档位反向差集**（缺口 `GAP-20260927-21` · 超出 py 原件的**新增门面**）：默认集阻断步
+//	  ⊆ 快档（`FAST_STEPS`）∪ 声明位（同目录 `fast-excluded.txt`）；有 `FAST_STEPS` 数组时才判。
 package main
 
 import (
@@ -101,6 +103,100 @@ var sswLooseExit = [][2]string{
 // sswScopes —— py `SCOPES`（tuple · 只做成员判定）。
 var sswScopes = []string{
 	"go", "rust", "pub", "tags", "docs", "gates", "tools", "slice", "public", "devdocs", "release",
+}
+
+// ── 档位反向差集（缺口 `GAP-20260927-21` · 需求面 `gate assert-fastlane-membership-explicitly`）──
+//
+//	判据：**默认集阻断步 ⊆ 快档 ∪ 声明位**（`FAST_STEPS` ⟷ `fast-excluded.txt`）。
+//	· 默认集阻断步 = 步骤表里 scope ∈ SCOPES 且 mode == `tri` 的步；
+//	· 快档         = 被扫表件里的 `FAST_STEPS` 名单（提交闸 `--fast` 的唯一来源）；
+//	· 声明位       = 与表件同目录的 `fast-excluded.txt`（一行一个步名 + 理由）。
+//	⇒ 两边都不在 ⇒ 该步被**静默排除**（谁把它挪出快档又不声明，没人看得见）⇒ 红。
+//	★ 仅被扫表件里**有** `FAST_STEPS` 数组时才判（合成夹具无该数组 ⇒ 逐字退回旧行为）。
+//	★★ 「声明位」是一份**只增不删的台账**（缺 `GAP-20260927-21` 拍板：台账口径取「默认集里全部非快档阻断步」，
+//	   而非只登被点名的少数几条 —— 只登少数则仍剩大批静默排除无人覆盖）。✗ 不许写进 `precommit-gates.sh`
+//	   （插入会顶掉其下方跨件的行号引用）；数据件 `.txt` 不会被 `check-gate-coverage` 当门件收。
+
+// sswFastStepsRE —— 抓 `FAST_STEPS=( … )` 数组体（行首 `)` 收尾）。
+var sswFastStepsRE = regexp.MustCompile(`(?s)\nFAST_STEPS=\(\n(.*?)\n\)\n`)
+
+// sswFastItemRE —— 数组体里逐行取被双引号包的条目。
+var sswFastItemRE = regexp.MustCompile(`(?m)^[ \t]*"((?:[^"\\]|\\.)*)"[ \t]*$`)
+
+// sswParseFastSteps —— 表件文本 ⇒ `FAST_STEPS` 名单（无该数组 / 空数组 ⇒ nil）。
+func sswParseFastSteps(text string) []string {
+	m := sswFastStepsRE.FindStringSubmatch(text)
+	if m == nil {
+		return nil
+	}
+	var out []string
+	for _, mm := range sswFastItemRE.FindAllStringSubmatch(m[1], -1) {
+		out = append(out, mm[1])
+	}
+	return out
+}
+
+// sswReadExcluded —— 读声明位 `fast-excluded.txt`（`#` 起头与空行忽略；第一列 = 步名）。
+// 第二返回值 = 该件是否在盘（缺席 ⇒ 视同空声明位，由差集自己判红 · 不静默当绿）。
+func sswReadExcluded(path string) ([]string, bool) {
+	text, err := sswReadText(path)
+	if err != nil {
+		return nil, false
+	}
+	var out []string
+	for _, ln := range sswPySplitLines(text) {
+		s := strings.TrimSpace(ln)
+		if s == "" || strings.HasPrefix(s, "#") {
+			continue
+		}
+		if i := strings.Index(s, "\t"); i >= 0 {
+			s = strings.TrimSpace(s[:i])
+		}
+		if s == "" {
+			continue
+		}
+		out = append(out, s)
+	}
+	return out, true
+}
+
+// sswTierDiff —— 档位反向差集（丙档）：返回逐条违例（空 ⇒ 全过）。
+//
+//	表件文本里没有 `FAST_STEPS` 数组 ⇒ 返回 nil（合成夹具逐字退回旧行为 · ✗ 不误伤）。
+//	双向都判：① 默认集阻断步不在「快档 ∪ 声明位」⇒ 静默排除；② 声明位写了不该写的
+//	（同时在快档里 ⇒ 冗余；不是默认集 tri 步 ⇒ 失指）⇒ 必有一处过时。
+func sswTierDiff(text string, steps []sswStep, exclNames []string) []string {
+	fast := sswParseFastSteps(text)
+	if len(fast) == 0 {
+		return nil
+	}
+	fastSet := map[string]bool{}
+	for _, f := range fast {
+		fastSet[f] = true
+	}
+	exclSet := map[string]bool{}
+	for _, e := range exclNames {
+		exclSet[e] = true
+	}
+	defTri := map[string]bool{}
+	var bad []string
+	for _, s := range steps {
+		if !sswContains(sswScopes, s.scope) || s.mode != "tri" {
+			continue
+		}
+		defTri[s.name] = true
+		if !fastSet[s.name] && !exclSet[s.name] {
+			bad = append(bad, fmt.Sprintf("丙 静默排除：默认集阻断步「%s」既不在快档（`FAST_STEPS`）也不在声明位（`fast-excluded.txt`）—— 谁把它挪出快档又不声明就没人看得见（缺口 `GAP-20260927-21`）", s.name))
+		}
+	}
+	for _, e := range exclNames {
+		if fastSet[e] {
+			bad = append(bad, fmt.Sprintf("丙 声明位冗余：`fast-excluded.txt` 里的「%s」**同时**在快档（`FAST_STEPS`）里 —— 两处都声称，必有一处过时（撤快档那一行，或删声明位这一行）", e))
+		} else if !defTri[e] {
+			bad = append(bad, fmt.Sprintf("丙 声明位失指：`fast-excluded.txt` 里的「%s」不是（或不再是）默认集 `tri` 阻断步 —— 声明位只许收「默认集 tri 步且不在快档」者", e))
+		}
+	}
+	return bad
 }
 
 // sswCmdPrefix —— 自检测例里那条「解释器 + 仓内脚本目录」命令前缀。**拆两截写**：
@@ -297,6 +393,24 @@ func sswSelfTest(stdout io.Writer) int {
 	steps, bad = sswScan("# 只有注释，没有 add_step\n")
 	chk("空转：扫不到任何 add_step ⇒ steps=0（调用方判 rc=2）", fmt.Sprintf("%d", len(steps)), "0")
 
+	// 档位反向差集（丙 · 缺口 `GAP-20260927-21`）：合成表件（含 `FAST_STEPS` 数组）· 不碰真目标。
+	tierBase := "add_step gates \"门A a（阻断）\" tri \"${REPO_ROOT}\" \"cmd-a\"\n" +
+		"add_step gates \"门B b（阻断）\" tri \"${REPO_ROOT}\" \"cmd-b\"\n" +
+		"FAST_STEPS=(\n  \"门A a（阻断）\"\n)\n"
+	tierSteps, _ := sswScan(tierBase)
+	nGood := len(sswTierDiff(tierBase, tierSteps, []string{"门B b（阻断）"}))
+	chk("档位正控：门B 在声明位 ⇒ 0 违例", fmt.Sprintf("%d", nGood), "0")
+	tierBad1 := sswTierDiff(tierBase, tierSteps, nil)
+	chk("档位负控·静默排除：门B 两边都不在 ⇒ 1 违例", fmt.Sprintf("%d", len(tierBad1)), "1")
+	tierName := fmt.Sprintf("%v", len(tierBad1) == 1 && strings.Contains(tierBad1[0], "门B b（阻断）"))
+	chk("档位负控·点名：违例逐字含该步名", tierName, "true")
+	tierBad2 := sswTierDiff(tierBase, tierSteps, []string{"门B b（阻断）", "门A a（阻断）"})
+	chk("档位负控·冗余：声明位含在快档里的门A ⇒ 1 违例", fmt.Sprintf("%d", len(tierBad2)), "1")
+	tierBad3 := sswTierDiff(tierBase, tierSteps, []string{"门B b（阻断）", "门Z z（阻断）"})
+	chk("档位负控·失指：声明位含非默认集步 ⇒ 1 违例", fmt.Sprintf("%d", len(tierBad3)), "1")
+	nNoFast := len(sswTierDiff(sswGood, tierSteps, nil))
+	chk("档位退回：表件无 `FAST_STEPS` ⇒ 0 违例（合成夹具逐字退回旧行为）", fmt.Sprintf("%d", nNoFast), "0")
+
 	if fi, err := os.Stat(sswDefaultFile()); err == nil && !fi.IsDir() {
 		if text, err := sswReadText(sswDefaultFile()); err == nil {
 			if _, bad2 := sswScan(text); len(bad2) == 0 {
@@ -426,14 +540,28 @@ func stepSwitchGateMain(stdout, stderr io.Writer, argv []string) int {
 		}
 	}
 	nall := len(steps)
-	if len(bad) > 0 {
-		fmt.Fprintf(stdout, "✗ 步名↔档位↔严格旗标：违例 %d 条（扫到 add_step %d 条 · 默认集 tri %d · tri-report %d）\n", len(bad), nall, tri, rep)
+	// ★ 档位反向差集（缺口 `GAP-20260927-21`）：仅表件里有 `FAST_STEPS` 数组时才判。
+	fast := sswParseFastSteps(text)
+	var exclNames []string
+	var tierBad []string
+	if len(fast) > 0 {
+		exclNames, _ = sswReadExcluded(sswPyJoin(filepath.Dir(fileVal), "fast-excluded.txt"))
+		tierBad = sswTierDiff(text, steps, exclNames)
+	}
+	if len(bad) > 0 || len(tierBad) > 0 {
+		fmt.Fprintf(stdout, "✗ 步名↔档位↔严格旗标：违例 %d 条（扫到 add_step %d 条 · 默认集 tri %d · tri-report %d）\n", len(bad)+len(tierBad), nall, tri, rep)
 		for _, b := range bad {
+			fmt.Fprintf(stdout, "   ✗ %s\n", b)
+		}
+		for _, b := range tierBad {
 			fmt.Fprintf(stdout, "   ✗ %s\n", b)
 		}
 		return 1
 	}
 	fmt.Fprintf(stdout, "✓ 步名↔档位↔严格旗标：表自洽（add_step %d 条 · 默认集 tri %d · tri-report %d · 甲/乙 违例 0）\n", nall, tri, rep)
+	if len(fast) > 0 {
+		fmt.Fprintf(stdout, "✓ 档位反向差集：默认集阻断步 %d ⊆ 快档 %d ∪ 声明位 %d（无静默排除 · 冗余/失指 0）\n", tri, len(fast), len(exclNames))
+	}
 	return 0
 }
 
@@ -444,3 +572,5 @@ func stepSwitchGateMain(stdout, stderr io.Writer, argv []string) int {
 //  ② py 无最外层兜底（裸 `sys.exit(main(...))`）⇒ 件读不了时裸回溯 rc=1（C 类）；
 //     本件按新口径 fail-closed rc=2（该格只保 rc 之外的正文不同：py 是回溯、本件是具名文案）。
 //  ③ argparse 的极角落形态（`-h=x` 短选项带值等）未逐一复刻，只复刻了被扫常见档。
+//  ④ 档位反向差集（缺口 `GAP-20260927-21`）是**新增门面**、非 py 原件行为 —— 仅在表件含
+//     `FAST_STEPS` 数组时生效；声明位 `fast-excluded.txt` 与表件同目录解析。

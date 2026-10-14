@@ -306,7 +306,7 @@ func gapExportWriteFiles(inv *invocation, stdout, stderr io.Writer, led gapLedge
 		return exitBlocked
 	}
 
-	date := time.Now().Format("2006-01-02")
+	date := time.Now().Format("20060102")
 	perImpact := map[string]int{}
 	maxDays := -1
 	oldest := ""
@@ -425,7 +425,7 @@ func gapExportWriteFiles(inv *invocation, stdout, stderr io.Writer, led gapLedge
 // （不建目录 · 不落件 · 不写真源 · 不写审计）。件名与真写**同一份算法**（`gapExportOutPrefix` /
 // `gapExportPageSize` / `gapImpactClosed` 六值闭集）—— 计划与真跑不许两套名字（名字不对 = 假预演 ✗）。
 func gapExportOutPlan(w io.Writer, led gapLedger, open []gapRecord, closedCount, noDecideCount int, dir, why string) {
-	date := time.Now().Format("2006-01-02")
+	date := time.Now().Format("20060102")
 	perImpact := map[string]int{}
 	for _, r := range open {
 		perImpact[r.Impact]++

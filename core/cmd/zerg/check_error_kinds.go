@@ -31,6 +31,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -39,6 +41,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/Mr2109/zerg-swarm/core/internal/contract"
 )
 
 // ── 判据正则（与 py 逐条对齐 · 名字前缀 `cek` 防包内同名）──────────────
@@ -69,14 +73,20 @@ func errorKindsGateMain(stdout, stderr io.Writer, argv []string) int {
 	// ② 位置参数等价解析（py argparse：root 可选 · 默认 "." · --self-test 布尔）。
 	root := "."
 	selfTest := false
+	emitBaseline := false
+	baselinePath := ""
 	var positional []string
 	for _, a := range argv {
 		switch {
 		case a == "--self-test":
 			selfTest = true
+		case a == "--emit-baseline":
+			emitBaseline = true
+		case strings.HasPrefix(a, "--baseline="):
+			baselinePath = strings.TrimPrefix(a, "--baseline=")
 		case strings.HasPrefix(a, "-") && a != "-":
 			// 未知旗标：py argparse 也 rc=2（文案另论 · 见件头「未覆盖面」）。
-			fmt.Fprintf(stderr, "usage: check-error-kinds.py [-h] [--self-test] [root]\n")
+			fmt.Fprintf(stderr, "usage: check-error-kinds.py [-h] [--self-test] [--baseline=PATH] [--emit-baseline] [root]\n")
 			fmt.Fprintf(stderr, "check-error-kinds.py: error: unrecognized arguments: %s\n", a)
 			return 2
 		default:
@@ -85,6 +95,9 @@ func errorKindsGateMain(stdout, stderr io.Writer, argv []string) int {
 	}
 	if len(positional) > 0 {
 		root = positional[len(positional)-1]
+	}
+	if emitBaseline {
+		return errorKindsGateDetailEmit(stdout, stderr, root)
 	}
 	if selfTest {
 		return errorKindsGateSelfTest(stdout)
@@ -104,15 +117,32 @@ func errorKindsGateMain(stdout, stderr io.Writer, argv []string) int {
 		}
 		return 2
 	}
+	// ── N2 子判据（§3.3 `N2` · 缺口 GAP-20261012-20）：把 `selfupdate_split` 的近义动词扫描
+	//    接成**门面**并进退码（此前只由 `go test` 兜 ⇒ 门面零落点）。
+	n2rc, n2lines := errorKindsGateN2Entry()
+	rc = cekMergeRC(rc, n2rc)
+	// ── detail 取值口径子判据（甲·登记式棘轮 · 缺口 GAP-20260928-25）：新开一面。
+	//    真源 = 现盘 core/cmd/zerg/*.go 的 setErr 第二参 ＋ 登记基线件；
+	//    基线取不到 / 现读空转 ⇒ rc=2（不给结论 · ✗ 不假绿）。
+	drc, dlines := errorKindsGateDetailEntry(r, baselinePath)
+	rc = cekMergeRC(rc, drc)
 	fmt.Fprintln(stdout, "── 命令面 error.kind 闭集（§九 M7）──")
 	for _, l := range lines {
+		fmt.Fprintln(stdout, l)
+	}
+	fmt.Fprintln(stdout, "── 命令面命名纪律 N2（§3.3：禁用近义动词分指两事）──")
+	for _, l := range n2lines {
+		fmt.Fprintln(stdout, l)
+	}
+	fmt.Fprintln(stdout, "── 命令面 error.detail 取值口径（甲·登记式棘轮 · §九 M7 detail · GAP-20260928-25）──")
+	for _, l := range dlines {
 		fmt.Fprintln(stdout, l)
 	}
 	switch rc {
 	case 0:
 		fmt.Fprintln(stdout, "⇒ 全绿（rc=0）")
 	case 1:
-		fmt.Fprintln(stdout, "⇒ 门禁红（rc=1）：kind 闭集或命名纪律被破坏")
+		fmt.Fprintln(stdout, "⇒ 门禁红（rc=1）：kind 闭集 / N2 命名纪律 / detail 取值口径 被破坏")
 	default:
 		fmt.Fprintln(stdout, "⇒ 不给结论（rc=2）")
 	}
@@ -143,7 +173,612 @@ func errorKindsGateRefuseJSON(stderr io.Writer, argv []string) *int {
 	return &rc
 }
 
+// ── N2 子判据（§3.3 `N2` · 缺口 `GAP-20261012-20`）────────────────────────────
+//
+// 病（缺口逐字）：门⑤ 实判的是 `error.kind` 蛇形命名，与 N2 近义动词禁令**零交集** ——
+// 「步名命名纪律 N2 四禁词」只由 `go test` 兜，**门面无落点**。
+//
+// 真源（**口径不从本件自定** · 一律现读）：`core/internal/contract/selfupdate.json` 的
+// `near_synonym_forbidden`（禁词表）/ `near_synonym_rule`（§3.3 `N2` 逐字）/ `semantics_split`
+// （两条命令各自的「该说什么」）—— 由 `contract.SelfUpdate()` 解出（唯一真源 · ✗ 不硬编禁词）。
+//
+// 判定口（**唯一**）：`updateWordSplitViolations`（`selfupdate_split.go`）—— ✗ 不另抄一份判据。
+// 被判对象：**真命令树**（`updateSplitShapes()` · 经 `errorKindsGateN2Shapes` 可注入夹具做负控）。
+//
+// 退码（与本门三码同规）：0 全绿 · 1 命中近义动词（逐条点名 命令·段·词）· 2 真源取不到/空（不给结论）。
+
+// errorKindsGateN2Shapes —— 形状取法（默认 = 真命令树；定向单测可覆盖注入夹具）。
+var errorKindsGateN2Shapes = updateSplitShapes
+
+// cekMergeRC —— 两枚子判据的退码合并（本仓严重度序：2（不给结论）> 1（红）> 0）。
+func cekMergeRC(a, b int) int {
+	if a == 2 || b == 2 {
+		return 2
+	}
+	if a == 1 || b == 1 {
+		return 1
+	}
+	return 0
+}
+
+// errorKindsGateN2Check —— N2 判定口：给定真源 + 形状 ⇒ (rc, 报告行)。
+func errorKindsGateN2Check(spec *contract.SelfUpdateSpec, cmds []updateCmdShape) (int, []string) {
+	if spec == nil || len(spec.NearSynonymForbidden) == 0 {
+		return 2, []string{"⛔ 不给结论：N2 真源取不到（`near_synonym_forbidden` 空 ⇒ 空转 = 假覆盖）"}
+	}
+	v := updateWordSplitViolations(spec, cmds)
+	lines := []string{fmt.Sprintf("禁词 %d 枚 · 命令 %d 条 · 命中 %d 条", len(spec.NearSynonymForbidden), len(cmds), len(v))}
+	for _, h := range v {
+		lines = append(lines, "✗ N2 "+h)
+	}
+	if len(v) > 0 {
+		return 1, lines
+	}
+	return 0, lines
+}
+
+// errorKindsGateN2Entry —— 门面入口：真源现读（`contract.SelfUpdate()`）+ 真命令树形状。
+func errorKindsGateN2Entry() (int, []string) {
+	spec, err := contract.SelfUpdate()
+	if err != nil {
+		return 2, []string{"⛔ 不给结论：N2 真源解不动（" + err.Error() + "）"}
+	}
+	return errorKindsGateN2Check(spec, errorKindsGateN2Shapes())
+}
+
 // errorKindsGateFindRoot —— py `find_root()`（自 start 向上 ≤8 层找 core/cmd/zerg/errors.go）。
+// ── detail 取值口径子判据（甲·登记式棘轮 · 缺口 `GAP-20260928-25`）────────────────
+//
+// 病（缺口逐字）：`error.kind` 有闭集判据（R1/R2/R3），`error.detail`（`setErr` 第二参）却
+// **零取值口径** —— 想造第二个一模一样的错，得自己发明一枚 detail 字面。
+//
+// 人拍口径（2026-10-15 · 甲档 = **登记式棘轮**）：**不规定「合法值表」**；把**现盘全部现有取值**
+// 登记入基线件 `core/internal/contract/error-detail-baseline.json`，此后 **新增 / 改动即红（须登记）**。
+// 硬线：✗ 抬基线来消红 · ✗ 放宽断言 · ✗ 把「登记」改成「全放行」。
+//
+// 判定口（唯一）：`errorKindsGateDetailCheck`（给定 基线 ＋ 现读落点 ⇒ (rc, 报告行)）。
+// 被判对象：现盘 `core/cmd/zerg/*.go`（✗ 不含 `_test.go`）里 `setErr(<kind>, <detail>, <msg>)` 的
+// **第二参**；字面量取**内层源码文本**（未反转义 · 基线面与现读面同口径），非字面量取**空白规整化后的
+// 表达式文本**（改名 / 改形态都判成「改动」）。
+//
+// 退码（与本门三码同规）：0 全绿 · 1 有未登记值 / 有登记值现读消失（逐条点名 件:行 ＋ 值）·
+// 2 基线件取不到 / 解析失败 / 现读空转（不给结论 ⇒ ✗ 不假绿）。
+//
+// 生成面（正门 · 打印模式 `--emit-baseline`）：产出 JSON 交**正门** `dev edit --file` 落进基线件 ——
+// 本门 main 路径一个字节都不写（✗ 不自己落盘）。
+
+// cekDetailBaselineRel —— 基线件的仓内唯一相对路径（生成面与校核面同用这一处）。
+const cekDetailBaselineRel = "core/internal/contract/error-detail-baseline.json"
+
+// cekDetailSite —— 一处 `setErr` 第二参落点。
+type cekDetailSite struct {
+	Rel     string // 仓内相对路径（core/cmd/zerg/x.go）
+	Line    int    // 行号（1 起）
+	Literal bool   // 字面量 / 非字面量
+	Value   string // 字面量：内层源码文本；非字面量：空白规整化后的表达式
+}
+
+// cekDetailEntry —— 基线里的一条登记（值 ＋ 该值的全部落点 `件:行` · 逐条可回溯）。
+type cekDetailEntry struct {
+	Value string   `json:"value"`
+	Sites []string `json:"sites"`
+}
+
+// cekDetailScanFace —— 基线件头部自述的取数口径（✗ 不带时间戳 · 排序稳定）。
+type cekDetailScanFace struct {
+	Glob        string `json:"glob"`
+	Arg         string `json:"arg"`
+	LiteralRead string `json:"literal_read"`
+	NonLitRead  string `json:"non_literal_read"`
+}
+
+// cekDetailCounts —— 基线自带计数（＝逐条列出的长度 · 只作自证 · ✗ 不另抄第二真源）。
+type cekDetailCounts struct {
+	Literals        int `json:"literals"`
+	LiteralSites    int `json:"literal_sites"`
+	NonLiterals     int `json:"non_literals"`
+	NonLiteralSites int `json:"non_literal_sites"`
+	SitesTotal      int `json:"sites_total"`
+}
+
+// cekDetailBaseline —— 基线件形状（`literals` / `non_literals` 各按值字典序排列）。
+type cekDetailBaseline struct {
+	Schema      string            `json:"schema"`
+	Note        string            `json:"note"`
+	Scan        cekDetailScanFace `json:"scan"`
+	Counts      cekDetailCounts   `json:"counts"`
+	Literals    []cekDetailEntry  `json:"literals"`
+	NonLiterals []cekDetailEntry  `json:"non_literals"`
+}
+
+// cekDetailWordByte —— 标识符字节判定（`setErr` 前一位是名字字符 ⇒ 不是本调用）。
+func cekDetailWordByte(c byte) bool {
+	return c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+}
+
+// cekSetErrCodeIdx —— 单件里 `setErr` 的**代码位**下标：注释 / 字符串字面量里的同串是散文不是用法
+// （与 R3 面同一条口径）；`func … setErr(…)` 的声明行也不算调用点。
+// cekSetErrDeclLine —— 该行是否为 **`setErr` 自身的声明行**（`func (inv *invocation) setErr(…` /
+// `func setErr(…`）。★ 关键是「**被声明的名字恰是 `setErr`**」：✗ 别用宽判据（「行首是 func」就跳）——
+// 那会把 `func f() { setErr("conflict", …) }` 这种**单行函数里的真调用**一起跳掉（实测：落点凭空少一条，
+// 且两套探针同错 ⇒ 对拍也看不出来）。
+func cekSetErrDeclLine(line string) bool {
+	s := strings.TrimLeft(line, " \t")
+	if !strings.HasPrefix(s, "func") {
+		return false
+	}
+	rest := strings.TrimLeft(s[len("func"):], " \t")
+	if strings.HasPrefix(rest, "(") {
+		i, depth := 0, 0
+		for i < len(rest) {
+			if rest[i] == '(' {
+				depth++
+			}
+			if rest[i] == ')' {
+				depth--
+				if depth == 0 {
+					i++
+					break
+				}
+			}
+			i++
+		}
+		rest = strings.TrimLeft(rest[i:], " \t")
+	}
+	if !strings.HasPrefix(rest, "setErr") {
+		return false
+	}
+	rest = rest[len("setErr"):]
+	return rest == "" || strings.HasPrefix(rest, "(")
+}
+
+func cekSetErrCodeIdx(text string) []int {
+	var idx []int
+	i, n := 0, len(text)
+	for i < n {
+		c := text[i]
+		if c == '/' && i+1 < n && text[i+1] == '/' {
+			j := strings.IndexByte(text[i:], '\n')
+			if j < 0 {
+				return idx
+			}
+			i += j
+			continue
+		}
+		if c == '/' && i+1 < n && text[i+1] == '*' {
+			j := strings.Index(text[i+2:], "*/")
+			if j < 0 {
+				return idx
+			}
+			i += 2 + j + 2
+			continue
+		}
+		if c == '"' || c == '\'' || c == '`' {
+			q := c
+			i++
+			for i < n {
+				if q != '`' && text[i] == '\\' {
+					i += 2
+					continue
+				}
+				if text[i] == q {
+					i++
+					break
+				}
+				i++
+			}
+			continue
+		}
+		if strings.HasPrefix(text[i:], "setErr") {
+			prev := byte(' ')
+			if i > 0 {
+				prev = text[i-1]
+			}
+			ls := strings.LastIndexByte(text[:i], '\n') + 1
+			le := len(text)
+			if j := strings.IndexByte(text[i:], '\n'); j >= 0 {
+				le = i + j
+			}
+			decl := cekSetErrDeclLine(text[ls:le])
+			if !cekDetailWordByte(prev) && !decl {
+				idx = append(idx, i)
+			}
+			i += 6
+			continue
+		}
+		i++
+	}
+	return idx
+}
+
+// cekCallArgs —— 从实参表起始括号起按嵌套深度切实参（字符串 / 注释里的逗号不计 · 未闭合 ⇒ nil）。
+func cekCallArgs(text string, open int) []string {
+	var args []string
+	var cur strings.Builder
+	depth := 1
+	i, n := open+1, len(text)
+	for i < n {
+		c := text[i]
+		switch {
+		case c == '(' || c == '[' || c == '{':
+			depth++
+			cur.WriteByte(c)
+			i++
+		case c == ')' || c == ']' || c == '}':
+			depth--
+			if depth == 0 {
+				args = append(args, cur.String())
+				return args
+			}
+			cur.WriteByte(c)
+			i++
+		case c == '"' || c == '\'' || c == '`':
+			q := c
+			cur.WriteByte(c)
+			i++
+			for i < n {
+				if q != '`' && text[i] == '\\' && i+1 < n {
+					cur.WriteString(text[i : i+2])
+					i += 2
+					continue
+				}
+				cur.WriteByte(text[i])
+				if text[i] == q {
+					i++
+					break
+				}
+				i++
+			}
+		case c == '/' && i+1 < n && text[i+1] == '/':
+			j := strings.IndexByte(text[i:], '\n')
+			if j < 0 {
+				return nil
+			}
+			cur.WriteString(text[i : i+j])
+			i += j
+		case c == '/' && i+1 < n && text[i+1] == '*':
+			j := strings.Index(text[i+2:], "*/")
+			if j < 0 {
+				return nil
+			}
+			cur.WriteString(text[i : i+2+j+2])
+			i += 2 + j + 2
+		case c == ',' && depth == 1:
+			args = append(args, cur.String())
+			cur.Reset()
+			i++
+		default:
+			cur.WriteByte(c)
+			i++
+		}
+	}
+	return nil
+}
+
+// cekDetailLitValue —— 第二参是否**恰好一枚**字符串字面量：是 ⇒ 回**内层源码文本**（未反转义）。
+func cekDetailLitValue(s string) (string, bool) {
+	n := len(s)
+	if n >= 2 && s[0] == '"' && s[n-1] == '"' {
+		i := 1
+		for i < n {
+			if s[i] == '\\' {
+				i += 2
+				continue
+			}
+			if s[i] == '"' {
+				if i == n-1 {
+					return s[1 : n-1], true
+				}
+				break
+			}
+			i++
+		}
+		return "", false
+	}
+	if n >= 2 && s[0] == '`' && s[n-1] == '`' && !strings.Contains(s[1:n-1], "`") {
+		return s[1 : n-1], true
+	}
+	return "", false
+}
+
+// cekCollapseSpace —— 非字面量的「形态」= 空白规整化后的表达式文本（换行 / 缩进不算改动）。
+func cekCollapseSpace(s string) string {
+	return strings.Join(strings.Fields(s), " ")
+}
+
+// cekDetailSitesInFile —— 单件扫描 ⇒ 该件全部 `setErr` 第二参落点（行号按起点现算）。
+func cekDetailSitesInFile(rel, text string) []cekDetailSite {
+	var out []cekDetailSite
+	for _, k := range cekSetErrCodeIdx(text) {
+		j := k + len("setErr")
+		for j < len(text) && (text[j] == ' ' || text[j] == '\t') {
+			j++
+		}
+		if j >= len(text) || text[j] != '(' {
+			continue
+		}
+		args := cekCallArgs(text, j)
+		if len(args) < 2 {
+			continue
+		}
+		flat := cekCollapseSpace(args[1])
+		if flat == "" {
+			continue
+		}
+		s := cekDetailSite{Rel: rel, Line: 1 + strings.Count(text[:k], "\n")}
+		if v, ok := cekDetailLitValue(flat); ok {
+			s.Literal = true
+			s.Value = v
+		} else {
+			s.Value = flat
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
+// cekScanDetailSites —— **唯一取数处**（现盘 `core/cmd/zerg/*.go` · 非测试件 · 件名排序）。
+// 返回 (落点, 读失败件清单)：读失败 ⇒ 真源取不到 ⇒ 由入口判 rc=2（✗ 不假绿）。
+func cekScanDetailSites(root string) ([]cekDetailSite, []string) {
+	dir := filepath.Join(root, "core", "cmd", "zerg")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, []string{"core/cmd/zerg（读不了目录：" + err.Error() + "）"}
+	}
+	var names []string
+	for _, e := range entries {
+		n := e.Name()
+		if strings.HasSuffix(n, ".go") && !strings.HasSuffix(n, "_test.go") {
+			names = append(names, n)
+		}
+	}
+	sort.Strings(names)
+	var sites []cekDetailSite
+	var fails []string
+	for _, n := range names {
+		b, err := os.ReadFile(filepath.Join(dir, n))
+		if err != nil {
+			fails = append(fails, "core/cmd/zerg/"+n+"（"+err.Error()+"）")
+			continue
+		}
+		sites = append(sites, cekDetailSitesInFile("core/cmd/zerg/"+n, string(b))...)
+	}
+	return sites, fails
+}
+
+// cekDetailGroup —— 现读落点 → (值 ⇒ 全部 `件:行`, 值的有序集)。
+func cekDetailGroup(sites []cekDetailSite, literal bool) (map[string][]string, []string) {
+	g := map[string][]string{}
+	for _, s := range sites {
+		if s.Literal != literal {
+			continue
+		}
+		g[s.Value] = append(g[s.Value], fmt.Sprintf("%s:%d", s.Rel, s.Line))
+	}
+	keys := make([]string, 0, len(g))
+	for k := range g {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return g, keys
+}
+
+// cekDetailCount —— 登记列表的落点总数。
+func cekDetailCount(entries []cekDetailEntry) int {
+	t := 0
+	for _, e := range entries {
+		t += len(e.Sites)
+	}
+	return t
+}
+
+// cekDetailCountMap —— 现读分组的落点总数。
+func cekDetailCountMap(g map[string][]string) int {
+	t := 0
+	for _, v := range g {
+		t += len(v)
+	}
+	return t
+}
+
+// cekDetailEntryMap —— 基线列表 → 映射（值 ⇒ 落点）。
+func cekDetailEntryMap(list []cekDetailEntry) map[string][]string {
+	m := map[string][]string{}
+	for _, e := range list {
+		m[e.Value] = e.Sites
+	}
+	return m
+}
+
+// cekDetailSortedKeys —— 映射的键字典序（报告按稳定序出）。
+func cekDetailSortedKeys(m map[string][]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// cekDetailSitesBrief —— 落点清单截断（✗ 不把几十处落点全刷进一行 · 截断处**明报**还剩几处）。
+func cekDetailSitesBrief(sites []string, max int) string {
+	if max < 1 {
+		max = 1
+	}
+	if len(sites) <= max {
+		return strings.Join(sites, " · ")
+	}
+	return strings.Join(sites[:max], " · ") + fmt.Sprintf(" · …另 %d 处", len(sites)-max)
+}
+
+// errorKindsGateDetailCheck —— detail 取值口径判定口：给定 (基线, 现读落点) ⇒ (rc, 报告行)。
+//
+// 三档：0 全绿 · 1 有未登记值 / 有登记值现读消失 · 2 基线取不到 / 空转（不给结论 ⇒ ✗ 不假绿）。
+func errorKindsGateDetailCheck(bl *cekDetailBaseline, sites []cekDetailSite) (int, []string) {
+	if bl == nil {
+		return 2, []string{"⛔ 不给结论：detail 取值口径基线取不到（" + cekDetailBaselineRel + " 读不到 / 解析失败）⇒ 空转 = 假覆盖，不许当绿"}
+	}
+	nReg, nRegNon := len(bl.Literals), len(bl.NonLiterals)
+	if nReg+nRegNon == 0 {
+		return 2, []string{"⛔ 不给结论：detail 取值基线一条登记都没有（空转 = 假覆盖，不许当绿）"}
+	}
+	nSites := len(sites)
+	if nSites == 0 {
+		return 2, []string{"⛔ 不给结论：现盘 `setErr` 第二参一个落点都没扫到（真源取不到 / 空转 = 假覆盖，不许当绿）"}
+	}
+	reg := cekDetailEntryMap(bl.Literals)
+	regNon := cekDetailEntryMap(bl.NonLiterals)
+	cur, curKeys := cekDetailGroup(sites, true)
+	curNon, curNonKeys := cekDetailGroup(sites, false)
+
+	var reds []string
+	for _, v := range curKeys {
+		if _, ok := reg[v]; !ok {
+			reds = append(reds, fmt.Sprintf("✗ 未登记的 detail 字面量 '%s'（%s）—— 新增取值须登记进 %s",
+				v, cekDetailSitesBrief(cur[v], 3), cekDetailBaselineRel))
+		}
+	}
+	for _, v := range cekDetailSortedKeys(reg) {
+		if _, ok := cur[v]; !ok {
+			reds = append(reds, fmt.Sprintf("✗ 已登记的 detail 字面量 '%s' 现读消失（改名 / 改形态 = 改动 ⇒ 须登记）：原落点 %s",
+				v, cekDetailSitesBrief(reg[v], 3)))
+		}
+	}
+	for _, v := range curNonKeys {
+		if _, ok := regNon[v]; !ok {
+			reds = append(reds, fmt.Sprintf("✗ 未登记的 detail 形态 '%s'（%s）—— 新增形态须登记进 %s",
+				v, cekDetailSitesBrief(curNon[v], 3), cekDetailBaselineRel))
+		}
+	}
+	for _, v := range cekDetailSortedKeys(regNon) {
+		if _, ok := curNon[v]; !ok {
+			reds = append(reds, fmt.Sprintf("✗ 已登记的 detail 形态 '%s' 现读消失（改形态 ⇒ 须登记）：原落点 %s",
+				v, cekDetailSitesBrief(regNon[v], 3)))
+		}
+	}
+
+	lines := []string{fmt.Sprintf("登记 %d 字面量 / %d 落点 ＋ %d 非字面量形态 / %d 落点 · 现读 %d 字面量 / %d 落点 ＋ %d 形态 / %d 落点 · 命中 %d 条",
+		nReg, cekDetailCount(bl.Literals), nRegNon, cekDetailCount(bl.NonLiterals),
+		len(curKeys), cekDetailCountMap(cur), len(curNonKeys), cekDetailCountMap(curNon), len(reds))}
+	lines = append(lines, reds...)
+	if len(reds) > 0 {
+		return 1, lines
+	}
+	return 0, lines
+}
+
+// errorKindsGateDetailScan —— 现读落点取数口（默认 `cekScanDetailSites`；定向单测 / 负控可覆盖 · ✗ 不改语义）。
+var errorKindsGateDetailScan = cekScanDetailSites
+
+// errorKindsGateDetailBaselineFile —— 基线件路径覆盖口（默认空 ⇒ 用 <root>/<相对路径>）。
+var errorKindsGateDetailBaselineFile = ""
+
+// cekDetailBaselinePathOf —— 基线件路径：`--baseline=` 旋钮 ＞ 覆盖口 ＞ 默认相对路径。
+func cekDetailBaselinePathOf(root, override string) string {
+	if override != "" {
+		return override
+	}
+	if errorKindsGateDetailBaselineFile != "" {
+		return errorKindsGateDetailBaselineFile
+	}
+	return filepath.Join(root, cekDetailBaselineRel)
+}
+
+// cekDetailLoadBaseline —— 读 ＋ 解基线件（读不到 / 解析失败 ⇒ error ⇒ 入口判 rc=2）。
+func cekDetailLoadBaseline(root, override string) (*cekDetailBaseline, error) {
+	b, err := os.ReadFile(cekDetailBaselinePathOf(root, override))
+	if err != nil {
+		return nil, err
+	}
+	var bl cekDetailBaseline
+	if err := json.Unmarshal(b, &bl); err != nil {
+		return nil, err
+	}
+	return &bl, nil
+}
+
+// errorKindsGateDetailEntry —— 门面入口：现读落点 ＋ 基线 ⇒ (rc, 报告行)。
+func errorKindsGateDetailEntry(root, baselineOverride string) (int, []string) {
+	sites, fails := errorKindsGateDetailScan(root)
+	nFail := len(fails)
+	if nFail > 0 {
+		lines := []string{fmt.Sprintf("⛔ 不给结论：现盘源码有 %d 件读不到（真源取不到 ⇒ 空转 = 假覆盖，不许当绿）", nFail)}
+		for _, f := range fails {
+			lines = append(lines, "  [读失败] "+f)
+		}
+		return 2, lines
+	}
+	bl, err := cekDetailLoadBaseline(root, baselineOverride)
+	if err != nil {
+		return 2, []string{"⛔ 不给结论：detail 取值口径基线取不到 / 解析失败（" + err.Error() + "）⇒ 空转 = 假覆盖，不许当绿"}
+	}
+	return errorKindsGateDetailCheck(bl, sites)
+}
+
+// cekDetailBuildBaseline —— 生成面：现读落点 ⇒ 基线件内容（值字典序 · 落点字典序 · ✗ 不带时间戳）。
+func cekDetailBuildBaseline(sites []cekDetailSite) *cekDetailBaseline {
+	bl := &cekDetailBaseline{
+		Schema: "zerg-error-detail-baseline/1",
+		Note: "error.detail（setErr 第二参）取值口径的**登记式棘轮**基线（甲档 · 2026-10-15 拍定 · 缺口 GAP-20260928-25）。" +
+			"口径：✗ 不规定合法值表 —— 现盘全部现有取值登记在此；**新增 / 改动即红**（须登记）。" +
+			"生成：`zerg gate check check-error-kinds --emit-baseline`（打印模式 · ✗ 不写盘），产出交正门 `dev edit --file` 落盘。",
+		Scan: cekDetailScanFace{
+			Glob:        "core/cmd/zerg/*.go（✗ 不含 _test.go）",
+			Arg:         "setErr(<kind>, <detail>, <msg>) 的第二参",
+			LiteralRead: "字面量取内层源码文本（未反转义）",
+			NonLitRead:  "非字面量取空白规整化后的表达式文本",
+		},
+	}
+	// 空组也写成 []（✗ 不写 null）—— 基线件形状稳定，消费侧不用分流。
+	bl.Literals = []cekDetailEntry{}
+	bl.NonLiterals = []cekDetailEntry{}
+	for _, wantLiteral := range []bool{true, false} {
+		g, keys := cekDetailGroup(sites, wantLiteral)
+		for _, k := range keys {
+			one := append([]string{}, g[k]...)
+			sort.Strings(one)
+			e := cekDetailEntry{Value: k, Sites: one}
+			if wantLiteral {
+				bl.Literals = append(bl.Literals, e)
+			} else {
+				bl.NonLiterals = append(bl.NonLiterals, e)
+			}
+		}
+	}
+	lit, non := cekDetailCount(bl.Literals), cekDetailCount(bl.NonLiterals)
+	bl.Counts = cekDetailCounts{
+		Literals:        len(bl.Literals),
+		LiteralSites:    lit,
+		NonLiterals:     len(bl.NonLiterals),
+		NonLiteralSites: non,
+		SitesTotal:      lit + non,
+	}
+	return bl
+}
+
+// errorKindsGateDetailEmit —— 生成面（打印模式 · ✗ 不写盘 · 0 出件 / 2 不给结论）。
+func errorKindsGateDetailEmit(stdout, stderr io.Writer, root string) int {
+	sites, fails := errorKindsGateDetailScan(root)
+	nFail, nSites := len(fails), len(sites)
+	if nFail > 0 || nSites == 0 {
+		fmt.Fprintf(stderr, "⛔ 不给结论：生成面拒绝产空基线（读失败 %d 件 · 扫到 %d 个落点 ⇒ 空转 = 假覆盖）\n", nFail, nSites)
+		for _, f := range fails {
+			fmt.Fprintf(stderr, "  [读失败] %s\n", f)
+		}
+		return 2
+	}
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(cekDetailBuildBaseline(sites)); err != nil {
+		fmt.Fprintf(stderr, "⛔ 不给结论：基线序列化失败（%v）\n", err)
+		return 2
+	}
+	fmt.Fprint(stdout, buf.String())
+	return 0
+}
+
 func errorKindsGateFindRoot(start string) (string, bool) {
 	d, err := filepath.Abs(start)
 	if err != nil {
@@ -453,6 +1088,48 @@ func errorKindsGateSelfTest(stdout io.Writer) int {
 	rc, _ = errorKindsGateCheck(mk(r3comment))
 	fmt.Fprintf(stdout, "  自检⑥ R3 注释位出现同句 ⇒ rc=%d（要 0 —— 注释剥掉后不误报）\n", rc)
 	ok = ok && rc == 0
+
+	// N2 子判据成对（§3.3 N2 · 缺口 GAP-20261012-20）—— 全合成夹具，不碰真命令树。
+	n2spec := &contract.SelfUpdateSpec{
+		NearSynonymForbidden: []string{"自更新", "升级", "upgrade", "self-update"},
+		SemanticsSplit: map[string]any{
+			"zerg update":      map[string]any{"command": "update", "summary_must_contain": "源码式自更新", "danger_source_must_contain": "F-3"},
+			"zerg core update": map[string]any{"command": "core update", "summary_must_contain": "主控自身换件", "danger_source_must_contain": "P12"},
+		},
+	}
+	n2good := []updateCmdShape{
+		{Path: "update", Summary: "源码式自更新（git 检出 → 构建 → 换件 → 回执）", DangerSource: "F-3"},
+		{Path: "core update", Summary: "主控自身换件（只换在跑的那一个制品）", DangerSource: "P12"},
+		{Path: "task ls", Summary: "列任务", Usage: "zerg task ls"},
+	}
+	n2rc, _ := errorKindsGateN2Check(n2spec, n2good)
+	fmt.Fprintf(stdout, "  自检⑦ N2 合成好件（两条命令各说各的 · 旁的命令无近义动词）⇒ rc=%d（要 0）\n", n2rc)
+	ok = ok && n2rc == 0
+
+	n2bad := append(append([]updateCmdShape{}, n2good...),
+		updateCmdShape{Path: "task submit", Summary: "提交任务并顺手升级主控", Usage: "zerg task submit"})
+	n2rc2, n2lines2 := errorKindsGateN2Check(n2spec, n2bad)
+	fmt.Fprintf(stdout, "  自检⑧ N2 合成坏件（概要塞「升级」）⇒ rc=%d（要 1）· %s\n", n2rc2, strings.Join(n2lines2, " | "))
+	ok = ok && n2rc2 == 1
+
+	n2rc3, _ := errorKindsGateN2Check(nil, n2good)
+	fmt.Fprintf(stdout, "  自检⑨ N2 真源取不到 ⇒ rc=%d（要 2 —— 空转 = 假覆盖，不给结论）\n", n2rc3)
+	ok = ok && n2rc3 == 2
+	dBase := cekDetailBuildBaseline([]cekDetailSite{{Rel: "core/cmd/zerg/a.go", Line: 3, Literal: true, Value: "seen_one"}})
+	dGood := []cekDetailSite{{Rel: "core/cmd/zerg/a.go", Line: 3, Literal: true, Value: "seen_one"}}
+	drc, _ := errorKindsGateDetailCheck(dBase, dGood)
+	fmt.Fprintf(stdout, "  自检⑩ detail 合成好件（现读 = 登记）⇒ rc=%d（要 0）\n", drc)
+	ok = ok && drc == 0
+
+	dBad := append(append([]cekDetailSite{}, dGood...),
+		cekDetailSite{Rel: "core/cmd/zerg/b.go", Line: 9, Literal: true, Value: "brand_new"})
+	drc2, dlines2 := errorKindsGateDetailCheck(dBase, dBad)
+	fmt.Fprintf(stdout, "  自检⑪ detail 未登记新值 ⇒ rc=%d（要 1）· %s\n", drc2, strings.Join(filter(dlines2, "✗"), " | "))
+	ok = ok && drc2 == 1
+
+	drc3, _ := errorKindsGateDetailCheck(nil, dGood)
+	fmt.Fprintf(stdout, "  自检⑫ detail 基线取不到 ⇒ rc=%d（要 2 —— 空转 = 假覆盖，不给结论）\n", drc3)
+	ok = ok && drc3 == 2
 
 	if ok {
 		fmt.Fprintln(stdout, "自检结论: 全过")

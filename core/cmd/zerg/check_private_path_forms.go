@@ -79,6 +79,10 @@ const pvKind = "PrivatePathForms"
 const pvReplaceRules = "publish/replace-rules.tsv"
 const pvRedactGo = "core/internal/obs/redact/redact.go"
 
+// pvWordingGo —— 公开面写作红线门的 Go 半（`scripts/gates/check-public-face-wording.py` 已退休、
+// 覆盖改由本 Go 半承载）。用途：F-18 的覆盖件 + F-14 债格的「已覆盖旁证」（见 `pvDebtCover`）。
+const pvWordingGo = "core/cmd/zerg/check_public_face_wording.go"
+
 // ── (b) 拼串处理：避免本件正文出现 `check-hardcoded-private-paths.py` 的 NEEDLES 真字面量 ──
 // 运行时拼出的值与原字面量**逐字节相同**（对拍已证），只是**源码文本**里不留连续原串。
 var (
@@ -91,6 +95,17 @@ var (
 
 var pvInstanceRE = regexp.MustCompile(`/(?:Users|home)/[A-Za-z]`)
 
+// pvDebtCover —— 债务格「已覆盖旁证」（缺口 `GAP-20260926-182` · 新规则 E3s）。
+//
+//	一条 = 一个**具体字面变体** + 覆盖它的判据件 + 该件里「覆盖证据」的字面。
+//	规则 E3s：若本格 Claim **仍认领**该字面（债格还在声称它未覆盖），而覆盖件在盘、
+//	且其正文**含**该证据 ⇒ 债格 **stale**（已覆盖的形态还留在债格里）⇒ 红，逐字点名。
+type pvDebtCover struct {
+	Lit      string
+	Gate     string
+	Evidence string
+}
+
 // pvForm —— 形态表一格（与 py dict 同形；`GateFile` 空串 ⇔ py 的 None ⇒ 必须带 `Debt`）。
 type pvForm struct {
 	ID        string
@@ -101,6 +116,8 @@ type pvForm struct {
 	GateFile  string
 	GateProbe string
 	Debt      string
+	// DebtCover —— 债格「已覆盖旁证」（仅债格用；空 ⇒ 不判 stale）。见 `pvDebtCover`。
+	DebtCover []pvDebtCover
 }
 
 var pvForms = []pvForm{
@@ -143,9 +160,21 @@ var pvForms = []pvForm{
 	{ID: "F-13", Name: "私有仓名（仓外私有文档仓名 `Zerg-内部文档`）", Claim: `Zerg-内部文档`,
 		SrcFile: pvReplaceRules, SrcProbe: "Zerg-内部文档\tZerg-内部文档",
 		GateFile: "scripts/gates/check-public-face-wording.py", GateProbe: "Zerg-内部文档"},
-	{ID: "F-14", Name: "私有模型代号·大小写变体（小写 `example-moe-36b` / `example-35b-v2` · 大写全长 `example-35b-v2` / `example-35b` · 大写家族前缀 `example-35b-v2-`）", Claim: `example-moe-36b|Ornith|example-35b-v2`,
-		SrcFile: pvReplaceRules, SrcProbe: "example-moe-36b\texample-moe-36b",
-		Debt: "现读（2026-09-26）：`scripts/gates/**` 面**无一件**判这些**大小写变体**形态 —— `check-public-face-wording.py` 的 A10 词表只收全形（`example-8b-quant` / `example-30b` / `example-moe-36b` / `example-35b` / `example-35b-v2` / `example-26b-review`）、A11 只收**大写**前缀 `example-moe-36b`，且两条都是 `re.compile(pat)`（**大小写敏感** ⇒ 大写变体不落网）⇒ 小写 `example-moe-36b` / `example-35b-v2` · 大写全长 `example-35b-v2` / `example-35b` · 大写家族前缀 `example-35b-v2-` **5 条 tsv 规则没有判据件盯** ⇒ 登记为**存量债**（照 F-02 先例：私有侧规则已在、**门禁侧那一半未落** ⇒ 本格不许悄悄绿，逐跑打印）"},
+	// ★ 2026-10-15 收窄（缺口 `GAP-20260926-182`）：F-14 原声明「5 条大小写变体全未被覆盖」**已 stale** ——
+	//   公开面写作红线门（Go 半 `check_public_face_wording.go` · py 已退休）的 A10/A11 自 2026-09-26 起
+	//   已补 `(?i:…)`/前缀形态，其 `--self-test` ⑦e 实跑证 `example-moe-36b`/`example-35b-v2-`/`example-35b-v2`/
+	//   `example-35b` **四格皆 rc=1** ⇒ 那 4 条变体**已被覆盖**（改挂新格 F-18）⇒ F-14 只留
+	//   **真正未被覆盖**的裸 `example-35b-v2`。★ 同时加「债格 stale 即红」断言（规则 E3s · 见 `pvDebtCover`）：
+	//   谁把这 4 条变体再写回 F-14 的 Claim（债格仍声称它们未覆盖），E3s 当场红并点名。
+	{ID: "F-14", Name: "私有模型代号·全小写裸名（`example-35b-v2`）", Claim: `^example-35b-v2$`,
+		SrcFile: pvReplaceRules, SrcProbe: "example-35b-v2\texample-35b-v2",
+		DebtCover: []pvDebtCover{
+			{Lit: "example-moe-36b", Gate: pvWordingGo, Evidence: "example-moe-36b"},
+			{Lit: "example-35b-v2-", Gate: pvWordingGo, Evidence: "example-35b-v2-"},
+			{Lit: "example-35b-v2", Gate: pvWordingGo, Evidence: "example-35b-v2-1."},
+			{Lit: "example-35b", Gate: pvWordingGo, Evidence: "example-35b-v2-1."},
+		},
+		Debt: "现读（2026-10-15 收窄）：`scripts/gates/**` 面**仍无一件**把**全小写裸名** `example-35b-v2` 当泄漏形态枚举 —— 公开面写作红线门（Go 半 `check_public_face_wording.go`）的 A11 只收**大写**家族前缀 `example-35b-v2-`（带连字符）、A10 只收两条全长 `example-35b` / `example-35b-v2`，实现均需连字符或 `-1.` 段 ⇒ 裸 `example-35b-v2`（无连字符、无版本段）**不落网** ⇒ 登记为**存量债**（照 F-02 先例：私有侧规则 `publish/replace-rules.tsv:66` 已在、**门禁侧那一半未落** ⇒ 本格不许悄悄绿，逐跑打印）。★ 原 2026-09-26 那 5 条里有 4 条已被覆盖（`example-moe-36b`/`example-35b-v2-`/`example-35b-v2`/`example-35b`）⇒ 改挂新格 F-18；本格加 stale 旁证（见本格 `DebtCover`），谁把旧 5 条写回 Claim 即红。"},
 	{ID: "F-15", Name: "私有模型代号·派生标识符 / 环境变量（`ExampleAdapter` · `EXAMPLE_TEMPLATE`）", Claim: `ExampleAdapter|EXAMPLE_TEMPLATE`,
 		SrcFile: pvReplaceRules, SrcProbe: "ExampleAdapter\tExampleAdapter",
 		Debt: "现读（2026-09-26）：这两条 tsv 规则收的是**代码标识符**（`ExampleAdapter` / `NewExampleAdapter` / `TestExampleAdapter_*` ⇒ 替换值必须是**合法 Go 标识符**）与**环境变量名**（`ZERG_EXAMPLE_TEMPLATE` ⇒ `ZERG_EXAMPLE_TEMPLATE`，大写 + 下划线）—— `scripts/gates/**` 面**没有一件判这两种形态**：`check-public-face-wording.py` 判的是**写作面用词**（甲档 12 条，不判标识符 / 环境变量）、`check-hardcoded-private-paths.py` 的 NEEDLES 全是**绝对路径实例** ⇒ 登记为**存量债**（本格逐跑打印）"},
@@ -155,6 +184,12 @@ var pvForms = []pvForm{
 	{ID: "F-17", Name: "机群机型族（低端机型 `edge-node`/`EDGE-NODE` · 迷你子端 `mini-node-1`/`mini-node-2`）", Claim: `edge-node|EDGE-NODE|mini-node-1|mini-node-2`,
 		SrcFile: pvReplaceRules, SrcProbe: "\\1edge-node",
 		Debt: "现读（2026-10-09）：这四条 tsv 规则（低端机 `edge-node`/`EDGE-NODE` · 迷你子端 `mini-node-1`/`mini-node-2`）此前**无替换规则**、只由发布期 BLOCK 兜底（命中即整批中止）；本轮按「镜像器替换面」补替换规则（先替后扫 :1776→:1778）消除中止。`scripts/gates/**` 面**无一件**把「机群机型族」当**形态**枚举（机型族漏判三态见 GAP-20261008-17）⇒ 门禁侧那一半未落 ⇒ 登记为**存量债**（本格逐跑打印）"},
+	// F-18 —— 2026-10-15 新增（缺口 `GAP-20260926-182`）：原 F-14 的 4 条大小写变体**已被覆盖**
+	//   （公开面写作红线门 A10/A11 补 `(?i:…)`/前缀形态后逐格 rc=1）⇒ 从债格改挂到此**覆盖格**：
+	//   GateFile/GateProbe 走 Go 半（py 已退休 · 覆盖改由 Go 半承载）⇒ E3 认「真覆盖」。
+	{ID: "F-18", Name: "私有模型代号·大小写变体（已覆盖 · 公开面写作红线门 A10/A11 兜）", Claim: `example-moe-36b|example-35b-v2-1\.[05]-35b|Ornith`,
+		SrcFile: pvReplaceRules, SrcProbe: "example-35b-v2-\texample-35b-v2-",
+		GateFile: pvWordingGo, GateProbe: "example-moe-36b"},
 }
 
 // ── 「非形态」登记面（缺口 `GAP-20260926-152` · 与 py `NON_FORM_RULES`/`NON_FORM_FRAGMENTS` 逐格同构）──
@@ -248,6 +283,7 @@ type pvResult struct {
 	Instances []pvInst
 	Nonform   []pvNonform
 	Meta      pvMeta
+	Stale     int // 债格 stale 条数（缺口 `GAP-20260926-182` · 规则 E3s）
 }
 
 func pvReadText(root, rel string) (string, bool) {
@@ -522,6 +558,31 @@ func pvRun(root string) pvResult {
 		}
 	}
 
+	// ── E3s 债务格 stale（缺口 `GAP-20260926-182`）：债格每条须**真的**未被任何判据件覆盖 ⇒ 已覆盖即红 ──
+	//   依据 `pvDebtCover`：债格 Claim 仍认领某字面 + 覆盖件在盘且含覆盖证据 ⇒ 该形态其实已被覆盖 ⇒ stale。
+	for _, f := range pvForms {
+		if f.GateFile != "" || f.Debt == "" {
+			continue
+		}
+		for _, dc := range f.DebtCover {
+			if !pvClaimHit(f.Claim, dc.Lit) {
+				continue // 债格已不再认领它（收窄到位）⇒ 不算 stale
+			}
+			txt, ok := pvReadText(root, dc.Gate)
+			if !ok {
+				txt, ok = pvReadText(root, pvGoHalfRel(dc.Gate))
+			}
+			if !ok {
+				continue // 覆盖件取不到 ⇒ 判不了（既不静默当绿、也不误红）
+			}
+			if strings.Contains(txt, dc.Evidence) {
+				res.Stale++
+				res.Red = append(res.Red, pvRed{Rule: "E3s", Form: pvStrPtr(f.ID), File: pvStrPtr(dc.Gate), Raw: dc.Lit,
+					Why: fmt.Sprintf("债务格 **stale**：本格 Claim 仍认领 `%s`，而覆盖件 `%s` 正文里含覆盖证据 `%s` ⇒ 该形态**已被覆盖** ⇒ 不许留在债格里（应收窄 Claim / 改挂到覆盖格 / 移除该字面）", dc.Lit, dc.Gate, dc.Evidence)})
+			}
+		}
+	}
+
 	if len(res.Red) > 0 {
 		res.Rc = 1
 	} else {
@@ -651,6 +712,11 @@ func pvSelfMk(td string, rulesLines, redactLines []string, forms []pvForm) error
 		if f.GateFile != "" && f.GateProbe != "" {
 			stubs[f.GateFile] = append(stubs[f.GateFile], f.GateProbe)
 		}
+		// 债格「已覆盖旁证」的覆盖件也要合成（E3s 要读它 · 缺口 `GAP-20260926-182`）：
+		// 夹具里不放它，E3s 会因「覆盖件取不到」而跳过 ⇒ 自检测不到真东西。
+		for _, dc := range f.DebtCover {
+			stubs[dc.Gate] = append(stubs[dc.Gate], dc.Evidence)
+		}
 	}
 	for gf, gps := range stubs {
 		var b strings.Builder
@@ -725,10 +791,10 @@ func pvSelfRunWith(td string, forms []pvForm, rules []string, nonFormRules *[][3
 	return pvRun(td)
 }
 
-// pvSelfTest —— = py `self_test()`：合成夹具 · 24 断言 · 成对负控。
+// pvSelfTest —— = py `self_test()`：合成夹具 · 28 断言 · 成对负控（＋缺口 `GAP-20260926-182` 的债格 stale 两格）。
 //
 //	夹具全落**仓外**临时目录（`defer os.RemoveAll` 回收）；形态表按 py `_run_with` 的 save/restore
-//	语义临时替换（自检单线程独占 ⇒ 无并发面）。输出 = py 逐字节同构：24 行 ✓/✗ + 结论行。
+//	语义临时替换（自检单线程独占 ⇒ 无并发面）。输出 = py 逐字节同构：28 行 ✓/✗ + 结论行。
 func pvSelfTest(stdout io.Writer) int {
 	ok, bad := 0, 0
 	var lines []string
@@ -917,6 +983,37 @@ func pvSelfTest(stdout io.Writer) int {
 	}
 	check("⑮b 同上 ⇒ E2a **点名**该行原文", pvBoolToInt(named15), 1)
 
+	// ⑯ must-fail（缺口 `GAP-20260926-182` · 债格 stale）：把 F-14 的 Claim 写回旧的 5 条变体
+	//    （债格仍声称 example-moe-36b 等未覆盖），而覆盖件正文含覆盖证据 ⇒ E3s 红。
+	_ = pvSelfMk(td, pvSelfRulesBase, pvSelfRedactBase, pvForms)
+	f16 := pvFormsCopy()
+	for i := range f16 {
+		if f16[i].ID == "F-14" {
+			f16[i].Claim = "example-moe-36b|Ornith|example-35b-v2"
+		}
+	}
+	r16 := pvSelfRunWith(td, f16, nil, nil, nil)
+	check("⑯ 债格 stale：F-14 Claim 写回旧 5 条变体 ⇒ rc=1（已覆盖的形态不许留在债格里）", r16.Rc, 1)
+	named16 := 0
+	for _, d := range r16.Red {
+		if d.Rule == "E3s" {
+			named16++
+		}
+	}
+	check("⑯b 同上 ⇒ 规则 E3s **点名**（不是笼统红）", pvBoolToInt(named16 >= 1), 1)
+
+	// ⑰ 成对回绿 + 不静默：F-14 收窄回裸 `example-35b-v2` ⇒ rc=0 且该格仍在 debt[] 里逐跑打印。
+	_ = pvSelfMk(td, pvSelfRulesBase, pvSelfRedactBase, pvForms)
+	r17 := pvSelfRunWith(td, pvFormsCopy(), nil, nil, nil)
+	check("⑰ 成对：F-14 收窄回裸 `example-35b-v2` ⇒ 回绿 rc=0", r17.Rc, 0)
+	nd17 := 0
+	for _, d := range r17.Debt {
+		if d.Form == "F-14" {
+			nd17++
+		}
+	}
+	check("⑰b 同上 ⇒ 该格仍在 `debt[]`（裸 `example-35b-v2` 逐跑打印 · 不静默）", nd17, 1)
+
 	fmt.Fprintf(stdout, "%s\n", strings.Join(lines, "\n"))
 	concl := "全过"
 	if bad != 0 {
@@ -975,7 +1072,7 @@ func privatePathFormsGateMain(stdout, stderr io.Writer, argv []string) int {
 		return pvListForms(stdout)
 	}
 	if selfTest {
-		// = py `self_test()`（合成夹具 · 24 断言 · 成对负控）。
+		// = py `self_test()`（合成夹具 · 28 断言 · 成对负控）。
 		return pvSelfTest(stdout)
 	}
 
@@ -1058,6 +1155,11 @@ func privatePathFormsGateMain(stdout, stderr io.Writer, argv []string) int {
 	for _, r := range res.Red {
 		fmt.Fprintf(stdout, "  ✗ [%s] %s  %s\n", r.Rule, pvLoc(r.File, r.Line), r.Raw)
 		fmt.Fprintf(stdout, "      %s\n", r.Why)
+	}
+	if res.Stale == 0 {
+		fmt.Fprintf(stdout, "  ✓ 债格 stale 自检：0 条（每条债格字面真的未被任何判据件覆盖 · 缺口 `GAP-20260926-182`）\n")
+	} else {
+		fmt.Fprintf(stdout, "  ✗ 债格 stale：%d 条（已覆盖的形态还留在债格里 ⇒ 逐条见上 `[E3s]`）\n", res.Stale)
 	}
 	if res.Rc == 0 {
 		fmt.Fprintf(stdout, "⇒ 形态枚举全过（rc=0）：规则 %d 条全被格认领 · 未覆盖形态 %d 条**已逐条登记并打印**（不静默）· 实例口径 %d 条（只打不红）\n",

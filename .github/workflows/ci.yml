@@ -39,14 +39,12 @@ jobs:
           git config --global user.name "Zerg CI"
       - name: shell 静态检查（$VAR 后紧跟非 ASCII → unbound variable · Go 半优先）
         run: |
-          # 判据件优先走 Go 半（`zerg gate check <键>`）；Go 半不可用 ⇒ 退回 py 半；两半皆缺 ⇒ 拒通过（不给结论）。
+          # 判据件只走 Go 半（`zerg gate check <键>`）；py 半已退役 ⇒ ✗ **无 py 回退半**；Go 半缺位 ⇒ 拒通过（不给结论）。
           rc=0
           if [ -x ./bin/zerg ]; then
             ./bin/zerg gate check check-shell-unicode-vars --check scripts/*.sh *.sh || rc=$?
-          elif [ -f scripts/gates/check-shell-unicode-vars.py ]; then
-            python3 scripts/gates/check-shell-unicode-vars.py --check scripts/*.sh *.sh || rc=$?
           else
-            echo "❌ 判据件 check-shell-unicode-vars 两半皆缺（py 与 Go 半）⇒ 拒通过（不给结论）" >&2
+            echo "❌ 判据件 check-shell-unicode-vars Go 半缺位（py 半已退役）⇒ 拒通过（不给结论）" >&2
             exit 1
           fi
           exit "$rc"
@@ -149,10 +147,8 @@ jobs:
           rc=0
           if [ -x ./bin/zerg ]; then
             ./bin/zerg gate check check_version || rc=$?
-          elif [ -f scripts/gates/check_version.py ]; then
-            python3 scripts/gates/check_version.py || rc=$?
           else
-            echo "❌ 判据件 check_version 两半皆缺（py 与 Go 半）⇒ 拒通过（不给结论）" >&2
+            echo "❌ 判据件 check_version Go 半缺位（py 半已退役）⇒ 拒通过（不给结论）" >&2
             exit 1
           fi
           exit "$rc"
@@ -161,10 +157,8 @@ jobs:
           rc=0
           if [ -x ./bin/zerg ]; then
             ./bin/zerg gate check check-gotoolchain || rc=$?
-          elif [ -f scripts/gates/check-gotoolchain.py ]; then
-            python3 scripts/gates/check-gotoolchain.py || rc=$?
           else
-            echo "❌ 判据件 check-gotoolchain 两半皆缺（py 与 Go 半）⇒ 拒通过（不给结论）" >&2
+            echo "❌ 判据件 check-gotoolchain Go 半缺位（py 半已退役）⇒ 拒通过（不给结论）" >&2
             exit 1
           fi
           exit "$rc"
@@ -187,10 +181,8 @@ jobs:
           rc=0
           if [ -x ./bin/zerg ]; then
             ./bin/zerg gate check check-compat-manifest --selftest && ./bin/zerg gate check check-compat-manifest || rc=$?
-          elif [ -f scripts/gates/check-compat-manifest.py ]; then
-            python3 scripts/gates/check-compat-manifest.py --selftest && python3 scripts/gates/check-compat-manifest.py || rc=$?
           else
-            echo "❌ 判据件 check-compat-manifest 两半皆缺（py 与 Go 半）⇒ 拒通过（不给结论）" >&2
+            echo "❌ 判据件 check-compat-manifest Go 半缺位（py 半已退役）⇒ 拒通过（不给结论）" >&2
             exit 1
           fi
           exit "$rc"
@@ -215,10 +207,8 @@ jobs:
           rc=0
           if [ -x ./bin/zerg ]; then
             ./bin/zerg gate check check_docs || rc=$?
-          elif [ -f scripts/gates/check_docs.py ]; then
-            python3 scripts/gates/check_docs.py || rc=$?
           else
-            echo "❌ 判据件 check_docs 两半皆缺（py 与 Go 半）⇒ 拒通过（不给结论）" >&2
+            echo "❌ 判据件 check_docs Go 半缺位（py 半已退役）⇒ 拒通过（不给结论）" >&2
             exit 1
           fi
           exit "$rc"
@@ -240,10 +230,8 @@ jobs:
           rc=0
           if [ -x ./bin/zerg ]; then
             ./bin/zerg ui i18n || rc=$?
-          elif [ -f ui/scripts/check-i18n.py ]; then
-            python3 ui/scripts/check-i18n.py || rc=$?
           else
-            echo "❌ 判据件 check-i18n 两半皆缺（py 与 Go 半）⇒ 拒通过（不给结论）" >&2
+            echo "❌ 判据件 check-i18n Go 半缺位（py 半已退役）⇒ 拒通过（不给结论）" >&2
             exit 1
           fi
           exit "$rc"
@@ -284,10 +272,8 @@ jobs:
           rc=0
           if [ -x ./bin/zerg ]; then
             ./bin/zerg gate check check-manifest-freshness-two-criteria || rc=$?
-          elif [ -f scripts/gates/check-manifest-freshness-two-criteria.py ]; then
-            python3 scripts/gates/check-manifest-freshness-two-criteria.py || rc=$?
           else
-            echo "❌ 判据件 check-manifest-freshness-two-criteria 两半皆缺（py 与 Go 半）⇒ 拒通过（不给结论）" >&2
+            echo "❌ 判据件 check-manifest-freshness-two-criteria Go 半缺位（py 半已退役）⇒ 拒通过（不给结论）" >&2
             exit 1
           fi
           exit "$rc"
@@ -296,10 +282,8 @@ jobs:
           rc=0
           if [ -x ./bin/zerg ]; then
             ./bin/zerg gate check check-public-ci-green || rc=$?
-          elif [ -f scripts/gates/check-public-ci-green.py ]; then
-            python3 scripts/gates/check-public-ci-green.py || rc=$?
           else
-            echo "❌ 判据件 check-public-ci-green 两半皆缺（py 与 Go 半）⇒ 拒通过（不给结论）" >&2
+            echo "❌ 判据件 check-public-ci-green Go 半缺位（py 半已退役）⇒ 拒通过（不给结论）" >&2
             exit 1
           fi
           exit "$rc"

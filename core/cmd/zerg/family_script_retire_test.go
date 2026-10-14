@@ -65,6 +65,8 @@ func srEnv(t *testing.T) (root, truth, state string) {
 	for _, d := range []string{
 		filepath.Join(root, "core", "internal", "contract"),
 		filepath.Join(root, "scripts"),
+		filepath.Join(root, "scripts", "gates"),
+		filepath.Join(root, "publish"),
 		filepath.Join(root, "vendor"),
 	} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
@@ -83,6 +85,9 @@ func srEnv(t *testing.T) (root, truth, state string) {
 	srWrite(t, filepath.Join(root, "scripts", "ext-tool.sh"), "#!/bin/sh\necho hi\n")
 	// 闭集外靶
 	srWrite(t, filepath.Join(root, "vendor", "x.py"), "print('v')\n")
+	// ★ F4（GAP-20261015-10）：两处**随动面**夹具（件仍在盘 ⇒ 默认安全档下它们必须逐字节不动）。
+	srWrite(t, filepath.Join(root, "publish", "excludes.txt"), srFaceExcludesBody)
+	srWrite(t, filepath.Join(root, "scripts", "gates", "lang-freeze-baseline.json"), srFaceSnapshotBody)
 
 	t.Setenv("ZERG_REPO", root)
 	t.Setenv("ZERG_STATE_DIR", state)
@@ -847,5 +852,144 @@ func TestScriptRetireCaliberHardcodedLineRefReddens(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("夹具丙：报错没点名「写死行号引用」：%v", errs)
+	}
+}
+
+// ── ⑦ ★ F4 加档（GAP-20261015-10）：两处随动面「件仍在盘 ⇒ **不摘**」（默认安全档）＋ 显式档才摘 ──
+//
+// 病灶（仓外夹具复现 · 真库只读）：退场正门按**物理离盘**口径真摘 `publish/excludes.txt` 的行与
+// `scripts/gates/lang-freeze-baseline.json` 的枚，而本门 ✗ 不代管 `git rm`、且**要求目标件在盘**才跑
+// ⇒ 摘后两个消费侧当场变红：`publish-public.sh --check-excludes-parity` rc=2 与 `check-lang-freeze` rc=1。
+// 定形 = **(a) 加档**：默认安全档「件仍在盘 ⇒ 不摘」；只有显式声明「本批随动 `git rm` 同批做」才摘。
+
+// srFaceExcludesBody / srFaceSnapshotBody —— 两处随动面的夹具体（行式排除表 ＋ 语言冻结快照）。
+const srFaceExcludesBody = "# 夹具排除表（F4 · GAP-20261015-10）\nscripts/keep.py\nscripts/keep2.py\n"
+
+const srFaceSnapshotBody = `{
+  "schema": "zerg-lang-freeze/1",
+  "generated": "夹具",
+  "entries": [
+    {
+      "path": "scripts/keep.py",
+      "lang": "py",
+      "bytes": 31
+    },
+    {
+      "path": "scripts/keep2.py",
+      "lang": "py",
+      "bytes": 31
+    }
+  ]
+}
+`
+
+// srFacePaths —— 夹具里两处随动面的落点（仓内相对）。
+func srFacePaths(root string) (excl, snap string) {
+	return filepath.Join(root, "publish", "excludes.txt"),
+		filepath.Join(root, "scripts", "gates", "lang-freeze-baseline.json")
+}
+
+// TestScriptRetireFaceDetachOnDiskStaysPut —— 态一（**默认安全档**）：件仍在盘 ⇒ 两处随动面**逐字节不摘**。
+//
+// 成对：同一趟里**登记面（退场台账）照样写**——证明本档只收窄「随动面」，✗ 不是把整条命令收成空转。
+func TestScriptRetireFaceDetachOnDiskStaysPut(t *testing.T) {
+	root, truth, _ := srEnv(t)
+	excl, snap := srFacePaths(root)
+	exBefore, snBefore := srSHA(t, excl), srSHA(t, snap)
+	truthBefore := srSHA(t, truth)
+
+	rc, out, errb := srRun(t, "script", "retire", "scripts/keep.py", "--yes", "--evidence", "F4 加档 · 件在盘档")
+	if rc != 0 {
+		t.Fatalf("--yes 真写期望 rc=0，实得 %d（out=%q err=%q）", rc, out, errb)
+	}
+	if got := srSHA(t, excl); got != exBefore {
+		t.Fatalf("默认安全档破了：件仍在盘却改了排除表 %s（%s → %s）", excl, exBefore, got)
+	}
+	if got := srSHA(t, snap); got != snBefore {
+		t.Fatalf("默认安全档破了：件仍在盘却改了冻结快照 %s（%s → %s）", snap, snBefore, got)
+	}
+	if !strings.Contains(out, "未摘") {
+		t.Fatalf("结果面没点名「未摘」（读者会以为摘了）：%q", out)
+	}
+	if strings.Contains(out, "✓ 摘 1 行") || strings.Contains(out, "✓ 摘 1 枚") {
+		t.Fatalf("结果面自称摘了行/枚（应严格不摘）：%q", out)
+	}
+	if srSHA(t, truth) == truthBefore {
+		t.Fatalf("登记面（退场台账）没写 —— 本档只收窄随动面，✗ 不该把整条命令收成空转")
+	}
+	if _, err := os.Stat(filepath.Join(root, "scripts", "keep.py")); err != nil {
+		t.Fatalf("目标件不在盘了（本正门 ✗ 不代管 git rm）：%v", err)
+	}
+}
+
+// TestScriptRetireFaceDetachExplicitTierDetaches —— 态二（**显式档**）：判定口 + 真摘两半都钉。
+func TestScriptRetireFaceDetachExplicitTierDetaches(t *testing.T) {
+	root, _, _ := srEnv(t)
+	excl, snap := srFacePaths(root)
+
+	// 判定口：件仍在盘 且 未显式声明 ⇒ 不摘（理由要点名「仍在盘」）。
+	if allowed, why := zerg.ScriptRetireFaceDetachAllowedForTest(root, "scripts/keep.py", false); allowed {
+		t.Fatalf("判定口破了：件仍在盘 · 未显式声明却 allowed=true（why=%q）", why)
+	} else if !strings.Contains(why, "仍在盘") {
+		t.Fatalf("判定口理由没点名「仍在盘」：%q", why)
+	}
+	// 显式声明 ⇒ 摘。
+	if allowed, why := zerg.ScriptRetireFaceDetachAllowedForTest(root, "scripts/keep.py", true); !allowed {
+		t.Fatalf("判定口破了：显式声明却 allowed=false（why=%q）", why)
+	}
+	// 件已离盘 ⇒ 放行（「无物可摘」那一支 · 保口径自洽）。
+	if allowed, why := zerg.ScriptRetireFaceDetachAllowedForTest(root, "scripts/ghost.py", false); !allowed {
+		t.Fatalf("判定口破了：件不在盘却 allowed=false（why=%q）", why)
+	}
+
+	// 真摘（命令面那枚旗标尚未上户口 ⇒ 显式档的唯一可达入口是本钩子 · 见 `scriptRetireFaceDetachOptIn`）。
+	if _, err := zerg.ScriptRetireDetachFacesForTest(root, "scripts/keep.py"); err != nil {
+		t.Fatalf("显式档真摘报错：%v", err)
+	}
+	eb, err := os.ReadFile(excl)
+	if err != nil {
+		t.Fatalf("读不了排除表：%v", err)
+	}
+	sb, err := os.ReadFile(snap)
+	if err != nil {
+		t.Fatalf("读不了冻结快照：%v", err)
+	}
+	if strings.Contains(string(eb), "scripts/keep.py") {
+		t.Fatalf("显式档没摘排除表那一行：%q", string(eb))
+	}
+	if strings.Contains(string(sb), "scripts/keep.py") {
+		t.Fatalf("显式档没摘冻结快照那一枚：%q", string(sb))
+	}
+	// ✗ 不许摘多：同表另一条（`scripts/keep2.py`）必须一字不动（摘只摘目标那一枚/一行）。
+	if !strings.Contains(string(eb), "scripts/keep2.py") {
+		t.Fatalf("显式档摘多了：排除表里同表另一条没了：%q", string(eb))
+	}
+	if !strings.Contains(string(sb), "scripts/keep2.py") {
+		t.Fatalf("显式档摘多了：冻结快照里同表另一枚没了：%q", string(sb))
+	}
+}
+
+// TestScriptRetireFaceDetachCLIFlagBoundary —— 边界钉（**临时格** · 会随 main.go 开窗转红）：
+// 显式档的旗标尚未在命令面上户口 ⇒ `parseInvocation` 兜底退 2「未知旗标」、两处随动面一字不动。
+//
+// ★ 待办（GAP-20261015-10 显式档）：另一路在 `main.go` 给该布尔旗标上户口（`parseInvocation` 布尔 case
+// ＋ dispatch 数据驱动收口 ＋ `script retire` 用法串，**三处同批**）**之后**，本格必须改成
+// 「给旗标 ⇒ 摘」/「不给 ⇒ 不摘」两态（并同步 `scriptRetireFaceDetachOptIn` 的旗标读）。
+func TestScriptRetireFaceDetachCLIFlagBoundary(t *testing.T) {
+	root, _, _ := srEnv(t)
+	excl, snap := srFacePaths(root)
+	exBefore, snBefore := srSHA(t, excl), srSHA(t, snap)
+
+	rc, _, errb := srRun(t, "script", "retire", "scripts/keep.py",
+		"--detach-publish-face", "--yes", "--evidence", "F4 边界钉")
+	if rc != 2 {
+		t.Fatalf("旗标未上户口 ⇒ 期望 rc=2（未知旗标），实得 %d（err=%q）—— "+
+			"若 main.go 已给它上户口，本格要改成两态（见上面注释）", rc, errb)
+	}
+	if !strings.Contains(errb, "未知旗标") {
+		t.Fatalf("没点名「未知旗标」：%q", errb)
+	}
+	if srSHA(t, excl) != exBefore || srSHA(t, snap) != snBefore {
+		t.Fatal("未知旗标那一档有写面（应零副作用）")
 	}
 }

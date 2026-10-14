@@ -60,13 +60,11 @@ jobs:
         id: v
         run: |
           set -euo pipefail
-          # 公开面判据件须能退 py ⇒ 优先 Go 半（`zerg gate check <键>`）；退回 py 半；两半皆缺 ⇒ 拒通过。
+          # 公开面判据件只走 Go 半（`zerg gate check <键>`）；py 半已退役 ⇒ ✗ **无 py 回退半**；Go 半缺位 ⇒ 拒通过（fail-closed，不给结论）。
           if [ -x ./bin/zerg ]; then
             ./bin/zerg gate check check_version
-          elif [ -f scripts/gates/check_version.py ]; then
-            python3 scripts/gates/check_version.py
           else
-            echo "❌ 判据件 check_version 两半皆缺（py 与 Go 半）⇒ 拒通过（不给结论）" >&2
+            echo "❌ 判据件 check_version Go 半缺位（py 半已退役）⇒ 拒通过（不给结论）" >&2
             exit 1
           fi
           V=$(grep -m1 '^const Version = ' core/internal/version/version.go | sed 's/.*"\(.*\)".*/\1/')
@@ -219,15 +217,13 @@ jobs:
       - name: 公开制品档（阻断）：source_sha 必须等于发布提交 · 两条判据各自成句（R-23 / R-24 · Go 半优先）
         run: |
           set -euo pipefail
-          # 公开面判据件须能退 py ⇒ 优先 Go 半（`zerg gate check <键>`）；退回 py 半；两半皆缺 ⇒ 拒发布（fail-closed）。
+          # 公开面判据件只走 Go 半（`zerg gate check <键>`）；py 半已退役 ⇒ ✗ **无 py 回退半**；Go 半缺位 ⇒ 拒发布（fail-closed）。
           run_judge() {   # $1 = 判据键（＝ py 件名去扩展名）；其余 = 子件参数
             local key="$1"; shift
             if [ -x ./bin/zerg ]; then
               ./bin/zerg gate check "$key" "$@"
-            elif [ -f "scripts/gates/${key}.py" ]; then
-              python3 "scripts/gates/${key}.py" "$@"
             else
-              echo "❌ 判据件 ${key} 两半皆缺（py 与 Go 半）⇒ 拒发布（不给结论）" >&2
+              echo "❌ 判据件 ${key} Go 半缺位（py 半已退役）⇒ 拒发布（不给结论）" >&2
               return 1
             fi
           }

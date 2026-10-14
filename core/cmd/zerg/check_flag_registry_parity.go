@@ -38,6 +38,22 @@
 //	★ 它是**零豁免**的（✗ 不借豁免表转绿）⇒ 真树上有漂就是 rc=1（照任务单「如实报 · 不放宽」）。
 //	自检成对负控在 `frpSelfTest` 末尾六格（机器面 / 字段面 / 危险档面各一负控一正控）。
 //
+// ★ v1.2.0 增补（**非** py 真搬面 · 照实声明）：
+//
+//	**面④/⑤ 存量棘轮**（人拍 R2「一次到位」· 抬基线 0→66）—— 面④/⑤ 原为**报告档**（不进退码），
+//	本版把**现读存量**（面④ 36 项 ＋ 面⑤ 30 项）逐条带 reason 冻进 `frpEXEMPT`，并把两面提进
+//	**退码面**：
+//
+//	· 现读项**全在冻结表里** ⇒ rc=0（并逐条打印 reason）；冻结表里已不再分家的行 ⇒ 提示可删；
+//	· 现读**多出**一条（冻结表未收）⇒ rc=1 且**逐条点名**（✗ 不得静默通过）；
+//	· 适用判据：**本树命令面不小于冻结表锚定的命令数** ⇒ 才启用棘轮；否则（两三条命令的合成
+//	  夹具 / 别的根）整表不适用，照面④/⑤ 原「报告档」行为。
+//	★★ 面④ 的 36 条是**判据口径造成的误报**（✗ 不得读成「真缺陷已接受」）：面④ 取数只认
+//	  「定义该命令 `run:` 处理函数的那个包内 .go 件」、**不跟调用图 / 不认派发层** ⇒ 如 `--node`
+//	  实由派发层 `remote.go:137 enforceNodeRules` 代消费（逐条 reason 给出真消费点）。判据口径
+//	  **本版未改**（口径修法另立缺口：「门73 面④ 判据口径不跟调用图」）。
+//	★ 面⑤ 的 30 条是**真 usage 缺列**（✗ 不是误报）：修点在 `main.go` / 族件用法串（本版禁区）。
+//
 // 入口签名（与 py 的 `main()` 逐字对齐）：
 //
 //	func flagRegistryParityGateMain(stdout, stderr io.Writer, argv []string) int
@@ -95,7 +111,7 @@ import (
 
 // ── 常量（与 py 逐条对齐 · 名字前缀 `frp` 防包内同名）──────────────────────────────
 const (
-	frpVersion = "1.1.0"
+	frpVersion = "1.2.0"
 	frpPKGRel  = "core/cmd/zerg"
 	frpMainRel = "core/cmd/zerg/main.go"
 )
@@ -109,11 +125,11 @@ const frpRules = "面① 用法串 = 命令树 usage:（非字面量按包内常
 	"甲 缺一处 = 用法串取值形态的旗标 ∉ 面③（透传型命令不计）；" +
 	"乙 多一处 = 面② 的名字在全部用法串里零提及；" +
 	"丙 形态 = 面② 的名字在用法串里只写裸形。" +
-	" 存量豁免表逐条带原因（棘轮 · 只许下调）；新增分家项 ⇒ rc=1。" +
-	"面④ 读者面（按命令 · 报告档 · 不进退码）= 某命令 usage 串里的旗标 ⇒ 该命令的实现件" +
+	" 存量豁免表逐条带原因（棘轮 · 只许下调）；新增分家项 ⇒ rc=1（面④/⑤ 同规：现读存量逐条带 reason 冻表 · 新增即红且点名 · 删即绿）。" +
+	"面④ 读者面（按命令 · 棘轮 · 进退码）= 某命令 usage 串里的旗标 ⇒ 该命令的实现件" +
 	"（定义其 run: 处理函数的包内 .go 件 · 先剥注释）必读它（字面 \"--F\" 或类型化字段 " +
 	"inv.<field>）—— 缺口账 `GAP-20260927-325`（全局「零读者」是错的判据）。" +
-	"面⑤ 反读面（按命令 · 报告档 · 不进退码）= 某命令实现按**取值**读了（`inv.flagVal`）某旗标 ⇒ " +
+	"面⑤ 反读面（按命令 · 棘轮 · 进退码）= 某命令实现按**取值**读了（`inv.flagVal`）某旗标 ⇒ " +
 	"该命令的 usage 串必列它（面④ 的另一向 —— 「实现读 ⇒ 用法必列」，缺口 `GAP-20261005-15`）；" +
 	"拒执守卫（同一函数里 `inv.flagVals`/`inv.hasFlag` 存在性检查）与别处已列 不计。" +
 	"面⑥ 运行期用法行面（按命令 · 报告档 · 不进退码）= 件内运行期 stderr 用法行的旗标集 ⟷ " +
@@ -179,10 +195,194 @@ var (
 )
 
 // frpKey —— 存量豁免表键（py 里是 `(面, 旗标)` 元组）。
-type frpKey struct{ Face, Flag string }
+type frpKey struct {
+	Face  string // 面名（`缺一处`/`多一处`/`形态` · 面④`④读者面` · 面⑤`⑤反读面`）
+	Flag  string // 旗标（如 `--node`）
+	Where string // 命令路径（面④/⑤ 的逐命令项用；面①②③ 的键留空）
+}
 
-// frpEXEMPT —— py `EXEMPT`（棘轮表；现读清空 6 → 0）。
-var frpEXEMPT = map[frpKey]string{}
+// frpEXEMPT —— py `EXEMPT`（存量豁免表 · 棘轮 · **只许下调**）。
+//
+// ★ v1.2.0 增补（人拍 R2「一次到位」· 抬基线 0→66）：把面④/⑤ 的**现读存量**逐条带 reason
+//
+//	冻进来。键 = (面, 旗标, 命令路径) —— 面①②③ 的键第三格留空。
+//	★★ 面④ 的 36 条 = **判据口径造成的误报**（✗ 不得读成「真缺陷已接受」）：面④ 取数只认
+//	「定义该命令 `run:` 处理函数的那个包内 .go 件」、**不跟调用图 / 不认派发层** ⇒ 逐条 reason
+//	给出真消费点（件:行 · 函数）。按令冻结，判据口径本身**本版未改**（口径修法另立缺口）。
+//	★ 面⑤ 的 30 条 = **真 usage 缺列**（✗ 不是误报）：实现按取值真读了、用法串真没列；清点
+//	在本版禁区（`main.go` / 族件用法串）。
+//
+// ★ 棘轮：新出现一条（本树现读 ∖ 本表）⇒ rc=1 且**逐条点名**；删一条 ⇒ 绿（只许下调 ·
+//
+//	✗ 不得静默通过）。
+var frpEXEMPT = map[frpKey]string{
+	// ── 面④ 读者面 36 条 —— ★ **判据口径误报**（✗ 不是真缺陷）：面④ 取数只认「定义该命令
+	//   `run:` 处理函数的那个包内 .go 件」、**不跟调用图 / 不认派发层** ⇒ 逐条实读的真消费点见
+	//   各 reason（36/36 都在本包别处被读 · 本单现读复核）——按令冻基线，✗ 不改口径
+	//   （口径修法另立缺口：「门73 面④ 判据口径不跟调用图」）。──
+	{Face: frpFaceReader, Flag: "--node", Where: "agent/reap"}:               "口径误报：--node 的真消费点 = remote.go:137 enforceNodeRules（派发层 · 全命令对象级校验）（面④ 只认 run: 实现件 family_reap.go · 不跟调用图）",
+	{Face: frpFaceReader, Flag: "--timeout", Where: "ask"}:                   "口径误报：--timeout 的真消费点 = wallclock.go:33 wallclockFlag（派发层墙钟闸 `--timeout` · 全命令）（面④ 只认 run: 实现件 family_fusion.go · 不跟调用图）",
+	{Face: frpFaceReader, Flag: "--node", Where: "build/all"}:                "口径误报：--node 的真消费点 = remote.go:137 enforceNodeRules（派发层 · 全命令对象级校验）（面④ 只认 run: 实现件 family_build.go · 不跟调用图）",
+	{Face: frpFaceReader, Flag: "--node", Where: "build/release"}:            "口径误报：--node 的真消费点 = remote.go:137 enforceNodeRules（派发层 · 全命令对象级校验）（面④ 只认 run: 实现件 family_build.go · 不跟调用图）",
+	{Face: frpFaceReader, Flag: "--node", Where: "core/restart"}:             "口径误报：--node 的真消费点 = remote.go:137 enforceNodeRules（派发层 · 全命令对象级校验）（面④ 只认 run: 实现件 family_core_restart.go · 不跟调用图）",
+	{Face: frpFaceReader, Flag: "--node", Where: "core/start"}:               "口径误报：--node 的真消费点 = remote.go:137 enforceNodeRules（派发层 · 全命令对象级校验）（面④ 只认 run: 实现件 guard.go · 不跟调用图）",
+	{Face: frpFaceReader, Flag: "--node", Where: "core/stop"}:                "口径误报：--node 的真消费点 = remote.go:137 enforceNodeRules（派发层 · 全命令对象级校验）（面④ 只认 run: 实现件 guard.go · 不跟调用图）",
+	{Face: frpFaceReader, Flag: "--node", Where: "core/update"}:              "口径误报：--node 的真消费点 = remote.go:137 enforceNodeRules（派发层 · 全命令对象级校验）（面④ 只认 run: 实现件 guard.go · 不跟调用图）",
+	{Face: frpFaceReader, Flag: "--dist", Where: "dev/build"}:                "口径误报：--dist 的真消费点 = 派发层 main.go:408 run()（hasFlag 分支）＋ main.go:4909 parseInvocation（面④ 只认 run: 实现件 family_dev_candidate.go · 不跟调用图）",
+	{Face: frpFaceReader, Flag: "--scope", Where: "dev/build"}:               "口径误报：--scope 的真消费点 = 派发层 main.go:5185 valueFlagName（取值表）＋ family_gate_run_step.go:545 gateRunValueFlags（面④ 只认 run: 实现件 family_dev_candidate.go · 不跟调用图）",
+	{Face: frpFaceReader, Flag: "--tool", Where: "dev/edit"}:                 "口径误报：--tool 的真消费点 = family_approve.go:463 cmdApproveNew ＋ main.go:5054 valueFlagName（面④ 只认 run: 实现件 family_dev_edit.go · 不跟调用图）",
+	{Face: frpFaceReader, Flag: "--candidate", Where: "dev/release"}:         "口径误报：--candidate 的真消费点 = family_dev_candidate.go:109 cmdDevVerify / :301 cmdDevTest（候选族共用）（面④ 只认 run: 实现件 guard.go · 不跟调用图）",
+	{Face: frpFaceReader, Flag: "--outdir", Where: "dev/test"}:               "口径误报：--outdir 的真消费点 = family_gate_run_step.go:109 ＋ family_repo_commit.go:592 runFastGate（gate 运行族）（面④ 只认 run: 实现件 family_dev_candidate.go · 不跟调用图）",
+	{Face: frpFaceReader, Flag: "--scope", Where: "dev/test"}:                "口径误报：--scope 的真消费点 = 派发层 main.go:5185 valueFlagName（取值表）＋ family_gate_run_step.go:545 gateRunValueFlags（面④ 只认 run: 实现件 family_dev_candidate.go · 不跟调用图）",
+	{Face: frpFaceReader, Flag: "--human-approval", Where: "dev/verify"}:     "口径误报：--human-approval 的真消费点 = stage_gate.go:200 cmdDevVerifyGate（面④ 只认 run: 实现件 family_dev_candidate.go · 不跟调用图）",
+	{Face: frpFaceReader, Flag: "--timeout", Where: "egg/run"}:               "口径误报：--timeout 的真消费点 = wallclock.go:33 wallclockFlag（派发层墙钟闸 `--timeout` · 全命令）（面④ 只认 run: 实现件 family_eggs_cocoons.go · 不跟调用图）",
+	{Face: frpFaceReader, Flag: "--context", Where: "fleet/render"}:          "口径误报：--context 的真消费点 = family_config.go:1445 contextYAMLPath（面④ 只认 run: 实现件 family_fleet.go · 不跟调用图）",
+	{Face: frpFaceReader, Flag: "--path", Where: "fleet/render"}:             "口径误报：--path 的真消费点 = family_config.go:53 fleetYAMLPath ＋ family_proc.go:60 svcDeclPath（族共用助手）（面④ 只认 run: 实现件 family_fleet.go · 不跟调用图）",
+	{Face: frpFaceReader, Flag: "--by", Where: "gap/assign"}:                 "口径误报：--by 的真消费点 = family_gap.go:379 gapByOf（族共用取值助手）（面④ 只认 run: 实现件 family_gap_state.go · 不跟调用图）",
+	{Face: frpFaceReader, Flag: "--by", Where: "gap/bulk/set-state"}:         "口径误报：--by 的真消费点 = family_gap.go:379 gapByOf（族共用取值助手）（面④ 只认 run: 实现件 family_gap_state.go · 不跟调用图）",
+	{Face: frpFaceReader, Flag: "--by", Where: "gap/note"}:                   "口径误报：--by 的真消费点 = family_gap.go:379 gapByOf（族共用取值助手）（面④ 只认 run: 实现件 family_gap_state.go · 不跟调用图）",
+	{Face: frpFaceReader, Flag: "--by", Where: "gap/project"}:                "口径误报：--by 的真消费点 = family_gap.go:379 gapByOf（族共用取值助手）（面④ 只认 run: 实现件 family_gap_state.go · 不跟调用图）",
+	{Face: frpFaceReader, Flag: "--by", Where: "gap/set-state"}:              "口径误报：--by 的真消费点 = family_gap.go:379 gapByOf（族共用取值助手）（面④ 只认 run: 实现件 family_gap_state.go · 不跟调用图）",
+	{Face: frpFaceReader, Flag: "--by", Where: "gap/set-unit"}:               "口径误报：--by 的真消费点 = family_gap.go:379 gapByOf（族共用取值助手）（面④ 只认 run: 实现件 family_gap_state.go · 不跟调用图）",
+	{Face: frpFaceReader, Flag: "--by", Where: "gap/unproject"}:              "口径误报：--by 的真消费点 = family_gap.go:379 gapByOf（族共用取值助手）（面④ 只认 run: 实现件 family_gap_state.go · 不跟调用图）",
+	{Face: frpFaceReader, Flag: "--by", Where: "gap/verify-one"}:             "口径误报：--by 的真消费点 = family_gap.go:379 gapByOf（族共用取值助手）（面④ 只认 run: 实现件 family_gap_state.go · 不跟调用图）",
+	{Face: frpFaceReader, Flag: "--dir", Where: "gate/results"}:              "口径误报：--dir 的真消费点 = family_gate_results.go:132 gateResults（面④ 只认 run: 实现件 gate.go · 不跟调用图）",
+	{Face: frpFaceReader, Flag: "--last", Where: "gate/results"}:             "口径误报：--last 的真消费点 = family_gate_results.go:133 gateResults ＋ main.go:4670 parseInvocation（面④ 只认 run: 实现件 gate.go · 不跟调用图）",
+	{Face: frpFaceReader, Flag: "--set", Where: "model/opts"}:                "口径误报：--set 的真消费点 = 派发层 main.go:5361（收成 inv.setPairs）（面④ 只认 run: 实现件 family_model_core.go · 不跟调用图）",
+	{Face: frpFaceReader, Flag: "--set", Where: "model/set"}:                 "口径误报：--set 的真消费点 = 派发层 main.go:5361（收成 inv.setPairs）（面④ 只认 run: 实现件 family_config.go · 不跟调用图）",
+	{Face: frpFaceReader, Flag: "--node", Where: "publish/run"}:              "口径误报：--node 的真消费点 = remote.go:137 enforceNodeRules（派发层 · 全命令对象级校验）（面④ 只认 run: 实现件 family_publish_run.go · 不跟调用图）",
+	{Face: frpFaceReader, Flag: "--allow-stale-gates", Where: "repo/commit"}: "口径误报：--allow-stale-gates 的真消费点 = gate_freshness.go:419 gateFreshnessGate（陈旧门豁免）（面④ 只认 run: 实现件 family_repo_commit.go · 不跟调用图）",
+	{Face: frpFaceReader, Flag: "--no-fast", Where: "repo/commit"}:           "口径误报：--no-fast 的真消费点 = 派发层 main.go:4660 parseInvocation（面④ 只认 run: 实现件 family_repo_commit.go · 不跟调用图）",
+	{Face: frpFaceReader, Flag: "--ttl", Where: "route/pin"}:                 "口径误报：--ttl 的真消费点 = 派发层 main.go:4705 parseInvocation（--ttl 取值面）＋ family_approve.go:1304 approveTTLOf（面④ 只认 run: 实现件 family_route.go · 不跟调用图）",
+	{Face: frpFaceReader, Flag: "--timeout", Where: "task/submit"}:           "口径误报：--timeout 的真消费点 = wallclock.go:33 wallclockFlag（派发层墙钟闸 `--timeout` · 全命令）（面④ 只认 run: 实现件 family_task.go · 不跟调用图）",
+	{Face: frpFaceReader, Flag: "--node", Where: "update"}:                   "口径误报：--node 的真消费点 = remote.go:137 enforceNodeRules（派发层 · 全命令对象级校验）（面④ 只认 run: 实现件 guard.go · 不跟调用图）",
+	// ── 面⑤ 反读面 30 条 —— **真 usage 缺列**（✗ 不是误报）：实现按取值真读了、该命令用法串
+	//   真没列。清它要动 `main.go` 的用法串 / 族件用法串（本版禁区）⇒ 冻结待另单（缺口
+	//   `GAP-20261005-15`）。──
+	{Face: frpFaceNoUsage, Flag: "--by", Where: "agent/restart"}:                  "真 usage 缺列（✗ 非误报）：cmdAgentRestart（family_agent_ops.go）按取值读了 --by、该命令用法串未列 ⇒ 本版冻结不修（修点 = 用法串 · 本单禁区）",
+	{Face: frpFaceNoUsage, Flag: "--path", Where: "config/reload"}:                "真 usage 缺列（✗ 非误报）：fleetYAMLPath（family_config.go）按取值读了 --path、该命令用法串未列 ⇒ 本版冻结不修（修点 = 用法串 · 本单禁区）",
+	{Face: frpFaceNoUsage, Flag: "--root", Where: "config/reload"}:                "真 usage 缺列（✗ 非误报）：fleetYAMLPath（family_config.go）按取值读了 --root、该命令用法串未列 ⇒ 本版冻结不修（修点 = 用法串 · 本单禁区）",
+	{Face: frpFaceNoUsage, Flag: "--path", Where: "core/daemon"}:                  "真 usage 缺列（✗ 非误报）：svcDeclPath（family_proc.go）按取值读了 --path、该命令用法串未列 ⇒ 本版冻结不修（修点 = 用法串 · 本单禁区）",
+	{Face: frpFaceNoUsage, Flag: "--root", Where: "core/daemon"}:                  "真 usage 缺列（✗ 非误报）：svcDeclPath（family_proc.go）按取值读了 --root、该命令用法串未列 ⇒ 本版冻结不修（修点 = 用法串 · 本单禁区）",
+	{Face: frpFaceNoUsage, Flag: "--path", Where: "core/reload"}:                  "真 usage 缺列（✗ 非误报）：fleetYAMLPath（family_config.go）按取值读了 --path、该命令用法串未列 ⇒ 本版冻结不修（修点 = 用法串 · 本单禁区）",
+	{Face: frpFaceNoUsage, Flag: "--root", Where: "core/reload"}:                  "真 usage 缺列（✗ 非误报）：fleetYAMLPath（family_config.go）按取值读了 --root、该命令用法串未列 ⇒ 本版冻结不修（修点 = 用法串 · 本单禁区）",
+	{Face: frpFaceNoUsage, Flag: "--by", Where: "core/restart"}:                   "真 usage 缺列（✗ 非误报）：cmdCoreRestart（family_core_restart.go）按取值读了 --by、该命令用法串未列 ⇒ 本版冻结不修（修点 = 用法串 · 本单禁区）",
+	{Face: frpFaceNoUsage, Flag: "--path", Where: "core/restart"}:                 "真 usage 缺列（✗ 非误报）：svcDeclPath（family_proc.go）按取值读了 --path、该命令用法串未列 ⇒ 本版冻结不修（修点 = 用法串 · 本单禁区）",
+	{Face: frpFaceNoUsage, Flag: "--root", Where: "core/restart"}:                 "真 usage 缺列（✗ 非误报）：svcDeclPath（family_proc.go）按取值读了 --root、该命令用法串未列 ⇒ 本版冻结不修（修点 = 用法串 · 本单禁区）",
+	{Face: frpFaceNoUsage, Flag: "--approval", Where: "dev/edit"}:                 "真 usage 缺列（✗ 非误报）：devEditLoadApproval（family_dev_edit.go）按取值读了 --approval、该命令用法串未列 ⇒ 本版冻结不修（修点 = 用法串 · 本单禁区）",
+	{Face: frpFaceNoUsage, Flag: "--approval-tool", Where: "dev/edit"}:            "真 usage 缺列（✗ 非误报）：devEditLoadApproval（family_dev_edit.go）按取值读了 --approval-tool、该命令用法串未列 ⇒ 本版冻结不修（修点 = 用法串 · 本单禁区）",
+	{Face: frpFaceNoUsage, Flag: "--state", Where: "dev/proposal"}:                "真 usage 缺列（✗ 非误报）：proposalList（family_dev.go）按取值读了 --state、该命令用法串未列 ⇒ 本版冻结不修（修点 = 用法串 · 本单禁区）",
+	{Face: frpFaceNoUsage, Flag: "--path", Where: "doctor"}:                       "真 usage 缺列（✗ 非误报）：svcDeclPath（family_proc.go）按取值读了 --path、该命令用法串未列 ⇒ 本版冻结不修（修点 = 用法串 · 本单禁区）",
+	{Face: frpFaceNoUsage, Flag: "--root", Where: "doctor"}:                       "真 usage 缺列（✗ 非误报）：svcDeclPath（family_proc.go）按取值读了 --root、该命令用法串未列 ⇒ 本版冻结不修（修点 = 用法串 · 本单禁区）",
+	{Face: frpFaceNoUsage, Flag: "--root", Where: "fleet/render"}:                 "真 usage 缺列（✗ 非误报）：fleetYAMLPath（family_config.go）按取值读了 --root、该命令用法串未列 ⇒ 本版冻结不修（修点 = 用法串 · 本单禁区）",
+	{Face: frpFaceNoUsage, Flag: "--by", Where: "gap/backfill-unit"}:              "真 usage 缺列（✗ 非误报）：gapByOf（family_gap.go）按取值读了 --by、该命令用法串未列 ⇒ 本版冻结不修（修点 = 用法串 · 本单禁区）",
+	{Face: frpFaceNoUsage, Flag: "--by", Where: "gap/idea/promote"}:               "真 usage 缺列（✗ 非误报）：gapByOf（family_gap.go）按取值读了 --by、该命令用法串未列 ⇒ 本版冻结不修（修点 = 用法串 · 本单禁区）",
+	{Face: frpFaceNoUsage, Flag: "--symptom", Where: "gap/idea/promote"}:          "真 usage 缺列（✗ 非误报）：gapAddInputFromFlags（family_gap.go）按取值读了 --symptom、该命令用法串未列 ⇒ 本版冻结不修（修点 = 用法串 · 本单禁区）",
+	{Face: frpFaceNoUsage, Flag: "--limit", Where: "gap/ls"}:                      "真 usage 缺列（✗ 非误报）：cmdGapLs（family_gap.go）按取值读了 --limit、该命令用法串未列 ⇒ 本版冻结不修（修点 = 用法串 · 本单禁区）",
+	{Face: frpFaceNoUsage, Flag: "--path", Where: "model/add"}:                    "真 usage 缺列（✗ 非误报）：fleetYAMLPath（family_config.go）按取值读了 --path、该命令用法串未列 ⇒ 本版冻结不修（修点 = 用法串 · 本单禁区）",
+	{Face: frpFaceNoUsage, Flag: "--root", Where: "model/add"}:                    "真 usage 缺列（✗ 非误报）：fleetYAMLPath（family_config.go）按取值读了 --root、该命令用法串未列 ⇒ 本版冻结不修（修点 = 用法串 · 本单禁区）",
+	{Face: frpFaceNoUsage, Flag: "--path", Where: "model/rm"}:                     "真 usage 缺列（✗ 非误报）：fleetYAMLPath（family_config.go）按取值读了 --path、该命令用法串未列 ⇒ 本版冻结不修（修点 = 用法串 · 本单禁区）",
+	{Face: frpFaceNoUsage, Flag: "--root", Where: "model/rm"}:                     "真 usage 缺列（✗ 非误报）：fleetYAMLPath（family_config.go）按取值读了 --root、该命令用法串未列 ⇒ 本版冻结不修（修点 = 用法串 · 本单禁区）",
+	{Face: frpFaceNoUsage, Flag: "--path", Where: "model/set"}:                    "真 usage 缺列（✗ 非误报）：fleetYAMLPath（family_config.go）按取值读了 --path、该命令用法串未列 ⇒ 本版冻结不修（修点 = 用法串 · 本单禁区）",
+	{Face: frpFaceNoUsage, Flag: "--root", Where: "model/set"}:                    "真 usage 缺列（✗ 非误报）：fleetYAMLPath（family_config.go）按取值读了 --root、该命令用法串未列 ⇒ 本版冻结不修（修点 = 用法串 · 本单禁区）",
+	{Face: frpFaceNoUsage, Flag: "--target", Where: "plan"}:                       "真 usage 缺列（✗ 非误报）：cmdPlan（family_fusion.go）按取值读了 --target、该命令用法串未列 ⇒ 本版冻结不修（修点 = 用法串 · 本单禁区）",
+	{Face: frpFaceNoUsage, Flag: "--remote", Where: "publish/run"}:                "真 usage 缺列（✗ 非误报）：cmdPublishRun（family_publish_run.go）按取值读了 --remote、该命令用法串未列 ⇒ 本版冻结不修（修点 = 用法串 · 本单禁区）",
+	{Face: frpFaceNoUsage, Flag: "--limit", Where: "repo/status"}:                 "真 usage 缺列（✗ 非误报）：repoStatusOne（family_repo.go）按取值读了 --limit、该命令用法串未列 ⇒ 本版冻结不修（修点 = 用法串 · 本单禁区）",
+	{Face: frpFaceNoUsage, Flag: "--docs-root", Where: "script/inventory/verify"}: "真 usage 缺列（✗ 非误报）：scriptInvDocsRoot（family_script_inventory.go）按取值读了 --docs-root、该命令用法串未列 ⇒ 本版冻结不修（修点 = 用法串 · 本单禁区）",
+}
+
+// ── 面④/⑤ 存量棘轮（v1.2.0 · 人拍 R2）────────────────────────────────────────
+//
+// 面④/⑤ 是**逐命令**分家项（键带命令路径）⇒ 与面①②③ 的 (面, 旗标) 键分开处理：
+//
+//	· 本树现读项**全在冻结表里** ⇒ 绿（并计入「存量豁免」逐条打印 reason）；
+//	· 本树现读**多出**一条（冻结表未收）⇒ rc=1 且**逐条点名**；
+//	· 冻结表里的行本树**已不再分家** ⇒ 绿（打印「可删该行」提示 · 只许下调）。
+//
+// ★ 适用判据（✗ 不误报合成夹具 / 别的根）：**本树命令面不小于冻结表锚定的命令数** ⇒ 才启用
+//
+//	棘轮；否则整表不适用，照面④/⑤ 原「报告档」行为（不判红、不打印存量块）。合成夹具
+//	只有两三条命令 ⇒ 恒不适用；真仓（245 条 ≥ 基线锚定的 ~45 条）⇒ 启用；真仓被整批改名
+//	（命令数不减）⇒ 仍启用 ⇒ 基线锚点全「已不再分家」＋本树项全「新出现」⇒ 照旧判红点名。
+//	★ 已实测的一坑：✗ 别用「命令路径有交集」当适用判据 —— 夹具里的合成命令名（`task/submit`）
+//	会与真仓同名 ⇒ 误判适用、夹具当场判红（本单 overlay 亲测撞过，改用命令面规模判据）。
+const (
+	frpFaceReader  = "④读者面"
+	frpFaceNoUsage = "⑤反读面"
+)
+
+// frpIsRatchetFace —— 该面是否面④/⑤（棘轮面）。
+func frpIsRatchetFace(face string) bool {
+	return face == frpFaceReader || face == frpFaceNoUsage
+}
+
+// frpRatchetFrozen —— 冻结表里面④/⑤ 的键（按 面·旗标·命令 排序）。
+func frpRatchetFrozen() []frpKey {
+	keys := make([]frpKey, 0, 66)
+	for k := range frpEXEMPT {
+		if frpIsRatchetFace(k.Face) {
+			keys = append(keys, k)
+		}
+	}
+	frpSortKeys(keys)
+	return keys
+}
+
+// frpRatchetApplies —— 棘轮适用判据（见上）。
+func frpRatchetApplies(nRows int) bool {
+	frozen := frpRatchetFrozen()
+	n := 0
+	seen := map[string]bool{}
+	for _, k := range frozen {
+		if !seen[k.Where] {
+			seen[k.Where] = true
+			n++
+		}
+	}
+	return nRows >= n
+}
+
+// frpRatchetStat —— 面④/⑤ 棘轮现读（报告面）。
+type frpRatchetStat struct {
+	On                      bool
+	Frozen, Hit, New, Stale int
+}
+
+// frpRatchetStatOf —— 由现读三表推出棘轮现读（On= 本次真启用了棘轮）。
+func frpRatchetStatOf(viol []frpViol, exemptUsed, stale []frpKey) frpRatchetStat {
+	st := frpRatchetStat{}
+	for k := range frpEXEMPT {
+		if frpIsRatchetFace(k.Face) {
+			st.Frozen++
+		}
+	}
+	for _, k := range exemptUsed {
+		if frpIsRatchetFace(k.Face) {
+			st.Hit++
+		}
+	}
+	for _, v := range viol {
+		if frpIsRatchetFace(v.Face) {
+			st.New++
+		}
+	}
+	for _, k := range stale {
+		if frpIsRatchetFace(k.Face) {
+			st.Stale++
+		}
+	}
+	st.On = st.Hit > 0 || st.Stale > 0
+	return st
+}
+
+// frpKeyLabel —— 报告/机器面里的键标签（面①②③ 无命令格；面④/⑤ 带命令路径）。
+func frpKeyLabel(k frpKey) string {
+	s := "[" + k.Face + "] " + k.Flag
+	if k.Where != "" {
+		s += " · zerg " + strings.ReplaceAll(k.Where, "/", " ")
+	}
+	return s
+}
 
 // frpViol —— 一条分家项（py 里是四元组）。
 type frpViol struct{ Face, Flag, Where, Why string }
@@ -912,7 +1112,7 @@ func frpCompute(root string) ([]frpViol, []frpKey, []frpKey, []frpKey, frpCounts
 			continue // 只在透传型命令的用法串里 ⇒ 设计如此
 		}
 		sort.Strings(live)
-		key := frpKey{"缺一处", f}
+		key := frpKey{Face: "缺一处", Flag: f}
 		if _, ok := frpEXEMPT[key]; ok {
 			exemptUsed = append(exemptUsed, key)
 			continue
@@ -925,7 +1125,7 @@ func frpCompute(root string) ([]frpViol, []frpKey, []frpKey, []frpKey, frpCounts
 	sort.Strings(vKeys)
 	for _, f := range vKeys {
 		if len(anyUse[f]) == 0 {
-			key := frpKey{"幽灵", f}
+			key := frpKey{Face: "幽灵", Flag: f}
 			if _, ok := frpEXEMPT[key]; ok {
 				exemptUsed = append(exemptUsed, key)
 				continue
@@ -942,7 +1142,7 @@ func frpCompute(root string) ([]frpViol, []frpKey, []frpKey, []frpKey, frpCounts
 		}
 		if len(bare) > 0 {
 			sort.Strings(bare)
-			key := frpKey{"形态", f}
+			key := frpKey{Face: "形态", Flag: f}
 			if _, ok := frpEXEMPT[key]; ok {
 				exemptUsed = append(exemptUsed, key)
 				continue
@@ -962,24 +1162,6 @@ func frpCompute(root string) ([]frpViol, []frpKey, []frpKey, []frpKey, frpCounts
 	}
 	viol = append(viol, declViols...)
 
-	used := map[frpKey]bool{}
-	for _, k := range exemptUsed {
-		used[k] = true
-	}
-	var stale, noReason []frpKey
-	for k := range frpEXEMPT {
-		if !used[k] {
-			stale = append(stale, k)
-		}
-	}
-	for k, v := range frpEXEMPT {
-		if strings.TrimSpace(v) == "" {
-			noReason = append(noReason, k)
-		}
-	}
-	frpSortKeys(stale)
-	frpSortKeys(noReason)
-
 	var pass []string
 	for _, r := range rows {
 		if r.Passthrough {
@@ -997,6 +1179,52 @@ func frpCompute(root string) ([]frpViol, []frpKey, []frpKey, []frpKey, frpCounts
 	if err != nil {
 		return nil, nil, nil, nil, frpCounts{}, nil, nil, nil, nil, err
 	}
+
+	// ── 面④/⑤ 存量棘轮（只许下调 · 新出现即红且点名）──
+	ratchetOn := frpRatchetApplies(len(rows))
+	if ratchetOn {
+		for _, nr := range noReader {
+			k := frpKey{Face: frpFaceReader, Flag: nr.Flag, Where: nr.Path}
+			if _, ok := frpEXEMPT[k]; ok {
+				exemptUsed = append(exemptUsed, k)
+				continue
+			}
+			viol = append(viol, frpViol{Face: frpFaceReader, Flag: nr.Flag,
+				Where: "zerg " + strings.ReplaceAll(nr.Path, "/", " "),
+				Why:   "面④ 读者面本树新出现、冻结表未收 ⇒ 棘轮只许下调（✗ 不得静默通过）⇒ 判红点名"})
+		}
+		for _, nu := range noUsage {
+			k := frpKey{Face: frpFaceNoUsage, Flag: nu.Flag, Where: nu.Path}
+			if _, ok := frpEXEMPT[k]; ok {
+				exemptUsed = append(exemptUsed, k)
+				continue
+			}
+			viol = append(viol, frpViol{Face: frpFaceNoUsage, Flag: nu.Flag,
+				Where: "zerg " + strings.ReplaceAll(nu.Path, "/", " "),
+				Why:   "面⑤ 反读面本树新出现、冻结表未收 ⇒ 棘轮只许下调（✗ 不得静默通过）⇒ 判红点名"})
+		}
+	}
+
+	used := map[frpKey]bool{}
+	for _, k := range exemptUsed {
+		used[k] = true
+	}
+	var stale, noReason []frpKey
+	for k := range frpEXEMPT {
+		if frpIsRatchetFace(k.Face) && !ratchetOn {
+			continue // 棘轮不适用（合成夹具 / 别的根）⇒ 冻结表不参与 stale
+		}
+		if !used[k] {
+			stale = append(stale, k)
+		}
+	}
+	for k, v := range frpEXEMPT {
+		if strings.TrimSpace(v) == "" {
+			noReason = append(noReason, k)
+		}
+	}
+	frpSortKeys(stale)
+	frpSortKeys(noReason)
 	rtDrift, rtUnmatched, err := frpRuntimeUsageFace(root)
 	if err != nil {
 		return nil, nil, nil, nil, frpCounts{}, nil, nil, nil, nil, err
@@ -1009,7 +1237,10 @@ func frpSortKeys(ks []frpKey) {
 		if ks[a].Face != ks[b].Face {
 			return ks[a].Face < ks[b].Face
 		}
-		return ks[a].Flag < ks[b].Flag
+		if ks[a].Flag != ks[b].Flag {
+			return ks[a].Flag < ks[b].Flag
+		}
+		return ks[a].Where < ks[b].Where
 	})
 }
 
@@ -1077,12 +1308,12 @@ func frpReport(viol []frpViol, exemptUsed []frpKey, stale []frpKey, noReason []f
 		lines = append(lines, "新分家项 0 项：两面（除存量豁免）对齐。")
 	}
 	// ── 面④ 读者面（按命令 · 报告档 · 缺口账 `GAP-20260927-325`）──
-	lines = append(lines, fmt.Sprintf("读者面（按命令 · 报告档 · 不进退码 · 缺口账 `GAP-20260927-325`）：「某命令 usage 串里的旗标 ⇒ 该命令的实现件必读」——本命令实现件不读的 %d 项：", len(noReader)))
+	lines = append(lines, fmt.Sprintf("读者面（按命令 · 棘轮 · 进退码 · 缺口账 `GAP-20260927-325`）：「某命令 usage 串里的旗标 ⇒ 该命令的实现件必读」——本命令实现件不读的 %d 项：", len(noReader)))
 	for _, nr := range noReader {
 		lines = append(lines, fmt.Sprintf("  · zerg %s · %s · 实现件 %s", strings.ReplaceAll(nr.Path, "/", " "), nr.Flag, nr.Impl))
 	}
 	// ── 面⑤ 反读面（按命令 · 报告档 · 缺口账 `GAP-20261005-15`）──
-	lines = append(lines, fmt.Sprintf("反读面（按命令 · 报告档 · 不进退码 · 缺口账 `GAP-20261005-15`）：「某命令实现按取值读（`inv.flagVal`）了某旗标 ⇒ 该命令的 usage 串必列它」（面④ 的另一向；拒执守卫 / 别处已列 不计）——本命令实现读了而 usage 没列的 %d 项：", len(noUsage)))
+	lines = append(lines, fmt.Sprintf("反读面（按命令 · 棘轮 · 进退码 · 缺口账 `GAP-20261005-15`）：「某命令实现按取值读（`inv.flagVal`）了某旗标 ⇒ 该命令的 usage 串必列它」（面④ 的另一向；拒执守卫 / 别处已列 不计）——本命令实现读了而 usage 没列的 %d 项：", len(noUsage)))
 	for _, nu := range noUsage {
 		lines = append(lines, fmt.Sprintf("  · zerg %s · %s · 读者函数 %s（%s）", strings.ReplaceAll(nu.Path, "/", " "), nu.Flag, nu.Fn, nu.Impl))
 	}
@@ -1105,21 +1336,25 @@ func frpReport(viol []frpViol, exemptUsed []frpKey, stale []frpKey, noReason []f
 		}
 		lines = append(lines, fmt.Sprintf("  （另有 %d 条运行期用法行的命令在命令树里没有同名命令 ⇒ 本面不判：%s）", len(rtUnmatched), strings.Join(us, " · ")))
 	}
+	if st := frpRatchetStatOf(viol, exemptUsed, stale); st.On {
+		lines = append(lines, fmt.Sprintf("面④/⑤ 存量棘轮（只许下调 · 现读存量逐条带 reason 冻表）：冻结 %d 条 · 命中 %d 条 · 本树新出现（未冻 ⇒ 已判红点名）%d 条 · 已不再分家（可删该行 · 只许下调）%d 条",
+			st.Frozen, st.Hit, st.New, st.Stale))
+	}
 	lines = append(lines, fmt.Sprintf("存量豁免 %d 项（棘轮 · 逐条打印 · 不进退码）：", len(exemptUsed)))
 	frpSortKeys(exemptUsed)
 	for _, k := range exemptUsed {
-		lines = append(lines, fmt.Sprintf("  ~ [%s] %s · %s", k.Face, k.Flag, frpEXEMPT[k]))
+		lines = append(lines, "  ~ "+frpKeyLabel(k)+" · "+frpEXEMPT[k])
 	}
 	if len(stale) > 0 {
 		lines = append(lines, "★ 以下豁免行**已不再分家**（修好了）⇒ 请删掉本件 EXEMPT 里这一行（棘轮只许下调）：")
 		for _, k := range stale {
-			lines = append(lines, fmt.Sprintf("  ~ [%s] %s", k.Face, k.Flag))
+			lines = append(lines, "  ~ "+frpKeyLabel(k))
 		}
 	}
 	if len(noReason) > 0 {
 		lines = append(lines, "判红：以下豁免行**没写原因**（不许无理由豁免）：")
 		for _, k := range noReason {
-			lines = append(lines, fmt.Sprintf("  ~ [%s] %s", k.Face, k.Flag))
+			lines = append(lines, "  ~ "+frpKeyLabel(k))
 		}
 	}
 	out := strings.Join(lines, "\n")
@@ -1160,6 +1395,12 @@ func frpJSONDoc(viol []frpViol, exemptUsed []frpKey, stale []frpKey, noReason []
 			b.WriteString(", ")
 		}
 		b.WriteString("{\"face\": " + frpJSONStr(k.Face) + ", \"flag\": " + frpJSONStr(k.Flag) + "}")
+	}
+	if st := frpRatchetStatOf(viol, exemptUsed, stale); st.On {
+		b.WriteString("], \"ratchet\": {\"frozen\": " + fmt.Sprintf("%d", st.Frozen) +
+			", \"hit\": " + fmt.Sprintf("%d", st.Hit) +
+			", \"new\": " + fmt.Sprintf("%d", st.New) +
+			", \"stale\": " + fmt.Sprintf("%d", st.Stale) + "}")
 	}
 	b.WriteString("], \"counts\": {\"命令树条数\": " + fmt.Sprintf("%d", counts.Commands) +
 		", \"名字表项数\": " + fmt.Sprintf("%d", counts.FlagNames) +
@@ -1549,6 +1790,34 @@ func frpSelfTest(stdout io.Writer) int {
 	}
 	add("⑦声明面（正控 · 危险档面）：用法串写了 `--dry-run` ⇒ 不再列", !dangRed, "")
 
+	// ── 面④/⑤ 存量棘轮（只许下调）· 成对负控（合成夹具 + 临时冻结表 · 跑完**还原**）──
+	//   正控：该命令的读者面项**全在冻结表里** ⇒ 不判红（且计入存量豁免）。
+	//   负控：冻结表**漏收一项** ⇒ 判红并**点名**该旗标（棘轮：新出现即红）。
+	rstSaved := frpEXEMPT
+	defer func() { frpEXEMPT = rstSaved }()
+	d = frpMkFixture(filepath.Join(base, "ratchet_ok"))
+	frpEXEMPT = map[frpKey]string{
+		{Face: frpFaceReader, Flag: "--all", Where: "task/submit"}:      "自检夹具 · 正控",
+		{Face: frpFaceReader, Flag: "--desc", Where: "task/submit"}:     "自检夹具 · 正控",
+		{Face: frpFaceReader, Flag: "--slice-id", Where: "task/submit"}: "自检夹具 · 正控",
+	}
+	vRT, exRT, _, _, _, _, _, _, _, _ := frpCompute(d)
+	exHits := 0
+	for _, k := range exRT {
+		if frpIsRatchetFace(k.Face) {
+			exHits++
+		}
+	}
+	add("⑩棘轮（正控 · 面④读者面）：读者面项全在冻结表里 ⇒ 不判红、计入存量豁免",
+		!hasViol(vRT, frpFaceReader, "--slice-id") && exHits == 3, "")
+	frpEXEMPT = map[frpKey]string{
+		{Face: frpFaceReader, Flag: "--all", Where: "task/submit"}:  "自检夹具 · 负控",
+		{Face: frpFaceReader, Flag: "--desc", Where: "task/submit"}: "自检夹具 · 负控",
+	}
+	vRT2, _, _, _, _, _, _, _, _, _ := frpCompute(d)
+	add("⑪棘轮（负控 · 面④读者面）：冻结表漏收一项（--slice-id）⇒ 判红且**点名**",
+		hasViol(vRT2, frpFaceReader, "--slice-id"), "")
+
 	bad := 0
 	for _, c := range checks {
 		if !c.ok {
@@ -1584,7 +1853,11 @@ func frpSortedExemptJoined() string {
 	frpSortKeys(keys)
 	parts := make([]string, len(keys))
 	for i, k := range keys {
-		parts[i] = k.Face + "/" + k.Flag
+		label := k.Face + "/" + k.Flag
+		if k.Where != "" {
+			label += "@" + k.Where
+		}
+		parts[i] = label
 	}
 	return strings.Join(parts, " · ")
 }
@@ -1636,9 +1909,9 @@ func flagRegistryParityGateMain(stdout, stderr io.Writer, argv []string) int {
 		fmt.Fprintln(stdout, frpRules)
 		fmt.Fprintf(stdout, "退码：%s\n", frpRCS)
 		fmt.Fprintf(stdout, "存量豁免 %d 项：%s\n", len(frpEXEMPT), frpSortedExemptJoined())
-		fmt.Fprintln(stdout, "面④ 读者面（按命令 · 报告档 · 不进退码）：RULES 末句 —— "+
+		fmt.Fprintln(stdout, "面④ 读者面（按命令 · 棘轮 · 进退码）：RULES 末句 —— "+
 			"「某命令 usage 串里的旗标 ⇒ 该命令的实现件必读」（缺口账 `GAP-20260927-325`）")
-		fmt.Fprintln(stdout, "面⑤ 反读面（按命令 · 报告档 · 不进退码 · 缺口账 `GAP-20261005-15`）：RULES 末句 —— "+
+		fmt.Fprintln(stdout, "面⑤ 反读面（按命令 · 棘轮 · 进退码 · 缺口账 `GAP-20261005-15`）：RULES 末句 —— "+
 			"「某命令实现按取值读了某旗标 ⇒ 该命令的 usage 串必列它」（面④ 的另一向）")
 		fmt.Fprintln(stdout, "面⑥ 运行期用法行面（按命令 · 报告档 · 不进退码 · 缺口账 `GAP-20260928-183`）："+
 			"件内运行期 stderr 用法行的旗标集 ⟷ 面① 命令树同命令用法串旗标集（双向对拍）")

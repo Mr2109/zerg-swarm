@@ -72,6 +72,10 @@ func ppfBuild(t *testing.T, dir string, rules []string) {
 		if f.GateFile != "" && f.GateProbe != "" {
 			stubs[f.GateFile] = append(stubs[f.GateFile], f.GateProbe)
 		}
+		// 债格「已覆盖旁证」的覆盖件也要合成（E3s 要读它 · 缺口 `GAP-20260926-182`）。
+		for _, dc := range f.DebtCover {
+			stubs[dc.Gate] = append(stubs[dc.Gate], dc.Evidence)
+		}
 	}
 	for gf, gps := range stubs {
 		var b strings.Builder
@@ -163,7 +167,7 @@ func mustAbs(t *testing.T, p string) string {
 
 // ppfSelfGolden —— py 原件 `--self-test` 的**逐字节**输出（24 行 + 结论行 · 真原件跑一次取得并钉版）。
 // 主件 `pvSelfTest` 的任何一个断言只要偏一格（got/want/文案/行序），本串即不等 ⇒ 用例必红（有牙）。
-const ppfSelfGolden = "  ✓ ① 正控：规则面 + 脱敏器面全被形态格认领 ⇒ rc=0（期望 rc=0 · 现跑 rc=0）\n  ✓ ② must-fail：`~/…` 形态无格（删 F-02）⇒ rc=1（期望 rc=1 · 现跑 rc=1）\n  ✓ ②b 同上 ⇒ **点名**到「形态无格」（不是笼统红）（期望 rc=1 · 现跑 rc=1）\n  ✓ ③ 成对：把 F-02 补回 ⇒ 回绿 rc=0（期望 rc=0 · 现跑 rc=0）\n  ✓ ④ must-fail：`$HOME` 规则 + 有格认领 ⇒ 仍 rc=0（有格即算枚举到）（期望 rc=0 · 现跑 rc=0）\n  ✓ ④b must-fail：同夹具把 F-03 也删掉 ⇒ rc=1（期望 rc=1 · 现跑 rc=1）\n  ✓ ⑤ 成对：`$HOME` 格走「不覆盖 + 理由」⇒ rc=0（期望 rc=0 · 现跑 rc=0）\n  ✓ ⑤b 同上 ⇒ 该格进 `debt[]`（**逐跑打印**，不静默）（期望 rc=1 · 现跑 rc=1）\n  ✓ ⑥ must-fail：门禁侧空且**无理由** ⇒ rc=1（期望 rc=1 · 现跑 rc=1）\n  ✓ ⑦ 真话负控：门禁侧点名**不在盘**的件 ⇒ rc=1（空指）（期望 rc=1 · 现跑 rc=1）\n  ✓ ⑦b 同上 ⇒ 理由逐字含「空指」（期望 rc=1 · 现跑 rc=1）\n  ✓ ⑧ 真话负控：出处句 `grep -F` 0 命中 ⇒ rc=1（期望 rc=1 · 现跑 rc=1）\n  ✓ ⑨ E4 只打不红：实例口径探针进 `instances[]` 且 rc 不变（期望 rc=1 · 现跑 rc=1）\n  ✓ ⑩ 缺真源件（空转）⇒ rc=2（不给结论 · 不许当绿）（期望 rc=2 · 现跑 rc=2）\n  ✓ ⑪ 真话负控：注入**真形态**未被任何格认领 ⇒ rc=1（期望 rc=1 · 现跑 rc=1）\n  ✓ ⑪b 同上 ⇒ E2a **点名**该行原文（不是笼统红）（期望 rc=1 · 现跑 rc=1）\n  ✓ ⑫ 真话负控：F-13 认领正则弄哑 ⇒ rc=1（期望 rc=1 · 现跑 rc=1）\n  ✓ ⑫b 同上 ⇒ 报出 `Zerg-内部文档` 那行（E2a 点名）（期望 rc=1 · 现跑 rc=1）\n  ✓ ⑬ 真话负控：债务格改回**未登记**（gate 空 + 无理由）⇒ rc=1（期望 rc=1 · 现跑 rc=1）\n  ✓ ⑬b 同上 ⇒ E3 **点名**到 F-16（期望 rc=1 · 现跑 rc=1）\n  ✓ ⑭ 非形态登记：公开示例规则 + 逐字登记 ⇒ rc=0（期望 rc=0 · 现跑 rc=0）\n  ✓ ⑭b 同上 ⇒ 该规则进 `nonform[]`（逐跑打印 · 不静默）（期望 rc=1 · 现跑 rc=1）\n  ✓ ⑮ must-fail：同规则不登记 ⇒ rc=1（真形态负控照旧有牙）（期望 rc=1 · 现跑 rc=1）\n  ✓ ⑮b 同上 ⇒ E2a **点名**该行原文（期望 rc=1 · 现跑 rc=1）\n自检结论: 全过（断言 24 条 · 失败 0 条）\n"
+const ppfSelfGolden = "  ✓ ① 正控：规则面 + 脱敏器面全被形态格认领 ⇒ rc=0（期望 rc=0 · 现跑 rc=0）\n  ✓ ② must-fail：`~/…` 形态无格（删 F-02）⇒ rc=1（期望 rc=1 · 现跑 rc=1）\n  ✓ ②b 同上 ⇒ **点名**到「形态无格」（不是笼统红）（期望 rc=1 · 现跑 rc=1）\n  ✓ ③ 成对：把 F-02 补回 ⇒ 回绿 rc=0（期望 rc=0 · 现跑 rc=0）\n  ✓ ④ must-fail：`$HOME` 规则 + 有格认领 ⇒ 仍 rc=0（有格即算枚举到）（期望 rc=0 · 现跑 rc=0）\n  ✓ ④b must-fail：同夹具把 F-03 也删掉 ⇒ rc=1（期望 rc=1 · 现跑 rc=1）\n  ✓ ⑤ 成对：`$HOME` 格走「不覆盖 + 理由」⇒ rc=0（期望 rc=0 · 现跑 rc=0）\n  ✓ ⑤b 同上 ⇒ 该格进 `debt[]`（**逐跑打印**，不静默）（期望 rc=1 · 现跑 rc=1）\n  ✓ ⑥ must-fail：门禁侧空且**无理由** ⇒ rc=1（期望 rc=1 · 现跑 rc=1）\n  ✓ ⑦ 真话负控：门禁侧点名**不在盘**的件 ⇒ rc=1（空指）（期望 rc=1 · 现跑 rc=1）\n  ✓ ⑦b 同上 ⇒ 理由逐字含「空指」（期望 rc=1 · 现跑 rc=1）\n  ✓ ⑧ 真话负控：出处句 `grep -F` 0 命中 ⇒ rc=1（期望 rc=1 · 现跑 rc=1）\n  ✓ ⑨ E4 只打不红：实例口径探针进 `instances[]` 且 rc 不变（期望 rc=1 · 现跑 rc=1）\n  ✓ ⑩ 缺真源件（空转）⇒ rc=2（不给结论 · 不许当绿）（期望 rc=2 · 现跑 rc=2）\n  ✓ ⑪ 真话负控：注入**真形态**未被任何格认领 ⇒ rc=1（期望 rc=1 · 现跑 rc=1）\n  ✓ ⑪b 同上 ⇒ E2a **点名**该行原文（不是笼统红）（期望 rc=1 · 现跑 rc=1）\n  ✓ ⑫ 真话负控：F-13 认领正则弄哑 ⇒ rc=1（期望 rc=1 · 现跑 rc=1）\n  ✓ ⑫b 同上 ⇒ 报出 `Zerg-内部文档` 那行（E2a 点名）（期望 rc=1 · 现跑 rc=1）\n  ✓ ⑬ 真话负控：债务格改回**未登记**（gate 空 + 无理由）⇒ rc=1（期望 rc=1 · 现跑 rc=1）\n  ✓ ⑬b 同上 ⇒ E3 **点名**到 F-16（期望 rc=1 · 现跑 rc=1）\n  ✓ ⑭ 非形态登记：公开示例规则 + 逐字登记 ⇒ rc=0（期望 rc=0 · 现跑 rc=0）\n  ✓ ⑭b 同上 ⇒ 该规则进 `nonform[]`（逐跑打印 · 不静默）（期望 rc=1 · 现跑 rc=1）\n  ✓ ⑮ must-fail：同规则不登记 ⇒ rc=1（真形态负控照旧有牙）（期望 rc=1 · 现跑 rc=1）\n  ✓ ⑮b 同上 ⇒ E2a **点名**该行原文（期望 rc=1 · 现跑 rc=1）\n  ✓ ⑯ 债格 stale：F-14 Claim 写回旧 5 条变体 ⇒ rc=1（已覆盖的形态不许留在债格里）（期望 rc=1 · 现跑 rc=1）\n  ✓ ⑯b 同上 ⇒ 规则 E3s **点名**（不是笼统红）（期望 rc=1 · 现跑 rc=1）\n  ✓ ⑰ 成对：F-14 收窄回裸 `example-35b-v2` ⇒ 回绿 rc=0（期望 rc=0 · 现跑 rc=0）\n  ✓ ⑰b 同上 ⇒ 该格仍在 `debt[]`（裸 `example-35b-v2` 逐跑打印 · 不静默）（期望 rc=1 · 现跑 rc=1）\n自检结论: 全过（断言 28 条 · 失败 0 条）\n"
 
 // ppfCountW15 —— 数某目录里 `w15-forms-` 前缀的条目（自检夹具回收牙用）。
 func ppfCountW15(dir string) int {
@@ -199,7 +203,7 @@ func TestPrivatePathFormsSelfTestWired(t *testing.T) {
 	if strings.Contains(errb, "未搬") {
 		t.Fatalf("--self-test 仍是「未搬」桩：stderr=%q", errb)
 	}
-	if rc != 0 || !strings.Contains(out, "自检结论: 全过（断言 24 条 · 失败 0 条）") {
+	if rc != 0 || !strings.Contains(out, "自检结论: 全过（断言 28 条 · 失败 0 条）") {
 		t.Fatalf("--self-test 未真跑：rc=%d out=%q", rc, out)
 	}
 }
@@ -231,7 +235,7 @@ func TestPrivatePathFormsGateRetired(t *testing.T) {
 			t.Fatal(err)
 		}
 		// Go 半在盘 ⇒ 判「已退役」（模拟 py 已退役 · Go 半接管）
-		ppfWrite(t, filepath.Join(d, "core/cmd/zerg/check_public_face_wording.go"), "package main\n")
+		ppfWrite(t, filepath.Join(d, "core/cmd/zerg/check_public_face_wording.go"), "package main\n// example-moe-36b（Go 半承载覆盖证据）\n")
 		rc, out, _ := ppfRun(d)
 		if rc != 0 {
 			t.Fatalf("退役态期望 rc=0（与在盘一致 · ✗ 不 fail-closed），实得 rc=%d out=%q", rc, out)
@@ -247,10 +251,40 @@ func TestPrivatePathFormsGateRetired(t *testing.T) {
 		if err := os.Remove(filepath.Join(d, pf)); err != nil {
 			t.Fatal(err)
 		}
-		// Go 半也不在盘（真消失）⇒ 不得当退役
+		// Go 半也不在盘（真消失）⇒ 不得当退役（F-18 直挂 Go 半 ⇒ 一并移开）
+		if err := os.Remove(filepath.Join(d, "core/cmd/zerg/check_public_face_wording.go")); err != nil {
+			t.Fatal(err)
+		}
 		rc, out, _ := ppfRun(d)
 		if rc != 1 || !strings.Contains(out, "[E3]") || !strings.Contains(out, "空指") {
 			t.Fatalf("真消失期望 rc=1 且 [E3] 空指，实得 rc=%d out=%q", rc, out)
 		}
 	})
+}
+
+// TestPrivatePathFormsDebtStale —— 债格 stale 断言（缺口 `GAP-20260926-182`）· 入口级两态。
+//
+//	正控：债格与实跑一致（F-14 收窄到裸 `example-35b-v2`）⇒ rc=0 且印「债格 stale 自检：0 条」。
+//	负控：把 F-14 的 Claim 写回旧 5 条变体（债格仍声称 example-moe-36b 等未覆盖）⇒ 规则 E3s 红、点名。
+func TestPrivatePathFormsDebtStale(t *testing.T) {
+	d := t.TempDir()
+	ppfBuild(t, d, ppfRulesBase)
+	rc, out, _ := ppfRun(d)
+	if rc != 0 || !strings.Contains(out, "债格 stale 自检：0 条") {
+		t.Fatalf("正控失败：期望 rc=0 且印 stale 自检行，实得 rc=%d out=%q", rc, out)
+	}
+
+	saved := pvForms
+	defer func() { pvForms = saved }()
+	bad := pvFormsCopy()
+	for i := range bad {
+		if bad[i].ID == "F-14" {
+			bad[i].Claim = "example-moe-36b|Ornith|example-35b-v2"
+		}
+	}
+	pvForms = bad
+	rc, out, _ = ppfRun(d)
+	if rc != 1 || !strings.Contains(out, "[E3s]") || !strings.Contains(out, "example-moe-36b") {
+		t.Fatalf("负控失败：期望 rc=1 且 [E3s] 点名 example-moe-36b，实得 rc=%d out=%q", rc, out)
+	}
 }

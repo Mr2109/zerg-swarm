@@ -143,11 +143,12 @@ func TestFamilyOpenCounts_EggWriteFaceIsOpen(t *testing.T) {
 				strings.Join(p, " "), c.danger.Level)
 		}
 	}
-	// 三档计数：本族 6 条 = `ls`/`show`（已开放）＋ `run`/`stop`/`pin`/`unpin`（危险档）· 拒执 0。
+	// 三档计数：本族 11 条 = `ls`/`show`/`info`/`verify`（已开放）＋ `run`/`stop`/`pin`/`unpin`/`gc`/`expand`/`release`（危险档）· 拒执 0。
 	// ★ 2026-10-12：原 7 条含 `retire`（危险档）；同批下架三件时 `egg retire` 退场 ⇒ 6 条 · 危险档 4。
+	// ★ 2026-10-15 卵族具名入口（DEV-2955）：+5 条 `info`/`verify`（已开放 · 只读）＋ `gc`/`expand`/`release`（危险档 D2/D3）⇒ 6 → 11 条 · 已开放 2 → 4 · 危险档 4 → 7。
 	open, refused, danger := familyHelpCountsForTest("egg")
-	if open != 2 || refused != 0 || danger != 4 {
-		t.Errorf("`egg` 族现算「已开放 %d · 拒执 %d · 危险档 %d」（要 2 / 0 / 4：`ls`+`show` 已开放 · `run`+`stop`+`pin`+`unpin` 危险档；★ 2026-10-12 下架 `retire` ⇒ 5 → 4）",
+	if open != 4 || refused != 0 || danger != 7 {
+		t.Errorf("`egg` 族现算「已开放 %d · 拒执 %d · 危险档 %d」（要 4 / 0 / 7：`ls`+`show`+`info`+`verify` 已开放 · `run`+`stop`+`pin`+`unpin`+`gc`+`expand`+`release` 危险档；★ 2026-10-12 下架 `retire` ⇒ 5 → 4；★ 2026-10-15 卵族入口 +5 ⇒ 6 → 11）",
 			open, refused, danger)
 	}
 	line := helpFirstLineForTest(t, "egg")
@@ -155,8 +156,8 @@ func TestFamilyOpenCounts_EggWriteFaceIsOpen(t *testing.T) {
 	if m == nil {
 		t.Fatalf("`zerg help egg` 首行形状不认：%q", line)
 	}
-	if m[3] != "2" || m[4] != "0" || m[5] != "4" {
-		t.Errorf("`zerg help egg` 首行报「已开放 %s · 拒执 %s · 危险档 %s」（要 2 / 0 / 4）—— 「报数走唯一真源 `openedForRun`」这一条现读不成立：%q",
+	if m[3] != "4" || m[4] != "0" || m[5] != "7" {
+		t.Errorf("`zerg help egg` 首行报「已开放 %s · 拒执 %s · 危险档 %s」（要 4 / 0 / 7）—— 「报数走唯一真源 `openedForRun`」这一条现读不成立：%q",
 			m[3], m[4], m[5], line)
 	}
 }

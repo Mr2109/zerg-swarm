@@ -565,6 +565,71 @@ func scriptRetireDropEntry(rel, key, field, target string) (bool, int, int, erro
 	return true, n, len(nt), scriptInvWriteAtomic(rel, []byte(nt))
 }
 
+// ── ★ F4 加档（GAP-20261015-10 · 2026-10-15）：随动面**物理离盘**口径 ⟷ 本门「✗ 不代管 git rm」口径冲突 ──
+//
+// 病灶（仓外夹具复现 · 真库只读）：上面两处随动面按**物理离盘**口径摘 —— `publish/excludes.txt` 语义是
+// 「件不在公开树里」、`lang-freeze-baseline.json` 语义是「件不在盘」；而本门按**决-01** ✗ 不代管
+// `git rm`、且**要求目标件在盘**才跑（上面那道 `target_absent` 闸）。⇒ 件仍在盘时摘它们必然与「件仍在盘」
+// 自相矛盾，两个消费侧当场变红：
+//
+//	· `publish-public.sh --check-excludes-parity` ⇒ rc=2（新表 120 条 ≠ 旧数组 121 条）
+//	· `check-lang-freeze` ⇒ rc=1（A 档：现读件 ∉ 快照 ⇒ 判「新增自研面」）
+//
+// 定形（母单 F4-b · **(a) 加档**）：**件仍在盘 ⇒ 随动面不摘**（默认安全档）。理由三条：
+//
+//	① 改的是**行为面**，✗ 不动别人的 `want` / 判据（(b) 改判据面会把两门的 `want` 一起改）；
+//	② 在盘时摘排除表行 = 让一件**私有件**从公开面排除表里消失（该件仍留盘 ⇒ 有出树风险）——方向性错误；
+//	③ 两处随动面与「真删」本是同一件事的两半：次序铁律（本门 ✗ 不调 `clfEmit`）只有在件**真离盘**后自洽。
+//
+// ★ 件真离盘的那一批照此走：`git rm <件>` → `gate check check-lang-freeze --emit`（现读整份重建 ⇒
+// 件不在盘即自然消失）→ 行式排除表那一行由该批另走 `dev edit`（须与旧 `EXCLUDES=(…)` 数组**同位同删**
+// 才过对拍闸；本门 ✗ 不管旧数组 ⇒ 本门**摘不动**它，这正是本档把它摘成「不摘」的硬理由）。
+
+// scriptRetireTargetPresent —— 「件仍在盘」判定（**单点真源** · 与命令面那道 `target_absent` 闸同口径）。
+func scriptRetireTargetPresent(root, target string) bool {
+	if strings.TrimSpace(target) == "" {
+		return false
+	}
+	st, err := os.Stat(filepath.Join(root, target))
+	return err == nil && !st.IsDir()
+}
+
+// scriptRetireFaceDetachOptIn —— 显式摘除档的**扳机**（缝）· 本单按「默认安全档」落 ⇒ 恒 false。
+//
+// ★ 为什么这枚扳机现在恒 false、✗ 不是 `inv.hasFlag("--detach-publish-face")`：那枚**布尔**旗标要先
+// 「上户口」才打得到 —— 三处同批（`main.go` 的 `parseInvocation` 布尔 case · dispatch 的数据驱动收口 ·
+// `script retire` 的用法串），而 `main.go` 由另一路在改（母单禁区）⇒ 本单只落**默认安全档**；
+// 显式档待 `main.go` 开窗后把本函数体改成一行旗标读（本件其余一字不动 · 判据面无随动）。
+func scriptRetireFaceDetachOptIn(inv *invocation) bool {
+	_ = inv
+	return false
+}
+
+// scriptRetireFaceDetachAllowed —— 随动面该不该摘（**判定口** · 单点真源）。
+//
+// 件仍在盘 且 未显式声明 ⇒ **不摘**（默认安全档）；件已离盘 ⇒ 无物可摘（本门也够不着）；显式声明 ⇒ 摘。
+func scriptRetireFaceDetachAllowed(root, target string, optIn bool) (bool, string) {
+	if optIn {
+		return true, "显式声明：本批随动 `git rm` 同批做"
+	}
+	if scriptRetireTargetPresent(root, target) {
+		return false, "件仍在盘（本门 ✗ 不代管 git rm）"
+	}
+	return true, "件已离盘"
+}
+
+// ScriptRetireFaceDetachAllowedForTest —— 判定口的**测试钩子**（同 `ScriptRetireExceptionErrorsForTest`
+// 一族：判据体在 `package main`，外部测试包 `main_test` 够不到未导出名 ⇒ 开只读出口 · ✗ 不改判据）。
+func ScriptRetireFaceDetachAllowedForTest(root, target string, optIn bool) (bool, string) {
+	return scriptRetireFaceDetachAllowed(root, target, optIn)
+}
+
+// ScriptRetireDetachFacesForTest —— 显式档**真摘**的测试钩子（`optIn=true` 那一态的唯一可达入口：
+// 命令面那枚旗标尚未上户口 ⇒ CLI 档打不着，见 `scriptRetireFaceDetachOptIn`）。
+func ScriptRetireDetachFacesForTest(root, target string) ([]string, error) {
+	return scriptRetireTouchRegistrationFaces(root, target)
+}
+
 // scriptRetireTouchRegistrationFaces —— 同批摘除**两处独立**登记面（行式排除表 ＋ 语言冻结快照）。
 // `retire_exceptions`（本真源内）不在此 —— 它随账本**同一次原子写**落（见真写段）。✗ 不调 `clfEmit`。
 func scriptRetireTouchRegistrationFaces(root, target string) ([]string, error) {
@@ -681,7 +746,8 @@ func scriptRetireChangeLine(target, state, evidence string) string {
 
 // scriptRetirePrintPlan —— 计划件（`--dry-run` 与「缺 `--yes`」两档**打印同一份**）。
 func scriptRetirePrintPlan(out, stderr io.Writer, title, target, state, truthPath string,
-	ledgerCount int, evidence []string, by, beforeSHA, afterSHA, backupPath, auditPath string) {
+	ledgerCount int, evidence []string, by, beforeSHA, afterSHA, backupPath, auditPath string,
+	faceAllowed bool, faceWhy string) {
 	fmt.Fprintln(out, "计划件（"+title+" · 零副作用 —— 未写件、未写审计）")
 	fmt.Fprintf(out, "  真源     : %s\n", truthPath)
 	fmt.Fprintf(out, "  目标件   : %s\n", target)
@@ -692,8 +758,14 @@ func scriptRetirePrintPlan(out, stderr io.Writer, title, target, state, truthPat
 		scriptRetireQuote(target), scriptRetireQuote(state), scriptRetireQuote(orDashList(evidence)))
 	fmt.Fprintf(out, "  落 state : %s\n", state)
 	fmt.Fprintf(out, "  --by     : %s\n", by)
-	fmt.Fprintf(out, "  登记面随动 : 同批摘掉该件行 —— %s · %s · 本真源 `%s`（✗ 不调 `clfEmit`）\n",
-		scriptRetireExcludesRel, clfSnapshotRel, scriptRetireExceptionKey)
+	if faceAllowed {
+		fmt.Fprintf(out, "  登记面随动 : 同批摘掉该件行 —— %s · %s · 本真源 `%s`（✗ 不调 `clfEmit`）\n",
+			scriptRetireExcludesRel, clfSnapshotRel, scriptRetireExceptionKey)
+	} else {
+		fmt.Fprintf(out, "  登记面随动 : ✗ **不摘**（%s）—— %s · %s · 本真源 `%s` 逐字节不动\n",
+			faceWhy, scriptRetireExcludesRel, clfSnapshotRel, scriptRetireExceptionKey)
+		fmt.Fprintf(out, "               （件仍在盘 ⇒ 摘它们会造 `--check-excludes-parity` rc=2 与 `check-lang-freeze` rc=1）\n")
+	}
 	fmt.Fprintln(out, scriptRetireResidualTemplate(target, orDashList(evidence)))
 	fmt.Fprintln(out, scriptRetireChangeLine(target, state, orDashList(evidence)))
 	fmt.Fprintf(out, "  写前 sha : %s\n", beforeSHA)
@@ -833,6 +905,8 @@ func cmdScriptRetire(inv *invocation, stdout, stderr io.Writer) int {
 	afterSHA := scriptRetireSHA([]byte(newText))
 	backupPath := scriptRetireBackupPath()
 	auditPath := editAuditPath()
+	// ★ F4 加档：两处随动面**摘不摘**的判定口（单点真源 · 计划面与真写面**同一枚**判定 ⇒ 计划不撒谎）
+	faceAllowed, faceWhy := scriptRetireFaceDetachAllowed(root, target, scriptRetireFaceDetachOptIn(inv))
 
 	// ── `--dry-run`：只出计划件，零副作用 ─────────────────────────────────────
 	if inv.dryRun {
@@ -841,7 +915,7 @@ func cmdScriptRetire(inv *invocation, stdout, stderr io.Writer) int {
 			out = stderr
 		}
 		scriptRetirePrintPlan(out, stderr, "--dry-run", target, state, truthPath, len(doc.RetireLedger),
-			evidence, by, beforeSHA, afterSHA, backupPath, auditPath)
+			evidence, by, beforeSHA, afterSHA, backupPath, auditPath, faceAllowed, faceWhy)
 		if inv.jsonGiven {
 			return scriptRetireEmitJSON(inv, stdout, stderr, "dry_run", target, state,
 				len(doc.RetireLedger), beforeSHA, afterSHA, auditPath)
@@ -856,7 +930,7 @@ func cmdScriptRetire(inv *invocation, stdout, stderr io.Writer) int {
 			out = stderr
 		}
 		scriptRetirePrintPlan(out, stderr, "--yes 前的一次预览", target, state, truthPath, len(doc.RetireLedger),
-			evidence, by, beforeSHA, afterSHA, backupPath, auditPath)
+			evidence, by, beforeSHA, afterSHA, backupPath, auditPath, faceAllowed, faceWhy)
 		if inv.jsonGiven {
 			if rc := scriptRetireEmitJSON(inv, stdout, stderr, "need_yes", target, state,
 				len(doc.RetireLedger), beforeSHA, afterSHA, auditPath); rc != exitOK {
@@ -915,10 +989,20 @@ func cmdScriptRetire(inv *invocation, stdout, stderr io.Writer) int {
 		inv.setErr("failed", "readback_mismatch", "写后读回对拍不等 ⇒ 已回滚")
 		return exitFail
 	}
-	// ── 登记面随动（P3① · 同批）：另两处独立面（行式排除表 ＋ 语言冻结快照 · ✗ 不调 `clfEmit`）────
-	faceLines, faceErr := scriptRetireTouchRegistrationFaces(root, target)
+	// ── 登记面随动（P3① · 同批 · ★ F4 加档）：件仍在盘 ⇒ 两处随动面**不摘**（默认安全档）────────
+	// 口径与依据见本件 `scriptRetireFaceDetachAllowed` 上面那段（GAP-20261015-10）。
+	var faceLines []string
+	var faceErr error
+	if faceAllowed {
+		faceLines, faceErr = scriptRetireTouchRegistrationFaces(root, target)
+	}
 	for _, fl := range faceLines {
 		fmt.Fprintln(stdout, fl)
+	}
+	if !faceAllowed {
+		fmt.Fprintf(stdout, "  登记面 %-25s ✗ 未摘（%s）· %s ✗ 未摘 ⇒ 两件逐字节未动\n",
+			scriptRetireExcludesRel, faceWhy, clfSnapshotRel)
+		fmt.Fprintf(stdout, "         （件仍在盘 ⇒ 摘它们会造 `publish-public.sh --check-excludes-parity` rc=2 与 `check-lang-freeze` rc=1）\n")
 	}
 	fmt.Fprintf(stdout, "  登记面 %-25s 摘 %d 枚（`%s` · 随账本同一次原子写落）\n",
 		scriptRetireTruthRel, excRemoved, scriptRetireExceptionKey)

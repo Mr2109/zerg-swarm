@@ -1,27 +1,40 @@
 // check_devdocs_root_single_source.go —— 门禁族「开发文档根单一真源」· **只报告**判据
-// （缺口 GAP-20260927-47 甲(a)）。
+// （缺口 GAP-20260927-47 甲(a) · 口径「派生字面量 = 0」= 缺口 GAP-20260927-88）。
 //
 // 病（缺口逐字）：同一个「开发文档面」被多道判据各判一遍，而其中一些判据的**默认根**里
 // 硬写着一个**版本目录字面**（如 `项目文档/v2.5.10`）—— 与版号真源（`core/internal/version/version.go`
-// 的 `const Version`，即 `v2.5.14`）**不一致** ⇒ 同一趟门判的是**两棵不同的树**，而 rc 都看不出。
+// 的 `const Version`）**不一致** ⇒ 同一趟门判的是**两棵不同的树**，而 rc 都看不出。
 //
-// 本门做什么：逐格点名「判据件默认根 ⟷ 版号真源」不符者，输出给**两侧逐字读数**
-// （件:行 ＋ 取的路径 ＋ 真源值）；相符的位点**不**点名。
+// ★ 口径（GAP-20260927-88 改）：旧口径「默认根 == 真源」**恒绿** —— 写死的版号只要不落在
+// 本件认得的构造形态里就永不落网，而写一个**等于真源**的版号更是一路绿（== 真源 ⇒ 绿）。
+// 本门改为断言 **「派生默认根字面量 = 0（位点全登记）」**：
+//
+//	· 凡「默认根 = <同级文档仓>/项目文档/<版号字面>」这一构造的**版本字面量**，不论它是否
+//	  等于现读真源，一律判红 —— 只有两条出路：**改成 derive**（从版号真源现算）或**登记进
+//	  `cdrssRegistered` 的带日期历史台账/语料白名单**（那些位的版目录是台账的固定落点，
+//	  跟着真源现算反而指错件）。
+//	· 真源（`const Version`）仍现读，只用于**报告行**与 fail-closed；**不再**作绿/红的判据
+//	  （否则退回恒绿）。
+//
+// 本门做什么：逐格点名「判据件里的派生默认根版本字面量」，输出给**两侧逐字读数**
+// （件:行 ＋ 字面 ＋ 真源值）；登记在册的带日期台账位**不**点名。
 //
 // 口径（逐条）：
 //
-//	· ★ **只报告**：命中不阻断（接线档 `tri-report`）。rc = 1（有不符）/ 0（全相符）；
+//	· ★ **只报告**：命中不阻断（接线档 `tri-report`）。rc = 1（有未登记字面量）/ 0（全绿）；
 //	  真源取不到 / 扫描面空转 ⇒ rc=2（不给结论 · ✗ 不当绿）。
 //	· ★ 真源**现读**（`core/internal/version/version.go` 的 `const Version = "X.Y.Z"`）；
 //	  本件**不硬写版本目录真值**（✗ 源码中不出现「项目文档 + 版号」的连续字面）。
 //	· ★ 取不到真源 ⇒ **不给结论（rc=2）**，✗ 不静默回落（fail-closed）。
 //	· ★ **只读**扫描：不起子进程 / 不联网 / 不写任何件（仅仓外只读临时夹具）。
 //
-// 扫描面与「位点」定义（两种形态 · 都是「默认根 = <同级文档仓>/项目文档/<版>」这一构造）：
+// 扫描面与「位点」定义（三种形态 · 都是「默认根 = <同级文档仓>/项目文档/<版>」这一构造）：
 //
 //	形态 A（直接字面）：`<join>(..., "项目文档", "vX.Y.Z")` ⇒ 报该字面所在行；
 //	形态 B（标识符）  ：`<join>(..., "项目文档", <标识>)`，而 `<标识>` 是**本件内**赋值为
-//	  裸版号字面 `"vX.Y.Z"` 的常量/变量（如 `cdfSlugVersionDir`）⇒ 报**声明行**。
+//	  裸版号字面 `"vX.Y.Z"` 的常量/变量（如 `cdfSlugVersionDir`）⇒ 报**声明行**；
+//	形态 C（同级根串）：单串里写死同级文档仓根尾段 `<文档仓名>/项目文档/vX.Y.Z`，且版目录即
+//	  **串尾**（可选尾斜杠）—— 只认形态 A/B 时这一形态漏网（写死同级默认根的老写法）。
 //
 // ✗ 不碰被点名件的**任何字节**（那属 GAP-20260927-47 的 (b) 半 · 另一批带收敛的活）。
 //
@@ -47,17 +60,44 @@ const (
 	cdrssScanDirRel = "core/cmd/zerg"                    // 判据件目录（扫描面）
 	cdrssVersionRel = "core/internal/version/version.go" // 版号真源（单一来源）
 	cdrssDocSeg     = "项目文档"                             // 开发文档树段（真源版号目录的上一级）
+	cdrssDocsTree   = "Zerg-" + "docs"                   // 同级文档仓名（形态 C 用 · 由部件拼出 ⇒ 本件源码不出现连续字面）
 )
 
 // cdrssGoVerConstRe —— 真源解析：`const Version = "2.5.14"` ⇒ 捕获 `2.5.14`。
 var cdrssGoVerConstRe = regexp.MustCompile(`(?m)^\s*const\s+Version\s*=\s*"([0-9][0-9.]*)"`)
 
-// 两个「默认根」构造形态的定位正则（★ 由**部件**拼出 ⇒ 本件源码里不出现连续的
+// 三种「默认根」构造形态的定位正则（★ 由**部件**拼出 ⇒ 本件源码里不出现连续的
 // 「项目文档 + 版号」字面 ⇒ 本件对自己的扫描面 0 命中）。
 var (
 	cdrssJoinLitRe   = regexp.MustCompile(`"` + cdrssDocSeg + `"\s*,\s*"(v[0-9]+(?:\.[0-9]+)+)"`)
 	cdrssJoinIdentRe = regexp.MustCompile(`"` + cdrssDocSeg + `"\s*,\s*([A-Za-z_][A-Za-z0-9_]*)`)
+	cdrssRootStrRe   = regexp.MustCompile(`"[^"]*` + cdrssDocsTree + `/` + cdrssDocSeg + `/(v[0-9]+(?:\.[0-9]+)+)/?"`)
 )
+
+// cdrssReg —— 白名单条目：**带日期的历史台账/语料**所在版目录（登记 ⇒ 允许保留该版号字面）。
+// ★ 只收「版目录是台账固定落点、跟着真源现算会指错件」的位；✗ 不收新写死的默认根（那些位正解 = derive）。
+type cdrssReg struct {
+	file   string // 仓内相对路径
+	anchor string // 该位点 ±3 行窗口内必现的特征串（改名 / 搬行会让它失效 ⇒ 重新登记）
+	date   string // 台账日期（YYYYMMDD）—— ★ 白名单只收带日期的历史台账/语料
+	reason string
+}
+
+// cdrssRegistered —— 白名单真源（逐条带 date=理由）。
+var cdrssRegistered = []cdrssReg{
+	{file: "core/cmd/zerg/check_idspace_map.go", anchor: "idmDefaultDoc", date: "20260924",
+		reason: "号段映射登记件（登记-号段映射-v2.5.12-20260924.md）的固定落点：带日期的历史台账所在版目录，随真源现算会指到没有该件的版本目录（✗ 不是派生默认值）"},
+}
+
+// cdrssRegisteredSite —— 位点是否在带日期台账白名单内（file ＋ ±3 行窗口内 anchor 双命中）。
+func cdrssRegisteredSite(s cdrssSite) bool {
+	for _, r := range cdrssRegistered {
+		if r.file == s.file && strings.Contains(s.ctx, r.anchor) {
+			return true
+		}
+	}
+	return false
+}
 
 // cdrssSite —— 一处「默认根版号位点」。
 type cdrssSite struct {
@@ -66,6 +106,7 @@ type cdrssSite struct {
 	path    string // 取的路径（`项目文档/<版>`）
 	version string // 取的版号目录字面
 	text    string // 该行原文（截断）
+	ctx     string // 该行 ±3 行窗口原文（白名单 anchor 判定用）
 }
 
 func cdrssTrim(s string) string {
@@ -144,30 +185,43 @@ func cdrssScan(root string) (int, []cdrssSite) {
 			continue
 		}
 		lines := strings.Split(string(raw), "\n")
+		win := func(i int) string { // 该行 ±3 行窗口（白名单 anchor 判定用）
+			lo, hi := i-3, i+4
+			if lo < 0 {
+				lo = 0
+			}
+			if hi > len(lines) {
+				hi = len(lines)
+			}
+			return strings.Join(lines[lo:hi], "\n")
+		}
+		add := func(line int, mpath, ver, text string) {
+			key := fmt.Sprintf("%s:%d", rel, line)
+			if seen[key] {
+				return
+			}
+			seen[key] = true
+			sites = append(sites, cdrssSite{file: rel, line: line,
+				path: mpath, version: ver, text: text, ctx: win(line - 1)})
+		}
 		for i, ln := range lines {
 			tr := strings.TrimSpace(ln)
 			if strings.HasPrefix(tr, "//") || strings.HasPrefix(tr, "/*") || strings.HasPrefix(tr, "*") {
 				continue // 注释行不作位点（说明文字不算硬写）
 			}
 			if m := cdrssJoinLitRe.FindStringSubmatch(ln); m != nil {
-				key := fmt.Sprintf("%s:%d", rel, i+1)
-				if !seen[key] {
-					seen[key] = true
-					sites = append(sites, cdrssSite{file: rel, line: i + 1,
-						path: cdrssDocSeg + "/" + m[1], version: m[1], text: cdrssTrim(ln)})
-				}
+				add(i+1, cdrssDocSeg+"/"+m[1], m[1], cdrssTrim(ln))
 			}
 			for _, im := range cdrssJoinIdentRe.FindAllStringSubmatch(ln, -1) {
 				declLine, ver, ok := cdrssResolveIdent(lines, im[1])
 				if !ok {
 					continue
 				}
-				key := fmt.Sprintf("%s:%d", rel, declLine)
-				if !seen[key] {
-					seen[key] = true
-					sites = append(sites, cdrssSite{file: rel, line: declLine,
-						path: cdrssDocSeg + "/" + ver, version: ver, text: cdrssTrim(lines[declLine-1])})
-				}
+				add(declLine, cdrssDocSeg+"/"+ver, ver, cdrssTrim(lines[declLine-1]))
+			}
+			// 形态 C（同级根串）：单串里写死同级文档仓根尾段、且版目录即**串尾**。
+			for _, cm := range cdrssRootStrRe.FindAllStringSubmatch(ln, -1) {
+				add(i+1, cdrssDocSeg+"/"+cm[1], cm[1], cdrssTrim(ln))
 			}
 		}
 	}
@@ -181,6 +235,7 @@ func cdrssScan(root string) (int, []cdrssSite) {
 }
 
 // cdrssRun —— 默认档：现读真源 ⇒ 扫面 ⇒ 逐格对拍并报告。
+// ★ 绿/红判据 = 「派生默认根字面量 = 0（位点全登记）」；真源只入报告行（✗ 不再作判据 ⇒ 不退回恒绿）。
 func cdrssRun(stdout, stderr io.Writer, root string) int {
 	canonical, ok, why := cdrssTrueSource(root)
 	if !ok {
@@ -200,23 +255,23 @@ func cdrssRun(stdout, stderr io.Writer, root string) int {
 		fmt.Fprintf(stdout, "⛔ 不给结论：扫描面 0 件判据件（%s/*.go 读不到 ⇒ 空转）\n", cdrssScanDirRel)
 		return cdrssRCblock
 	}
-	var bad []cdrssSite
+	var unreg []cdrssSite
 	for _, s := range sites {
-		if s.version != canonical {
-			bad = append(bad, s)
+		if !cdrssRegisteredSite(s) {
+			unreg = append(unreg, s)
 		}
 	}
-	fmt.Fprintf(stdout, "判据件默认根 ⟷ 版号真源 对拍：真源 = %s（%s）｜扫描 %d 件判据件｜位点 %d 处｜不符 %d 处\n",
-		canonical, cdrssVersionRel, nfiles, len(sites), len(bad))
-	for _, s := range bad {
-		fmt.Fprintf(stdout, "✗ 不符 %s:%d  取的路径=%s  真源=%s\n", s.file, s.line, s.path, canonical)
+	fmt.Fprintf(stdout, "判据件派生默认根字面量 = 0 对拍：版号真源 = %s（%s）｜扫描 %d 件判据件｜派生字面量 %d 处（登记 %d 处 · 未登记 %d 处）\n",
+		canonical, cdrssVersionRel, nfiles, len(sites), len(sites)-len(unreg), len(unreg))
+	for _, s := range unreg {
+		fmt.Fprintf(stdout, "✗ 未登记 %s:%d  字面=%s  真源=%s\n", s.file, s.line, s.path, canonical)
 		fmt.Fprintf(stdout, "      行文: %s\n", s.text)
 	}
-	if len(bad) == 0 {
-		fmt.Fprintf(stdout, "⇒ 绿：%d 处开发文档默认根的版号目录 == 真源 %s\n", len(sites), canonical)
+	if len(unreg) == 0 {
+		fmt.Fprintf(stdout, "⇒ 绿：开发文档默认根的版本字面量 = 0 处未登记（本面 %d 处全为带日期的历史台账/语料 · 已逐条登记）\n", len(sites))
 		return cdrssRCok
 	}
-	fmt.Fprintf(stdout, "⇒ 不符 %d 处（★ 只报告档 · tri-report：不阻断提交；这几处硬写的收口归 (b) 批）\n", len(bad))
+	fmt.Fprintf(stdout, "⇒ 派生默认根版本字面量 %d 处**未登记**（★ 只报告档 · tri-report：不阻断提交；正解 = 改成 derive 或按带日期台账登记）\n", len(unreg))
 	return cdrssRCfail
 }
 
@@ -226,7 +281,7 @@ func cdrssWriteFile(root, rel, content string) {
 	_ = os.WriteFile(p, []byte(content), 0o644)
 }
 
-// cdrssSelfTest —— 正/负控（**合成树 · 不碰真目标**）。
+// cdrssSelfTest —— 正/负控（**合成树 · 不碰真目标**）。★ 9 格。
 func cdrssSelfTest(stdout, stderr io.Writer) int {
 	ok := true
 	chk := func(cond bool, okMsg, badMsg string) {
@@ -243,45 +298,62 @@ func cdrssSelfTest(stdout, stderr io.Writer) int {
 		return 1
 	}
 	defer func() { _ = os.RemoveAll(td) }()
-	// 夹具：真源 9.9.9；两件判据件 —— 一件相符（v9.9.9）· 一件不符（v1.0.0 · 且经标识符形态）。
+	// 夹具：真源 9.9.9；形态 A 的位点字面 **v9.9.9 恰等于真源**（旧口径的恒绿点）；
+	// 形态 B 的标识符赋值为裸版号字面（报声明行）。
 	cdrssWriteFile(td, cdrssVersionRel, "package version\n\nconst Version = \"9.9.9\"\n")
-	cdrssWriteFile(td, cdrssScanDirRel+"/check_ok.go",
-		"package main\n\nfunc ok() string { return join(sib, \"项目文档\", \"v9.9.9\") }\n")
-	cdrssWriteFile(td, cdrssScanDirRel+"/check_bad.go",
-		"package main\n\nconst slug = \"v1.0.0\"\n\nfunc bad() string { return join(sib, \"项目文档\", slug) }\n")
-	var out bytes.Buffer
-	rc := cdrssRun(&out, stderr, td)
-	got := out.String()
-	chk(rc == cdrssRCfail, "正控：一处不符 ⇒ rc=1（只报告档 · 命中即报）",
-		fmt.Sprintf("正控失败：期望 rc=1，实得 %d（out=%q）", rc, got))
-	chk(strings.Contains(got, "check_bad.go:3"), "正控：逐条点名不符件（含 件:行 · 形态 B 报声明行）",
-		"正控失败：输出未点名 check_bad.go:3")
-	chk(strings.Contains(got, "取的路径=项目文档/v1.0.0") && strings.Contains(got, "真源=v9.9.9"),
-		"正控：两侧逐字读数（取的路径 + 真源值）齐", "正控失败：两侧读数不齐")
-	chk(!strings.Contains(got, "check_ok.go"), "正控：相符的位点**不**被点名（判据有区分度）",
-		"正控失败：相符位点也被点名（判据无区分度）")
-	// 负控①：把不符处改成 == 真源 ⇒ 翻绿（判据对内容敏感 · ✗ 非永真）。
-	cdrssWriteFile(td, cdrssScanDirRel+"/check_bad.go",
-		"package main\n\nconst slug = \"v9.9.9\"\n\nfunc bad() string { return join(sib, \"项目文档\", slug) }\n")
-	var out2 bytes.Buffer
-	rc2 := cdrssRun(&out2, stderr, td)
-	chk(rc2 == cdrssRCok, "负控①：该处改成 == 真源 ⇒ rc=0（非永真）",
-		fmt.Sprintf("负控①失败：期望 rc=0，实得 %d（out=%q）", rc2, out2.String()))
-	// 负控②：真源取不到 ⇒ rc=2（不给结论 · ✗ 不静默回落）。
+	cdrssWriteFile(td, cdrssScanDirRel+"/check_a.go",
+		"package main\n\nfunc a() string { return join(sib, \"项目文档\", \"v9.9.9\") }\n")
+	cdrssWriteFile(td, cdrssScanDirRel+"/check_b.go",
+		"package main\n\nconst slug = \"v2.5.10\"\n\nfunc b() string { return join(sib, \"项目文档\", slug) }\n")
+	var outA bytes.Buffer
+	rcA := cdrssRun(&outA, stderr, td)
+	gotA := outA.String()
+	chk(rcA == cdrssRCfail, "① 正控：未登记的派生默认根字面量 ⇒ rc=1（只报告档 · 命中即报）",
+		fmt.Sprintf("①失败：期望 rc=1，实得 %d（out=%q）", rcA, gotA))
+	chk(strings.Contains(gotA, "check_a.go:3"), "② 正控：逐条点名未登记件（含 件:行）",
+		"②失败：输出未点名 check_a.go:3")
+	chk(strings.Contains(gotA, "字面="+cdrssDocSeg+"/v9.9.9") && strings.Contains(gotA, "真源=v9.9.9"),
+		"③ ★ 恒绿反证：字面**等于真源**（v9.9.9）仍判红（旧口径「== 真源 ⇒ 绿」已废）",
+		"③失败：等于真源的字面被放行（退回恒绿）")
+	chk(strings.Contains(gotA, "check_b.go:3") && strings.Contains(gotA, "字面=项目文档/v2.5.10"),
+		"④ 正控：形态 B（标识符）报**声明行**（check_b.go:3）",
+		"④失败：形态 B 未点名声明行")
+	// 负控①：把 A/B 两处都改成 derive（本件不出现版号字面）⇒ 翻绿（判据对内容敏感 · ✗ 非永真）。
+	cdrssWriteFile(td, cdrssScanDirRel+"/check_a.go",
+		"package main\n\nfunc a() string { return join(sib, \"项目文档\", mapVer(Version)) }\n")
+	cdrssWriteFile(td, cdrssScanDirRel+"/check_b.go",
+		"package main\n\nfunc b() string { return mapVer(Version) }\n")
+	var outB bytes.Buffer
+	rcB := cdrssRun(&outB, stderr, td)
+	chk(rcB == cdrssRCok, "⑤ 负控①：该两处改成 derive（无字面）⇒ rc=0（非永真）",
+		fmt.Sprintf("⑤失败：期望 rc=0，实得 %d（out=%q）", rcB, outB.String()))
+	// 负控②：形态 C（同级根串）· **已登记**的带日期历史台账位 ⇒ 不红（★ 口径未被弄成「凡版号字面就红」）。
+	cdrssWriteFile(td, cdrssScanDirRel+"/check_idspace_map.go",
+		"package main\n\n// idmDefaultDoc —— 台账固定落点\nfunc idmDefaultDoc() string { return root + \"/../Zerg-内部文档/项目文档/v2.5.10/\" + leaf }\n")
+	// 负控③：带日期的历史台账**文件引用**（串尾是件名 · 不是版目录）⇒ 不是派生默认根 ⇒ 不红。
+	cdrssWriteFile(td, cdrssScanDirRel+"/check_c.go",
+		"package main\n\nconst ledgerRel = \"项目文档/v2.5.10/清单-脚本现状-20260920.tsv\"\n")
+	var outC bytes.Buffer
+	rcC := cdrssRun(&outC, stderr, td)
+	gotC := outC.String()
+	chk(rcC == cdrssRCok && strings.Contains(gotC, "未登记 0 处"),
+		"⑥ 负控②：形态 C 的位**已登记**（带日期历史台账）⇒ 不红；⑦ 负控③：带日期的台账文件引用（串尾是件名）⇒ 不红",
+		fmt.Sprintf("⑥⑦失败：期望 rc=0 且未登记 0 处，实得 rc=%d out=%q", rcC, gotC))
+	// 负控④：真源取不到 ⇒ rc=2（不给结论 · ✗ 不静默回落）。
 	td2, e2 := os.MkdirTemp("", "cdrss-selftest2-")
 	if e2 != nil {
 		fmt.Fprint(stdout, "自检跑不了：造不出临时目录\n")
 		return 1
 	}
 	defer func() { _ = os.RemoveAll(td2) }()
-	cdrssWriteFile(td2, cdrssScanDirRel+"/check_bad.go",
-		"package main\n\nfunc bad() string { return join(sib, \"项目文档\", \"v1.0.0\") }\n")
-	var out3 bytes.Buffer
-	rc3 := cdrssRun(&out3, stderr, td2)
-	chk(rc3 == cdrssRCblock && strings.Contains(out3.String(), "不给结论"),
-		"负控②：真源取不到 ⇒ rc=2 且明说「不给结论」（✗ 不静默回落）",
-		fmt.Sprintf("负控②失败：rc=%d out=%q", rc3, out3.String()))
-	// 负控③：判据件目录 0 件 ⇒ rc=2（空转不给结论）。
+	cdrssWriteFile(td2, cdrssScanDirRel+"/check_a.go",
+		"package main\n\nfunc a() string { return join(sib, \"项目文档\", \"v1.0.0\") }\n")
+	var outD bytes.Buffer
+	rcD := cdrssRun(&outD, stderr, td2)
+	chk(rcD == cdrssRCblock && strings.Contains(outD.String(), "不给结论"),
+		"⑧ 负控④：真源取不到 ⇒ rc=2 且明说「不给结论」（✗ 不静默回落）",
+		fmt.Sprintf("⑧失败：rc=%d out=%q", rcD, outD.String()))
+	// 负控⑤：判据件目录 0 件 ⇒ rc=2（空转不给结论）。
 	td3, e3 := os.MkdirTemp("", "cdrss-selftest3-")
 	if e3 != nil {
 		fmt.Fprint(stdout, "自检跑不了：造不出临时目录\n")
@@ -289,16 +361,16 @@ func cdrssSelfTest(stdout, stderr io.Writer) int {
 	}
 	defer func() { _ = os.RemoveAll(td3) }()
 	cdrssWriteFile(td3, cdrssVersionRel, "package version\n\nconst Version = \"9.9.9\"\n")
-	var out4 bytes.Buffer
-	rc4 := cdrssRun(&out4, stderr, td3)
-	chk(rc4 == cdrssRCblock, "负控③：判据件目录 0 件 ⇒ rc=2（空转不给结论）",
-		fmt.Sprintf("负控③失败：期望 rc=2，实得 %d", rc4))
+	var outE bytes.Buffer
+	rcE := cdrssRun(&outE, stderr, td3)
+	chk(rcE == cdrssRCblock, "⑨ 负控⑤：判据件目录 0 件 ⇒ rc=2（空转不给结论）",
+		fmt.Sprintf("⑨失败：期望 rc=2，实得 %d", rcE))
 
 	res := "FAIL"
 	if ok {
 		res = "PASS"
 	}
-	fmt.Fprintf(stdout, "自检 %s（7 格）\n", res)
+	fmt.Fprintf(stdout, "自检 %s（9 格）\n", res)
 	if ok {
 		return 0
 	}

@@ -513,6 +513,13 @@
    "备注": "登记依据 = 门⑩ `R1 未登记件`：本档落盘面此前在命令表里**无 `danger`** ⇒ 写命令冒充只读档（`zerg help` 判安全档 ✗，本族 `gapWriteFaceWhy` 的只读闸也据 `danger == nil` 把它当只读）；2026-09-27 补 `danger: D2` + 干跑档，本件由此新增 `dry.?run`/`DryRun` 字样 ⇒ 必须登记。口径照同族先例 `core/cmd/zerg/family_gap.go`（`add`/`verify`/`set-state`/`note`：`--dry-run` ⇒ 计划件 stdout + rc=0 · 缺 `--yes` ⇒ 2 · `--yes` 才写），不是第五套语义。"
   },
   {
+   "file": "core/cmd/zerg/family_gap_diff.go",
+   "类": "实现站点：`gap diff <左> <右>` 的 `--out <件路径>` 落报告件的 D2 三态写门（`--dry-run` / 缺 `--yes` / `--yes`）· 与 guard.go / family_gap_export.go 同一套语义",
+   "语义": "dryrun.v1",
+   "零副作用判据": "`bin/zerg gap diff <左件> <右件> --out <报告件> --dry-run` ⇒ rc 照真跑（0 无差异 / 1 有差异）· stdout = 计划件（落点件 + 左/右 + 三类差计数 + 未执行）+ stderr 一行「（--dry-run：只出计划件 · 零副作用 —— 未落任何件）」「两输入与审计一个字节未动」· **报告件一个字节都不落、两输入 sha256 逐字不变**（判据件 `family_gap_diff_test.go` 的 `TestGapDiffNegativeControls` 负控③ 现跑钉住）；缺 `--yes` ⇒ 计划件走 stderr + 退 2（fail-closed）。本命令**不写真源、不写审计**（两份**外部件**对拍）。",
+   "备注": "登记依据 = 门⑩ `R1 未登记件`（现跑命中即红）+ 门78 `check-newcmd-followup` 面①。口径照同族先例 `family_gap_export.go`（`--out` 的 D2 三态）；★ 本面**只在 `--out` 那一支有落盘面**，裸跑 / `--json` 两面照旧零写盘。走既有的 `dryrun.v1` 一套语义，**不是第五套语义**。"
+  },
+  {
    "file": "core/cmd/zerg/cli_gap_state_test.go",
    "类": "命令面测试件（`gap` 族两条新写面三态的机检：干跑零副作用 / 缺 `--yes` 退 2 / 真写读回）",
    "语义": "dryrun.v1",
@@ -1316,6 +1323,27 @@
    "语义": "dryrun.v1",
    "零副作用判据": "本件是消费者/对拍件：`cdsRun` 在 `t.TempDir()` 合成库上跑真 CLI（`core db stamp --db <合成库> --dry-run`）并断言**干跑只出计划件 · 库文件一个字节不写**（跑前跑后 sha256 逐字同）；夹具全在临时目录 ⇒ 不碰真库、不写真件、不删、不推。",
    "备注": "登记依据 = 门⑩ R1 未登记件（E3 · DEV-2920 新增的测试件正文含 --dry-run 字样即进扫描面）。同 cli_approve_rotate_test.go / cli_gate_model 一族先例：测试面只判那一档，属既有 dryrun.v1 一套语义，不另立第五套。"
+  },
+ {
+   "file": "core/cmd/zerg/family_egg.go",
+   "类": "命令面三态（`egg gc` D3 · `egg expand`/`egg release` D2 的 `--dry-run` 计划件 · 与 guard.go / family_core_db.go 同一套语义）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "`bin/zerg egg gc [--root <卵库根>] --dry-run` ⇒ 退码 0 · stdout 只出计划件 ＋ 一行「计划件（--dry-run · 零副作用 —— 未删任何件、未取 df 读数）」· **一个卵件都不删、不取 df**（真删只在 `--confirm=<卵库根>` 与 `--yes` **同时**到齐那一支）；`egg expand <卵> --to <落点> --dry-run` ⇒ 退码 0 · 只出只读探针计划件（「未登记引用、未落件、未建目录」）· 不写落点件、不登记引用；`egg release <副本> --dry-run` ⇒ 退码 0 · 计划件（「未删任何件、未改引用图、未取 df 读数」）· 不删件、不改引用图。缺 `--yes`（`expand`/`release`）或缺 `--confirm`/`--yes`（`gc`）那一态：计划件走 stderr ＋ 退 2（fail-closed），同为零副作用；`--dry-run` 与 `--yes` 同给 ⇒ 退 2、零动作。",
+   "备注": "登记依据 = 门⑩ `R1 未登记件`（门78 `check-newcmd-followup` 面① 现读点名「`core/cmd/zerg/family_egg.go` 含 dry-run 语义但未登记」⇒ 缺）。本件**真读** `inv.dryRun` 并据此分行（三条写面各一分支）⇒ 属**真站点**（✗ 不是「字样引用」），并入既有的 `dryrun.v1` 一套语义，✗ 不新造 `dryrun.v2`。出处：卵开工 · 卵7① · 提案 DEV-2955。"
+  },
+ {
+   "file": "core/cmd/zerg/family_gap_diff_test.go",
+   "类": "命令面测试件（`gap diff` `--out` 落报告件三态的**消费者 / 对拍件**：干跑零副作用 / 缺 `--yes` 退 2 / 真写读回）—— 测试面，非干跑语义站点（本件只把 `--dry-run` / `inv.dryRun` 原样交给 `cmdGapDiff` 直调并断言，自身一行干跑逻辑都没有）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "本件是**消费者 / 对拍件**：`TestGapDiffNegativeControls` 负控③ 现跑置 `inv.dryRun = true` 直调 `cmdGapDiff`（带 `--out <报告件>`），断言 rc 照真跑（有差异 ⇒ 1）且**报告件不存在于盘** ＋ 两输入 sha256 逐字不变；负控③b 真写（`--yes`）⇒ 报告件在盘；负控③c 缺 `--yes` ⇒ rc=2 且件仍不落。它自己不写真件：夹具账一律落 `t.TempDir()` 合成盘面；不落盘 / 不删 / 不推 / 不造目录 / 不改 git 状态。",
+   "备注": "登记依据 = 门⑩ `R1 未登记件`（本单源码现编件现跑点名即红）：本件正文含 `--dry-run` / `dryRun` 字面即进扫描面。同 `cli_route_test.go` / `cli_gap_state_test.go` / `cli_gap_sweep_test.go` 的「判据件 / 消费者」处置 —— 它不声明语义，只是**判**那一档；走既有的 `dryrun.v1` 一套语义，**不是第五套语义**。来源路 F29（`gap diff` · 提案 DEV-2971）；本单 F45 补登。"
+  },
+ {
+   "file": "core/internal/store/eggstore/gc.go",
+   "类": "实现站点：卵库 GC 的干跑档（`Store.GC(dryRun bool)` —— `dry_run` 只出计划件 · 不删件 · 不取 df 读数；与命令面 `core/cmd/zerg/family_egg.go` 的 `egg gc --dry-run` 同一套语义）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "`Store.GC(true)` 那一支（本件 `if dryRun {` 段）只把可删卵名逐个填进 `rep.Deleted` ＋ 置 `rep.Note = \"干跑：只出计划，未删任何件、未取 df 读数\"` 后返回 ⇒ **一个卵件都不删**（`os.Remove` 只在非干跑支）、**不取 df**（`s.sample()` 只在非干跑支）、不改引用计数 / 不改名册态 / 不写删却审计（三者均只在真删支）；真删只在 `dryRun == false` 且引用计数归零、态在回收面（`reclaimable` / `broken`）时发生。",
+   "备注": "登记依据 = 门⑩ `R1 未登记件`（本单源码现编件现跑点名即红）：本件现读含 `DryRun` 字段（`json:\"dry_run\"`）、`GC(dryRun bool)` 形参 ＋ 干跑分支字面 ⇒ 进扫描面。它是 `--dry-run` 一套语义在**卵库存储层**的实现站点（`dry_run=true` 只报计划），与 CLI 写面同口径。走既有的 `dryrun.v1` 一套语义，**不是第五套语义**。来源路 卵2（`core/internal/store/eggstore/` 地基 · `gc.go` 系 22 件之一）；本单 F45 补登。"
   }
  ]
 

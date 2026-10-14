@@ -7288,7 +7288,7 @@
    "command": "gap status",
    "id": "gap/status#说明面不认 --json",
    "want_rc": 2,
-   "want_stdout_bytes": 760,
+   "want_stdout_bytes": 759,
    "stdout_bytes_unpinned": true,
    "why": "**有**字段表的说明面 ⇒ 2（与 K2 甲档归一后的 2 同码、错因不同：未知字段经 reportBadField 逐格点名合法字段）"
   },
@@ -10130,6 +10130,341 @@
    "want_rc": 2,
    "want_stdout_bytes": 0,
    "why": "确认值必须与目标逐字相同 —— 给错值一律拒绝（§4.1 K7）"
+  },
+  {
+   "id": "publish/snapshot-self-test#未知旗标",
+   "command": "publish snapshot-self-test",
+   "argv": [
+    "publish",
+    "snapshot-self-test",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标（本命令透传型 ⇒ 旗标逐字交真身 argv 解析面 ⇒ 真身按 `unrecognized arguments` 退 2）"
+  },
+  {
+   "id": "publish/snapshot-self-test#不认的契约主号",
+   "command": "publish snapshot-self-test",
+   "argv": [
+    "publish",
+    "snapshot-self-test",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判，不碰任何目标（同族先例 publish/verify#不认的契约主号）"
+  },
+  {
+   "id": "publish/snapshot-self-test#缺快照目录",
+   "command": "publish snapshot-self-test",
+   "argv": [
+    "publish",
+    "snapshot-self-test"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "缺位置参数「快照目录」⇒ 用法错（真身逐字 `the following arguments are required: snapshot`）· 执行前判（同族先例 publish/set#缺路径）"
+  },
+  {
+   "argv": [
+    "gap",
+    "diff",
+    "--nosuchflag-zz"
+   ],
+   "command": "gap diff",
+   "id": "gap/diff#未知旗标",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "argv": [
+    "gap",
+    "diff",
+    "--schema",
+    "zerg/v9"
+   ],
+   "command": "gap diff",
+   "id": "gap/diff#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "argv": [
+    "gap",
+    "diff"
+   ],
+   "command": "gap diff",
+   "id": "gap/diff#缺输入",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "缺输入（要左件 · 右件两枚位置参数）⇒ 用法错 2（**不给结论**）· stdout 0 字节 —— ★ 本面「输入取不到 ⇒ 2」**不同于**同族「真源读不到 ⇒ 8」（本命令对拍两份**外部件**，缺件属前置/用法面）"
+  },
+  {
+   "argv": [
+    "gap",
+    "diff",
+    "a",
+    "b",
+    "--dry-run",
+    "--yes"
+   ],
+   "command": "gap diff",
+   "id": "gap/diff#--dry-run 与 --yes 同给",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "`--dry-run` 与 `--yes` 同给 ⇒ 自相矛盾（`dryRunYesConflict`）⇒ 用法错 2 · stdout 0 字节"
+  },
+  {
+   "argv": [
+    "fs",
+    "unprotected",
+    "--nosuchflag-zz"
+   ],
+   "command": "fs unprotected",
+   "id": "fs/unprotected#未知旗标",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标（本命令只读 ⇒ 连仓根都不解析）"
+  },
+  {
+   "argv": [
+    "fs",
+    "unprotected",
+    "--schema",
+    "zerg/v9"
+   ],
+   "command": "fs unprotected",
+   "id": "fs/unprotected#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "argv": [
+    "fs",
+    "unprotected",
+    "x"
+   ],
+   "command": "fs unprotected",
+   "id": "fs/unprotected#位置参数不收（arity= none）",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "本命令 `arity: none`（不收位置参数 —— 仓根取**现读工作树**）⇒ 多余位置参数 = 用法错 2 · stdout 0 字节（不给结论）"
+  },
+  {
+   "argv": [
+    "fs",
+    "unprotected",
+    "--json"
+   ],
+   "command": "fs unprotected",
+   "id": "fs/unprotected#--json 不给字段",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "给了 `--json` 而没给字段 ⇒ 用法错 2（与同族 `gap diff` / `repo status` 同口径）· stdout 0 字节（本命令不报 error.kind ⇒ 包封不补 · K2 0 字节档）· 不给结论"
+  },
+  {
+   "id": "egg/info#未知旗标",
+   "command": "egg info",
+   "argv": [
+    "egg",
+    "info",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "egg/info#不认的契约主号",
+   "command": "egg info",
+   "argv": [
+    "egg",
+    "info",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "egg/info#--json 不给字段",
+   "command": "egg info",
+   "argv": [
+    "egg",
+    "info",
+    "--json"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 329,
+   "why": "给了 --json 不给字段 ⇒ 2 + **错误面包封走 stdout**（`inv.err != nil` 也发射 ⇒ 非危险档命令同样有机器面：`items` 空 + `error.kind=usage`；★ 本 why **不记绝对字节数** —— 逐字形态见 `want_stdout_bytes` 那一格）（§4.1 K2 甲档 · 码**取自退码表** `usage` = 2）"
+  },
+  {
+   "id": "egg/verify#未知旗标",
+   "command": "egg verify",
+   "argv": [
+    "egg",
+    "verify",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "egg/verify#不认的契约主号",
+   "command": "egg verify",
+   "argv": [
+    "egg",
+    "verify",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "egg/verify#--json 不给字段",
+   "command": "egg verify",
+   "argv": [
+    "egg",
+    "verify",
+    "--json"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 331,
+   "why": "给了 --json 不给字段 ⇒ 2 + **错误面包封走 stdout**（`inv.err != nil` 也发射 ⇒ 非危险档命令同样有机器面：`items` 空 + `error.kind=usage`；★ 本 why **不记绝对字节数** —— 逐字形态见 `want_stdout_bytes` 那一格）（§4.1 K2 甲档 · 码**取自退码表** `usage` = 2）"
+  },
+  {
+   "id": "egg/gc#未知旗标",
+   "command": "egg gc",
+   "argv": [
+    "egg",
+    "gc",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "egg/gc#不认的契约主号",
+   "command": "egg gc",
+   "argv": [
+    "egg",
+    "gc",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "egg/gc#缺 --confirm（D3）",
+   "command": "egg gc",
+   "argv": [
+    "egg",
+    "gc",
+    "x"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "D3 不可逆：缺确认 ⇒ fail-closed 2（§九 M3 C2 · §十二 P-014）"
+  },
+  {
+   "id": "egg/gc#--confirm 值不匹配",
+   "command": "egg gc",
+   "argv": [
+    "egg",
+    "gc",
+    "x",
+    "--confirm=不匹配-zz",
+    "--yes"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "确认值必须与目标逐字相同 —— 给错值一律拒绝（§4.1 K7）"
+  },
+  {
+   "id": "egg/expand#未知旗标",
+   "command": "egg expand",
+   "argv": [
+    "egg",
+    "expand",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "egg/expand#不认的契约主号",
+   "command": "egg expand",
+   "argv": [
+    "egg",
+    "expand",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "egg/expand#缺 --yes（D2）",
+   "command": "egg expand",
+   "argv": [
+    "egg",
+    "expand",
+    "x"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "D2 缺 --yes ⇒ fail-closed 2（§九 M3 C2）"
+  },
+  {
+   "id": "egg/release#未知旗标",
+   "command": "egg release",
+   "argv": [
+    "egg",
+    "release",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "egg/release#不认的契约主号",
+   "command": "egg release",
+   "argv": [
+    "egg",
+    "release",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "egg/release#缺 --yes（D2）",
+   "command": "egg release",
+   "argv": [
+    "egg",
+    "release",
+    "x"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "D2 缺 --yes ⇒ fail-closed 2（§九 M3 C2）"
   }
  ],
  "tiers": {
