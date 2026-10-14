@@ -23,7 +23,8 @@
 //	   **绝不把「没报」判成混版、也绝不判成一致**。
 //	③ **判决只此一处** —— `StatusHandler` 与任何别的消费方都调本文件的 `CountFleetHealth`，
 //	   不许各自再写一份 `snap.Healthy` 的加减（两份实现就会漂，漂的形态就是本条这次的事故）。
-//	④ **同源判定另立一格**（GAP-20261013-09 · 候选 c）—— `same_origin`：`same`/`mixed`/`unknown`。
+//	④ **同源判定另立一格**（GAP-20261013-09 · 候选 c）—— `same_origin`：`same`/`mixed`/`unknown`
+//	   ＋ **第四态 `local_dirty`**（本机脏 · 附④：源提交同、但该机 `code_sha` 带 `+dirty` ⇒ ✗ 不判 `same`）。
 //	   它比的**不是**版本号、也**不是** `code_sha`，而是**源提交**（`origin_sha` ＝ 镜像 tip 的
 //	   `GitOrigin-RevId` trailer ＝ 私有图源提交）：主控那行报私有 sha、节点那行报镜像 tip，
 //	   两套 git 命名空间不同名 ⇒ 矩阵里「全绿也可能是混版」。✗ 判不了（缺映射/trailer 缺/没报）
@@ -54,11 +55,19 @@ const (
 //
 // ★ 三态里 **`unknown` 必须保留（缺 ≠ 一致）**：映射缺 / trailer 缺 / 该机没带该格 ⇒ 一律 `unknown`，
 // ✗ 绝不折叠成 `same` —— 那正是「防假绿」这一条要挡的形态。
+//
+// ★ **第四态 `local_dirty`（本机脏 · 附④ 拍板）**：源提交与主控同、但该机 `code_sha` 带 `+dirty`
+// ⇒ **`same` 不覆盖它**（「脏」≠「一致」，与上面 `unknown` 同口径，同属「别把不一致当一致」）。
+// ★ 既有三态的**字面与语义一字不动**（本批只增第四态；故第四态另起一个 const，不重排上面三行）。
 const (
 	OriginSame    = "same"    // 与主控同源（同一笔源提交）
 	OriginMixed   = "mixed"   // 源提交与主控不同 ⇒ 真混版
 	OriginUnknown = "unknown" // 判不了（主控或该机没带可比键）—— 缺 ≠ 一致
 )
+
+// OriginLocalDirty —— 同源判定**第四态**（本机脏）：源提交与主控同，但该机 `code_sha` 带 `+dirty`
+// 尾标 ⇒ 所跑代码 ≠ 那笔源提交（本地有未提交改动）。★ 判据：`same` **不覆盖** `code_sha=…+dirty`。
+const OriginLocalDirty = "local_dirty"
 
 // MasterCodeVersion 返回主控自身的版本号（唯一真源：`core/internal/version`）。
 // 为什么不在本文件写常量：`core/internal/version/version.go` 是版本号的**唯一**真源
@@ -109,6 +118,34 @@ func MachineOriginVerdict(masterOrigin, machineOrigin string) string {
 		return OriginSame
 	}
 	return OriginMixed
+}
+
+// MachineOriginVerdictWithCode —— 同源裁决的**带本机身份**版（第四态 `local_dirty` 的唯一入口 · 附④）。
+//
+// 在三态裁决之上只加一条腿：**源提交同源、但那台机的 `code_sha` 带 `+dirty`** ⇒ 判 `local_dirty`，
+// ✗ 不折叠成 `same`。理由与 `OriginUnknown` 是同一条「缺 ≠ 一致」：`+dirty` 说明它跑的不是那笔源
+// 提交（本地有未提交改动），把「脏的本地构建」当成「同源」正是「防假绿」要挡的形态
+// （本仓 `code_sha` 带 `+dirty` 是常态 ⇒ 旧三态下「同源」那一格几乎总掺着脏）。
+//
+// ★ 顺序不可颠倒：先跑三态裁决 —— `mixed`（真混版）与 `unknown`（判不了）**一律原样返回**，
+// 第四态只替换 `same` 那一格（两者已是更强的结论，✗ 不许被脏标记盖掉）。
+// 干净（`code_sha` 无 `+dirty`）且同源 ⇒ 仍 `same`；真缺（源提交判不了）⇒ 仍 `unknown`。
+func MachineOriginVerdictWithCode(masterOrigin, machineOrigin, machineCodeSHA string) string {
+	if v := MachineOriginVerdict(masterOrigin, machineOrigin); v != OriginSame {
+		return v
+	}
+	if codeSHAIsDirty(machineCodeSHA) {
+		return OriginLocalDirty
+	}
+	return OriginSame
+}
+
+// codeSHAIsDirty —— 认 `code_sha` 的「本机脏」尾标。本仓口径：脏 = `<commit>+dirty`
+// （与 `gen_cli_reference` / `check_artifact_source_parity` 的判法逐字同形：`strings.HasSuffix(commit, "+dirty")`）。
+// ★ 只做「有 `+dirty` 尾标」这一条正判：空串 / 别的形态 / 取不到 一律**不算脏**（不猜）——
+// 「认不出」不升级成 `local_dirty`，那一格由三态的 `unknown` 承接。
+func codeSHAIsDirty(codeSHA string) bool {
+	return strings.HasSuffix(strings.TrimSpace(codeSHA), "+dirty")
 }
 
 // originUsable 判一个源提交值是否**可用于比对**：空串与 "unknown"（未注入的旧哨兵）都不算。
@@ -175,8 +212,9 @@ func AnnotateIdentityVerdicts(masterVersion, masterOrigin string, snaps map[stri
 		}
 		cp := *snap
 		cp.VersionMismatch = MachineVersionVerdict(masterVersion, cp.CodeVersion) == VersionMixed
-		// 同源裁决：比 `OriginSHA`（规范键），✗ 不比 `CodeSHA`（两套 git 命名空间，比不出结论）。
-		cp.SameOrigin = MachineOriginVerdict(masterOrigin, cp.OriginSHA)
+		// 同源裁决：比 `OriginSHA`（规范键），✗ 不比 `CodeSHA`（两套 git 命名空间，比不出结论）；
+		// 另带该机 `CodeSHA` 认「本机脏」尾标 ⇒ 第四态 `local_dirty`（附④）。
+		cp.SameOrigin = MachineOriginVerdictWithCode(masterOrigin, cp.OriginSHA, cp.CodeSHA)
 		out[name] = &cp
 	}
 	return out

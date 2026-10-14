@@ -194,10 +194,39 @@ func TestMachineOriginVerdict_ThreeStates(t *testing.T) {
 	}
 }
 
-// TestStatusHandler_SameOriginThreeStates —— HTTP 层同形状复跑：三台一次打出三态 + 基准随响应。
+// TestMachineOriginVerdictWithCode_FourthState —— 第四态「本机脏」三例（GAP-20261013-09 附④）：
+// 干净且同源 ⇒ 仍 `same`（反例：脏标记只认 `+dirty` 尾标）；同源但 `code_sha` 带 `+dirty` ⇒
+// `local_dirty`（✗ 不折叠成 `same`）；真缺 / 真混版 / 没基准 ⇒ **仍回三态**（第四态只换 `same` 那一格，
+// 不许盖掉更强的结论）。★ 干净的 `same` 与脏的 `local_dirty` 并列 ⇒「可与 same 区分」可机检。
+func TestMachineOriginVerdictWithCode_FourthState(t *testing.T) {
+	cases := []struct {
+		name    string
+		master  string
+		machine string
+		codeSHA string
+		want    string
+	}{
+		{"干净且同源 ⇒ 仍 same", "3b04f6ab", "3b04f6ab", "3b04f6ab", OriginSame},
+		{"本机脏：同源但 code_sha 带 +dirty ⇒ local_dirty（✗ 不判 same）", "3b04f6ab", "3b04f6ab", "3b04f6ab+dirty", OriginLocalDirty},
+		{"真缺：该机没带 origin_sha ⇒ 仍 unknown（第四态不盖 unknown）", "3b04f6ab", "", "3b04f6ab+dirty", OriginUnknown},
+		{"真混版：源提交不同 ⇒ 仍 mixed（第四态不盖 mixed）", "3b04f6ab", "1a6b02fc", "3b04f6ab+dirty", OriginMixed},
+		{"判不了：主控没带源提交 ⇒ 仍 unknown（没有基准就没有判决）", "", "3b04f6ab", "3b04f6ab+dirty", OriginUnknown},
+		{"干净但真混版 ⇒ mixed 不被脏标记干扰", "3b04f6ab", "1a6b02fc", "1a6b02fc", OriginMixed},
+	}
+	for _, c := range cases {
+		if got := MachineOriginVerdictWithCode(c.master, c.machine, c.codeSHA); got != c.want {
+			t.Errorf("%s：MachineOriginVerdictWithCode(%q,%q,%q) = %q，want %q",
+				c.name, c.master, c.machine, c.codeSHA, got, c.want)
+		}
+	}
+}
+
+// TestStatusHandler_SameOriginThreeStates —— HTTP 层同形状复跑：三台一次打出三态 ＋ 第四态「本机脏」+ 基准随响应。
 //
-// 三台 `code_version` 全都相同（= 现有版本裁决一律判「不混版」），唯一差别是**源提交** ——
+// 三台 `code_version` 全都相同（= 现有版本裁决一律判「不混版」），差别只在**源提交**与**本机脏** ——
 // 这正是本缺口的形态：旧字段全绿，而『到底同不同源』这一句没人答。本用例要它答出来。
+// ★ 附④ 后 Mr2109（主控本机 · `code_sha` 带 `+dirty`）判 `local_dirty` —— ✗ 不再折叠成 `same`
+// （用例名里的「三态」指既有三态；本行的第四态由 `OriginLocalDirty` 承接，改名留收口笔 · 本节不删符号）。
 func TestStatusHandler_SameOriginThreeStates(t *testing.T) {
 	// 主控基准的真源是 `version.Origin`（构建期注入）；未注入时是空串 ⇒ 全表 unknown。
 	// 本用例要证的是**判决**与**下发**，故把基准钉住（用完即还原，不留包级残留）。
@@ -206,7 +235,7 @@ func TestStatusHandler_SameOriginThreeStates(t *testing.T) {
 	t.Cleanup(func() { version.Origin = old })
 
 	h := newTestHandlers()
-	// ① 同源：源提交与主控基准逐字相同（模拟「镜像 tip 的 GitOrigin-RevId = 主控的私有提交」）
+	// ① 同源但本机脏：源提交与主控基准逐字相同，而 code_sha 带 +dirty（附④ ⇒ 第四态 local_dirty）
 	postHeartbeat(t, h, store.HeartbeatRequest{Machine: "Mr2109", Healthy: true, CodeVersion: version.Version,
 		CodeSHA: "3b04f6abcd+dirty", OriginSHA: "3b04f6abcd"})
 	// ② 真混版：拿的是另一笔源提交
@@ -221,7 +250,9 @@ func TestStatusHandler_SameOriginThreeStates(t *testing.T) {
 		t.Fatalf("master_origin_sha 应随响应报出判决基准（否则「同源」不可复核），实得 %v", got)
 	}
 	machines, _ := resp["machines"].(map[string]interface{})
-	want := map[string]string{"Mr2109": OriginSame, "edge-node": OriginMixed, "mini-node-2": OriginUnknown}
+	// Mr2109 = 主控本机（源提交同、但 code_sha 带 +dirty）⇒ 第四态 local_dirty（附④ · ✗ 不判 same）；
+	// edge-node = 真混版（另一笔源提交）；mini-node-2 = 判不了（没带源提交）。
+	want := map[string]string{"Mr2109": OriginLocalDirty, "edge-node": OriginMixed, "mini-node-2": OriginUnknown}
 	for m, w := range want {
 		row, _ := machines[m].(map[string]interface{})
 		if row == nil {
