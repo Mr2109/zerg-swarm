@@ -1484,10 +1484,10 @@ func init() {
 		{
 			path:     []string{"core", "db"},
 			kind:     "CoreDb",
-			summary:  "虫族库四动作（薄壳 · 转发 `core/internal/store/zdb`）：`check` **只读**体检（integrity_check ＋ foreign_key_check ＋ application_id ＋ user_version/page_count/journal_mode —— 真库上跑也一字节不写）· `backup` GFS 快照（checkpoint(TRUNCATE) → VACUUM INTO → 侧车八格 → prune 日14/周8/月12 · 保底 ≥3）· `restore` 从快照就位（VACUUM INTO → 体检 → 逐表行数对拍 → rename · 自证以侧车为准）· `prune` 逐代轮转（**只删匹配命名件**）",
-			usage:    "zerg core db <check|backup|prune> [--db <库路径>] [--dry-run | --yes] [--json <字段>] · zerg core db restore --from <快照> --to <库路径> --confirm=<库路径> --yes [--dry-run] [--json <字段>]",
+			summary:  "虫族库五动作（`stamp`：**只打标不迁移** —— 只补 `PRAGMA application_id` 身份标（三态：==本标 空动作 / ==0 写一次＋回读自证 / 其它非 0 拒执），✗ 不跑迁移 ⇒ `user_version` 一字不动）（薄壳 · 转发 `core/internal/store/zdb`）：`check` **只读**体检（integrity_check ＋ foreign_key_check ＋ application_id ＋ user_version/page_count/journal_mode —— 真库上跑也一字节不写）· `backup` GFS 快照（checkpoint(TRUNCATE) → VACUUM INTO → 侧车八格 → prune 日14/周8/月12 · 保底 ≥3）· `restore` 从快照就位（VACUUM INTO → 体检 → 逐表行数对拍 → rename · 自证以侧车为准）· `prune` 逐代轮转（**只删匹配命名件**）",
+			usage:    "zerg core db <check|backup|prune|stamp> [--db <库路径>] [--dry-run | --yes] [--json <字段>] · zerg core db restore --from <快照> --to <库路径> --confirm=<库路径> --yes [--dry-run] [--json <字段>]",
 			arity:    "any",
-			args:     []string{"动作：check | backup | restore | prune"},
+			args:     []string{"动作：check | backup | restore | prune | stamp"},
 			fields:   coreDbFields,
 			danger:   &dangerSpec{dangerD3, "库路径", "改虫族群库面：`restore` **覆盖 `--to` 指向的库**（自证 / 体检不过 ⇒ `zdb` 里 fail-closed，rename 之前就退）· `backup` / `prune` 写 / 删 `~/.zerg/backup/` 里的快照（GFS **只删匹配命名件** · 保底 ≥3）；`check` **只读**零写", "设计-虫族数据库-20261013 §四.2/§四.3 · §五 Q12/Q23/Q24 · 任务书 T2④/T4①", true, dangerScopeRepo},
 			opened:   true,

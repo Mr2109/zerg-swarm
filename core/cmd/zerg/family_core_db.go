@@ -3,7 +3,7 @@
 // 命令入口落在**既有 `core` 族**（设计 §五 Q12 · 任务单 T2④ 逐字：「✗ 不新开族」「形制 = 既有族内具名子动作」）
 // —— 登记形制照同族 `core daemon`：一条 `core <族>` 命令 ＋ 子动作在 `inv.args[0]` 里派发。
 //
-// 本件是**薄壳**（✗ 不在命令层重写逻辑）：四个子动作逐字转发到 `core/internal/store/zdb` 已落的接口 ——
+// 本件是**薄壳**（✗ 不在命令层重写逻辑）：五个子动作逐字转发到 `core/internal/store/zdb` 已落的接口 ——
 //
 //	check   → `zdb.OpenReader`（DSN 带 `_pragma=query_only(ON)` 的只读句柄）＋ 三条体检 pragma
 //	backup  → `zdb.BackupDefaultReadOnly(<库路径>)`（**只读**句柄 → VACUUM INTO → 侧车 → GFS prune）
@@ -46,9 +46,9 @@ import (
 )
 
 // coreDbActions —— 子动作闭集（派发与报面**共用这一份** ⇒ ✗ 不在第二处再判一次）。
-var coreDbActions = []string{"check", "backup", "restore", "prune"}
+var coreDbActions = []string{"check", "backup", "restore", "prune", "stamp"}
 
-// coreDbFields —— `--json` 可取的全部字段（四动作的**并集**：一条 `core db` 命令一张字段表）。
+// coreDbFields —— `--json` 可取的全部字段（五动作的**并集**：一条 `core db` 命令一张字段表）。
 //
 // ★ 形状稳：这 27 格名字与语义**只增不改**（改名 = 破下游）；某个动作取不到的格**整键略去**
 // （✗ 绝不落 `0` / 空串 —— 与 API 的 `omitempty` 同一条铁律，收受端 `emitSelected` 同口径）。
@@ -109,6 +109,8 @@ func cmdCoreDb(inv *invocation, stdout, stderr io.Writer) int {
 		return coreDbRestore(inv, stdout, stderr)
 	case "prune":
 		return coreDbPrune(inv, stdout, stderr)
+	case "stamp":
+		return coreDbStamp(inv, stdout, stderr)
 	}
 	coreDbUsageErr(inv, stderr, fmt.Sprintf("未知动作 %q", action))
 	return exitUsage
@@ -415,6 +417,108 @@ func coreDbPrune(inv *invocation, stdout, stderr io.Writer) int {
 		coreDbMaybeList(row["removed"]))
 	fmt.Fprintf(stdout, "判词     : ok\n")
 	return exitOK
+}
+
+// ── stamp（**只打标不迁移** · 转发 `zdb.StampApplicationID`）──────────────────────────────────
+
+// coreDbStamp —— `zerg core db stamp [--db <库路径>] [--dry-run | --yes]`：给一枚**已存在**的库补
+// `PRAGMA application_id` 身份标（§三.4 附 G③ · §六 Q28）。本动作存在的**唯一**理由：
+//
+// ★ **✗ 不走 `zdb.Open`**（那是写路径：同一函数体里 `migrate()` 排在打标**之前** ⇒ 拿它补标会
+// **顺带把迁移跑一遍** ⇒ 真库 `user_version` 1→3）。转发 `zdb.StampApplicationID` —— 开库句柄照
+// **备份源库**那条只读用途路径（`BuildSnapshotSourceDSN`：只带 `busy_timeout`）⇒ 一条写步骤都不走：
+//
+//	✗ 不跑迁移 · ✗ 不体检写面 · ✗ 不 checkpoint · ✗ 不动 `user_version`
+//
+// 只做 `application_id` 的**三态** ＋ **回读自证**（与 `zdb` 的 `ensureApplicationID` 逐条**同口径**）：
+//
+//	① 值 == `zdb.ZergApplicationID` ⇒ **空动作**（一字节不写）；
+//	② 值 == 0（未打标）⇒ 写一次 ＋ 回读自证（回读 ≠ 本标 ⇒ fail-closed 退 1）；
+//	③ 值非 0 且 ≠ 本标 ⇒ **拒执**退 1（`zdb.ErrNotZergDB` · ✗ 不覆盖别人的身份标）。
+//
+// 写面 ⇒ 与同族 `backup` / `prune` **同档**：`--dry-run` 出计划件（零副作用）· 真跑要 `--yes`。
+func coreDbStamp(inv *invocation, stdout, stderr io.Writer) int {
+	if inv.jsonGiven {
+		if rc := requireFields(inv, stderr); rc != exitOK {
+			return rc
+		}
+	}
+	dbPath := coreDbPath(inv)
+	if inv.dryRun {
+		coreDbStampPlan(stdout, dbPath)
+		fmt.Fprintf(stderr, "（--dry-run：只出计划件 · 零副作用 —— 未开库、未写库头、未打标）\n")
+		return exitOK
+	}
+	if rc := writeGuardYes(inv, stderr); rc != exitOK {
+		return rc
+	}
+	if _, rc := coreDbNeedExistingFile(inv, stderr, "库", dbPath); rc != exitOK {
+		return rc
+	}
+	before, after, serr := zdb.StampApplicationID(dbPath)
+	if serr != nil {
+		msg := fmt.Sprintf("打标未做（`zdb.StampApplicationID`）：%v ⇒ 退码 1（fail-closed：值非 0 且非本标 ⇒ ✗ 不覆盖别人的身份标）", serr)
+		inv.setErr("failed", "stamp_failed", msg)
+		fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
+		return exitFail
+	}
+	// 回读三件：与同族 `check` **同一组**只读探针（✗ 不另立第二套判据）。
+	rdb, rerr := zdb.OpenReader(dbPath)
+	if rerr != nil {
+		msg := fmt.Sprintf("打标已落（application_id=%d），但只读回读句柄开不起来（%s）：%v ⇒ 不给结论（退码 8）", after, dbPath, rerr)
+		inv.setErr("blocked", "reader_unavailable", msg)
+		fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
+		return exitBlocked
+	}
+	defer rdb.Close()
+	ic, icOK := coreDbIntegrity(rdb)
+	fk, fkOK := coreDbFKViolations(rdb)
+	appID, appOK := coreDbApplicationID(rdb)
+	row := map[string]string{
+		"action":                 "stamp",
+		"db":                     dbPath,
+		"exists":                 "true",
+		"size_bytes":             coreDbFileSize(dbPath),
+		"wal_bytes":              coreDbFileSize(dbPath + "-wal"),
+		"application_id":         strconv.FormatInt(appID, 10),
+		"application_id_ok":      strconv.FormatBool(appOK),
+		"integrity_check":        ic,
+		"foreign_key_violations": strconv.Itoa(fk),
+		"user_version":           coreDbScalarInt(rdb, "PRAGMA user_version"),
+		"page_count":             coreDbScalarInt(rdb, "PRAGMA page_count"),
+		"journal_mode":           coreDbScalarText(rdb, "PRAGMA journal_mode"),
+		"verdict":                "ok",
+	}
+	verdictRC := exitOK
+	if !icOK || !fkOK || !appOK {
+		row["verdict"] = "failed"
+		verdictRC = exitFail
+	}
+	if inv.jsonGiven {
+		return selectJSON(stdout, stderr, inv, inv.path, inv.fields, row)
+	}
+	fmt.Fprintf(stdout, "库                  : %s\n", dbPath)
+	fmt.Fprintf(stdout, "改前 / 改后         : %d / %d（本仓身份标 = %d = 0x%X · 0 = 未打标 ⇒ 补标 · 非 0 他标 ⇒ 拒执）\n",
+		before, after, int64(zdb.ZergApplicationID), int64(zdb.ZergApplicationID))
+	fmt.Fprintf(stdout, "integrity_check     : %s\n", ic)
+	fmt.Fprintf(stdout, "foreign_key_check   : %d 行（须 0）\n", fk)
+	fmt.Fprintf(stdout, "application_id      : %s（application_id_ok=%s）\n", row["application_id"], row["application_id_ok"])
+	fmt.Fprintf(stdout, "user_version / 页数 : %s / %s（**打标不迁移** ⇒ user_version 一字不动）\n",
+		orX(row["user_version"], "-"), orX(row["page_count"], "-"))
+	fmt.Fprintf(stdout, "判词                : %s\n", row["verdict"])
+	fmt.Fprintf(stderr, "%s: 只打标（`zdb.StampApplicationID` · 句柄照备份源库那条只读用途路径）—— ✗ 不跑迁移 · ✗ 不 checkpoint\n", progName)
+	return verdictRC
+}
+
+// coreDbStampPlan —— `stamp --dry-run` 的计划件（零副作用：只读一条路径事实，不开库、不写库头）。
+func coreDbStampPlan(stdout io.Writer, dbPath string) {
+	fmt.Fprintln(stdout, "计划件（--dry-run · 零副作用 —— 未开库、未写库头、未打标）")
+	fmt.Fprintf(stdout, "  动作   : %s core db stamp（**只打标不迁移**）\n", progName)
+	fmt.Fprintf(stdout, "  库     : %s（在盘=%t）\n", dbPath, coreDbPathExists(dbPath))
+	fmt.Fprintf(stdout, "  三态   : ==本标 %d ⇒ 空动作（一字节不写）· ==0（未打标）⇒ 写一次 ＋ 回读自证 · 其它非 0 ⇒ 拒执（退码 1 · ✗ 不覆盖别人的身份标）\n",
+		int64(zdb.ZergApplicationID))
+	fmt.Fprintf(stdout, "  不跑   : ✗ 不跑迁移（`user_version` 一字不动）· ✗ 不体检写面 · ✗ 不 checkpoint（句柄只带 `busy_timeout`）\n")
+	fmt.Fprintf(stdout, "  真跑要 : %s core db stamp --db %s --yes\n", progName, dbPath)
 }
 
 // ── 体检三条（与 `zdb.HealthCheck` 逐条同口径 —— ✗ 不另立第二套判据）───────────────────────────

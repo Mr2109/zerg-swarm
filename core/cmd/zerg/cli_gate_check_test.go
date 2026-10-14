@@ -350,8 +350,14 @@ func TestGateCheckGoEntryTableComplete(t *testing.T) {
 	//
 	//	（check-mem-gb-parity · 见 core/cmd/zerg/check_mem_gb_parity.go · 主控 fleet.yaml ⟷ 本机子端注册表
 	//	逐同名模型比 mem_gb · 两侧都标口径才放行）⇒ 189→190。
-	if got := len(gateCheckGoEntry); got != 190 {
-		t.Fatalf("进程内 Go 表项数要 == 190，得到 %d", got)
+	// ★ 2026-10-15（2.5.15 清账批 E4 · 本单）：两件 `.sh` 判据 Go 真搬 ＋ 入 inproc 表 +2
+	//
+	//	（check-agentd-unit-default / check-upgrade-local-source · 见 core/cmd/zerg/check_agentd_unit_default.go
+	//	与 core/cmd/zerg/check_upgrade_local_source.go）⇒ 190→192。
+	//	★ 同批撤掉那两件在 check-cli-ownership 里的「未接 inproc 标准路由」缺口 ⇒ 未接合计 3→1
+	//	（余 family_publish_snapshot_native.go —— 它要动 main.go，另路）。
+	if got := len(gateCheckGoEntry); got != 192 {
+		t.Fatalf("进程内 Go 表项数要 == 192，得到 %d", got)
 	}
 	// ★ 放宽（2026-10-07 退役批）：旧不变量「表键必在名录」⇒「表键 ⇒ 名录 **或** inproc 键 二者其一」。
 	//   退役件（py 已 `git rm`）只余 inproc 那一路（family_gate_check.go 的 inproc 兜底 ⇒ rc=0）；

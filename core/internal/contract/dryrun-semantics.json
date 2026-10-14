@@ -1309,6 +1309,13 @@
    "语义": "dryrun.v1",
    "零副作用判据": "`core db backup|restore|prune --dry-run` ⇒ 退码 0 · 只出计划件（`backup`：源库 / 备份目录在盘事实 ＋ 五步；`restore`：快照 / 目标库在盘事实 ＋ 四步；`prune`：备份目录 ＋ GFS 四档）—— 未开库、未 `VACUUM INTO`、未写侧车、未 prune、未 rename 就位、未删任何配对 `-wal`/`-shm`；`check` 是**只读**档（无 `--dry-run`）：走 `zdb.OpenReader` 的 `query_only=ON` 句柄 ＋ 三条体检 pragma，真库上跑也一个字节不写。",
    "备注": "T6①（2026-10-14 · DB 命令面批）· 门78 面① 现读点名「实现件含 dry-run 语义但未登记」⇒ 同批登记。★ `backup` 走**不跑迁移**的开库路径（`zdb.BackupDefaultReadOnly` ＋ `VACUUM INTO`）—— 另一条硬判据：备份前后源库 `sha256` 逐字同 ＋ `user_version` 不动（迁移一步不跑）。"
+  },
+ {
+   "file": "core/cmd/zerg/family_core_db_stamp_test.go",
+   "类": "命令面测试件（`core db stamp` 的 `--dry-run` 计划件正控 ＋ 真跑 `--yes` 三态 ＋ 拒执负控）—— 测试面 · 消费者/对拍件：只把 `--dry-run` 原样交给 CLI 并断言，自身一行干跑逻辑都没有",
+   "语义": "dryrun.v1",
+   "零副作用判据": "本件是消费者/对拍件：`cdsRun` 在 `t.TempDir()` 合成库上跑真 CLI（`core db stamp --db <合成库> --dry-run`）并断言**干跑只出计划件 · 库文件一个字节不写**（跑前跑后 sha256 逐字同）；夹具全在临时目录 ⇒ 不碰真库、不写真件、不删、不推。",
+   "备注": "登记依据 = 门⑩ R1 未登记件（E3 · DEV-2920 新增的测试件正文含 --dry-run 字样即进扫描面）。同 cli_approve_rotate_test.go / cli_gate_model 一族先例：测试面只判那一档，属既有 dryrun.v1 一套语义，不另立第五套。"
   }
  ]
 

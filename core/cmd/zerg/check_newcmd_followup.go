@@ -1466,7 +1466,7 @@ func cnfAnalyse(root string, maxExamples int, stderr io.Writer) (int, []string) 
 			add("   门69 rc=0：`help --all`/`help`/`help dangerous` 的 lines/bytes 六格 ⟷ 现读一致 ⇒ 齐")
 		} else if *hrc == 1 {
 			add("   门69 rc=1 ⇒ **缺**：新命令改了 help 面却没按 `--emit-baseline` 刷新 `BASELINE` 六格" +
-				"（真身 py ＋ Go 镜像两处同批刷）")
+				"（真身 `core/cmd/zerg/check_help_shape.go` 的 `chsBaseline` · 原 py 探针已退役）")
 			bad++
 		} else {
 			add(fmt.Sprintf("   门69 rc=%d：不给结论 ⇒ 不适用（不误红）", *hrc))

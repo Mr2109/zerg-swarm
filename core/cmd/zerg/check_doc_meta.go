@@ -18,7 +18,7 @@
 //	   不是「任一外部树取不到就退 2」。本件**未**把「任一取不到」扩成红。
 //	④ ★ py 该档本来就退 1/0 的（M1 无 frontmatter 块 = 默认告警 rc=0 / `--missing=fail` 升红 rc=1；
 //	   M14/M15 = BLOCK rc=2）**逐字沿用**，✗ 不抬档。**未覆盖面⑦** 列出 py 最外层无兜底的那一格。
-//	⑤ ★★ **`..` 段**：`--scope formal` 的仓外候选串 `../Zerg-内部文档/项目文档/v2.5.10/` 与打印串
+//	⑤ ★★ **`..` 段**：`--scope formal` 的仓外候选串 `../Zerg-内部文档/项目文档/现行/` 与打印串
 //	   `pyJoin(root, alt)` **含 `..` 段** ⇒ 本件一律走自实现 `cdmPyJoin`（posixpath.join 语义，
 //	   逐字保留 `..`），✗ 不用 `filepath.Join`（它会把 `a/../b` 归一成 `b`）。无 `..` 段的
 //	   缺省串同样走 `cdmPyJoin`，两态逐字同。`FROZEN_PREFIX_ALT = "../Zerg-内部文档/项目文档/"` 正是
@@ -144,6 +144,8 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/Mr2109/zerg-swarm/core/internal/chat"
 )
 
 // ── 常量表（逐字照搬 py 的插入序；✗ 不用 Go map 保序）───────────────────────
@@ -175,9 +177,18 @@ type cdmFormalItem struct {
 	alt string
 }
 
+// cdmStableLanding —— **去版本号稳定落点**名（= `chat.StableLandingName`：`现行` · 一处真源，
+// ✗ 不在本包另写字面量；与判据 `check-doc-consumers` / 只读命令 `zerg doc consumers` 同法）。
+var cdmStableLanding = chat.StableLandingName
+
 // cdmFormalPrefix —— py `FORMAL_PREFIX`（元组序照搬；✗ 不用 map）。
+// 落点面（缺口 GAP-20260927-121 · 2026-10-15）：首项原钉版本目录字面量（v2.5.10 那一版）⇒ 改指活版落点：
+// 稳定面「唯一份」= `<项目文档根>/现行/`（版本只当元数据 · 落点路径不随版本变）；仓内前缀 / 仓外候选
+// 各由 `<项目文档根>` ＋ `chat.StableLandingName` 拼出（基础字面量与 `cdmFrozenPrefix` /
+// `cdmFrozenPrefixAlt` 同）⇒ ✗ 不硬编版本字面量、✗ 不随当前版号改字
+// （判法照判据 `check-doc-consumers` 的「稳定落点」，见其 `dcConforms` / `dcStableLandingName`）。
 var cdmFormalPrefix = []cdmFormalItem{
-	{"docs/项目文档/v2.5.10/", "../Zerg-内部文档/项目文档/v2.5.10/"},
+	{"docs/项目文档/" + cdmStableLanding + "/", "../Zerg-内部文档/项目文档/" + cdmStableLanding + "/"},
 	{"docs/常青/", ""},
 	{"docs/skills/", ""},
 	{"docs/zh/", ""},

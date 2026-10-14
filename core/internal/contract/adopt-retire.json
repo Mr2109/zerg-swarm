@@ -1262,6 +1262,16 @@
       "object": "deploy/scripts/deploy-launch.sh",
       "state": "已登记退场（2026-10-09）",
       "evidence": "GAP-20261001-13（M2 真搬台账） · GAP-20261008-05（退件↔登记/排除面一致性） · 退场批1b-deploy-launch-20261009 · Go 真身 core/cmd/zerg/deploy_launch.go（2026-10-08 真搬 · 入口 deployLaunchGateMain · 命令面 zerg deploy launch）· 名册旧 reason「OS胶水…Go壳仅exec…物理不可化」已过期 ⇒ 改判=已真搬（✗ 不再 exec 本件）· 退役态预检：zerg deploy launch 移件前后 rc/stdout/stderr 逐字同（缺 --host usage rc=2 · 无 rc=2 新增）"
+    },
+    {
+      "object": "scripts/gates/check-agentd-unit-default.sh",
+      "state": "已登记退场（2026-10-15）",
+      "evidence": "两态对拍全同：sh 原件 ↔ Go 半 39 例 stdout/stderr/退码三面逐字同（另经重建后 bin/zerg gate check 复核 14 例）· Go 后继件 core/cmd/zerg/check_agentd_unit_default.go · inproc 键 check-agentd-unit-default 在册 · 2.5.15 清账批 E4"
+    },
+    {
+      "object": "scripts/gates/check-upgrade-local-source.sh",
+      "state": "已登记退场（2026-10-15）",
+      "evidence": "两态对拍全同：sh 原件 ↔ Go 半 39 例 stdout/stderr/退码三面逐字同（另经重建后 bin/zerg gate check 复核 14 例）· Go 后继件 core/cmd/zerg/check_upgrade_local_source.go · inproc 键 check-upgrade-local-source 在册 · 2.5.15 清账批 E4"
     }
  ],
  "retire_exceptions": [

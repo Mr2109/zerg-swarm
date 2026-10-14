@@ -1107,7 +1107,11 @@ type vsDDEnt struct{ file, role, state, got, want, note, reviewDate string }
 var vsReReviewDate = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 var vsDerivedDefaultSites = []vsSiteEnt{
 	{"scripts/gates/check-doc-freshness.py", `os\.path\.join\(sibling, "项目文档", "(v[0-9.]+)"\)`, "pinned", "v2.5.10", "乙·沿革/引证：v2.5.10 是文档面上一次定稿版（改真源 2.5.13 破 devdocs:meta/freshness D1 两阻断步）· Mr2109 2026-10-08 拍·GAP-20260927-89", "2026-10-08"},
-	{"core/cmd/zerg/check_doc_meta.go", `\{"docs/项目文档/(v[0-9.]+)/"`, "pinned", "v2.5.10", "FORMAL_PREFIX 首棵（面登记 · 沿革同上）", "2026-10-08"},
+	// ★ 2026-10-15（E5 收口 · GAP-20260927-121 落点面改指）：原此处一条 **pinned** 位点 ——
+	// `core/cmd/zerg/check_doc_meta.go` 的 FORMAL_PREFIX 首棵（旧值写死 `docs/项目文档/v2.5.10/`）。
+	// 该处已随 E2 改指为**去版本号稳定落点**（`"docs/项目文档/" + cdmStableLanding + "/"`，
+	// cdmStableLanding = `chat.StableLandingName` = `现行`）⇒ 件内**零版本字面量可捕获** ⇒ 本登记册**摘除**这一条。
+	// 该面的单一真源判据改由门125 `check-devdocs-root-single-source`（判据件默认根 ⟷ 版号真源 对拍）承担。
 	// ★ 2026-10-14（GAP-20260927-88）：原此处另有三条 **pinned** 位点 ——
 	// `core/cmd/zerg/check_approve_{ci,closedset,freeze}.go` 的开发文档面**默认根版本尾段**
 	// （旧值写死 `v2.5.11`）。那三处已收口为**现读版本真源**推导（族共享助手
