@@ -441,8 +441,11 @@ func gchParseVersion(text string) ([]int, bool) {
 	return out, true
 }
 
-// gchScanRoster —— py `scan_roster(root)`：递归 `root/scripts` 全子树，只收 `.py`/`.sh`
-// （`__pycache__` 不进）⇒ {名: [仓相对路径…]}（与 `check-judge-registry.py` 同口径）。
+// gchScanRoster —— 现读名录（名 ⇒ 仓相对路径）：递归 `scripts` 全子树 · `__pycache__` 不进。
+//
+// ★ 收件口径**与注册表同源**（缺口 GAP-20261012-15）：真源 = `family_gate_check.go` 的
+// gateRosterAccept（`.py`/`.sh` ＋ 无后缀活门）—— 本格的「现读名录件数」是**与注册表 `count` 对拍的尺**，
+// 尺与 `check-judge-registry` 的扫面必须同口径，否则注册表一收无后缀活门（B∖C ⇒ 0）这一格就会假红。
 func gchScanRoster(root string) map[string][]string {
 	base := filepath.Join(root, gchRosterDir)
 	out := map[string][]string{}
@@ -456,11 +459,14 @@ func gchScanRoster(root string) map[string][]string {
 			}
 			return nil
 		}
-		_, ext := gchPySplitExt(d.Name())
-		if ext != ".py" && ext != ".sh" {
+		var mode os.FileMode
+		if info, ierr := d.Info(); ierr == nil {
+			mode = info.Mode()
+		}
+		name, _, ok := gateRosterAccept(p, mode)
+		if !ok {
 			return nil
 		}
-		name := strings.TrimSuffix(d.Name(), ext)
 		rel, rerr := filepath.Rel(root, p)
 		if rerr != nil {
 			return nil

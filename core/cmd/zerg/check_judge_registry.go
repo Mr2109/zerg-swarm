@@ -491,8 +491,13 @@ func jrToolVersion(interp string) string {
 	return interp + "/unknown"
 }
 
-// jrScanRoster 照 py scan_roster：递归 `<root>/scripts/` · 只收 `.py`/`.sh` · 不下钻 `__pycache__`
+// jrScanRoster 照 py scan_roster：递归 `<root>/scripts/` · 不下钻 `__pycache__`
 // ⇒ {名: [仓相对路径…]}（每名下的路径再 sort · 与 py 逐字同）。
+//
+// ★ 收件口径**与壳侧同源**（缺口 GAP-20261012-15）：`.py`/`.sh` **＋ 无后缀活门**（无扩展名 ＋
+// 有可执行位 ＋ shebang 可识别）—— 真源 = `family_gate_check.go` 的 `gateRosterAccept`。本件此前
+// 自持一份「只收 .py/.sh」的口径 ⇒ 注册表清单比壳名录**少 3 条**（B∖C：edit-assert · mutate-scan ·
+// zerg-hello），而 `--check` 的双向差集又拿同一份窄口径当尺 ⇒ 那 3 条**两边都看不见**（静默）。
 func jrScanRoster(root string) map[string][]string {
 	base := pyJoin(root, jrRosterDir)
 	paths := map[string][]string{}
@@ -506,8 +511,13 @@ func jrScanRoster(root string) map[string][]string {
 			}
 			return nil
 		}
-		name, ext := jrPySplitExt(d.Name())
-		if _, ok := jrInterp[ext]; !ok {
+		// ★ 收件口径 = gateRosterAccept（唯一真源 · ✗ 不再自持一份 `.py`/`.sh` 窄表）。
+		var mode os.FileMode
+		if info, ierr := d.Info(); ierr == nil {
+			mode = info.Mode()
+		}
+		name, _, ok := gateRosterAccept(p, mode)
+		if !ok {
 			return nil
 		}
 		rel, rerr := filepath.Rel(root, p)
@@ -521,6 +531,16 @@ func jrScanRoster(root string) map[string][]string {
 		sort.Strings(v)
 	}
 	return paths
+}
+
+// jrEntryInterp —— 注册表条目「解释器」列：口径真源 = `family_gate_check.go` 的 gateRosterAccept
+// （有扩展名走闭集映射 · 无后缀活门按件自身 shebang）。取不到 ⇒ 回落扩展名映射（逐字同旧）。
+func jrEntryInterp(full, rel string) string {
+	if _, iv, ok := gateRosterInterpOf(full); ok {
+		return iv
+	}
+	_, ext := jrPySplitExt(rel)
+	return jrInterp[ext]
 }
 
 // jrBuildRegistry 照 py build_registry（确定性：条目按 name 排序 · 键序固定）。
@@ -545,10 +565,11 @@ func jrBuildRegistry(root string) *jrRegistry {
 			continue
 		}
 		rel := paths[name][0]
-		_, ext := jrPySplitExt(rel)
-		interp := jrInterp[ext]
+		full := pyJoin(root, rel)
+		// ★ 解释器列的口径真源 = gateRosterAccept（无后缀活门按件自身 shebang · 缺口 GAP-20261012-15）。
+		interp := jrEntryInterp(full, rel)
 		tv := jrToolVersion(interp)
-		sha, err := jrSHA256Hex(pyJoin(root, rel))
+		sha, err := jrSHA256Hex(full)
 		if err != nil {
 			sha = ""
 		}
@@ -1099,7 +1120,108 @@ func jrCmdEmit(root, out string, stdout, stderr io.Writer) int {
 	return 0
 }
 
+// jrInprocTable / jrInprocClassTable —— 现读 inproc 两张键表的**引用快照**（在 `func init()` 里抄一份）。
+//
+// ★ 为什么不让 jrNameSourceNotes **直接** range `gateCheckGoEntry`：那会构成**初始化环**
+//
+//	gateCheckGoEntry → checkJudgeRegistryGateMain → jrCmdCheck → jrNameSourceNotes → gateCheckGoEntry
+//
+// ⇒ `go build` 逐字报 `initialization cycle for gateCheckGoEntry`（★ 可执行文件**编不过**）。
+// 照同包现役先例（`check_cli_ownership.go` 的 `ccoInprocTable` · `check_doc_freshness.go` 的
+// `cdfInprocFaceTable`）在**判据侧**抄一份引用即断环 —— `func init()` 体不进「包级变量初始化」那棵
+// 依赖树，故不再成环；✗ 不动那两张表本身（表的键是字面量、编排脚本按字面量认自检面）。
+var (
+	jrInprocTable      map[string]func(stdout, stderr io.Writer, argv []string) int
+	jrInprocClassTable map[string]gateCheckClassSpec
+)
+
+func init() {
+	jrInprocTable = gateCheckGoEntry
+	jrInprocClassTable = gateCheckClassEntry
+}
+
+// jrNameSourceNotes —— 判据**名空间对拍腿**（缺口 GAP-20261012-15 · **只报** · ✗ 不改任何退码）。
+//
+//	A —— inproc 键（`gateCheckGoEntry` ∪ `gateCheckClassEntry` · 经上面的引用快照读）：名可解析
+//	B —— 现读名录（`jrScanRoster(root)` · 与壳侧 `gateRosterAccept` 同口径）
+//	C —— 注册表清单（`entries[].name`）
+//	N —— 名册（= 壳侧清书面现在渲染的那个并集 B ∪ A）
+//
+// 本腿报**两枚真判据**（两枚都落在「盘上件」这一个面上 ⇒ **具备上牙条件**）：
+//
+//	① B ∖ C 必空 —— 名录件必须在注册表清单里可见（本单前 3 条：edit-assert · mutate-scan · zerg-hello）
+//	② C ∖ B 必空 —— 注册表不得点名盘上无名（悬空登记）
+//
+// ★ ✗ **不报「A ∖ B」**：那个差集**结构上恒非空**（A 是**补充腿** —— 真搬 Go 判据的 py 件已退役，
+// 目录派生面本来就没有它）⇒ 拿它当判据会造出一条**永远红的判据**（负控：本单落地前后它都非 0）。
+// 「A 在**可用名清单**里可见」这一面由**壳侧清书面**担保（`gateCheckNameRoster` · 唯一拼接点）；
+// 要机检它只能另走一条腿：跑**新一代制品** + 读 `zerg gate check --dry-run --json` 的 `count`/`entries`
+// （本单 ✗ 不重编 ⇒ 那条腿与重编同批，见报告 §三 的上牙条件）。
+func jrNameSourceNotes(root string, reg *jv) []string {
+	aSet := map[string]bool{}
+	for n := range jrInprocTable {
+		aSet[n] = true
+	}
+	for n := range jrInprocClassTable {
+		aSet[n] = true
+	}
+	bSet := map[string]bool{}
+	for n := range jrScanRoster(root) {
+		bSet[n] = true
+	}
+	cSet := map[string]bool{}
+	if reg != nil {
+		if ev := jget(reg, "entries"); ev != nil && ev.kind == 'a' {
+			for _, e := range ev.arr {
+				if e != nil && e.kind == 'o' && jpresent(e, "name") {
+					cSet[jrPyStr(jget(e, "name"))] = true
+				}
+			}
+		}
+	}
+	nameRoster := map[string]bool{}
+	for n := range bSet {
+		nameRoster[n] = true
+	}
+	for n := range aSet {
+		nameRoster[n] = true
+	}
+	bc, cb := jrSetDiff(bSet, cSet), jrSetDiff(cSet, bSet)
+	return []string{
+		fmt.Sprintf("名空间对拍：A(inproc 键) %d · B(名录) %d · C(注册表) %d · N(名册 = B∪A) %d（迁移期**只报** · ✗ 不改退码）",
+			len(aSet), len(bSet), len(cSet), len(nameRoster)),
+		fmt.Sprintf("B∖C %d%s · C∖B %d%s · （上牙条件：重编后本条两差集皆 0 ⇒ 可转判红）",
+			len(bc), jrPeekNames(bc), len(cb), jrPeekNames(cb)),
+	}
+}
+
+// jrSetDiff —— x ∖ y（排序稳定）。
+func jrSetDiff(x, y map[string]bool) []string {
+	out := []string{}
+	for n := range x {
+		if !y[n] {
+			out = append(out, n)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// jrPeekNames —— 只报行里的短名册（空 ⇒ 「（空 · 齐）」；否则点名前几枚 · 超出加省略号）。
+func jrPeekNames(xs []string) string {
+	if len(xs) == 0 {
+		return "（空 · 齐）"
+	}
+	const peekCap = 6
+	head, tail := xs, ""
+	if len(head) > peekCap {
+		head, tail = head[:peekCap], " …"
+	}
+	return "（" + strings.Join(head, " · ") + tail + "）"
+}
+
 // jrCmdCheck 照 py cmd_check（甲半双向差集 ＋ 甲⇄乙 第三方向 · fail-closed）。
+
 func jrCmdCheck(root, regPath, decPath string, stdout, stderr io.Writer) int {
 	reg, errMsg := jrLoadRegistry(regPath)
 	if errMsg != "" {
@@ -1114,6 +1236,12 @@ func jrCmdCheck(root, regPath, decPath string, stdout, stderr io.Writer) int {
 	// 乙半可见面（✗ 不改退码）：enforce 状态 + 逐条采纳/豁免/声明 + 未决定计数；未建则打迁移期脚注。
 	for _, nt := range jrDecisionNotes(decisions, reg) {
 		fmt.Fprintf(stderr, "  · 乙半 %s\n", nt)
+	}
+	// ★ 缺口 GAP-20261012-15 · **名空间对拍腿**（迁移期**只报** · ✗ 不改本命令的退码 · ✗ 不参与判红）。
+	//   为什么先只报：清书面/注册表那两面落在**制品**里，而落地时运行中的 `zerg` 仍是旧一代
+	//   ⇒ 立刻上牙就是「一落即红」破门。上牙条件与时机见 jrNameSourceNotes 的头注与报告 §三。
+	for _, ln := range jrNameSourceNotes(root, reg) {
+		fmt.Fprintf(stderr, "  · 只报 %s\n", ln)
 	}
 	problems, ok := jrProblemList(root, reg, decisions)
 	if !ok {

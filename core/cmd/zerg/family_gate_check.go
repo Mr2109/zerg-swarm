@@ -120,6 +120,46 @@ func gateCheckShebangInterp(path string) (string, []string, bool) {
 	return prog, args, true
 }
 
+// gateRosterAccept —— 判据件「件名 ＋ 解释器」的**收件口径唯一真源**（M1-19 全套 · ✗ 别处不许再各抄一份）。
+//
+//	有扩展名：只认 gateCheckInterpreter 闭集（`.py` ⇒ python3 · `.sh` ⇒ bash）—— 其余扩展名
+//	          （`.go`/`.md`/`.json`/…）一律出局（名录只装判据件 · ✗ 不收数据件/说明件），
+//	          **也不看可执行位**（仓内 .py/.sh 多为 0644）。
+//	无后缀：判据 =「无扩展名 ＋ 有可执行位 ＋ shebang 可识别」（gateCheckShebangInterp）⇒ 解释器按
+//	        件**自身 shebang**（✗ 不按位猜 · ✗ 不认任意二进制）；**件名 ＝ 整个文件名**。
+//
+// `mode` 只有无后缀那一档读它（有扩展名那档不读）。返回（判据名 · 解释器 · 收不收）。
+// ★ 凡「扫 `<仓根>/scripts/` 下的判据件」的面一律经本函数收件（壳名录 gateCheckRoster · 注册表
+// jrScanRoster · `gate check` 体检 gchScanRoster）⇒ 口径只此一处，改口径不必改三处。
+func gateRosterAccept(path string, mode fs.FileMode) (name, interp string, ok bool) {
+	base := filepath.Base(path)
+	ext := filepath.Ext(base)
+	if iv, hit := gateCheckInterpreter[ext]; hit {
+		return strings.TrimSuffix(base, ext), iv, true
+	}
+	if ext != "" {
+		return "", "", false
+	}
+	if mode.Perm()&0o111 == 0 {
+		return "", "", false
+	}
+	prog, _, sok := gateCheckShebangInterp(path)
+	if !sok {
+		return "", "", false
+	}
+	return base, prog, true
+}
+
+// gateRosterInterpOf —— 现读某件的（判据名 · 解释器）：口径真源同 gateRosterAccept（`os.Stat` 取 mode）。
+// ok=false ⇒ 该件不是判据件（或读不到）。
+func gateRosterInterpOf(full string) (name, interp string, ok bool) {
+	var mode fs.FileMode
+	if st, err := os.Stat(full); err == nil {
+		mode = st.Mode()
+	}
+	return gateRosterAccept(full, mode)
+}
+
 // gateCheckLockToolRel —— M1-09 件级锁 ＋ 槽池取槽的**现成件**（调它，✗ 不另造第二把）。
 // 与 `scripts/gates/judge-lock.py` 逐字同源（`<仓根>/scripts/gates/judge-lock.py`）。
 var gateCheckLockToolRel = []string{"gates", "judge-lock.py"}
@@ -178,27 +218,19 @@ func gateCheckRoster(root string) (map[string]string, []string, error) {
 			}
 			return nil
 		}
-		n := d.Name()
-		ext := filepath.Ext(n)
-		if _, ok := gateCheckInterpreter[ext]; ok {
-			name := strings.TrimSuffix(n, ext)
-			paths[name] = append(paths[name], p)
+		// ★ 收件口径的**唯一真源** = gateRosterAccept（`.py`/`.sh` 闭集 ＋ 无后缀活门）；
+		//   本件不再自持一份 —— 注册表/体检那两处扫面已改调同一枚（缺口 GAP-20261012-15）。
+		//   `Info()` 读不到时 mode 取零值：`.py`/`.sh` 那一档不读 mode（照收 · 逐字同旧），
+		//   无后缀档因可执行位读不到而出局（也与旧行为逐字同）。
+		var mode fs.FileMode
+		if info, ierr := d.Info(); ierr == nil {
+			mode = info.Mode()
+		}
+		name, _, ok := gateRosterAccept(p, mode)
+		if !ok {
 			return nil
 		}
-		// ★ M1-19 · 无后缀档：`Ext(n) == ""` 的件再走一道「可执行位 ＋ shebang 可识别」的判据。
-		// ✗ 有扩展名但非 `.py`/`.sh` 的件（`.go`/`.md`/`.json`/…）在这里**直接出局** ——
-		// 名录只装判据件，绝不把数据件/说明件收进来。
-		if ext != "" {
-			return nil
-		}
-		info, ierr := d.Info()
-		if ierr != nil || info.Mode().Perm()&0o111 == 0 {
-			return nil
-		}
-		if _, _, ok := gateCheckShebangInterp(p); !ok {
-			return nil
-		}
-		paths[n] = append(paths[n], p)
+		paths[name] = append(paths[name], p)
 		return nil
 	})
 	if err != nil {
@@ -307,6 +339,51 @@ func gateCheckRosterSorted(byName map[string]string) []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// gateCheckSyntheticJudgePath —— A 独有（py 件已退役 · 真搬 Go 体在册）时「名 ⇒ 件」的**合成路径**：
+// `<仓根>` ＋ 名录目录 ＋ `gates` ＋ `<名>.py`（与名解析面的退役兜底逐字同规）。★ 它只喂下游的
+// **路径边界**与**台账**，**不代表该件在盘**（✗ 不许拿它当「件存在」的证据）。只此一处拼它。
+func gateCheckSyntheticJudgePath(root, name string) string {
+	return filepath.Join(root, gateCheckRosterDirRel, "gates", name+".py")
+}
+
+// gateCheckNameRoster —— 判据**名册**（名 ⇒ 件）的**单一真源 N = B ∪ A**，也是这套并集的**唯一拼接点**。
+//
+// 病灶（缺口 GAP-20261012-15 · 判据名空间三分裂）：**名解析面**早已并入 A（gateCheck 里那段退役兜底：
+// 键 ∈ `gateCheckGoEntry` **或** `gateCheckClassEntry` ⇒ 视为在册 ⇒ rc 不再是 2），而**清书面**两处
+// （gateCheck 的可用名渲染 · gateCheckFullTable 的 names）仍旧只渲染 B ⇒ 同一个键「跑得动却看不见」
+// —— 这就是三分裂里 A∖B 那一块的成因。本函数把清书面统一到**与名解析面同一个并集**上。
+//
+//	B = gateCheckRoster(root) —— 现读 `<仓根>/scripts/` 递归列举（`.py`/`.sh` ＋ 无后缀活门）。
+//	A = `gateCheckGoEntry` ∪ `gateCheckClassEntry` 的**键**（与上面那条在册判定**同集合** · 同口径）。
+//
+// 返回：byName（名 ⇒ 件；**A 独有**的名用 gateCheckSyntheticJudgePath 的合成路径）、
+// goOnly（A 独有的名 · 已排序 · 供渲染标注「inproc 档」）、dupes（同名歧义 · 来自 B）、err。
+// ✗ 别处不许再拼一遍 B∪A（免造第二真源）；✗ 也不许只并 `gateCheckGoEntry` 而漏
+// `gateCheckClassEntry` —— 那样清书面会比名解析面**窄**，A∖B 那一块会留一半没治。
+func gateCheckNameRoster(root string) (map[string]string, []string, []string, error) {
+	byName, dupes, err := gateCheckRoster(root)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	goOnly := []string{}
+	for name := range gateCheckGoEntry {
+		if _, hit := byName[name]; hit {
+			continue
+		}
+		byName[name] = gateCheckSyntheticJudgePath(root, name)
+		goOnly = append(goOnly, name)
+	}
+	for name := range gateCheckClassEntry {
+		if _, hit := byName[name]; hit {
+			continue
+		}
+		byName[name] = gateCheckSyntheticJudgePath(root, name)
+		goOnly = append(goOnly, name)
+	}
+	sort.Strings(goOnly)
+	return byName, goOnly, dupes, nil
 }
 
 // gateCheckAvailableLines —— 可用名列表的人读渲染（每行若干名，按显示宽度折行）。
@@ -467,10 +544,11 @@ type gateCheckFullTableEntry struct {
 }
 
 // gateCheckFullTable —— M1-06：**全表干跑**（逐件名字⇒件解析 · ✗ 不 exec · **零副作用**）。
-// `count` = 名录件数（构造上 == 名录）；有解析不到的件 ⇒ rc=`1`（一般失败）；名录读不到/同名歧义 ⇒
-// rc=`2`（不给结论）。`--json` ⇒ 机器面 `{count,resolved,dry_run,entries[]}`。
+// `count` = **名册 N = B ∪ A 的件数**（缺口 GAP-20261012-15：清书面与名解析面同口径 ⇒ A 独有
+// （真搬 Go 体在册 · py 件已退役）的名也进表 · 路径为合成路径）；有解析不到的件 ⇒ rc=`1`（一般失败）；
+// 名录读不到/同名歧义 ⇒ rc=`2`（不给结论）。`--json` ⇒ 机器面 `{count,resolved,dry_run,entries[]}`。
 func gateCheckFullTable(root string, stdout, stderr io.Writer, dry, js bool) int {
-	byName, dupes, err := gateCheckRoster(root)
+	byName, goOnly, dupes, err := gateCheckNameRoster(root)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s: ⛔ 判据名录读不到（%s/ 列举失败：%v）⇒ **不给结论**\n",
 			progName, gateCheckRosterDirRel, err)
@@ -486,6 +564,10 @@ func gateCheckFullTable(root string, stdout, stderr io.Writer, dry, js bool) int
 		return exitBlocked
 	}
 	names := gateCheckRosterSorted(byName)
+	inprocOnly := map[string]bool{}
+	for _, n := range goOnly {
+		inprocOnly[n] = true
+	}
 	prefix := filepath.Join(root, gateCheckRosterDirRel) + string(os.PathSeparator)
 	entries := make([]gateCheckFullTableEntry, 0, len(names))
 	resolved := 0
@@ -512,13 +594,19 @@ func gateCheckFullTable(root string, stdout, stderr io.Writer, dry, js bool) int
 			"entries":  entries,
 		})
 	} else {
-		fmt.Fprintf(stdout, "全表干跑（dry_run=%v）：件 %d · 解析到 %d\n", dry, count, resolved)
+		fmt.Fprintf(stdout,
+			"全表干跑（dry_run=%v）：件 %d · 解析到 %d（名册 N = B ∪ A；其中 inproc 档 %d 条 · 件不在盘 · 路径为合成路径）\n",
+			dry, count, resolved, len(goOnly))
 		for _, e := range entries {
 			mark := "✓"
 			if !e.JudgeResolved {
 				mark = "✗"
 			}
-			fmt.Fprintf(stdout, "  %s %s\t%s\n", mark, e.Name, e.Path)
+			tag := ""
+			if inprocOnly[e.Name] {
+				tag = "\t(inproc 档)"
+			}
+			fmt.Fprintf(stdout, "  %s %s\t%s%s\n", mark, e.Name, e.Path, tag)
 		}
 	}
 	if resolved != count {
@@ -1069,11 +1157,32 @@ func gateCheck(inv *invocation, stdout, stderr io.Writer, root string) int {
 	if !ok {
 		// **保守拒**：名字不在册 ⇒ 拒并给可用名列表（✗ 不猜 · 不模糊匹配）。
 		fmt.Fprintf(stderr, "%s: 判据名 %q **不在册**（名字 ⇒ 件 只认逐字同名；不模糊匹配）\n", progName, name)
-		names := gateCheckRosterSorted(byName)
-		fmt.Fprintf(stderr, "%s: 可用名 %d 条（现读 %s/ 递归列举）：\n", progName, len(names), gateCheckRosterDirRel)
-		for _, ln := range gateCheckAvailableLines(names, 4) {
+		// ★ 缺口 GAP-20261012-15：清单渲染与**名解析面同口径** —— 名册 N = B ∪ A
+		//   （gateCheckNameRoster · 唯一拼接点）。A 独有（py 件已退役 · 真搬 Go 体在册）的名标
+		//   `*`：它们**跑得动**，只是件不在盘 —— ✗ 别把这批漏掉（那正是「跑得动却看不见」）。
+		roster, goOnly, _, rerr := gateCheckNameRoster(root)
+		if rerr != nil {
+			roster, goOnly = byName, nil
+		}
+		names := gateCheckRosterSorted(roster)
+		inproc := map[string]bool{}
+		for _, n := range goOnly {
+			inproc[n] = true
+		}
+		shown := make([]string, 0, len(names))
+		for _, n := range names {
+			if inproc[n] {
+				n += "*"
+			}
+			shown = append(shown, n)
+		}
+		fmt.Fprintf(stderr, "%s: 可用名 %d 条（现读 %s/ 递归列举 ∪ inproc 键表 · 名册 N = B ∪ A）：\n",
+			progName, len(names), gateCheckRosterDirRel)
+		for _, ln := range gateCheckAvailableLines(shown, 4) {
 			fmt.Fprintln(stderr, ln)
 		}
+		fmt.Fprintf(stderr, "%s: `*` = inproc 档 %d 条（真搬 Go 判据体在册 · py 件已退役 ⇒ 件不在盘）\n",
+			progName, len(goOnly))
 		fmt.Fprintf(stderr, "%s: judge_resolved=false\n", progName)
 		return exitUsage
 	}
