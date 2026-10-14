@@ -9279,7 +9279,7 @@
    "id": "wall/mutate#--dry-run 与 --yes 同给",
    "want_rc": 2,
    "want_stdout_bytes": 0,
-   "why": "`--dry-run`（只出计划件）与 `--yes`（真写）**不许同给** ⇒ 两道确认档自相矛盾 ⇒ 用法错 2、stdout 0 字节（判在 exec 之前 · 不碰任何目标件）。★ 本格由原「wall/mutate#未开放（确认档齐）」随本单把 `wall mutate` 开为已开放（opened:false→true · run cmdGuarded→cmdWallMutate）重派生 —— 原 argv `wall mutate bridge --yes` 现已真跑（够不着 must-fail），改换「同给」这一道命令面自判的前置拒执格（dry_run_yes_conflict · `guard.go:dryRunYesConflict`）⇒ **保 4 格 / 总数不变**"
+   "why": "`--dry-run`（只出计划件）与 `--yes`（真写）**不许同给** ⇒ 两道确认档自相矛盾 ⇒ 用法错 2、stdout 0 字节（判在 exec 之前 · 不碰任何目标件）。★ 本格由原「wall/mutate#未开放（确认档齐）」随本单把 `wall mutate` 开为已开放（opened:false→true · run cmdGuarded→cmdWallMutate）重派生 —— 原 argv `wall mutate bridge --yes` 现已真跑（够不着 must-fail），改换「同给」这一道命令面自判的前置拒执格（dry_run_yes_conflict · `guard.go:dryRunYesConflict`）⇒ **保格数 / 总数不变**"
   },
   {
    "argv": [
