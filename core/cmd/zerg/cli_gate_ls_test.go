@@ -17,6 +17,7 @@ package main_test
 
 import (
 	"encoding/json"
+	"os/exec"
 	"regexp"
 	"strings"
 	"testing"
@@ -277,5 +278,141 @@ func TestGateLsJSON_BareHasNoNameKey(t *testing.T) {
 		if _, ok := r["name"]; ok {
 			t.Errorf("第 %d 行不该有 name 键（裸面＝冻结全量）：%+v", i, r)
 		}
+	}
+}
+
+// ── 缺口 `GAP-20260929-22`：`gate ls` 的**可直接粘贴命令**表 ＋ `--step` 未命中提示（成对自检）──
+//
+// 两态都读在**源码编出的测试进程**里（`runZergRepo` ⇒ `zerg.RunForTest`）：本单禁重编 `bin/zerg`
+// ⇒ 「改后」读数是**解析层**（源码面），✗ 不是制品读数。
+//
+// 合成门禁脚本一次备两样：① `--list` 出口（供 `gate ls` 出清单）；② 一条 `add_step` 声明
+// （供 `parseAddSteps` 读步名 —— `gate run --step … --dry-run` 只读脚本、**不起任何子进程**）。
+
+// glqStepName —— 合成步名：空白 ＋ 单引号 ＋ 反引号（三种「该怎么引用」的坑一次全带）。
+const glqStepName = "合 成'步`x`"
+
+// glqListBody —— `--list` 的**人面正文**（落成一件，脚本 `cat` 它 ⇒ 反引号/单引号不经 shell 展开）。
+const glqListBody = "── 步骤清单（scope 模式 名称）──\n" +
+	"   go    empty  gofmt -l core\n" +
+	"   gates tri    " + glqStepName + "\n" +
+	"共 2 步\n"
+
+// glqGateBody —— 合成门禁脚本：`--list` 出口 ＋ 一条 `add_step` 声明（声明放在 `exit 2` 之后 =
+// **不可达** ⇒ 脚本跑起来不会去执行它，解析器照样读得到）。
+const glqGateBody = "case \"${1:-}\" in\n" +
+	"  --list) cat \"$(dirname \"$0\")/.glq-list\"; exit 0 ;;\n" +
+	"esac\n" +
+	"printf '✗ 未知参数: %s\\n' \"${1:-}\" >&2\n" +
+	"exit 2\n" +
+	"add_step gates \"" + glqStepName + "\" tri \".\" \"true\"\n"
+
+func glqRepo(t *testing.T) string {
+	t.Helper()
+	root := syntheticRepo(t, glqGateBody)
+	mustWrite(t, root+"/scripts/gates/.glq-list", glqListBody)
+	return root
+}
+
+// glqQuotedFromFooter —— 从 `gate ls` 的 stderr 追加段里**逐字**取出那一步的引号形态
+// （= 调用者照抄时要搬走的那个字节串）。取不到 ⇒ 停手（不许拿别的形态顶替）。
+func glqQuotedFromFooter(t *testing.T, errb string) string {
+	t.Helper()
+	const head = "gate run --step "
+	const tail = " --only-step"
+	for _, ln := range strings.Split(errb, "\n") {
+		i := strings.Index(ln, head)
+		if i < 0 {
+			continue
+		}
+		rest := ln[i+len(head):]
+		j := strings.LastIndex(rest, tail)
+		if j < 0 || !strings.Contains(rest[:j], "合 成") {
+			continue
+		}
+		return rest[:j]
+	}
+	t.Fatalf("`gate ls` 的粘贴表里取不到那一步的引号形态：%q", errb)
+	return ""
+}
+
+// glqShellUnquote —— 让 **shell** 按它的规矩把引号形态还原成 argv 里的那一个串
+// （= 粘贴那一刻 shell 实际交给程序的字节 · 这一步**就是**「粘贴」本身）。
+func glqShellUnquote(t *testing.T, quoted string) string {
+	t.Helper()
+	out, err := exec.Command("bash", "-c", "printf '%s' "+quoted).Output()
+	if err != nil {
+		t.Fatalf("shell 解不开这段引号形态 %q：%v", quoted, err)
+	}
+	return string(out)
+}
+
+// ① 表在：`gate ls`（默认面）⇒ stdout **逐字不变**（仍是脚本 `--list`），stderr 追加
+// 「可直接粘贴的整条命令」，且步名按「闭引号 ＋ 反斜杠单引号 ＋ 重开引号」的写法闭合（含单引号的合成步名）。
+func TestGateLsPasteFooterQuotesStepName(t *testing.T) {
+	root := glqRepo(t)
+	rc, out, errb := runZergRepo(t, root, "gate", "ls")
+	if rc != 0 {
+		t.Fatalf("`gate ls` ⇒ 退 0，得到 %d · stderr=%s", rc, errb)
+	}
+	if !strings.Contains(out, glqStepName) {
+		t.Fatalf("stdout 该逐字带出脚本 `--list` 的步名：%q", out)
+	}
+	if strings.Contains(out, "可直接粘贴的整条命令") {
+		t.Fatalf("✗ 粘贴表不许进 stdout（stdout 是脚本 `--list` 的逐字节转出）：%q", out)
+	}
+	if !strings.Contains(errb, "可直接粘贴的整条命令") {
+		t.Fatalf("stderr 该带「可直接粘贴的整条命令」表：%q", errb)
+	}
+	quoted := glqQuotedFromFooter(t, errb)
+	if !strings.Contains(quoted, `'\''`) {
+		t.Fatalf("含单引号的步名该按 `'\\''` 闭合，实得 %q", quoted)
+	}
+	if want := "'合 成'\\''步`x`'"; quoted != want {
+		t.Fatalf("引号形态 = %q（要 %q）", quoted, want)
+	}
+}
+
+// ② 粘贴即解析到该步（正控）：把表里那一条**照抄**过 shell 解引号 ⇒ `--step` **命中**该步。
+// `--dry-run` 是只读形态（零子进程、不跑任何步骤）—— 本单 ✗ 不真跑门。
+func TestGateLsPasteCmdResolvesStep(t *testing.T) {
+	root := glqRepo(t)
+	rc, _, errb := runZergRepo(t, root, "gate", "ls")
+	if rc != 0 {
+		t.Fatalf("`gate ls` ⇒ 退 0，得到 %d · stderr=%s", rc, errb)
+	}
+	quoted := glqQuotedFromFooter(t, errb)
+	name := glqShellUnquote(t, quoted)
+	if name != glqStepName {
+		t.Fatalf("shell 按表里的引号形态还原出 %q（要 %q）⇒ 该形态没做到逐字", name, glqStepName)
+	}
+	rc2, out2, errb2 := runZergRepo(t, root, "gate", "run", "--step", name, "--only-step", "--dry-run")
+	if rc2 != 0 {
+		t.Fatalf("粘贴表里那条命令 ⇒ 该解析到该步（退 0），得到 %d · stdout=%q · stderr=%s", rc2, out2, errb2)
+	}
+	if !strings.Contains(out2+errb2, glqStepName) {
+		t.Fatalf("解析到的那一步该是 %q：stdout=%q stderr=%q", glqStepName, out2, errb2)
+	}
+}
+
+// ③ 成对自检 —— 未命中 ⇒ 提示「可能是引号/展开所致，试试单引号」出现；命中 ⇒ **不出现**。
+func TestGateStepMissHintPaired(t *testing.T) {
+	root := glqRepo(t)
+	rcMiss, _, errMiss := runZergRepo(t, root, "gate", "run", "--step", "合 成'步", "--only-step", "--dry-run")
+	if rcMiss != 2 {
+		t.Fatalf("未命中 ⇒ 退 2，得到 %d · stderr=%s", rcMiss, errMiss)
+	}
+	if !strings.Contains(errMiss, "可能是引号/展开所致") {
+		t.Fatalf("未命中该点明「可能是引号/展开所致」：%q", errMiss)
+	}
+	if !strings.Contains(errMiss, "单引号") {
+		t.Fatalf("未命中该提示「试试单引号」：%q", errMiss)
+	}
+	rcHit, _, errHit := runZergRepo(t, root, "gate", "run", "--step", glqStepName, "--only-step", "--dry-run")
+	if rcHit != 0 {
+		t.Fatalf("命中 ⇒ 退 0，得到 %d · stderr=%s", rcHit, errHit)
+	}
+	if strings.Contains(errHit, "可能是引号/展开所致") {
+		t.Fatalf("命中时**不许**出现未命中提示：%q", errHit)
 	}
 }

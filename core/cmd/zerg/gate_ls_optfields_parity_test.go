@@ -9,7 +9,11 @@
 // `gateLsOptFields`），✗ 不扫文本、✗ 不另抄一份。
 package main
 
-import "testing"
+import (
+	"os/exec"
+	"strings"
+	"testing"
+)
 
 // gateLsOptFieldsEqual —— 两张可选字段表**逐字**比对（序 + 值逐格同 ⇒ true）。
 // 提成纯函数 ⇒ 成对负控能直接喂合成对（哑化本比对 ⇒ 负控对红）。
@@ -58,5 +62,58 @@ func TestGateLsOptFieldsEqualPaired(t *testing.T) {
 		if got := gateLsOptFieldsEqual(c.a, c.b); got != c.want {
 			t.Errorf("%s：gateLsOptFieldsEqual(%q, %q) = %v，要 %v", c.name, c.a, c.b, got, c.want)
 		}
+	}
+}
+
+// ── 缺口 `GAP-20260929-22`：步名引号安全的**自证** ＋ 成对负控 ────────────────────────────────────
+//
+// `gateLsShellQuote` 拼出来的串必须能让 shell **逐字还原**原串（含单引号 / 反引号 / `$` /
+// 空白 / CJK）—— 这是「可直接粘贴的整条命令」能成立的**唯一**前提（拼错 ⇒ 粘贴即退 2 假红）。
+
+// gqRunShell —— 真喂 shell 转一圈：把 `shellForm` 当命令串交给 `bash -c`，读回它实际拿到的字节。
+// 只用于**只读**的 printf 侦察 ⇒ 零副作用（✗ 不碰仓、✗ 不起 zerg、✗ 不写任何件）。
+func gqRunShell(shellForm string) (string, bool) {
+	out, err := exec.Command("bash", "-c", "printf '%s' "+shellForm).Output()
+	if err != nil {
+		return "", false
+	}
+	return string(out), true
+}
+
+// TestGateLsShellQuoteSelfProven —— 自证：`gateLsShellQuote` 的产物过 shell 一圈**逐字节**还原原串；
+// 且含单引号的步名**必须**用「闭引号 ＋ 反斜杠单引号 ＋ 重开引号」的写法（✗ 不是把串直接塞进一对单引号里
+// —— 那种拼法会撑破引号结构）。
+func TestGateLsShellQuoteSelfProven(t *testing.T) {
+	cases := []string{
+		"gofmt -l core",
+		"门㊶ 抓取/解析纪律：`grep` 破折号模式必须 `-e`/`--` + 禁贪婪剥标签（阻断）",
+		"门㊷ 过滤/脱敏面形态枚举：`~`/`$HOME`/绝对 全枚举 + 出处可核（阻断）",
+		"合 成'步`x`",
+		"it's a 'test'",
+		"双引号 \" 与反斜杠 \\ 与分号 ;; 与竖线 | 与星号 *",
+		"$HOME 与 ${VAR} 与 $(id) 与 `id`",
+	}
+	for _, s := range cases {
+		got, ok := gqRunShell(gateLsShellQuote(s))
+		if !ok || got != s {
+			t.Fatalf("引号自证失败：%q 过 shell 一圈变成 %q（ok=%v）—— 正确形态 = %q", s, got, ok, gateLsShellQuote(s))
+		}
+	}
+	q := gateLsShellQuote("合 成'步")
+	if !strings.Contains(q, `'\''`) {
+		t.Fatalf("含单引号的步名必须按 `'\\''` 闭合，实得 %q", q)
+	}
+}
+
+// TestGateLsShellQuotePaired —— 成对负控：同一批串用「裸粘 / 双引号」两种**错形态**过 shell ⇒ 必被改写
+// （证主判据的对照面有牙：不是「怎么拼都过」）。
+func TestGateLsShellQuotePaired(t *testing.T) {
+	naked, ok := gqRunShell("合 成 步")
+	if !ok || naked == "合 成 步" {
+		t.Fatalf("负控甲（裸粘）失败：%q —— 含空白的串裸粘后被切词，不该还原成原串", naked)
+	}
+	dq, ok := gqRunShell(`"$HOME"`)
+	if !ok || dq == "$HOME" || dq == "" {
+		t.Fatalf("负控乙（双引号）失败：%q —— `$` 应被 shell 展开（串被改写）", dq)
 	}
 }

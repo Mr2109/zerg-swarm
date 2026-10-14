@@ -188,6 +188,10 @@ func cmdGate(inv *invocation, stdout, stderr io.Writer) int {
 	showZeroHit := false
 	showZeroName := ""
 	var showZeroDecls []gateStepDecl
+	// ★ 缺口 `GAP-20260929-22`（本片）：只读档 `gate ls` 的**粘贴表**开关（非 ls 档 ⇒ false ⇒ 零副作用）；
+	//   lsBuf 是 stdout 的**旁路副件**（`io.MultiWriter`）—— 用户拿到的 stdout 逐字节不变（只转发不翻译）。
+	lsPaste := false
+	var lsBuf bytes.Buffer
 	switch action {
 	case "ls":
 		if inv.jsonGiven {
@@ -213,6 +217,9 @@ func cmdGate(inv *invocation, stdout, stderr io.Writer) int {
 		if rc := gateLSRejectFlags(tail, stderr); rc != exitOK {
 			return rc
 		}
+		// ★ 缺口 `GAP-20260929-22`（本片）：**不新增旗标** —— 只读档在脚本 `--list` 那份 stdout
+		//   **逐字节转出之后**（stdout 一字不改），往 stderr 追加「可直接粘贴的整条命令」表 ＋ 引号口径。
+		lsPaste = true
 		args = []string{"--list"}
 	case "run":
 		// ★ 缺口 `GAP-20260927-02`（P1 · 命令面）：门跑**干跑档** —— `--dry-run` ⇒ 只摆出
@@ -366,7 +373,13 @@ func cmdGate(inv *invocation, stdout, stderr io.Writer) int {
 	defer func() { runningChild = nil }()
 	cmd.Dir = root
 	cmd.Stdin = os.Stdin
-	cmd.Stdout = stdout
+	if lsPaste {
+		// ★ 缺口 `GAP-20260929-22`：只读档把脚本 `--list` 的 stdout **旁路**一份（MultiWriter 先写 stdout
+		//   再写副本 ⇒ 用户拿到的字节与改前**逐字节相同**），供跑完后的粘贴表按同一份清单取名。
+		cmd.Stdout = io.MultiWriter(stdout, &lsBuf)
+	} else {
+		cmd.Stdout = stdout
+	}
 	cmd.Stderr = stderr
 	if err := cmd.Run(); err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
@@ -375,6 +388,10 @@ func cmdGate(inv *invocation, stdout, stderr io.Writer) int {
 			// ★ 缺口 `GAP-20261005-46`：零命中 ⇒ 脚本那一行已印，这里**追加**候选与指路。
 			if showZeroHit {
 				gateShowZeroHitHint(stderr, showZeroDecls, showZeroName)
+			}
+			// ★ 缺口 `GAP-20260929-22`：只读档 `gate ls` 的粘贴表（追加在脚本输出之后 · 同 show 零命中体例）。
+			if lsPaste {
+				gateLsPasteFooter(stderr, lsBuf.String())
 			}
 			// ★ 只转发、不翻译：脚本的**正码**原样返回（0/1/2/8… 逐字透传，不改写）。
 			code := ee.ExitCode()
@@ -395,6 +412,10 @@ func cmdGate(inv *invocation, stdout, stderr io.Writer) int {
 	recordRunFreshness(root, runOutdirArg, runSince, freshFP, freshHead, stderr)
 	if showZeroHit {
 		gateShowZeroHitHint(stderr, showZeroDecls, showZeroName)
+	}
+	// ★ 缺口 `GAP-20260929-22`：只读档 `gate ls` 的粘贴表（追加在脚本那份清单之后 · stderr）。
+	if lsPaste {
+		gateLsPasteFooter(stderr, lsBuf.String())
 	}
 	return exitOK
 }
@@ -481,7 +502,7 @@ var gateLsFields = []string{"total", "scope", "mode", "step"}
 // 映射另**落件** `core/cmd/zerg/testdata/gate-step-ids.json`（真步名的冻结向量 + 机检）。**同名步**
 // ⇒ 响亮判冲突（口径照 `gate explain` 的「步骤名出现 N 次 ⇒ 歧义」），✗ 不静默取首。
 // 逐字：`zerg gate ls --json id` ⇒ `{"steps":[{"id":"s…"},…]}`。✗ 不进冻结 `fields:`（同 `name` 体例）。
-var gateLsOptFields = []string{"name", "gates_total", "fast", "reds", "id"}
+var gateLsOptFields = []string{"name", "gates_total", "fast", "reds", "id", "cmd"}
 
 // gateLsFieldLegal —— 字段是否在闭集四格内（与 `gateShowFieldLegal` 同形 · 不另写第二份口径）。
 func gateLsFieldLegal(f string) bool {
@@ -692,7 +713,10 @@ func gateLsJSON(inv *invocation, stdout, stderr io.Writer, root, script string) 
 		case "gates_total":
 			// ★ GAP-20261010-13：顶层标量格（值 = total = count，已被 pgsParseListJSON 自证钉住）。
 			wantGatesTotal = true
-		case "scope", "mode", "step", "name":
+		case "scope", "mode", "step", "name", "cmd":
+			// ★ 缺口 `GAP-20260929-22`（本片）：`cmd` 同走**可选字段层** —— 每步一格的
+			//   **可直接粘贴的整条命令**（含正确引号 · 见 `gateLsPasteCmd`）。✗ 不进冻结
+			//   `fields:`（帮助/导出面与命令页一行不动，同 `name` 体例）。
 			rowKeys = append(rowKeys, f)
 		case "fast":
 			// ★ 缺口 `GAP-20260927-21`（本片）：每步**是否在快速档**（名单真源 = 门脚本的 `FAST_STEPS`）。
@@ -832,6 +856,9 @@ func gateLsJSON(inv *invocation, stdout, stderr io.Writer, root, script string) 
 					} else if f == "id" {
 						// ★ 缺口 `GAP-20260928-68`：短 id 由步名现算（✗ 不落第二张表 · ✗ 不看行号）。
 						v = gateStepShortID(r.Step)
+					} else if f == "cmd" {
+						// ★ 缺口 `GAP-20260929-22`：可直接粘贴的整条命令（含正确引号 · 步名现算）。
+						v = gateLsPasteCmd(r.Step)
 					}
 					kk, _ := json.Marshal(f)
 					vv, _ := json.Marshal(v)
@@ -896,5 +923,107 @@ func gateShowZeroHitHint(stderr io.Writer, decls []gateStepDecl, name string) {
 	for _, s := range nearestSteps(decls, name, 3) {
 		fmt.Fprintf(stderr, "  候选：%s\n", s)
 	}
+	gateStepQuoteHint(stderr, name)
 	fmt.Fprintf(stderr, "要列全部步名 ⇒ `zerg gate ls`；已知门件名 ⇒ `zerg gate find <门件名>` 反查步名\n")
+}
+
+// ── 缺口 `GAP-20260929-22`：步名的**引号安全**（可直接粘贴的整条命令 ＋ 未命中提示）──────────────
+//
+// 病（现读 · 第三批调研血证）：步名是人读串（含空白 / CJK / 反引号 / `$`），而 `gate run --step` /
+// `gate show` / `gate explain` 一律**按名逐字精确匹配** ⇒ 「怎么把这个串安全地交给 shell」全靠
+// 调用者自己知道，三种粘法里**只有一种对**：
+//
+//	· 裸粘   ⇒ shell 按空白切词 ⇒ 步名被切散 ⇒ 退 2（word-split）；
+//	· 双引号 ⇒ `$HOME` 一类被**展开**、反引号被**执行** ⇒ 串被改写 ⇒ 退 2（假红）；
+//	· 单引号 ⇒ 逐字不动（唯一正确形态）。
+//
+// 本处**不新增旗标**（用户拍定形态），只做两件：① 只读档 `gate ls` 追加「可直接粘贴的整条命令」表；
+// ② 步名未命中时提示「可能是引号/展开所致，试试单引号」。两者都**不改任何脚本退码**，也**不动 `gate ls`
+// 的 stdout**（那句「只转发、不翻译」不下岗 —— 本命令 stdout 仍是脚本 `--list` 的逐字节转出）。
+
+// gateLsShellQuote —— 步名的 **shell 单引号逐字**形态：整串用一对单引号包住，内嵌的单引号按
+// 「闭引号 ＋ 反斜杠单引号 ＋ 重开引号」的写法闭合（POSIX 的**唯一**正确写法）。
+//
+// ★ 为什么必须走这一枚、✗ 不许就近拼：单引号内**没有**转义语法，直接把串塞进一对单引号里，
+// 步名一带单引号就会把引号结构撑破、后半段重新落回 shell 解析面。
+// ★ 自证（真喂 `bash -c` 转一圈比对逐字节）：`TestGateLsShellQuoteSelfProven`；
+// 成对负控（裸粘 / 双引号 ⇒ 串被改写）：`TestGateLsShellQuotePaired`。
+func gateLsShellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// gateLsPasteCmd —— 一步的**可直接粘贴的整条命令**（含正确引号 · 正式档）。
+func gateLsPasteCmd(step string) string {
+	return progName + " gate run --step " + gateLsShellQuote(step) + " --only-step"
+}
+
+// gateLsPasteReadonlyCmd —— 同一条命令的**只读零副作用**形态（只想核「引号对不对」时用）。
+func gateLsPasteReadonlyCmd(step string) string {
+	return gateLsPasteCmd(step) + " " + gateRunDryFlag
+}
+
+// gateLsNameNeedsQuote —— 步名是否含空白或 shell 活动字符（裸粘会被切词、双引号会被展开/执行）。
+// 非也是同样一条口径（一律单引号），只是这股在表里不加星标。
+func gateLsNameNeedsQuote(s string) bool {
+	return strings.ContainsAny(s, " \t`$'\"\\|&;<>()*?[]{}!#~")
+}
+
+// gateLsPasteRowsFromList —— 从脚本 `--list` 的**人面正文**里抠出 (scope, mode, 步名) 清单。
+// ★ 切法与 `gateLsJSON` 的退化路**同一把**（`impactStepListLineRe` · ✗ 不另造第二套）：这样表里的
+// 步名与用户刚看到的那一份清单**逐字同源**（机读面那份 JSON 是另一份文本，不走这里）。
+func gateLsPasteRowsFromList(body string) []gateStepIDRow {
+	rows := []gateStepIDRow{}
+	for _, ln := range strings.Split(body, "\n") {
+		t := strings.TrimSpace(ln)
+		if t == "" || strings.HasPrefix(t, "共") || strings.HasPrefix(t, "──") {
+			continue
+		}
+		if m := impactStepListLineRe.FindStringSubmatch(t); m != nil {
+			rows = append(rows, gateStepIDRow{Scope: m[1], Mode: m[2], Name: m[3]})
+			continue
+		}
+		rows = append(rows, gateStepIDRow{Name: t})
+	}
+	return rows
+}
+
+// gateLsPasteFooter —— 只读档 `gate ls` 跑完之后**追加**的「可直接粘贴的整条命令」表（走 stderr）。
+//
+// 为什么走 stderr 而不是 stdout：本命令的 stdout 是脚本 `--list` 那一份的**逐字节转出**
+// （`TestCLIExecPassthroughListIsVerbatim` 钉着这一条）⇒ 一个字节都不许动；故这里只**追加**到
+// stderr，与 `gate show` 零命中指路（`gateShowZeroHitHint`）同一体例。
+// 步名清单取自**用户刚看到的那份 stdout 旁路副本**（`cmdGate` 的 `lsBuf`）⇒ 表 ⟷ 清单逐字同源，
+// ✗ 不是另跑一趟脚本、✗ 不是另抄一份步骤表。
+func gateLsPasteFooter(stderr io.Writer, listBody string) {
+	fmt.Fprintln(stderr, "── 可直接粘贴的整条命令（缺口 `GAP-20260929-22` · 逐字单引号）──")
+	fmt.Fprintln(stderr, "引号口径：步名一律**单引号**逐字包住 —— ✗ 裸粘会被 shell 按空白切词（步名被切散 ⇒ 退 2）；")
+	fmt.Fprintln(stderr, "          ✗ 双引号会被 shell 展开 `$` 或**执行**反引号（步名串被改写 ⇒ 退 2 假红）。")
+	fmt.Fprintln(stderr, "          步名自带单引号时按 `'\\''` 闭合（下表已按此拼好，照抄即可）。")
+	rows := gateLsPasteRowsFromList(listBody)
+	if len(rows) == 0 {
+		fmt.Fprintf(stderr, "%s: 步骤清单正文里没抠到一条步名 ⇒ 不列粘贴表（✗ 不编步名 · 退码不变）\n", progName)
+		return
+	}
+	for _, r := range rows {
+		mark := "  "
+		if gateLsNameNeedsQuote(r.Name) {
+			mark = "★ " // ★ = 名字含空白或 shell 活动字符（裸粘 / 双引号会被改写）
+		}
+		fmt.Fprintf(stderr, "%s%s\n", mark, gateLsPasteCmd(r.Name))
+	}
+	fmt.Fprintln(stderr, "★ = 步名含空白或 shell 活动字符；每一条都**照抄即可**。")
+	fmt.Fprintf(stderr, "只想核「引号对不对」（零副作用）：%s\n", gateLsPasteReadonlyCmd("<步名>"))
+	fmt.Fprintf(stderr, "机读面同表（每步一格 `cmd`）：%s gate ls --json cmd\n", progName)
+}
+
+// gateStepQuoteHint —— 步名**未命中**时的引号指路（缺口 `GAP-20260929-22` ②）。
+//
+// 步名是人读串，「粘进 shell 时怎么引用」是这条路上**唯一**的失败源（裸粘 word-split / 双引号被展开）
+// ⇒ 每条「步名找不到」的判词后都补这一段；四处（`gate run --step --json` / `--verify-live` 与
+// `--show-log` 与 `--dry-run` 共用的 `resolveGateStep` / `gate show --json` / `gate show` 默认面
+// 零命中指路）**共用这一处口径**（✗ 不各写一份）。
+func gateStepQuoteHint(stderr io.Writer, given string) {
+	fmt.Fprintf(stderr, "可能是引号/展开所致 —— 试试**单引号**逐字包住（✗ 裸粘会被空白切词；✗ 双引号会被 shell 展开 `$` 与反引号 ⇒ 串被改写、退 2 假红）：\n")
+	fmt.Fprintf(stderr, "  %s gate run --step %s --only-step\n", progName, gateLsShellQuote(given))
+	fmt.Fprintf(stderr, "  每一步可直接粘贴的整条命令 ⇒ `%s gate ls`（或 `%s gate ls --json cmd`）\n", progName, progName)
 }

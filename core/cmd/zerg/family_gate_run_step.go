@@ -144,6 +144,7 @@ func gateRunStepJSON(inv *invocation, stdout, stderr io.Writer, root, script str
 		for _, s := range nearestSteps(decls, name, 3) {
 			fmt.Fprintf(stderr, "  候选：%s\n", s)
 		}
+		gateStepQuoteHint(stderr, name)
 		return exitUsage
 	}
 	if len(hits) > 1 {
@@ -437,6 +438,7 @@ func resolveGateStep(decls []gateStepDecl, name string, stderr io.Writer) (gateS
 		for _, s := range nearestSteps(decls, name, 3) {
 			fmt.Fprintf(stderr, "  候选：%s\n", s)
 		}
+		gateStepQuoteHint(stderr, name)
 		return gateStepDecl{}, exitUsage
 	}
 	if len(hits) > 1 {

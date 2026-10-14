@@ -854,7 +854,10 @@ func init() {
 			//  ✗ 不含行号/序号 ⇒ 步骤表插/删一行后其余步的 id 逐字不变）同走**可选字段层** ⇒
 			//  `zerg gate ls --json id` 点得出来（件内那一侧是 `gate.go` 的 `gateLsOptFields`，两表逐字一致
 			//  由 `TestGateLsOptFieldsParity` 钉住 · ✗ 不进冻结 `fields:` ⇒ 帮助面与命令页一行不动）。
-			optFields:   []string{"name", "gates_total", "fast", "reds", "id"},
+			// ★ 缺口 `GAP-20260929-22`（本片 · 2026-10-14）：`cmd`（每步**可直接粘贴的整条命令**，含正确
+			//  引号；单引号逐字 / 内嵌单引号按 `'\''` 闭合 · 见 `gate.go` 的 `gateLsPasteCmd`）同走**可选字段层**
+			//  ⇒ `zerg gate ls --json cmd` 点得出来；✗ 不进冻结 `fields:`（帮助面与命令页一行不动 · 同 `name`/`id`）。
+			optFields:   []string{"name", "gates_total", "fast", "reds", "id", "cmd"},
 			endpoint:    "",
 			passthrough: true,
 			run:         cmdGate,
