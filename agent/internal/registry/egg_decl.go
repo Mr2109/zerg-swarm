@@ -33,6 +33,16 @@ const EggSchemaVersionCurrent = 1
 // 「默认空」无例外：一律收走，差别只在阈值长短。
 const DefaultIdleUnloadSeconds = 600
 
+// mem_gb 口径闭集（GAP-20261014-68）—— **与主控侧同形**（主控真源 = `core/internal/config` 的
+// `MemGBScopeUsage` / `MemGBScopeGateVal`）。`core` 与 `agent` 是两个 module ⇒ 常量各存一份、值面
+// 逐字相同；改动任一侧必须同批改另一侧（同 `egg_profile.go` 的 GpuMemKind 常量做法）。
+const (
+	// MemGBScopeUsage 占用/需求声明口径（实测峰值 + 余量）—— 主控 `gateway/fleet.yaml` 的本义。
+	MemGBScopeUsage = "usage"
+	// MemGBScopeGateVal 闸门拍值·故意报大·fail-closed —— 本侧（子端 `agent_models.yaml`）的本义。
+	MemGBScopeGateVal = "gate-val"
+)
+
 // SmallModelIdleUnloadSeconds 小模型（嵌入 / 重排 / 分类类）的建议空窗收走阈值（秒）。
 // 用户口径（Mr2109 2026-09-15）：「因为是小模型，需则装，用完就卸，所以，他们的卸时间可以短点 2 分钟」。
 const SmallModelIdleUnloadSeconds = 120
@@ -212,6 +222,17 @@ func ValidateEggDeclaration(name string, entry *ModelEntry) EggDeclarationResult
 			"卵 %s：ssd_streaming_preload_experts=%d 不合法（预热专家数不能为负；"+
 				"无实测档案就不声明，适配器自然不发该参数——无档案不预热，设计 §9.4 / §8.4 标定铁律）",
 			displayName(name), entry.SsdStreamingPreloadExperts))
+	}
+
+	// ===== 5) mem_gb_scope：`mem_gb` 的口径（GAP-20261014-68；字段注释见 registry.ModelEntry）=====
+	// 两侧同名不同义（主控 = 占用/需求声明 `usage`；本侧 = 闸门拍值 `gate-val`）⇒ 口径必须能申报、
+	// 且只能申报闭集里的值。空 = 未申报 ⇒ **兼容读**（旧登记册：不据此拒孵，与 gpu_mem_kind 同一纪律）；
+	// 非空却在闭集外 ⇒ **拒孵**（口径写错 = 声明坏了：静默按错口径读，比读不出来糟，同 §6.8.4 的口径）。
+	if entry.MemGBScope != "" && entry.MemGBScope != MemGBScopeUsage && entry.MemGBScope != MemGBScopeGateVal {
+		res.Fatal = append(res.Fatal, fmt.Sprintf(
+			"卵 %s：mem_gb_scope=%q 不是合法口径（合法：%q（占用/需求声明）/ %q（闸门拍值·fail-closed））——"+
+				"口径决定 `mem_gb` 怎么读（两侧同名不同义，✗ 不可互比）；无口径请留空",
+			displayName(name), entry.MemGBScope, MemGBScopeUsage, MemGBScopeGateVal))
 	}
 
 	return res

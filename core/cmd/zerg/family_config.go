@@ -1046,6 +1046,10 @@ func modelSetKind(key string) string {
 	switch key {
 	case "verified", "ssd", "thinking", "tool_support", "engine_impl_required":
 		return "bool"
+	case "mem_gb_scope":
+		// GAP-20261014-68：`mem_gb` 的口径（闭集 `usage|gate-val`）—— 真源在 `core/internal/config`
+		// （`config.MemGBScopes` / `config.MemGBScopeKnown`）；本处只按它判值域、✗ 不另抄值面。
+		return "scope"
 	case "verified_state":
 		// GAP-20261003-21（设计稿 §三乙案）：verified 三态闭集 true|false|reported ——
 		// 旧 bool 键 `verified` 不动（零破坏）；第三态 `reported` 走这枚**加性**键。
@@ -1075,6 +1079,12 @@ func modelSetValueText(key, v string) (string, bool) {
 	case "state":
 		// GAP-20261003-21：三态闭集 —— true | false | reported（其它一律拒 · 值域不合即退 2）。
 		if v != "true" && v != "false" && v != "reported" {
+			return "", false
+		}
+		return v, true
+	case "scope":
+		// GAP-20261014-68：`mem_gb` 口径闭集（真源 `config.MemGBScopes`）—— 不在闭集即退 2。
+		if !config.MemGBScopeKnown(v) {
 			return "", false
 		}
 		return v, true
@@ -1260,7 +1270,7 @@ func cmdModelSet(inv *invocation, stdout, stderr io.Writer) int {
 		inv.setErr("usage", detail, msg)
 		fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
 		fmt.Fprintf(stderr, "  用法：zerg model set --model <模型名> --host <主机> [--file <GGUF 路径>] --set k=v [--set k=v …] --confirm <模型名> [--dry-run | --yes]\n")
-		fmt.Fprintf(stderr, "        （只改点准的那一条 · 其余字段逐字保留；可改字段：host backend file mem_gb size_bytes ctx_window max_tokens architecture arch template modality verified verified_state verified_where thinking tool_support ssd mmproj moe description added name family）\n")
+		fmt.Fprintf(stderr, "        （只改点准的那一条 · 其余字段逐字保留；可改字段：host backend file mem_gb size_bytes ctx_window max_tokens architecture arch template modality verified verified_state verified_where mem_gb_scope thinking tool_support ssd mmproj moe description added name family）\n")
 		return exitUsage
 	}
 	if name == "" || host == "" {

@@ -17,10 +17,23 @@ import (
 
 // ModelEntry 单个模型注册条目。
 type ModelEntry struct {
-	File     string  `yaml:"file"`
-	Backend  string  `yaml:"backend"`
-	MemGB    float64 `yaml:"mem_gb"`
-	Modality string  `yaml:"modality"`
+	File    string  `yaml:"file"`
+	Backend string  `yaml:"backend"`
+	MemGB   float64 `yaml:"mem_gb"`
+	// MemGBScope 上面 `mem_gb` 的**口径**（GAP-20261014-68 · 加性字段 · 校验见 egg_decl.go 第 5 段）。
+	//
+	// 两侧同名 `mem_gb` 不同义：主控 `gateway/fleet.yaml` = **占用/需求声明**（实测峰值 + 余量）；
+	// **本注册表**（子端 `agent_models.yaml`）= **闸门拍值·故意报大·fail-closed**（子端内存闸判据
+	// `available < mem_gb × MEM_HEADROOM` 即拒装；闸门只读实测档案，不读 `mem_gb`）。此前这条口径
+	// 只活在 fleet.yaml 的注释里 ⇒ 对拍的人与脚本都可能把两侧数值直接比（本缺口症状）。
+	//
+	//   MemGBScopeUsage    占用/需求声明口径（实测峰值 + 余量）—— 主控本义
+	//   MemGBScopeGateVal  闸门拍值·故意报大·fail-closed —— 本侧（子端）本义
+	//
+	// 空 = 未申报（旧登记册）⇒ 兼容读、**不据此拒孵**（与 `gpu_mem_kind` / `ctx` / `cache_gb` 同一条
+	// 兼容纪律：`agent/internal/monitor/egg_profile.go` 的 GpuMemKind 先例）；非空却在闭集外 ⇒ 拒孵。
+	MemGBScope string `yaml:"mem_gb_scope,omitempty"`
+	Modality   string `yaml:"modality"`
 	// D3 多模态：视觉投影文件（llama-server -mm 参数——如 mmproj-*.gguf）
 	MMProj string `yaml:"mmproj"`
 	// ChatTemplate 可选的 chat template 文件路径（覆盖 GGUF 内嵌模板，如 example-35b-v2 系）。

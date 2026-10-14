@@ -17,6 +17,7 @@ models:
       backend: llama-server
       file: /path/to/models/your-model-Q4_K_M.gguf
       mem_gb: 6
+      mem_gb_scope: usage   # 口径：usage＝占用/需求声明（主控侧）；子端 gate-val＝闸门拍值
       ctx_window: 32768
       modality: text
 
@@ -27,6 +28,7 @@ models:
       backend: llama-server
       file: /path/to/models/your-model-32b-Q4_K_M.gguf
       mem_gb: 22
+      mem_gb_scope: usage   # 口径：usage＝占用/需求声明（主控侧）；子端 gate-val＝闸门拍值
       ctx_window: 262144
       modality: text
     - name: example-32b
@@ -34,6 +36,7 @@ models:
       backend: llama-server
       file: /data/models/your-model-32b-Q4_K_M.gguf
       mem_gb: 22
+      mem_gb_scope: usage   # 口径：usage＝占用/需求声明（主控侧）；子端 gate-val＝闸门拍值
       ctx_window: 262144
       modality: text
 

@@ -30,6 +30,9 @@
 //
 // 退码（与 py 逐字同）：0 全对 · 1 有可由声明面判定的缺陷 · 2 不给结论（件不在 / 解析不出 /
 // 空域 / 自检不过）。
+//
+// ★ 2026-10-14（GAP-20261014-68）：新增**判据 F**（`mem_gb` 的口径必须能机读）—— 判据 A–E 语义、
+// 退码族一字未动；口径值是**引用** `core/internal/config` 的闭集（✗ 不在本件另抄一份值面）。
 package main
 
 import (
@@ -41,6 +44,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/Mr2109/zerg-swarm/core/internal/config"
 )
 
 // cflBackends 是后端闭集（判据 C；与 py `BACKENDS` 逐字同源）。
@@ -48,6 +53,13 @@ var cflBackends = []string{"llama-server", "ds4-server"}
 
 // cflRequiredFields 是候选必备字段（判据 B；与 py `REQUIRED_FIELDS` 逐字同源）。
 var cflRequiredFields = []string{"host", "backend", "file"}
+
+// cflMemGBScopeMain 主控侧的 `mem_gb` 口径（GAP-20261014-68）：本段（`gateway/fleet.yaml`）恒为
+// 「占用/需求声明」；子端口径 `gate-val`（闸门拍值）出现在这里 = 口径搬错侧。
+const cflMemGBScopeMain = config.MemGBScopeUsage
+
+// cflMemGBScopes 口径闭集（**引用真源** = `core/internal/config` 的 `MemGBScopes`）。
+var cflMemGBScopes = config.MemGBScopes
 
 // cflMainlineUnsupportedArchs 是主线 llama.cpp 不支持的架构（判据 D 的参照真源；与 py
 // `MAINLINE_UNSUPPORTED_ARCHS` 同源，真源同 core/internal/config/validator.go）。
@@ -235,6 +247,18 @@ func cflCheck(fleetPath string) (int, []cflFinding) {
 			} else if v, err := strconv.ParseFloat(mg, 64); err == nil && v <= 0 {
 				findings = append(findings, cflFinding{"B", fmt.Sprintf("%s：`mem_gb`=%s 非正数", where, c.get("mem_gb"))})
 			}
+			// 判据 F（GAP-20261014-68）：`mem_gb` 的口径必须能机读 —— 两侧同名不同义（主控 = 占用/
+			// 需求声明 `usage`；子端 = 闸门拍值 `gate-val`），此前只活在注释里 ⇒ 对拍的人与脚本都
+			// 可能把两侧数值直接比。三支：缺（未申报）/ 值 ∉ 闭集 / 子端口径搬错侧。
+			mgScope := strings.TrimSpace(c.get("mem_gb_scope"))
+			switch {
+			case mgScope == "":
+				findings = append(findings, cflFinding{"F", fmt.Sprintf("%s：缺 `mem_gb_scope`（`mem_gb`=%s 的口径不可机读 —— 有 `mem_gb` 就必须申报口径 `%s`）", where, c.get("mem_gb"), cflMemGBScopeMain)})
+			case !cflInSet(mgScope, cflMemGBScopes):
+				findings = append(findings, cflFinding{"F", fmt.Sprintf("%s：`mem_gb_scope`=`%s` 不在闭集 %s 里（口径写错 = 口径不明）", where, mgScope, cflList(cflMemGBScopes))})
+			case mgScope != cflMemGBScopeMain:
+				findings = append(findings, cflFinding{"F", fmt.Sprintf("%s：`mem_gb_scope`=`%s` 是**子端口径**（闸门拍值）搬到了主控 `fleet.yaml` ⇒ 口径搬错侧（本侧恒 `%s`）", where, mgScope, cflMemGBScopeMain)})
+			}
 			host := strings.TrimSpace(c.get("host"))
 			if host != "" && len(fleetKeys) > 0 && !fleetKeys[host] {
 				findings = append(findings, cflFinding{"C", fmt.Sprintf("%s：host `%s` 不在 `fleet:` 机器键集 %s 里（引了不存在的机器）", where, host, cflSortedKeys(fleetKeys))})
@@ -352,6 +376,9 @@ func cflSelfTest() int {
 	expect("fork-inconsistent", cflBadForkFixture, 1, "D")
 	expect("bad-fields", cflBadFieldsFixture, 1, "B")
 	expect("empty-domain", cflEmptyFixture, 2, "A")
+	expect("scope-missing", cflMissingScopeFixture, 1, "F")
+	expect("scope-bad-value", cflBadScopeValueFixture, 1, "F")
+	expect("scope-wrong-side", cflWrongSideScopeFixture, 1, "F")
 	if rc, _ := cflCheck("/nonexistent/fleet.yaml"); rc != 2 {
 		fails = append(fails, fmt.Sprintf("missing-file：期望 rc=2，实得 rc=%d", rc))
 	}
@@ -362,16 +389,16 @@ func cflSelfTest() int {
 		}
 		return 2
 	}
-	fmt.Println("✓ check-fleet-loadable 自检全过（5 格）")
+	fmt.Println("✓ check-fleet-loadable 自检全过（8 格）")
 	return 0
 }
 
 const cflGoodFixture = `models:
   Foo-Fork:
-    - { host: m1, backend: llama-server, file: /srv/models/foo.gguf, mem_gb: 8, cmd: ["/opt/run-foo.sh", "-m", "{file}"] }
-    - { host: m2, backend: llama-server, file: /srv/models/foo.gguf, mem_gb: 8, cmd: ["/opt/run-foo.sh", "-m", "{file}"] }
+    - { host: m1, backend: llama-server, file: /srv/models/foo.gguf, mem_gb: 8, mem_gb_scope: usage, cmd: ["/opt/run-foo.sh", "-m", "{file}"] }
+    - { host: m2, backend: llama-server, file: /srv/models/foo.gguf, mem_gb: 8, mem_gb_scope: usage, cmd: ["/opt/run-foo.sh", "-m", "{file}"] }
   Bar:
-    - { host: m1, backend: llama-server, file: /srv/models/bar.gguf, mem_gb: 4 }
+    - { host: m1, backend: llama-server, file: /srv/models/bar.gguf, mem_gb: 4, mem_gb_scope: usage }
 aliases:
 fleet:
   m1: { host: <controller-ip>, port: 8100, os: macos, kind: work }
@@ -381,7 +408,7 @@ fleet:
 const cflBadForkFixture = `models:
   Foo-Fork:
     - { host: m1, backend: llama-server, file: /srv/models/foo.gguf, mem_gb: 8, cmd: ["/opt/run-foo.sh", "-m", "{file}"] }
-    - { host: m2, backend: llama-server, file: /srv/models/foo.gguf, mem_gb: 8 }
+    - { host: m2, backend: llama-server, file: /srv/models/foo.gguf, mem_gb: 8, mem_gb_scope: usage }
 fleet:
   m1: { host: <controller-ip>, port: 8100, os: macos, kind: work }
   m2: { host: <worker-ip>, port: 8100, os: ubuntu, kind: ai }
@@ -389,12 +416,37 @@ fleet:
 
 const cflBadFieldsFixture = `models:
   Broken:
-    - { host: m9, backend: llama-server, file: /srv/models/x.bin, mem_gb: 0 }
+    - { host: m9, backend: llama-server, file: /srv/models/x.bin, mem_gb: 0, mem_gb_scope: usage }
 fleet:
   m1: { host: <controller-ip>, port: 8100, os: macos, kind: work }
 `
 
 const cflEmptyFixture = "models:\nfleet:\n  m1: { host: <controller-ip>, port: 8100 }\n"
+
+// cflMissingScopeFixture 判据 F 负控①（本缺口的症状本体）：`mem_gb` 有、口径**没申报**。
+const cflMissingScopeFixture = `models:
+  Unscoped:
+    - { host: m1, backend: llama-server, file: /srv/models/u.gguf, mem_gb: 8 }
+fleet:
+  m1: { host: <controller-ip>, port: 8100, os: macos, kind: work }
+`
+
+// cflBadScopeValueFixture 判据 F 负控②：口径**在闭集外**（值写错 ⇒ 口径不明）。
+const cflBadScopeValueFixture = `models:
+  Typo:
+    - { host: m1, backend: llama-server, file: /srv/models/t.gguf, mem_gb: 8, mem_gb_scope: usage-ish }
+fleet:
+  m1: { host: <controller-ip>, port: 8100, os: macos, kind: work }
+`
+
+// cflWrongSideScopeFixture 判据 F 负控③：**子端口径搬到主控侧**（`gate-val` 出现在 fleet.yaml）——
+// 这一支正是 GAP-20261014-68 的两侧同名不同义本体。
+const cflWrongSideScopeFixture = `models:
+  Moved:
+    - { host: m1, backend: llama-server, file: /srv/models/m.gguf, mem_gb: 8, mem_gb_scope: gate-val }
+fleet:
+  m1: { host: <controller-ip>, port: 8100, os: macos, kind: work }
+`
 
 // checkFleetLoadableGateMain 是 `zerg gate check check-fleet-loadable` 的进程内入口。
 func checkFleetLoadableGateMain(stdout, stderr io.Writer, argv []string) int {
@@ -433,6 +485,6 @@ func checkFleetLoadableGateMain(stdout, stderr io.Writer, argv []string) int {
 		}
 		return 1
 	}
-	fmt.Fprintf(stdout, "✓ 可加载判据全过（fleet=%s）：必备字段齐 · 引用都在册 · 引擎实现一致\n", fleet)
+	fmt.Fprintf(stdout, "✓ 可加载判据全过（fleet=%s）：必备字段齐 · 引用都在册 · 引擎实现一致 · mem_gb 口径已申报\n", fleet)
 	return 0
 }

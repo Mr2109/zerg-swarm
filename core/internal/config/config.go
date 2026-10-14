@@ -13,14 +13,25 @@ import (
 
 // ModelCandidate 一个模型在某个主机上的候选部署信息。
 type ModelCandidate struct {
-	Name      string  `yaml:"name,omitempty"`   // 模型名称（V001 必填）
-	Family    string  `yaml:"family,omitempty"` // 模型家族（V002/V014 必填/校验）
-	Host      string  `yaml:"host"`
-	Backend   string  `yaml:"backend"`
-	File      string  `yaml:"file"`
-	MemGb     float64 `yaml:"mem_gb"`
-	SSD       bool    `yaml:"ssd"`
-	CtxWindow int     `yaml:"ctx_window"` // 模型上下文上限（V22，GGUF 元数据实测）
+	Name    string  `yaml:"name,omitempty"`   // 模型名称（V001 必填）
+	Family  string  `yaml:"family,omitempty"` // 模型家族（V002/V014 必填/校验）
+	Host    string  `yaml:"host"`
+	Backend string  `yaml:"backend"`
+	File    string  `yaml:"file"`
+	MemGb   float64 `yaml:"mem_gb"`
+
+	// ═══ GAP-20261014-68：`mem_gb` 的口径必须能申报（加性键 · 旧条目一字不改 · ✗ 不翻红既有条）═══
+	// 同一个字段名 `mem_gb` 两侧装两种账：**本侧**（主控 `gateway/fleet.yaml`）= 占用/需求声明
+	// （实测峰值 + 余量）；**子端** `agent_models.yaml` = 闸门拍值·故意报大·fail-closed。此前这条口径
+	// 只活在注释里（`zerg code find mem_gb_scope` 零命中）⇒ 对拍工具/人都可能拿两侧数值直接比。
+	// 本键把它变成机读值（真源常量见本件末尾 `MemGBScope*`）：
+	//   `usage`    占用/需求声明口径（实测峰值 + 余量）—— 本侧本义；
+	//   `gate-val` 闸门拍值·故意报大·fail-closed —— 子端本义。
+	// 空 = 未申报（旧条目）⇒ 兼容读；判据 = `core/cmd/zerg/check_fleet_loadable.go` 判据 F
+	// （`mem_gb` 有则口径必有 · 值 ∈ 闭集 · 本侧恒 `usage`）；写面 = `zerg model set --set mem_gb_scope=…`。
+	MemGBScope string `yaml:"mem_gb_scope,omitempty"`
+	SSD        bool   `yaml:"ssd"`
+	CtxWindow  int    `yaml:"ctx_window"` // 模型上下文上限（V22，GGUF 元数据实测）
 	// MaxTokens 该候选声明的**单次输出上限**（2026-09-19 ④）。
 	//
 	// 为什么补这一格：fleet.yaml 里已经写了 `max_tokens: 262144`，但解析侧没有这个字段 ⇒ yaml 里
@@ -297,4 +308,29 @@ func parseWithCleanup(data []byte) []byte {
 		cleaned = append(cleaned, line)
 	}
 	return []byte(strings.Join(cleaned, "\n"))
+}
+
+// mem_gb 口径闭集（GAP-20261014-68）—— 判据 F、写面（`zerg model set`）与消费侧的**真源**
+// （`core` 模块内唯一一份；子端侧同名常量在 `agent/internal/registry/egg_decl.go` —— `core` / `agent` 是
+// 两个 module ⇒ 各存一份、值面逐字相同，改动任一侧必须同批改另一侧）。
+// ★ 收口项：同包 `check_mem_gb_parity.go`（GAP-20261014-67 · 两侧 `mem_gb` 对拍门）自带的
+// `mgpScopeClosedSet` 与本闭集**同值两份**（usage / gate-val）⇒ 宜收口为引用本真源（✗ 别各留一份）。
+const (
+	// MemGBScopeUsage 占用/需求声明口径（实测峰值 + 余量）—— 主控 `gateway/fleet.yaml` 的本义。
+	MemGBScopeUsage = "usage"
+	// MemGBScopeGateVal 闸门拍值·故意报大·fail-closed —— 子端 `agent_models.yaml` 的本义。
+	MemGBScopeGateVal = "gate-val"
+)
+
+// MemGBScopes 口径闭集（序即报文里的列举序）。
+var MemGBScopes = []string{MemGBScopeUsage, MemGBScopeGateVal}
+
+// MemGBScopeKnown 值是否在闭集内（空串 = 未申报 ⇒ 由调用方按「缺」或「兼容读」分别处置）。
+func MemGBScopeKnown(v string) bool {
+	for _, s := range MemGBScopes {
+		if v == s {
+			return true
+		}
+	}
+	return false
 }

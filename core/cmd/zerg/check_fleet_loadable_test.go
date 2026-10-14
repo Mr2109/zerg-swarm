@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// TestFleetLoadableSelfTest 跑本门自检（与 py `--self-test` 同五格）。
+// TestFleetLoadableSelfTest 跑本门自检（8 格：原 5 格 + GAP-20261014-68 的判据 F 三格负控）。
 func TestFleetLoadableSelfTest(t *testing.T) {
 	if rc := cflSelfTest(); rc != 0 {
 		t.Fatalf("自检不过 rc=%d", rc)
