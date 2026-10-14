@@ -1266,6 +1266,13 @@
  ],
  "retire_exceptions": [
   {
+   "object": "scripts/svc/zerg-dbbackup.sh",
+   "category": "OS胶水·调度（launchd 作业体）",
+   "reason": "OS胶水：`~/Library/LaunchAgents/com.zerg.dbbackup.plist` 的 ProgramArguments 逐字 `/bin/bash <本件>`（StartCalendarInterval 03:30 本地 · WorkingDirectory=仓根）——本件**不实现**备份/归档逻辑，只逐字转发命令面 `zerg core db backup`（`core/internal/store/zdb` 的 BackupDefault 体例）；Go 侧无 launchd 作业体等价物，迁 Go＝改掉平台调度集成形态。",
+   "keep_cost": "随 launchd/plist 形态与库路径变动同步核对；设计 §四.3 的归档那一半命令面出口落地后，本件要补第二段（顺序铁律：备份在前、归档在后）。若要退场，得先把调度语义搬进 Go 正门并保住 launchctl 侧两态（✗ 不是「不做」）。",
+   "review_date": "2026-10-14"
+  },
+  {
    "object": "scripts/build/publish-public.sh",
    "category": "外部依赖（退场例外）",
    "reason": "生态绑定：`git init` + 远端推送 + 公开面树（白名单/排除项/脱敏）—— 本机跑不出等价行为",

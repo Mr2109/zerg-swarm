@@ -1788,7 +1788,7 @@ func init() {
 			path:    []string{"repo", "commit"},
 			kind:    "RepoCommit",
 			summary: "提交：**按文件名逐件暂存**（禁 `git add -A`）· 或**点名单路径**（`--only <路径…>`：索引面允许非空、别人的暂存只许多不许少）· **过快速档才放行** · 禁 `--no-verify`（例外走 `--waive <步名> --reason <…>` 并进审计）",
-			usage:   "zerg repo commit --message <题> (--file <件>… | --only <路径>[ --only <路径>]… | --removed <路径>…) [--proposal <提案 id>] [--by <谁>] [--trace <id>] [--criterion <判据>] [--waive <步名> --reason <理由>] [--allow-stale-gates <一句话理由>] [--json <字段>] [--dry-run] [--yes]",
+			usage:   "zerg repo commit --message <题> (--file <件>… | --only <路径>[ --only <路径>]… | --removed <路径>…) [--proposal <提案 id>] [--by <谁>] [--trace <id>] [--criterion <判据>] [--waive <步名> --reason <理由>] [--allow-stale-gates <一句话理由>] [--no-fast] [--json <字段>] [--dry-run] [--yes]",
 			arity:   "any",
 			args:    []string{"提交主题（--message）", "逐件点名（--file · 可重复）或点名单路径（--only · 可重复 · 可 `--only=<路径>`）"},
 			fields:  repoCommitFields,
