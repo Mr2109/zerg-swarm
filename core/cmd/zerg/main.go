@@ -1476,6 +1476,24 @@ func init() {
 			endpoint: "",
 			run:      cmdCorePs,
 		},
+		// ---- T2④ / T4①（2026-10-14 · 本单）：`core db <check|backup|restore|prune>` —— 虫族库
+		// 备份 / 恢复 / 体检 / GFS 轮转的**唯一命令入口**。设计 §五 Q12 逐字：「✗ 不新开 `zerg db` 族」
+		// ⇒ 挂**既有 `core` 族**下；登记形制照同族 `core daemon`（一条命令 · 子动作在 `inv.args[0]` 里派发）。
+		// 实现件 = `core/cmd/zerg/family_core_db.go`（薄壳 · 逐字转发 `zdb` 已落接口 —— ✗ 命令层重写逻辑）；
+		// ★ 与归档**共用同一枚 plist**（`com.zerg.dbbackup` · 先备份后归档）。
+		{
+			path:     []string{"core", "db"},
+			kind:     "CoreDb",
+			summary:  "虫族库四动作（薄壳 · 转发 `core/internal/store/zdb`）：`check` **只读**体检（integrity_check ＋ foreign_key_check ＋ application_id ＋ user_version/page_count/journal_mode —— 真库上跑也一字节不写）· `backup` GFS 快照（checkpoint(TRUNCATE) → VACUUM INTO → 侧车八格 → prune 日14/周8/月12 · 保底 ≥3）· `restore` 从快照就位（VACUUM INTO → 体检 → 逐表行数对拍 → rename · 自证以侧车为准）· `prune` 逐代轮转（**只删匹配命名件**）",
+			usage:    "zerg core db <check|backup|prune> [--db <库路径>] [--dry-run | --yes] [--json <字段>] · zerg core db restore --from <快照> --to <库路径> --confirm=<库路径> --yes [--dry-run] [--json <字段>]",
+			arity:    "any",
+			args:     []string{"动作：check | backup | restore | prune"},
+			fields:   coreDbFields,
+			danger:   &dangerSpec{dangerD3, "库路径", "改虫族群库面：`restore` **覆盖 `--to` 指向的库**（自证 / 体检不过 ⇒ `zdb` 里 fail-closed，rename 之前就退）· `backup` / `prune` 写 / 删 `~/.zerg/backup/` 里的快照（GFS **只删匹配命名件** · 保底 ≥3）；`check` **只读**零写", "设计-虫族数据库-20261013 §四.2/§四.3 · §五 Q12/Q23/Q24 · 任务书 T2④/T4①", true, dangerScopeRepo},
+			opened:   true,
+			endpoint: "",
+			run:      cmdCoreDb,
+		},
 		{
 			path:    []string{"core", "start"},
 			machine: machineHostName,
@@ -4991,6 +5009,13 @@ func valueFlagName(a string) string {
 	// 两件事混用会让「命令发到哪」与「请求落在哪」变成一个词。
 	switch a {
 	case "--machine":
+		return a
+	}
+	// 虫族库面旗标（T2④ / T4① · 2026-10-14 · 本单）：`--db <库路径>` —— `core db` 的**库落点**
+	// （不给 ⇒ `zdb.DefaultPath()`）。与上面各排同一口径：值照收，语义在 `family_core_db.go` 里判；
+	// ★ 本排是名字表「唯一真源」⇒ 不登记就一律退 2「未知旗标」= 新旗标等于不可用。
+	switch a {
+	case "--db":
 		return a
 	}
 	// dev 族「基线回放」旗标（GAP-20261009-10 修法① · 本枚）：`dev edit --base <件路径|HEAD|sha>` ——

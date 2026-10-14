@@ -14,12 +14,15 @@ package fleetlogs
 
 import (
 	"bytes"
+	crand "crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Mr2109/zerg-swarm/agent/internal/logx"
@@ -33,6 +36,12 @@ type Entry struct {
 	Model     string `json:"model"`
 	RequestID string `json:"request_id"`
 	Message   string `json:"message"`
+	// EventID —— **幂等键**（§三.5 附 H③ · Q6）：节点侧生成的 ULID（时间戳 48b ＋ 随机 80b）。
+	//   生成位点 = **入队（上报）之前、每批生成一次 ＋ 重投复用**。
+	//   ★ 必须跨重投**稳定**：主控靠 `UNIQUE(machine, event_id)` ＋ `ON CONFLICT DO NOTHING` 去重；
+	//     若每轮重投都重生成 ⇒ 去重永不触发、重投全成新行（去重失效）。
+	//   `omitempty`：老路（`ParseLogLine`）不填 ⇒ 不上线（主控对空 event_id **不**去重 —— 是写明的时效边界）。
+	EventID string `json:"event_id,omitempty"`
 }
 
 // reportBody 上报体（顶层 machine + logs[]）。
@@ -41,7 +50,13 @@ type reportBody struct {
 	Logs    []Entry `json:"logs"`
 }
 
-const defaultInterval = 5 * time.Second
+const (
+	defaultInterval = 5 * time.Second // 稳态上报间隔（`protocol.md:62` 定案 · **不变**）
+	// ── T5b-d ② 退避 ＋ ④ 批上限（照 §三.5 附 H① · §六 Q7）──
+	backoffBase = 1 * time.Second  // 退避基数（局域网 ⇒ 比公网 2s 更激进）
+	backoffCap  = 60 * time.Second // 退避上限（✗ **不封顶**：日志是审计料、丢不起 ⇒ 一直退避重试）
+	maxBatch    = 500              // 单批条数上限（超出 ⇒ 切多批连续投 · ✗ 不攒巨 payload）
+)
 
 // Reporter 机群日志上报器。
 type Reporter struct {
@@ -56,6 +71,14 @@ type Reporter struct {
 	mu     sync.Mutex
 	offset int64 // 已上报到的文件字节游标（只在 post 成功后前移）
 	fails  int   // 累计上报失败次数（「不静默吞」的可核证据）
+
+	// ── T5b-d 四格（**不换队列模型** · ✗ 不引入队列 / spool / 内存上限）──
+	gaveUp    bool          // ③ 错误分类：401/403 = 令牌错 ⇒ 立即放弃（✗ 不再重试）
+	drops     int           // ③ 错误分类：400/413 = 永久性失败 ⇒ 不重试、丢该批（计数 ＋ 出声）
+	backoff   time.Duration // ② 最近一次失败后的退避时长（0 = 上次成功；供诊断读）
+	pendStart int64         // ① 上一批的起始游标（**重投复用** event_id 的锚）
+	pendEnd   int64         // ① 上一批的结束游标
+	pendIDs   []string      // ① 上一批逐条 event_id（重投复用 · ✗ 不重生成）
 }
 
 // NewReporter 造上报器。interval 固定 5s（`protocol.md:62` 定案）；logPath 空 = 无本机日志源。
@@ -90,12 +113,18 @@ func (r *Reporter) Start() {
 	r.mu.Unlock()
 
 	go func() {
-		ticker := time.NewTicker(r.interval)
-		defer ticker.Stop()
+		// 稳态间隔 = `interval`（5s · 不变）；**失败 ⇒ 指数退避** base 1s ×2 / cap 60s（✗ 不封顶）。
+		timer := time.NewTimer(r.interval)
+		defer timer.Stop()
 		for {
 			select {
-			case <-ticker.C:
+			case <-timer.C:
 				r.RunOnce()
+				wait := r.interval
+				if d := r.Backoff(); d > 0 {
+					wait = d
+				}
+				timer.Reset(wait)
 			case <-r.stopCh:
 				return
 			}
@@ -126,8 +155,42 @@ func (r *Reporter) Offset() int64 {
 	return r.offset
 }
 
-// RunOnce 读一次增量并上报（循环与自检共用）。上报失败 ⇒ 出声 + 计数 + **游标不推进**。
+// Drops 累计「永久性失败丢批」数（HTTP 400/413 ⇒ 不重试）——供自检 / 诊断读。
+func (r *Reporter) Drops() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.drops
+}
+
+// GaveUp 是否已放弃上报（HTTP 401/403 = 令牌错 ⇒ 立即放弃）。
+func (r *Reporter) GaveUp() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.gaveUp
+}
+
+// Backoff 最近一次失败后的退避时长（0 = 上次成功）；供诊断 / 自检读。
+func (r *Reporter) Backoff() time.Duration {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.backoff
+}
+
+// RunOnce 读一次增量并上报（循环与自检共用）。
+//
+// ★ 失败语义（硬约束 · **一字不动**）：**可重试的失败 ⇒ 出声 ＋ 计数 ＋ 游标不推进**
+// （下轮重读重发、条目不丢 · 重投**复用同批 event_id**）。T5b-d 只**新增**两支分类：
+//   - 400/413 = 永久性失败 ⇒ ✗ 不重试（重投同一批永远不会成 = 毒丸）⇒ 丢该批 ＋ 出声 ＋ 计数 ＋ 游标前移；
+//   - 401/403 = 令牌错 ⇒ **立即放弃**（`gaveUp`）＋ 点名（✗ 再试无意义）。
 func (r *Reporter) RunOnce() {
+	r.mu.Lock()
+	if r.gaveUp {
+		r.mu.Unlock()
+		return // 已放弃（401/403）⇒ ✗ 不再试（点名已在放弃那一次做过）
+	}
+	start := r.offset
+	r.mu.Unlock()
+
 	entries, next, err := r.scan()
 	if err != nil {
 		logx.Errorf("fleet", "读本机日志源失败", "machine", r.machine, "path", r.logPath, "error", err)
@@ -136,20 +199,46 @@ func (r *Reporter) RunOnce() {
 	if len(entries) == 0 {
 		return
 	}
-	if perr := r.post(entries); perr != nil {
-		// **不静默吞**：出声 + 计数；游标**不**前移 ⇒ 下轮重读重发、条目不丢。
+	r.assignEventIDs(start, next, entries) // ① 每批生成一次 ＋ **重投复用**
+
+	perr := r.postBatch(entries) // ④ 批 ≤500 切多批
+	switch classifyPostErr(perr) {
+	case postOK:
+		r.mu.Lock()
+		r.offset = next
+		r.pendIDs, r.pendStart, r.pendEnd = nil, 0, 0
+		r.backoff = 0
+		r.mu.Unlock()
+		logx.Infof("fleet", "日志上报成功", "machine", r.machine, "count", len(entries))
+	case postRetry:
+		// **不静默吞**：出声 + 计数；② 退避 base 1s ×2 / cap 60s（✗ 不封顶）；游标**不**前移
+		// ⇒ 下轮重读重发、条目不丢（重投**复用同批 event_id**）。
 		r.mu.Lock()
 		r.fails++
 		n := r.fails
+		r.backoff = nextBackoff(n)
+		wait := r.backoff
 		r.mu.Unlock()
 		logx.Errorf("fleet", "日志上报失败", "machine", r.machine, "url", r.endpoint(),
-			"count", len(entries), "fail_total", n, "error", perr)
-		return
+			"count", len(entries), "fail_total", n, "backoff", wait.String(), "error", perr)
+	case postDrop:
+		// 400/413 = 永久性失败 ⇒ ✗ 不重试（毒丸）⇒ 丢该批 ＋ 出声 ＋ 计数 ＋ 游标前移。
+		r.mu.Lock()
+		r.drops++
+		d := r.drops
+		r.pendIDs, r.pendStart, r.pendEnd = nil, 0, 0
+		r.offset = next
+		r.mu.Unlock()
+		logx.Errorf("fleet", "日志上报**永久性失败**（HTTP 400/413）⇒ 不重试、丢该批", "machine", r.machine,
+			"count", len(entries), "drop_total", d, "error", perr)
+	case postGiveUp:
+		// 401/403 = 令牌错 ⇒ **立即放弃 ＋ 点名**（✗ 不再重试 · ✗ 不静默）。
+		r.mu.Lock()
+		r.gaveUp = true
+		r.mu.Unlock()
+		logx.Errorf("fleet", "日志上报**认证失败**（HTTP 401/403 · 令牌缺失或不合法）⇒ 立即放弃、不再重试",
+			"machine", r.machine, "url", r.endpoint(), "error", perr)
 	}
-	r.mu.Lock()
-	r.offset = next
-	r.mu.Unlock()
-	logx.Infof("fleet", "日志上报成功", "machine", r.machine, "count", len(entries))
 }
 
 func (r *Reporter) endpoint() string { return r.controller + "/api/fleet/logs" }
@@ -218,7 +307,7 @@ func (r *Reporter) post(entries []Entry) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("HTTP %d", resp.StatusCode)
+		return &postStatusError{code: resp.StatusCode} // 带码 ⇒ 错误分类的唯一依据（文案与旧逐字同）
 	}
 	return nil
 }
@@ -260,4 +349,141 @@ func ParseLogLine(line string) (Entry, bool) {
 		}
 	}
 	return e, true
+}
+
+// ─────────────────────── T5b-d 四格（不换队列模型 · ✗ 不引入队列/spool/内存上限） ───────────────────────
+
+// postBatch —— ④ 批 ≤ `maxBatch`（500）：超出 ⇒ **切多批连续投**（✗ 不攒巨 payload · §三.5 附 H①）。
+// ✗ 不引入队列 / spool：本件只把**一次 scan 的增量**按 500 切段、逐段 POST。
+func (r *Reporter) postBatch(entries []Entry) error {
+	for start := 0; start < len(entries); start += maxBatch {
+		end := start + maxBatch
+		if end > len(entries) {
+			end = len(entries)
+		}
+		if err := r.post(entries[start:end]); err != nil {
+			return err // 某段失败即返（后续段不投 ⇒ 游标不前进，下轮从同一批头重来、id 复用）
+		}
+	}
+	return nil
+}
+
+// postStatusError —— 上报被 HTTP 非 2xx 挡下（带状态码 ⇒ **错误分类的唯一依据**）。
+type postStatusError struct{ code int }
+
+func (e *postStatusError) Error() string { return fmt.Sprintf("HTTP %d", e.code) }
+
+// postOutcome —— 一次上报的归属（③ 错误分类三态 ＋ 成功）。
+type postOutcome int
+
+const (
+	postOK     postOutcome = iota // 成功
+	postRetry                     // 可重试（网络 / 404 / 429 / 5xx 一类）⇒ 游标**不**前进
+	postDrop                      // 400 / 413 ⇒ 永久性失败、不重试、丢该批
+	postGiveUp                    // 401 / 403 ⇒ 令牌错、立即放弃 ＋ 点名
+)
+
+// classifyPostErr —— ③ 错误分类（照 §三.5 附 H① · §六 Q7 逐字）：
+//
+//	400 / 413                  ⇒ **不重试**（毒丸：重投同一批永远不会成）
+//	401 / 403                  ⇒ **不重试 ＋ 立即放弃 ＋ 点名**（令牌错）
+//	其余（网络 / 404 / 429 / 5xx）⇒ **重试**（游标不前进 · 「失败⇒游标不前进」语义**不动**）
+func classifyPostErr(err error) postOutcome {
+	if err == nil {
+		return postOK
+	}
+	var se *postStatusError
+	if errors.As(err, &se) {
+		switch se.code {
+		case 400, 413:
+			return postDrop
+		case 401, 403:
+			return postGiveUp
+		}
+	}
+	return postRetry
+}
+
+// nextBackoff —— ② 指数退避 base `backoffBase`(1s) ×2 / cap `backoffCap`(60s) · **✗ 不封顶**。
+// 序列（fails = 1,2,3,…）：1s · 2s · 4s · 8s · 16s · 32s · 60s · 60s · …（照 §三.5 附 H① 的 Datadog 配方）。
+func nextBackoff(fails int) time.Duration {
+	if fails <= 0 {
+		return 0
+	}
+	d := backoffBase
+	for i := 1; i < fails; i++ {
+		if d >= backoffCap {
+			return backoffCap
+		}
+		d *= 2
+	}
+	if d > backoffCap {
+		return backoffCap
+	}
+	return d
+}
+
+// assignEventIDs —— ① `event_id`（ULID）：**入队（上报）前生成一次、重投复用**（§三.5 附 H③）。
+// ★ 重投复用是**硬要求**（同 `Entry.EventID` 注）。复用锚 = 「这一批的字节区间」：
+// 失败 ⇒ 游标不前进 ⇒ 下轮扫到**同一区间** ⇒ 复用同批 id；区间一变（期间又来了新完整行）⇒ 重生成。
+// ✗ 本件不引入队列 / spool：只记**当前这一批**（O(批) 内存）。
+func (r *Reporter) assignEventIDs(start, end int64, entries []Entry) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.pendIDs != nil && len(r.pendIDs) == len(entries) && r.pendStart == start && r.pendEnd == end {
+		for i := range entries {
+			entries[i].EventID = r.pendIDs[i]
+		}
+		return
+	}
+	ids := make([]string, len(entries))
+	for i := range entries {
+		ids[i] = newULID()
+		entries[i].EventID = ids[i]
+	}
+	r.pendStart, r.pendEnd, r.pendIDs = start, end, ids
+}
+
+// ulidAlphabet —— Crockford Base32（ULID 规范字母表：✗ 不含 I / L / O / U）。
+const ulidAlphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+
+// ulidFallbackSeq —— 随机源不可用时的兜底自增（✗ 绝不退化成空串 —— 空 event_id 会让去重失效）。
+var ulidFallbackSeq uint64
+
+// newULID —— 造一枚 ULID = 时间戳 48b ＋ 随机 80b（26 字符 · §三.5 附 H③）。
+// ★ 随机段取 `crypto/rand`；万一取不到 ⇒ 用纳秒时间 ＋ 进程内自增兜底（仍保「同进程不重复」最低要求）。
+func newULID() string {
+	ms := uint64(time.Now().UnixMilli()) & 0xffffffffffff // 48 bit
+	var rnd [10]byte
+	if _, err := crand.Read(rnd[:]); err != nil {
+		n := uint64(time.Now().UnixNano())
+		s := atomic.AddUint64(&ulidFallbackSeq, 1)
+		for i := 0; i < 8; i++ {
+			rnd[i] = byte(n >> uint(56-8*i))
+		}
+		rnd[8] = byte(s >> 8)
+		rnd[9] = byte(s)
+	}
+	return encodeULID(ms, rnd)
+}
+
+// encodeULID —— 128 bit → 26 字符（前 10 字符 = 48b 时间戳 MSB-first（首字符只用高 3 位）；
+// 后 16 字符 = 80b 随机段，每字符恰 5 位）—— 逐字照 ULID 规范的字符布局。
+func encodeULID(ms uint64, rnd [10]byte) string {
+	var out [26]byte
+	for i := 0; i < 10; i++ {
+		out[i] = ulidAlphabet[(ms>>uint(45-5*i))&0x1f]
+	}
+	for i := 0; i < 16; i++ {
+		v := 0
+		for k := 0; k < 5; k++ {
+			v <<= 1
+			pos := 5*i + k
+			if rnd[pos/8]&(1<<uint(7-pos%8)) != 0 {
+				v |= 1
+			}
+		}
+		out[10+i] = ulidAlphabet[v]
+	}
+	return string(out[:])
 }

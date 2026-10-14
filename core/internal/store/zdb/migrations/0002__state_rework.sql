@@ -11,12 +11,17 @@
 --       在**同一事务**里跑（见 migrate.go 的 applyMigration）。
 --
 -- 机理：SQLite 改 CHECK 无 ALTER 路 ⇒ 照官方 12 步法重建表（建新表 → 搬数据 → 删旧表 → 改名 → 重建索引）。
---   ★ 外键：`task_events(task_id) REFERENCES tasks(id)`。`PRAGMA foreign_keys` 在事务内是 **no-op**
---     （用不了），改用 `PRAGMA defer_foreign_keys = ON` —— 它**可以**在事务内设，
---     把「DROP TABLE tasks 的隐式 DELETE 会瞬时违反外键」推迟到 COMMIT 校验；
---     而 COMMIT 时新表已改名就位、行数一致 ⇒ 不违反。✗ 不删、不重建 task_events。
-
-PRAGMA defer_foreign_keys = ON;
+--   ★ 外键：`task_events(task_id) REFERENCES tasks(id)`（默认 NO ACTION）。`DROP TABLE tasks`（本件第 ⑤ 段）
+--     在 FK **开启**时会发一条**隐式 DELETE**，把「延迟外键违规」种进事务；而 `PRAGMA foreign_keys`
+--     在**事务内是 no-op**、`ALTER TABLE … RENAME` 也**不消解**已记下的违规
+--     ⇒ 事务内无论怎么绕都过不去（实测：库里只要有 1 条 `task_events` 行，COMMIT 就报
+--     `FOREIGN KEY constraint failed` 整事务回滚 —— 见设计稿 §三.7 附 I.3 的阻断级实证）。
+--   ⇒ FK 的「关 / 开」是**迁移器**的活，且必须在**事务外**做（官方十二步之步 1 / 12）：迁移器另开一条
+--     **不带** `foreign_keys(ON)` 的专用连接 → `BEGIN` 之前 `PRAGMA foreign_keys = OFF` → 事务内跑完本件
+--     → **提交前**跑 `PRAGMA foreign_key_check`（期望 0 行）→ 连接即弃。
+--     见 `migrate.go` 的 `applyDestructiveMigration` / `migrationSnapshot`。
+--   ★ ✗ 本件里**不要**写任何 FK 开关语句：那些 PRAGMA 落在事务内一律无效（no-op），写了只会给人假保证。
+--   ⇒ 本件只做「建新 → 拷 → 删旧 → 改名 → 重建索引」这五段纯 DDL/DML，✗ 不碰 `task_events`。
 
 -- ① 新表：五值 CHECK ＋ 三字段（paused_at / last_steer_at / next_attempt_at）
 CREATE TABLE tasks_new (

@@ -265,7 +265,7 @@ func TestOpen_IntegrityCheckAndWAL(t *testing.T) {
 	}
 }
 
-// ───────────────────────── ⑥ 迁移：版本号拄 user_version + 幂等重跑（上限 2） ─────────────────────────
+// ───────────────────────── ⑥ 迁移：版本号拄 user_version + 幂等重跑（上限 3） ─────────────────────────
 
 func TestMigration_VersionPinnedAndIdempotentRerun(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "zerg.db")
@@ -277,8 +277,8 @@ func TestMigration_VersionPinnedAndIdempotentRerun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v != 2 {
-		t.Fatalf("首开 user_version 应为 2（0001+0002），实得 %d", v)
+	if v != 3 {
+		t.Fatalf("首开 user_version 应为 3（0001+0002+0003），实得 %d", v)
 	}
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
@@ -289,8 +289,8 @@ func TestMigration_VersionPinnedAndIdempotentRerun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("重开（幂等重跑）失败: %v", err)
 	}
-	if v2, _ := db2.UserVersion(); v2 != 2 {
-		t.Fatalf("重开后 user_version 应为 2，实得 %d", v2)
+	if v2, _ := db2.UserVersion(); v2 != 3 {
+		t.Fatalf("重开后 user_version 应为 3，实得 %d", v2)
 	}
 	if n, _ := db2.CountTasks(); n != 0 {
 		t.Fatalf("重开不该动数据，tasks 行数=%d", n)
@@ -347,10 +347,22 @@ func TestBackup_DifferentVolumeGuard(t *testing.T) {
 
 func TestBuildDSN_FrozenSpec(t *testing.T) {
 	got := BuildDSN("<repo>/.runtime/zerg.db")
+	// ★ T4c 接线：新建库的写侧 DSN 把 `auto_vacuum(2)` **排在 `journal_mode(WAL)` 之前**
+	// （§四.3 第 3 条：auto_vacuum 须在开 WAL 之前、建表之前设；反序 ⇒ 静默失效、回读 0）。
 	want := "file:<repo>/.runtime/zerg.db" +
-		"?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(ON)&_txlock=immediate"
+		"?_pragma=auto_vacuum(2)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(ON)&_txlock=immediate"
 	if got != want {
 		t.Fatalf("DSN 与设计稿 §三.3 配方不符：\n got=%s\nwant=%s", got, want)
+	}
+	// ★ 既有库的写侧 DSN（BuildExistingDSN）：与上**逐字同形、唯独不带** `auto_vacuum(2)` ⇒ 存量库不改行为。
+	gotExisting := BuildExistingDSN("<repo>/.runtime/zerg.db")
+	wantExisting := "file:<repo>/.runtime/zerg.db" +
+		"?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(ON)&_txlock=immediate"
+	if gotExisting != wantExisting {
+		t.Fatalf("既有库 DSN 应为「写侧 DSN 去掉 auto_vacuum(2)」逐字同形：\n got=%s\nwant=%s", gotExisting, wantExisting)
+	}
+	if strings.Contains(gotExisting, "auto_vacuum") {
+		t.Fatalf("既有库 DSN ✗ 不该带 auto_vacuum：%s", gotExisting)
 	}
 }
 
@@ -414,8 +426,8 @@ func TestState_0002_LegacyValueNormalization(t *testing.T) {
 		t.Fatalf("Open(旧库) 失败（0002 迁移没过）: %v", err)
 	}
 	defer db.Close()
-	if v, _ := db.UserVersion(); v != 2 {
-		t.Fatalf("旧库升到 user_version 应为 2，实得 %d", v)
+	if v, _ := db.UserVersion(); v != 3 {
+		t.Fatalf("旧库升到 user_version 应为 3，实得 %d", v)
 	}
 
 	want := map[string]string{
@@ -621,8 +633,8 @@ func TestState_0002_FiveValueCheck(t *testing.T) {
 	}
 }
 
-// TestMigration_0002_IdempotentRerun —— 幂等重跑（单测④）：连开三次，user_version 恒 2、数据不丢、
-// schema 签名逐字节不变（＝没重跑 DDL）；上限抬到 2 后「库版本高于上限 ⇒ 拒启」口径依旧成立。
+// TestMigration_0002_IdempotentRerun —— 幂等重跑（单测④）：连开三次，user_version 恒 3、数据不丢、
+// schema 签名逐字节不变（＝没重跑 DDL）；上限抬到 3 后「库版本高于上限 ⇒ 拒启」口径依旧成立。
 func TestMigration_0002_IdempotentRerun(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "zerg.db")
 	var lastSig string
@@ -635,8 +647,8 @@ func TestMigration_0002_IdempotentRerun(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if v != 2 {
-			t.Fatalf("第 %d 次 Open 后 user_version 应为 2，实得 %d", i, v)
+		if v != 3 {
+			t.Fatalf("第 %d 次 Open 后 user_version 应为 3，实得 %d", i, v)
 		}
 		if i == 1 {
 			mustSubmit(t, db, Task{ID: "t-idem", SliceID: "slice-1"})

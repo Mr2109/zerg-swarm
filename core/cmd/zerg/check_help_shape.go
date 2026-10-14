@@ -1136,9 +1136,9 @@ type chsFaceBl struct {
 type chsBaselineSet map[string]chsFaceBl
 
 var chsBaseline = chsBaselineSet{
-	"help --all":     {HasLines: true, Lines: 409, HasBytes: true, Bytes: 222814},
+	"help --all":     {HasLines: true, Lines: 410, HasBytes: true, Bytes: 224537},
 	"help":           {HasLines: true, Lines: 295, HasBytes: true, Bytes: 73292, HasLast: true, Last: "      非交互用 `--token-stdin`；详见 `zerg help credentials`）。"},
-	"help dangerous": {HasLines: true, Lines: 117, HasBytes: true, Bytes: 44681, HasRows: true, Rows: 105, HasTail: true, Tail: "上表 105 条：**已开放 92 条**（确认档齐就真执行 —— 逐条见上行标记）；**未开放 13 条**（真跑一律**拒执**、退码 2 = 不给结论，只有 `--dry-run` 出计划件 = 退码 0）。"},
+	"help dangerous": {HasLines: true, Lines: 118, HasBytes: true, Bytes: 45208, HasRows: true, Rows: 106, HasTail: true, Tail: "上表 106 条：**已开放 93 条**（确认档齐就真执行 —— 逐条见上行标记）；**未开放 13 条**（真跑一律**拒执**、退码 2 = 不给结论，只有 `--dry-run` 出计划件 = 退码 0）。"},
 	"help config":    {HasLines: true, Lines: 21, HasBytes: true, Bytes: 1748},
 }
 

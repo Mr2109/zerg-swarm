@@ -47,12 +47,13 @@ func (h *Handlers) fleetLogsReceive(w http.ResponseWriter, r *http.Request) {
 
 	var payload map[string]any
 	if jerr := json.Unmarshal(body, &payload); jerr != nil {
-		// 非 JSON（v1 兼容）：整行当 message 落盘。
-		if e := store.Insert("", []FleetLogEntry{{Message: string(body)}}); e != nil {
-			writeErrorCode(w, http.StatusInternalServerError, "FLEET_LOGS_INSERT_FAILED", e.Error())
+		// 非 JSON（v1 兼容）：整行当 message 落盘（无 event_id ⇒ 不参与去重）。
+		res, ierr := store.InsertWithCounts("", []FleetLogEntry{{Message: string(body)}})
+		if ierr != nil {
+			writeErrorCode(w, http.StatusInternalServerError, "FLEET_LOGS_INSERT_FAILED", ierr.Error())
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "stored": 1})
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "stored": res.Stored, "duplicate": res.Duplicate})
 		return
 	}
 
@@ -82,6 +83,7 @@ func (h *Handlers) fleetLogsReceive(w http.ResponseWriter, r *http.Request) {
 				Model:     fleetStrField(m, "model"),
 				RequestID: fleetStrField(m, "request_id"),
 				Message:   fleetStrField(m, "message"),
+				EventID:   fleetStrField(m, "event_id"),
 			}
 			for _, req := range []struct{ name, val string }{
 				{"ts", e.TS},
@@ -96,11 +98,12 @@ func (h *Handlers) fleetLogsReceive(w http.ResponseWriter, r *http.Request) {
 			}
 			entries = append(entries, e)
 		}
-		if e := store.Insert(machine, entries); e != nil {
-			writeErrorCode(w, http.StatusInternalServerError, "FLEET_LOGS_INSERT_FAILED", e.Error())
+		res, ierr := store.InsertWithCounts(machine, entries)
+		if ierr != nil {
+			writeErrorCode(w, http.StatusInternalServerError, "FLEET_LOGS_INSERT_FAILED", ierr.Error())
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "stored": len(entries)})
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "stored": res.Stored, "duplicate": res.Duplicate})
 		return
 	}
 
@@ -112,6 +115,7 @@ func (h *Handlers) fleetLogsReceive(w http.ResponseWriter, r *http.Request) {
 		Model:     fleetStrField(payload, "model"),
 		RequestID: fleetStrField(payload, "request_id"),
 		Message:   fleetStrField(payload, "message"),
+		EventID:   fleetStrField(payload, "event_id"),
 	}
 	if e.TS == "" {
 		e.TS = fleetStrField(payload, "timestamp")
@@ -120,11 +124,12 @@ func (h *Handlers) fleetLogsReceive(w http.ResponseWriter, r *http.Request) {
 		writeErrorCode(w, http.StatusBadRequest, "MISSING_FIELD", "缺必填字段：logs（既无批量 logs 数组，也无单条日志的 level/component/message）")
 		return
 	}
-	if err := store.Insert(machine, []FleetLogEntry{e}); err != nil {
-		writeErrorCode(w, http.StatusInternalServerError, "FLEET_LOGS_INSERT_FAILED", err.Error())
+	res, ierr := store.InsertWithCounts(machine, []FleetLogEntry{e})
+	if ierr != nil {
+		writeErrorCode(w, http.StatusInternalServerError, "FLEET_LOGS_INSERT_FAILED", ierr.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "stored": 1})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "stored": res.Stored, "duplicate": res.Duplicate})
 }
 
 // fleetLogsStoreOr503 — 取库；不可用则写 503 并返回 nil（调用方直接 return）。
