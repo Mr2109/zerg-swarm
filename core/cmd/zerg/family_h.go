@@ -27,7 +27,20 @@ import (
 
 // cmdResourceLs —— `zerg resource ls [<类型>]`（只读）。
 // 给了类型 ⇒ 打 `/api/resources/{type}`；没给 ⇒ 打 `/api/resources/ledger`（账本全表）。
+//
+// ★ 2026-10-14（缺口 `GAP-20261014-47` · 落点 = 修 `resource ls 工具` 的 400 · 不开窗 · 本支**只增**）：
+//
+//	`工具` 是**唯一**一支**本地投影** —— 它读 CA 工具台账 `<仓根>/tools/versions.json`，**不走主控**。
+//	为什么：主控 `GET /api/resources/{type}` 只认四个**英文**类型（`models|tools|skills|mcp`），
+//	给中文标签 ⇒ `/api/resources/工具` 当场退 **400 `UNKNOWN_RESOURCE_TYPE`**（改前症状逐字 =
+//	「主控 /api/resources/工具 返回 400」）；而「虫族有哪些工具」的真源是**仓内台账**
+//	（`tools/versions.json` · 现读 141 键 · 出处 `AGENTS.md:56` ／ `tools/cli-tools.json:4`），
+//	主控那份 `tools` 面是 agent 运行时工具（现读 142 条 · 与台账**不同集**）⇒ 本支直读台账。
+//	其余类型（含英文 `tools`）与无参形态**一字不动** = 只增不改。
 func cmdResourceLs(inv *invocation, stdout, stderr io.Writer) int {
+	if len(inv.args) > 0 && inv.args[0] == "工具" {
+		return cmdResourceToolsLedger(inv, stdout, stderr)
+	}
 	path := "/api/resources/ledger"
 	if len(inv.args) > 0 {
 		path = "/api/resources/" + inv.args[0]
@@ -39,6 +52,53 @@ func cmdResourceLs(inv *invocation, stdout, stderr io.Writer) int {
 	}
 	rows, display := flattenPayload(resp)
 	return listCmd(inv, stdout, stderr, display, rows)
+}
+
+// cmdResourceToolsLedger —— `zerg resource ls 工具`（只读 · **本地**投影 CA 工具台账）。
+//
+// 真源 = `<仓根>/tools/versions.json`（`{"<工具名>":"<版本>"}` · 现读 141 键 · 出处 `AGENTS.md:56`
+// 与 `tools/cli-tools.json:4` 逐字点名它，且后者明文「**不是** CLI 依赖账」）。本命令**只列台账**、
+// 不给任何执行口（缺口 `GAP-20261014-47` 的「执行不归 CLI」明文）。
+//
+// 三态（照本族既有口径 · 与 `cmdScriptLs` 同一条）：
+//
+//	① 台账在盘且非空 ⇒ 逐条列出（人类面 TSV `name`/`version`；`--json` 走 `listCmd` 同一出口）；
+//	② 台账在盘但**为空**（`{}`）⇒ **正确空输出**（表头 + 0 行 · rc=0）—— 「一个工具都没有」是**合法结果**，
+//	   ✗ 不是错（缺口 `GAP-20261014-47` 的反例要求）；
+//	③ 台账**不在盘** / 不是合法 JSON ⇒ **不给结论**（rc=8 fail-closed）—— 拿「读不到」当「没有」= 假绿，
+//	   本族一贯不许（同 `cmdScriptLs` 的 `scripts_absent`）。
+func cmdResourceToolsLedger(inv *invocation, stdout, stderr io.Writer) int {
+	root := repoRoot()
+	if root == "" {
+		inv.setErr("blocked", "repo_root_absent", "解析不到仓根")
+		fmt.Fprintf(stderr, "%s: 解析不到仓根 ⇒ 列不出工具台账（不给结论 · 退码 8）\n", progName)
+		return exitBlocked
+	}
+	ledger := filepath.Join(root, "tools", "versions.json")
+	b, err := os.ReadFile(ledger)
+	if err != nil {
+		inv.setErr("blocked", "tool_ledger_absent", "读不到 CA 工具台账")
+		fmt.Fprintf(stderr, "%s: 读不到 CA 工具台账 %s（%v）⇒ 不给结论（退码 8）\n", progName, ledger, err)
+		return exitBlocked
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		inv.setErr("blocked", "tool_ledger_unparsable", "CA 工具台账不是合法 JSON")
+		fmt.Fprintf(stderr, "%s: CA 工具台账 %s 不是合法 JSON（%v）⇒ 不给结论（退码 8）\n", progName, ledger, err)
+		return exitBlocked
+	}
+	names := make([]string, 0, len(m))
+	for k := range m {
+		names = append(names, k)
+	}
+	sort.Strings(names) // 行序稳定（字典序 · 便于人眼与 `--json` 逐条对拍）
+	rows := []map[string]string{}
+	for _, n := range names {
+		rows = append(rows, map[string]string{"name": n, "version": cell(m[n])})
+	}
+	// 读到几条就说几条（现读读数 · ✗ 不写死）：人眼要的是「台账到底几键」。
+	fmt.Fprintf(stderr, "%s: 工具台账 = %s（%d 键 · 现读 · 真源 tools/versions.json）\n", progName, ledger, len(rows))
+	return listCmd(inv, stdout, stderr, []string{"name", "version"}, rows)
 }
 
 // cmdResourceLedger —— `zerg resource ledger`（只读 · 与 `resource ls` 同源，只是名字固定）。
