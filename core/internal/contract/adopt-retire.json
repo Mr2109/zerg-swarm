@@ -1834,11 +1834,133 @@
   "evidence": "GAP-20261014-46",
   "registration": "提案件 DEV-2821（主仓 adopt-retire.json + 机检 + Zerg-内部文档 导出物同批落 · 未提交）"
  },
+ "登记（2026-10-14 · GAP-20261014-38…45 · 工具归属普查 2.5.15 §2.6② · UI 模块 ② 逐件）": {
+  "face": "UI 模块",
+  "class": "② 保留为内部实现",
+  "why": "工具归属普查 2.5.15 §2.6② 点名 UI 模块 ② 8 组（20 件）「有口未接」：真源 faces[4] 归 ② 保留为内部实现，而命令面无逐件归属投影（`zerg ui` 现读只有 i18n / i18n-audit / start 三条）。普查本单逐字「本单只求归属可查（不要求收编为动作）」⇒ 按普查入账件口径「不必归 CLI 者，必须登记归属（`adopt-retire.json` 承担）」在真源侧逐件立归属指针。★ 本区 ✗ 不改类（8 组全留 ②）；逐条理由的真源仍是导出物 §②「### UI 模块（8 条）」，本区只登记指针、✗ 不复制理由。",
+  "source": "Zerg-内部文档/项目文档/v2.5.10/归属-收编与退役-20260920.md §② ### UI 模块（行 291–300 · 8 条）",
+  "evidence": [
+   "GAP-20261014-38",
+   "GAP-20261014-39",
+   "GAP-20261014-40",
+   "GAP-20261014-41",
+   "GAP-20261014-42",
+   "GAP-20261014-43",
+   "GAP-20261014-44",
+   "GAP-20261014-45"
+  ],
+  "count": {
+   "groups": 8,
+   "files": 20
+  },
+  "objects": [
+   {
+    "file": "ui/src/modules/chat/chat_view.rs",
+    "doc": "ui/src/modules/chat/（chat_view.rs · mod.rs · 2 件）",
+    "why": "② 保留为内部实现（决议① 对话视图不开命令面）"
+   },
+   {
+    "file": "ui/src/modules/chat/mod.rs",
+    "doc": "ui/src/modules/chat/（chat_view.rs · mod.rs · 2 件）",
+    "why": "② 保留为内部实现（决议① 对话视图不开命令面）"
+   },
+   {
+    "file": "ui/src/modules/filebrowse/actions.rs",
+    "doc": "ui/src/modules/filebrowse/（actions · browser · mod · roots · 4 件）",
+    "why": "② 保留为内部实现（决议③ 文件浏览面板随虫茧迁走）"
+   },
+   {
+    "file": "ui/src/modules/filebrowse/browser.rs",
+    "doc": "ui/src/modules/filebrowse/（actions · browser · mod · roots · 4 件）",
+    "why": "② 保留为内部实现（决议③ 文件浏览面板随虫茧迁走）"
+   },
+   {
+    "file": "ui/src/modules/filebrowse/mod.rs",
+    "doc": "ui/src/modules/filebrowse/（actions · browser · mod · roots · 4 件）",
+    "why": "② 保留为内部实现（决议③ 文件浏览面板随虫茧迁走）"
+   },
+   {
+    "file": "ui/src/modules/filebrowse/roots.rs",
+    "doc": "ui/src/modules/filebrowse/（actions · browser · mod · roots · 4 件）",
+    "why": "② 保留为内部实现（决议③ 文件浏览面板随虫茧迁走）"
+   },
+   {
+    "file": "ui/src/modules/zerg_module.rs",
+    "doc": "ui/src/modules/zerg_module.rs · icons.rs · mod.rs（3 件）",
+    "why": "② 保留为内部实现（UI 模块骨架 · ② 原样保留）"
+   },
+   {
+    "file": "ui/src/modules/icons.rs",
+    "doc": "ui/src/modules/zerg_module.rs · icons.rs · mod.rs（3 件）",
+    "why": "② 保留为内部实现（UI 模块骨架 · ② 原样保留）"
+   },
+   {
+    "file": "ui/src/modules/mod.rs",
+    "doc": "ui/src/modules/zerg_module.rs · icons.rs · mod.rs（3 件）",
+    "why": "② 保留为内部实现（UI 模块骨架 · ② 原样保留）"
+   },
+   {
+    "file": "ui/src/api.rs",
+    "doc": "ui/src/api.rs",
+    "why": "② 保留为内部实现（② 原样保留）"
+   },
+   {
+    "file": "ui/src/app.rs",
+    "doc": "ui/src/app.rs · ui/src/main.rs（2 件）",
+    "why": "② 保留为内部实现（② 原样保留）"
+   },
+   {
+    "file": "ui/src/main.rs",
+    "doc": "ui/src/app.rs · ui/src/main.rs（2 件）",
+    "why": "② 保留为内部实现（② 原样保留）"
+   },
+   {
+    "file": "ui/build.rs",
+    "doc": "ui/build.rs · ui/Cargo.toml · ui/Cargo.lock · ui/.cargo/config.toml · ui/.gitignore（5 件）",
+    "why": "② 保留为内部实现（构建件 · `build ls` 只覆盖 `bin/` 制品）"
+   },
+   {
+    "file": "ui/Cargo.toml",
+    "doc": "ui/build.rs · ui/Cargo.toml · ui/Cargo.lock · ui/.cargo/config.toml · ui/.gitignore（5 件）",
+    "why": "② 保留为内部实现（构建件 · `build ls` 只覆盖 `bin/` 制品）"
+   },
+   {
+    "file": "ui/Cargo.lock",
+    "doc": "ui/build.rs · ui/Cargo.toml · ui/Cargo.lock · ui/.cargo/config.toml · ui/.gitignore（5 件）",
+    "why": "② 保留为内部实现（构建件 · `build ls` 只覆盖 `bin/` 制品）"
+   },
+   {
+    "file": "ui/.cargo/config.toml",
+    "doc": "ui/build.rs · ui/Cargo.toml · ui/Cargo.lock · ui/.cargo/config.toml · ui/.gitignore（5 件）",
+    "why": "② 保留为内部实现（构建件 · `build ls` 只覆盖 `bin/` 制品）"
+   },
+   {
+    "file": "ui/.gitignore",
+    "doc": "ui/build.rs · ui/Cargo.toml · ui/Cargo.lock · ui/.cargo/config.toml · ui/.gitignore（5 件）",
+    "why": "② 保留为内部实现（构建件 · `build ls` 只覆盖 `bin/` 制品）"
+   },
+   {
+    "file": "ui/locales/en.yml",
+    "doc": "ui/locales/en.yml · zh-CN.yml（2 件）",
+    "why": "② 保留为内部实现（词表件 · `zerg ui i18n` 只投影基线与漂移、不列词表件归属）"
+   },
+   {
+    "file": "ui/locales/zh-CN.yml",
+    "doc": "ui/locales/en.yml · zh-CN.yml（2 件）",
+    "why": "② 保留为内部实现（词表件 · `zerg ui i18n` 只投影基线与漂移、不列词表件归属）"
+   },
+   {
+    "file": "ui/svg",
+    "doc": "ui/svg（1 件）",
+    "why": "② 保留为内部实现（图形资源 · ② 原样保留）"
+   }
+  ]
+ },
  "boundaries": [
   "本表只登记**归属与判据指针**，不复制设计稿正文；四类定义仍在 §5.0（行 210–215）。",
   "④ 的 12 条**不是 12 个新任务**：它们收敛成 4 组承接项（见 pending_items），逐条带 why + next。（2026-10-08：原「脚本·评测线 13 件」一组同批收编入 ① ⇒ 组数 5→4、条数 25→12。）",
   "2026-09-21 改判已生效：`compressor_demo` 由 ③ 退役改判 ② 保留为内部 + 登记 `public=no` —— 原判「退役删除」作废（决策表 §二 第 4 行已同批标注）。",
-  "本表不含 273 条的**逐对象枚举**：逐对象落回写在 `Zerg-内部文档/项目文档/v2.5.10/归属-收编与退役-20260920.md`（导出物），两边的四个总数与五个面分布**逐格相同**（机检断言）。",
+  "本表不含 273 条的**逐对象枚举**：逐对象落回写在 `Zerg-内部文档/项目文档/v2.5.10/归属-收编与退役-20260920.md`（导出物），两边的四个总数与五个面分布**逐格相同**（机检断言）。★ 2026-10-14 补：② 面里被**工具归属普查 2.5.15** 点名的对象另有「登记（`GAP-20261014-38…45`）」区做**逐件归属指针**登记（机检 判据⑨）—— 那是**归属指针**；全量 273 的逐对象落回与逐条理由仍以上述导出物为准。",
   "例外类名册（`retire_exceptions`）**只收闭集内件**（决-12：**自研面** ＝ 全仓 − `vendor/**` − `tools/ocr/venv/**` − `scripts/evals/_archive/**` 的 py/sh）：每条须**四列齐**（category / reason / keep_cost / review_date）＋ `object` 在闭集 ＋ `review_date` 可解析（`2006-01-02`）。机检 = `core/cmd/zerg/family_script_retire.go` 的 `scriptRetireExceptionErrors`（`zerg script retire` 每跑一次先自检名册；外部测试出口 `ScriptRetireExceptionErrorsForTest` · GAP-20261007-03）。",
   "★ 闭集外件**不作退场例外登记**：`.githooks/pre-commit`（提交钩子 · 待 `批-8` 形态落地，见 `Zerg-内部文档/01-设计/设计-退场正门-retire-20261006.md`）原在名册里，但 `zerg script retire` 的闭集闸**先于**例外档 ⇒ 该条对该路径**无牙**，已移出名册（2026-10-07 · GAP-20261007-03）。",
   "★ 例外名册**随动纠正**（2026-10-07 · 该件**已落 Go 半（M2 真搬）** ⇒ 不再是例外类 · 迁出 8 件 · Go 半均在 `core/cmd/zerg/`）：`scripts/gates/check-i18n-drift.sh`＝`check_i18n_drift.go` · `scripts/gates/check-tool-version-sync.sh`＝`check_tool_version_sync.go` · `scripts/sandbox-probes/writeout-probe.py`＝`writeout_probe.go` · `tools/kb_docs_sync.py`＝`kb_docs_sync.go` · `ui/scripts/check-i18n.py`＝`check_i18n.go` · `ui/scripts/i18n_audit.py`＝`i18n_audit.go` · `tools/doc_index_gen.py`＝`doc_index_gen.go` · `tools/gen_tools_md.py`＝`gen_tools_md.go`（名册 76 → 68）。**★ 2026-10-08 更正（DEV-2019 · 回登记）**：上列 `scripts/sandbox-probes/writeout-probe.py` 已**回登记**入 `retire_exceptions`（category『沙箱探针·茧壁取证物』· reason 首词『硬线』）—— 茧壁取证面（`scripts/wall/wall-macos-evidence.py`）把真件**硬拷贝**进靶子跑、源码 sha256 本身即取证物；Go 半 `core/cmd/zerg/writeout_probe.go` 是 `gate check` **子命令**、✗ 不是可拷进靶子的独立制品 ⇒ **不可退**（同批还回登记 `scripts/docs/inplace-window.py` · 名册 64→66）⇒ 本项「不再是例外类」对**该件**不再成立（实迁出 **7 件**）。保留件（含 `scripts/gates/check-gate-bootstrap.sh`）的判定依据＝**真跑子进程 ／ 自举面 ／ 无 Go 半**。",

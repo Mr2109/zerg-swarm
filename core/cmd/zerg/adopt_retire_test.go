@@ -1007,6 +1007,228 @@ func TestAdoptRetireReclassVsExport(t *testing.T) {
 	}
 }
 
+// ── 判据⑨：② 逐件归属登记（工具归属普查 2.5.15 §2.6②）与**导出物 / 盘上**双向对拍 ────────────────
+//
+// 为什么要有这一条：真源 faces[4] 的 ② 只到**计数**，逐对象落回在导出物；而普查给这批账（GAP-20261014-38…45）
+// 的判据是「件名在真源里查得到」⇒ 真源侧必须有**逐件归属指针**，并且它不许悄悄腐。九条规则：
+//
+//	R1 抽空 fail-closed：本区抽不到 / objects 空 ⇒ 不给结论（✗ 别把「空」当「全绿」）。
+//	R2 形状：face/class/why/source/evidence 非空；class 必须含「② 保留为内部」。
+//	R3 下限（自印 N ＋ N 下界）：件数 < 20 或组数 < 8 ⇒ 报（登记面被抽薄）。
+//	R4 计数自洽：count.groups / count.files 必须与 objects 现读一致。
+//	R5 盘上存在：每件须在盘（✗ 登记指向不存在的件 ＝ 台账撒谎）。
+//	R6 导出物交叉：每件的 doc 串须逐字出现在导出物 `## ②` 的 `### UI 模块` 段（导出物不在 ⇒ 该格跳过）。
+//	R7 证据：evidence 须逐条给出 GAP-20261014-38…45 八条。
+//	R8 唯一：同件不得重复登记。
+//	R9 键名：本区 ✗ 以「改判」开头（判据⑧ 只收**换类**改判；本区是同类归属登记）。
+type arUiReg struct {
+	Face     string   `json:"face"`
+	Class    string   `json:"class"`
+	Why      string   `json:"why"`
+	Source   string   `json:"source"`
+	Evidence []string `json:"evidence"`
+	Count    struct {
+		Groups int `json:"groups"`
+		Files  int `json:"files"`
+	} `json:"count"`
+	Objects []struct {
+		File string `json:"file"`
+		Doc  string `json:"doc"`
+		Why  string `json:"why"`
+	} `json:"objects"`
+}
+
+const (
+	// arUiRegKeyPrefix —— 本区键名前缀（✗ 不以「改判」开头 —— 判据⑧ 只收换类改判，本区不改类）。
+	arUiRegKeyPrefix = "登记（2026-10-14 · GAP-20261014-38…45"
+	// arUiRegMinFiles / arUiRegMinGroups —— 登记下限（现读 20 件 / 8 组）。
+	arUiRegMinFiles  = 20
+	arUiRegMinGroups = 8
+)
+
+// judgeARUiInternalReg —— 判据⑨（九条规则见上）。root ＝ 仓根（核「件在盘」）；exportText 空 ⇒ R6 跳过。
+func judgeARUiInternalReg(raw []byte, exportText, root string) []error {
+	var errs []error
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &top); err != nil {
+		return []error{fmt.Errorf("判据⑨ 破：真源解不动：%v", err)}
+	}
+	var key string
+	for k := range top {
+		if strings.HasPrefix(k, arUiRegKeyPrefix) {
+			key = k
+			break
+		}
+	}
+	// R1 抽空 fail-closed —— 抽不到本区 ⇒ 不给结论（✗ 静默全绿）。
+	if key == "" {
+		return []error{fmt.Errorf("判据⑨ 破：真源里找不到「%s…」区（抽空 ⇒ 不给结论 · fail-closed）", arUiRegKeyPrefix)}
+	}
+	var reg arUiReg
+	if err := json.Unmarshal(top[key], &reg); err != nil {
+		return []error{fmt.Errorf("判据⑨ 破：`%s` 解不动：%v", key, err)}
+	}
+	// R9 键名。
+	if strings.HasPrefix(key, "改判") {
+		errs = append(errs, fmt.Errorf("判据⑨ 破：`%s` 以「改判」开头（改判只收换类；本区是同类归属登记）", key))
+	}
+	// R2 形状。
+	for _, f := range []struct{ name, v string }{
+		{"face", reg.Face}, {"class", reg.Class}, {"why", reg.Why}, {"source", reg.Source},
+	} {
+		if strings.TrimSpace(f.v) == "" {
+			errs = append(errs, fmt.Errorf("判据⑨ 破：`%s` 的 %s 留白（逐件登记必须有档）", key, f.name))
+		}
+	}
+	if !strings.Contains(reg.Class, "② 保留为内部") {
+		errs = append(errs, fmt.Errorf("判据⑨ 破：`%s` 的 class = %q 不含「② 保留为内部」（本区只登记 ② 面）", key, reg.Class))
+	}
+	if len(reg.Evidence) == 0 {
+		errs = append(errs, fmt.Errorf("判据⑨ 破：`%s` 没写 evidence（登记必须点名缺口账）", key))
+	}
+	// R3 下限（自印 N ＋ N 下界）· 负控与抽空三态见 TestAdoptRetireUiInternalReg。
+	if len(reg.Objects) == 0 {
+		errs = append(errs, fmt.Errorf("判据⑨ 破：`%s` 的 objects 抽空（0 件）⇒ 不给结论 · fail-closed", key))
+	}
+	if len(reg.Objects) < arUiRegMinFiles {
+		errs = append(errs, fmt.Errorf("判据⑨ 破：`%s` 自印 %d 件 低于下限 %d ⇒ 登记面被抽薄", key, len(reg.Objects), arUiRegMinFiles))
+	}
+	groupsSeen := map[string]bool{}
+	for _, o := range reg.Objects {
+		groupsSeen[o.Doc] = true
+	}
+	if len(groupsSeen) < arUiRegMinGroups {
+		errs = append(errs, fmt.Errorf("判据⑨ 破：`%s` 自印 %d 组 低于下限 %d（有整组丢失）", key, len(groupsSeen), arUiRegMinGroups))
+	}
+	// R4 计数自洽。
+	if reg.Count.Files != len(reg.Objects) || reg.Count.Groups != len(groupsSeen) {
+		errs = append(errs, fmt.Errorf("判据⑨ 破：`%s` 的 count = {groups %d, files %d} 与 objects 现读 {groups %d, files %d} 不一致（计数脱钩）",
+			key, reg.Count.Groups, reg.Count.Files, len(groupsSeen), len(reg.Objects)))
+	}
+	// R5 盘上存在 · R6 导出物交叉 · R8 唯一。
+	seen := map[string]bool{}
+	var sec map[string]map[string]string
+	if strings.TrimSpace(exportText) != "" {
+		sec = arExportSections(exportText)
+	}
+	for _, o := range reg.Objects {
+		f := strings.TrimSpace(o.File)
+		if f == "" {
+			errs = append(errs, fmt.Errorf("判据⑨ 破：`%s` 有一条的 file 留白", key))
+			continue
+		}
+		if seen[f] {
+			errs = append(errs, fmt.Errorf("判据⑨ 破：`%s` 里 %s 重复登记", key, f))
+		}
+		seen[f] = true
+		if root != "" {
+			if _, err := os.Stat(filepath.Join(root, f)); err != nil {
+				errs = append(errs, fmt.Errorf("判据⑨ 破：`%s` 登记的 %s 不在盘（%v）⇒ 台账撒谎", key, f, err))
+			}
+		}
+		if sec != nil {
+			body := sec["②"]["UI 模块"]
+			if strings.TrimSpace(o.Doc) == "" {
+				errs = append(errs, fmt.Errorf("判据⑨ 破：`%s` 里 %s 没写 doc（导出物交叉串）", key, f))
+			} else if !strings.Contains(body, o.Doc) {
+				errs = append(errs, fmt.Errorf("判据⑨ 破：`%s` 里 %s 的 doc 串在导出物 `## ②` 的 `### UI 模块` 段里找不到 ⇒ 真源与导出物不同源", key, f))
+			}
+		}
+	}
+	// R7 证据逐条。
+	for i := 38; i <= 45; i++ {
+		id := fmt.Sprintf("GAP-20261014-%d", i)
+		found := false
+		for _, e := range reg.Evidence {
+			if strings.TrimSpace(e) == id {
+				found = true
+				break
+			}
+		}
+		if !found {
+			errs = append(errs, fmt.Errorf("判据⑨ 破：`%s` 的 evidence 缺 %s", key, id))
+		}
+	}
+	return errs
+}
+
+// TestAdoptRetireUiInternalReg —— 判据⑨ 真仓现跑 ＋ 负控三态（全程在内存里改 raw · ✗ 不写仓、✗ 不碰真状态目录）。
+func TestAdoptRetireUiInternalReg(t *testing.T) {
+	root, _, raw := loadAR(t)
+	if errs := judgeARUiInternalReg(raw, "", root); len(errs) > 0 {
+		t.Errorf("判据⑨ 破（真源内部层，%d 处）：\n  %s", len(errs), joinErrs(errs))
+	}
+	// 导出物交叉层（两仓分家 ⇒ 该格跳过；真源内部层照判）。
+	exp := filepath.Join(filepath.Dir(root), "Zerg-内部文档", "项目文档", "v2.5.10", "归属-收编与退役-20260920.md")
+	if b, err := os.ReadFile(exp); err == nil {
+		if errs := judgeARUiInternalReg(raw, string(b), root); len(errs) > 0 {
+			t.Errorf("判据⑨ 破（含导出物交叉，%d 处）：\n  %s", len(errs), joinErrs(errs))
+		} else {
+			t.Logf("判据⑨ ✓ ② 逐件归属登记与盘上 20 件 / 导出物 ②`### UI 模块` 8 条逐条对上")
+		}
+	} else {
+		t.Logf("判据⑨ · 导出物不在（%v）⇒ 导出物交叉那一格跳过（真源内部层已判）", err)
+	}
+
+	// ── 负控三态（改坏了必须红 ⇒ 牙在「盘上存在 / 组数下限 / 抽空 fail-closed」三格上）──
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &top); err != nil {
+		t.Fatalf("负控夹具：真源解不动：%v", err)
+	}
+	var key string
+	for k := range top {
+		if strings.HasPrefix(k, arUiRegKeyPrefix) {
+			key = k
+			break
+		}
+	}
+	if key == "" {
+		t.Fatalf("负控夹具前置不成立：真源里找不到「%s…」区", arUiRegKeyPrefix)
+	}
+	var reg map[string]interface{}
+	if err := json.Unmarshal(top[key], &reg); err != nil {
+		t.Fatalf("负控夹具：本区解不动：%v", err)
+	}
+	rebuild := func() []byte {
+		b, err := json.Marshal(reg)
+		if err != nil {
+			t.Fatalf("负控夹具：重编本区失败：%v", err)
+		}
+		top[key] = b
+		out, err := json.Marshal(top)
+		if err != nil {
+			t.Fatalf("负控夹具：重编真源失败：%v", err)
+		}
+		return out
+	}
+	objs := reg["objects"].([]interface{})
+	origLen := len(objs)
+	first := objs[0].(map[string]interface{})
+	origFile := first["file"]
+	// ① 改成不存在的路径 ⇒ R5 必红。
+	first["file"] = "ui/src/modules/__nope__.rs"
+	if errs := judgeARUiInternalReg(rebuild(), "", root); len(errs) == 0 {
+		t.Errorf("判据⑨ 负控①破：登记件改成不存在的路径，判据竟不红（牙不在「盘上存在」那一格）")
+	}
+	first["file"] = origFile
+	// ② 删一整组（末组 1 件）⇒ 组数 8→7，R3 必红。
+	reg["objects"] = objs[:origLen-1]
+	if errs := judgeARUiInternalReg(rebuild(), "", root); len(errs) == 0 {
+		t.Errorf("判据⑨ 负控②破：删掉一整组，判据竟不红（牙不在「组数下限」那一格）")
+	}
+	// ③ 抽空 ⇒ R1/R3 fail-closed（✗ 别把「空」当「全绿」）。
+	reg["objects"] = []interface{}{}
+	if errs := judgeARUiInternalReg(rebuild(), "", root); len(errs) == 0 {
+		t.Errorf("判据⑨ 负控③破：objects 抽空，判据竟不红（抽空必须 fail-closed）")
+	}
+	// ④ 计数脱钩 ⇒ R4 必红。
+	reg["objects"] = objs
+	reg["count"] = map[string]interface{}{"groups": 8, "files": 19}
+	if errs := judgeARUiInternalReg(rebuild(), "", root); len(errs) == 0 {
+		t.Errorf("判据⑨ 负控④破：count 与 objects 脱钩，判据竟不红（牙不在「计数自洽」那一格）")
+	}
+}
+
 func joinErrs(errs []error) string {
 	parts := make([]string, 0, len(errs))
 	for _, e := range errs {
