@@ -2398,6 +2398,24 @@ func init() {
 			fields:  []string{"action", "root", "root_source", "egg", "ref", "path", "released", "refs_left", "refs_now", "zero", "df_before", "df_after", "freed_bytes_df", "freed_source", "nominal_note", "path_exists", "dry_run", "note", "verdict"},
 			run:     cmdEggRelease,
 		},
+		// ---- F52（2026-10-15）：`egg sign` **具名入口** —— 把卵5 已落的签名能力接进命令树 ----
+		// 账面出处：`GAP-20261015-27` 的 `want_family=egg` / `want_action=sign`（族名与动作名照账面**逐字**）。
+		// 真修件 = `core/cmd/zerg/egg_sign.go`（卵5 · 提案 `DEV-2958` 已落提交面）；命令面壳 = 该件 `cmdEggSign`。
+		// ★ 判据一字不落：argv 组装 / 前置探针 / 自检面全在 `egg_sign.go`（本笔**只接线** —— ✗ 不改那件任何判据语义）。
+		// ★ 退码闭集（照卵5 口径 · ✗ 不新增裸数字）：0 真跑签成 / 1 真跑了但未成（判决只看退码）/
+		//   2 不给结论（工具缺失 / 版本不符 / 子进程起不来 / 用法错 —— 本库无 cosign ⇒ 恒走这一档）。
+		// ★ ✗ 不新增旗标（usage 只列既有的 `--self-test`（全局布尔 · 谁用谁读）与 `--json` ⇒ 门73 旗标名表零改动 ·
+		//   `usageDeclaresFlag` 无新增落点）。位置参数 1–3 枚（照同族 `egg expand` / `egg release` 的多位置参数先例）。
+		{
+			path:    []string{"egg", "sign"},
+			kind:    "EggSign",
+			summary: "为卵签名（cosign keyed · **调用形态真跑**：工具面前置探针 → argv 组装 → 转发 cosign）· 工具缺失 / 版本不符 ⇒ 退 2 不给结论（本库未装 cosign ⇒ 恒这一档）· 退码 0 签成 / 1 未成 / 2 不给结论 · `--self-test` 跑卵5 四态＋负控（9 项）",
+			usage:   "zerg egg sign <卵包.egg> [<子钥件> [<bundle 件>]] [--self-test] [--json <字段>]",
+			arity:   "any",
+			args:    []string{"卵包 .egg 件（必给）", "子钥件（cosign 的 key 取值）", "bundle 落件（cosign 的 bundle 取值）"},
+			fields:  []string{"egg", "key", "bundle", "argv", "rc", "verdict"},
+			run:     cmdEggSign,
+		},
 		// ---- 批 D · T-49 内部任务引擎族 `itask`（§7.1 P8 · §5.1 九条端点）----
 		{
 			path:     []string{"itask", "ls"},

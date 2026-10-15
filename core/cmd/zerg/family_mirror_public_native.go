@@ -8,7 +8,7 @@
 // ★ 数据处理面（引擎 `publish/mirror-public-lib.py`）**逐字节照旧**：
 //
 //	引擎是**整件 python**（不是旧壳里的内联 heredoc 块）—— 本件把它**逐字节内嵌**为 base64 常量
-//	（见 `family_mirror_public_pyblocks.go` 的 `mpPyLibB64`，落盘前 sha256 与原件逐字节同 = 83552369…），
+//	（见 `family_mirror_public_pyblocks.go` 的 `mpPyLibB64`，落盘前 sha256 与原件逐字节同 = 01d82c9c…），
 //	运行期经 `python3 -c <bootstrap>` 交 **stdin** 执行，并在 bootstrap 里注入与旧壳**逐字同形**的
 //	`__file__` / `argv[0]`（脚本位置）⇒ `REPO_ROOT` 推导面与旧壳**同锚**（✗ 不吃 cwd）。
 //	⇒ 这几段（`os.walk` 序 / `re` 语义 / unicode 转义 / git 子进程序）**保证与旧壳逐字同**，不另造 Go 第二口径。

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"os"
@@ -25,6 +26,22 @@ func TestMirrorPublicEmbeddedLibByteExact(t *testing.T) {
 	got := hex.EncodeToString(sum[:])
 	if got != mpPyLibSHA256 {
 		t.Fatalf("内嵌引擎 sha256 %s ≠ 锚 %s（与原件漂移）", got, mpPyLibSHA256)
+	}
+	// ★ F51：**双向校验**（✗ 不再只断言自身锚）—— 解码必须 == 盘上真源
+	// `publish/mirror-public-lib.py` **逐字节**。上面那两格是「同语自证」（承载件与自身锚比）；
+	// 本格才是「承载件 ⟷ 真源同步」那一刀（与生成器 `mirror_public_pyblocks_gen.go` 的 `--check` 同判据）。
+	root := repoRoot()
+	if root == "" {
+		t.Fatalf("仓根解析不到 ⇒ 双向校验前置不成立（✗ 不留 Skip · fail-closed）")
+	}
+	pyPath := filepath.Join(root, "publish", "mirror-public-lib.py")
+	src, err := os.ReadFile(pyPath)
+	if err != nil {
+		t.Fatalf("真源读不到 %s（✗ 不留 Skip · fail-closed）：%v", pyPath, err)
+	}
+	if !bytes.Equal(b, src) {
+		t.Fatalf("内嵌引擎 == 自身锚，但 ⟷ 盘上真源**不是同一份**：解码 %d B sha256 %s ⟷ 真源 %d B sha256 %s（首个不同字节偏移 %d）",
+			len(b), got, len(src), mpPygSum(src), mpPygFirstDiff(b, src))
 	}
 }
 
@@ -234,5 +251,76 @@ func TestMirrorPublicToyParityLive(t *testing.T) {
 			t.Fatalf("[%s] stderr 不同\n--旧链--\n%s\n--新 Go--\n%s",
 				tc.name, mask(oErr.String(), outA), mask(gErr.String(), outB))
 		}
+	}
+}
+
+// TestMirrorPublicPyblocksGenFourStates —— 生成器/双向校验门 `gen-mirror-public-pyblocks` 的**四态自证**：
+//
+//	① 一致（盘上真源 ＋ 盘上真承载件）   ⇒ rc=0
+//	② 真源被改一字节（仓外副本）         ⇒ rc=1（✗ 不得只因自身锚而绿 · 旧断言此处照绿）
+//	③ 承载件被手改（仓外副本）           ⇒ rc=1
+//	④ 真源取不到                         ⇒ rc=2（不给结论）
+//
+// ★ 「仓外副本」= 全在 t.TempDir() 里造；真仓两件**只读**（✗ 不碰）。
+func TestMirrorPublicPyblocksGenFourStates(t *testing.T) {
+	root := repoRoot()
+	if root == "" {
+		t.Fatalf("仓根解析不到 ⇒ 四态前置不成立（✗ 不留 Skip · fail-closed）")
+	}
+	py := filepath.Join(root, "publish", "mirror-public-lib.py")
+	carry := filepath.Join(root, "core", "cmd", "zerg", "family_mirror_public_pyblocks.go")
+	src, err := os.ReadFile(py)
+	if err != nil {
+		t.Fatalf("真源读不到 %s：%v", py, err)
+	}
+	carryTxt, err := os.ReadFile(carry)
+	if err != nil {
+		t.Fatalf("承载件读不到 %s：%v", carry, err)
+	}
+	run := func(p, c string) (int, string, string) {
+		var o, e strings.Builder
+		rc := mpPyblocksGenGateMain(&o, &e, []string{"--check", "--py", p, "--carry", c})
+		return rc, o.String(), e.String()
+	}
+	// ① 一致 ⇒ rc=0
+	if rc, o, e := run(py, carry); rc != 0 {
+		t.Fatalf("① 一致态 rc=%d ≠ 0\nstdout=%s\nstderr=%s", rc, o, e)
+	}
+	dir := t.TempDir()
+	// ② 真源改一字节（仓外副本）⇒ rc=1 且点名「不是同一份」
+	mod := append([]byte(nil), src...)
+	mod[len(mod)/2] ^= 0x01
+	modPy := filepath.Join(dir, "mirror-public-lib.py")
+	if err := os.WriteFile(modPy, mod, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if rc, o, _ := run(modPy, carry); rc != 1 || !strings.Contains(o, "不是同一份") {
+		t.Fatalf("② 真源改一字节 rc=%d（期望 1 且点名「不是同一份」）\nstdout=%s", rc, o)
+	}
+	// ③ 承载件被手改（仓外副本 · 翻 b64 里一个字符 ⇒ 解码内容变）
+	s := string(carryTxt)
+	at := strings.Index(s, "const mpPyLibB64 = \"")
+	if at < 0 {
+		t.Fatal("③ 前置不成立：承载件里定位不到 mpPyLibB64 常量")
+	}
+	pos := at + len("const mpPyLibB64 = \"") + 30
+	rep := byte('A')
+	if s[pos] == 'A' {
+		rep = 'B'
+	}
+	bad := s[:pos] + string(rep) + s[pos+1:]
+	if bad == s {
+		t.Fatal("③ 前置不成立：承载件没被改动")
+	}
+	badCarry := filepath.Join(dir, "carry-hand-edited.go")
+	if err := os.WriteFile(badCarry, []byte(bad), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if rc, o, _ := run(py, badCarry); rc != 1 {
+		t.Fatalf("③ 承载件手改 rc=%d ≠ 1\nstdout=%s", rc, o)
+	}
+	// ④ 真源取不到 ⇒ rc=2（不给结论）
+	if rc, _, e := run(filepath.Join(dir, "no-such.py"), carry); rc != 2 {
+		t.Fatalf("④ 真源取不到 rc=%d ≠ 2（不给结论）\nstderr=%s", rc, e)
 	}
 }

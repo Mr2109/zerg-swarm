@@ -5,6 +5,8 @@
 // ✗ 一行不改（逐字节同）：Go 真身 `family_mirror_public_native.go` 把 `mpPyLibBytes()` 交给
 // `python3 -c <bootstrap>`（stdin），从而**保证数据处理面**与旧壳逐字同。
 // 本文件由生成器逐字节抽取，✗ 不许手改（改则与 py 半漂移；`mpPyLibSHA256` 是它的锚）。
+// 生成器 ＝ `core/cmd/zerg/mirror_public_pyblocks_gen.go`（inproc 键 `gen-mirror-public-pyblocks`）：
+// 重生 `zerg gate check gen-mirror-public-pyblocks` · 双向对拍（解码 == 盘上 py **逐字节**）加 `--check`。
 //
 // ★ 为什么是 base64url 而不是字面量：引擎正文里**逐字含**私有探针形态（`_INL_BLOCK` 里那几条
 //

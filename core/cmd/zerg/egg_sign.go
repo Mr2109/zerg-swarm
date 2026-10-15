@@ -21,8 +21,9 @@
 //
 //	· ✗ 不装 / ✗ 不下载 cosign · ✗ 不联网 · ✗ **不真签任何东西** —— 本件**只组装命令** ＋ 在**仓外桩件**上真跑。
 //	  真签名 / 真验证**不在本件**（靠拍定后的发布链与真 cosign）。
-//	· 本件**不接线** `core/cmd/zerg/main.go`（✗ 不注册命令 · ✗ 不改 add_step）；入口 `eggSignSelfTest` 目前**无 CLI 调用点**
-//	  （同 `zergEggGateMain` 的 M2 中间态）。
+//	· 本件**已接线**（F52 · 2026-10-15 · 补 `GAP-20261015-27` 的 `want_action=sign` **具名入口**）：
+//	  命令树条目 `{egg, sign}` 落 `core/cmd/zerg/main.go`、**命令面壳 = 本件件尾 ③ 段的 `cmdEggSign`**
+//	  （只接线 —— ✗ 不改上面 ①–⑤ 任何判据语义）；`eggSignSelfTest` 的 CLI 调用点 = `zerg egg sign --self-test`。
 //	· 桩件一律**仓外**（scratch / 测试临时目录运行时生成）· ✗ 不进仓 · ✗ 不写仓内件。
 //	· 退码一律走具名常量（✗ 不写裸数字 `return 2`）；`0/1/2` 复用包内既有 `exitOK / exitFail / exitUsage`。
 //
@@ -39,7 +40,7 @@
 //	(a) 本件**不扫仓内树、不写仓内件**（自检只落临时目录）⇒ 无自扫描面。
 //	(b) 本件**零绝对路径字面量**；桩件路径一律**运行时现取**。
 //
-// 出厂声明结束。入口 `eggSignSelfTest` 无 CLI 调用点。
+// 出厂声明结束。入口：命令面壳 `cmdEggSign`（F52 接线 · 见件尾 ③ 段 · CLI 正门 = `zerg egg sign`）。
 package main
 
 import (
@@ -372,7 +373,7 @@ func eggFileOwnerUID(fi os.FileInfo) (uint32, bool) {
 }
 
 // ------------------------------------------------------------------------------------------------------------
-// 自检（＝ 未接线的 `--self-test` 面 · 只落临时目录 · ✗ 不真签）
+// 自检（＝ `--self-test` 面 · CLI 正门 = `zerg egg sign --self-test`（F52 接线）· 只落临时目录 · ✗ 不真签）
 // ------------------------------------------------------------------------------------------------------------
 
 // eggSignStubScript —— 仓外假 cosign 桩（自检**运行时生成** · ✗ 不进仓 · ✗ 不真签）。
@@ -580,4 +581,165 @@ func eggSignSelfTest(stdout, stderr io.Writer) int {
 func eggSignSelfFail(stderr io.Writer, err error) int {
 	fmt.Fprintf(stderr, "%s: 自检失败：%v\n", eggSignProg, err)
 	return exitFail
+}
+
+// ============================================================================================================
+// ③ 命令面接线（F52 · 2026-10-15）：`zerg egg sign` —— 把 ①② 段已落的签名能力接进命令树
+// ============================================================================================================
+//
+// 落点：命令树条目 `{egg, sign}` 落 `core/cmd/zerg/main.go`；**命令面壳 = 本段 `cmdEggSign`**
+// （照同族先例 `family_egg.go:cmdEggVerify` / `family_gap_diff.go:cmdGapDiff` 同形 —— 壳与真身同件）。
+// ★ 判据一行都不落本段：argv 组装 = `eggSignBlobArgv`（① 段 · 逐字不改）· 真跑 = `eggSignRunCosign`
+// （① 段 · 逐字不改）· 自检面 = `eggSignSelfTest`（② 段 · 逐字不改）。本层只做三件事：用法面 / 转发 / 两个面。
+//
+// 步序（照 ① 段 `eggSignRunCosign` 自身的次序 LookPath → 探版本 → 真跑）：
+//
+//	① `--self-test` ⇒ ② 段自检面（9 项：正向 ① ①b ② ③ ④ ＋ 负控 A–D）—— 这就是该入口此前缺的 CLI 调用点；
+//	② 用法面一：`--json` 给了旗标不给字段 ⇒ 用法错 2（与同族 `fs unprotected` / `gap diff` 同口径 · 0 字节档）；
+//	③ 用法面二：位置参数基数 1–3 枚（`<卵包.egg> [<子钥件> [<bundle 件>]]` · 卵必给）；
+//	④ **工具面前置探针**（① 段调用形态里的 `version` 探针）：缺 / 版本不符 ⇒ 2 · **不给结论**；
+//	⑤ 要件面（工具在位才判 —— 免得组出一条空件的 argv 去真签）：子钥 / bundle 落件缺 ⇒ 2 · 不给结论；
+//	⑥ 组装（`eggSignBlobArgv`）＋ 真跑（`eggSignRunCosign`）⇒ 退码照下表原样转出。
+//
+// 为什么工具面在要件面**之先**：工具缺失是**所有**签名动作的共同前置 —— 先报这一档才不把「工具面
+// 给不出结论」盖成「你的用法错」（本库未装 cosign ⇒ 恒走这一档 —— 这正是「✗ 不假绿」那一条）。
+// ★ 用法面两档（②③）判在**任何真跑之前** ⇒ 与环境无关（矩阵格可逐字冻结）。
+//
+// 退码表（闭集三档 · ✗ 不写裸数字 —— 全走包内具名常量）：
+//
+//	`exitOK`（0）—— cosign 真跑且签成（判决**只看退码**，✗ 不以 stdout 文案当判据 · 照 ① 段约定）
+//	`exitFail`（1）—— 真跑了但未成（cosign 退码 ≠ 0）
+//	`eggSignRCNoConclusion`（2）—— 工具缺失 / 版本不符 / 子进程起不来（`eggSignRCSpawnFail`）/ 用法错
+//
+// 未覆盖面（如实）：本段**不落**「签名字节写进 bundle 槽位」（① 段把 cosign 的 stdout 原样收在
+// `eggSignResult.Stdout` 里，命令面**不回显、不落槽位** —— 槽位与 `zerg_egg.go` 写/读端的真接线属另单：
+// 卵5 未覆盖面 ④）；真签 / 真验的能力仍拄外置 cosign（本库未装 ⇒ 前置探针恒给 2 · 不给结论）。
+//
+// eggSignProbeArgvVersion —— 前置探针的那一条 argv（① 段调用形态四条里已有的 `version` 探针 · 逐字同）。
+const eggSignProbeArgvVersion = "version"
+
+// eggSignMaxArgs —— 位置参数上界（`<卵包.egg> [<子钥件> [<bundle 件>]]` 三枚 · 照命令树 usage 逐字）。
+const eggSignMaxArgs = 3
+
+// 机读面 verdict 三值（闭集 · 与上面退码表一一对应 —— ✗ 不放自由文本）。
+const (
+	eggSignVerdictSigned       = "signed"
+	eggSignVerdictFailed       = "sign-failed"
+	eggSignVerdictNoConclusion = "no-conclusion"
+)
+
+// cmdEggSign —— `zerg egg sign` 的命令面**薄壳**（F52 接线 · 2026-10-15）。
+func cmdEggSign(inv *invocation, stdout, stderr io.Writer) int {
+	// ① 自检档（② 段的面 · 9 项 —— ✗ 不真签 · 只落临时目录）。本入口 = 它此前缺的那个 CLI 调用点。
+	if inv.selfTest {
+		return eggSignSelfTest(stdout, stderr)
+	}
+	// ② 用法面一：`--json` 给了旗标不给字段 ⇒ 用法错 2（与同族 `fs unprotected` / `gap diff` 同口径）。
+	if inv.jsonGiven && len(inv.fields) == 0 {
+		fmt.Fprintf(stderr, "%s: `--json` 要给逗号分隔的字段（本命令口径 = 用法错 2）\n", progName)
+		if c := find(inv.path); c != nil {
+			fmt.Fprintf(stderr, "可选字段: %s\n", strings.Join(c.fields, ","))
+		}
+		return exitUsage
+	}
+	// ③ 用法面二：位置参数基数 1–3 枚（卵必给）。两档用法面都判在**任何真跑之前** ⇒ 与环境无关。
+	if len(inv.args) == 0 {
+		fmt.Fprintf(stderr, "%s: `%s egg sign` 要一枚 <卵包.egg>（位置参数 · 不收空）⇒ 用法错 2（不给结论）\n",
+			progName, progName)
+		fmt.Fprintf(stderr, "See '%s egg sign --help'。\n", progName)
+		return exitUsage
+	}
+	if len(inv.args) > eggSignMaxArgs {
+		fmt.Fprintf(stderr, "%s: 多余位置参数 %q（本命令至多 %d 枚：<卵包.egg> [<子钥件> [<bundle 件>]]）\n",
+			progName, inv.args[eggSignMaxArgs], eggSignMaxArgs)
+		fmt.Fprintf(stderr, "See '%s egg sign --help'。\n", progName)
+		return exitUsage
+	}
+	egg := inv.args[0]
+	key, bundle := "", ""
+	if len(inv.args) > 1 {
+		key = inv.args[1]
+	}
+	if len(inv.args) > 2 {
+		bundle = inv.args[2]
+	}
+	// ④ 工具面前置探针（`version` 形态）：缺 / 版本不符 ⇒ 退码 2 · **不给结论**（✗ 不假绿）。
+	probe := eggSignRunCosign(nil, eggSignProbeArgvVersion)
+	if !probe.Conclusion {
+		fmt.Fprintf(stderr, "%s: %s\n", progName, probe.Why)
+		fmt.Fprintf(stderr, "（前置探针 = cosign 的 version 面 —— 工具面拿不到判决 ⇒ 本发**不给结论** · ✗ 不假绿）\n")
+		return probe.RC
+	}
+	// ⑤ 要件面（工具在位才判）：子钥 / bundle 落件缺 ⇒ 用法错 2 · 不给结论（✗ 不组一条空件的 argv 去真签）。
+	missing := []string{}
+	if strings.TrimSpace(key) == "" {
+		missing = append(missing, "<子钥件>")
+	}
+	if strings.TrimSpace(bundle) == "" {
+		missing = append(missing, "<bundle 件>")
+	}
+	if len(missing) > 0 {
+		fmt.Fprintf(stderr, "%s: `%s egg sign` 缺 %s（工具面已在位 · 签名要件不齐 ⇒ 不给结论 · 退码 2）\n",
+			progName, progName, strings.Join(missing, "、"))
+		fmt.Fprintf(stderr, "See '%s egg sign --help'。\n", progName)
+		return exitUsage
+	}
+	// ⑥ 组装（① 段 · 逐字不改）＋ 真跑（① 段 · 逐字不改）：判决只看退码。
+	argv := eggSignBlobArgv(key, bundle, egg)
+	res := eggSignRunCosign(nil, argv...)
+	rc := exitFail
+	verdict := eggSignVerdictFailed
+	switch {
+	case !res.Conclusion || res.RC == eggSignRCSpawnFail:
+		rc, verdict = eggSignRCNoConclusion, eggSignVerdictNoConclusion
+	case res.RC == exitOK:
+		rc, verdict = exitOK, eggSignVerdictSigned
+	}
+	if rc == eggSignRCNoConclusion {
+		why := res.Why
+		if why == "" {
+			why = "cosign 未给出可用判决"
+		}
+		fmt.Fprintf(stderr, "%s: %s ⇒ 不给结论（退码 %d · ✗ 不假绿）\n", progName, why, eggSignRCNoConclusion)
+	}
+	if rc == exitFail {
+		fmt.Fprintf(stderr, "%s: cosign 未成（退码 %d）· argv: cosign %s\n", progName, res.RC, strings.Join(argv, " "))
+		if len(res.Stderr) > 0 {
+			fmt.Fprintf(stderr, "%s", string(res.Stderr))
+		}
+	}
+	// ⑦ 两个面同一份结论（✗ 不各写各的）；`changed` = 真签成了才真（✗ 不恒 false / ✗ 不恒 true）。
+	inv.changed = boolPtr(rc == exitOK)
+	if inv.jsonGiven {
+		rows := []map[string]string{eggSignRow(egg, key, bundle, argv, res.RC, verdict)}
+		if ec := selectJSONList(stdout, stderr, inv, inv.path, inv.fields, rows); ec != exitOK {
+			return ec
+		}
+		return rc
+	}
+	eggSignHuman(stdout, egg, key, bundle, argv, res, verdict)
+	return rc
+}
+
+// eggSignRow —— 机读面一行（字段表 = 命令树 `{egg, sign}` 的 `fields:` 六格）。
+func eggSignRow(egg, key, bundle string, argv []string, subRC int, verdict string) map[string]string {
+	return map[string]string{
+		"egg":     egg,
+		"key":     key,
+		"bundle":  bundle,
+		"argv":    "cosign " + strings.Join(argv, " "),
+		"rc":      strconv.Itoa(subRC),
+		"verdict": verdict,
+	}
+}
+
+// eggSignHuman —— 人面读数（卵 / 子钥件 / bundle 落件 / 组装的 argv / cosign 退码 / verdict 逐字）。
+func eggSignHuman(w io.Writer, egg, key, bundle string, argv []string, res eggSignResult, verdict string) {
+	fmt.Fprintf(w, "卵签名（调用形态真跑 · verdict=%s）\n", verdict)
+	fmt.Fprintf(w, "  卵: %s\n", egg)
+	fmt.Fprintf(w, "  子钥件: %s\n", key)
+	fmt.Fprintf(w, "  bundle 落件: %s\n", bundle)
+	fmt.Fprintf(w, "  argv: cosign %s\n", strings.Join(argv, " "))
+	fmt.Fprintf(w, "  cosign 退码: %d · 签名走 stdout（%d 字节 · ✗ 本版不回显、不落槽位 —— 归另单）\n",
+		res.RC, len(res.Stdout))
 }

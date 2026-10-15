@@ -183,6 +183,7 @@ var gateCheckGoEntry = map[string]func(stdout, stderr io.Writer, argv []string) 
 	"gen-cli-reference":                     genCliReferenceGateMain,
 	"gen-gap-ledger":                        genGapLedgerGateMain,
 	"gen-glossary-exports":                  genGlossaryExportsGateMain,
+	"gen-mirror-public-pyblocks":            mpPyblocksGenGateMain,
 	"gen-tools-md":                          genToolsMdGateMain,
 	"i18n-audit":                            i18nAuditGateMain,
 	"inplace-window":                        ipwGateMain,

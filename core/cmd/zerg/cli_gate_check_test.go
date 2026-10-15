@@ -356,8 +356,12 @@ func TestGateCheckGoEntryTableComplete(t *testing.T) {
 	//	与 core/cmd/zerg/check_upgrade_local_source.go）⇒ 190→192。
 	//	★ 同批撤掉那两件在 check-cli-ownership 里的「未接 inproc 标准路由」缺口 ⇒ 未接合计 3→1
 	//	（余 family_publish_snapshot_native.go —— 它要动 main.go，另路）。
-	if got := len(gateCheckGoEntry); got != 192 {
-		t.Fatalf("进程内 Go 表项数要 == 192，得到 %d", got)
+	// ★ 2026-10-15（2.5.15 清账 F51 · 本单）：镜像引擎承载件**生成器**入 inproc 表 +1
+	//
+	//	（gen-mirror-public-pyblocks · 见 core/cmd/zerg/mirror_public_pyblocks_gen.go · 入口 mpPyblocksGenGateMain ·
+	//	在盘无同名 py 件 ⇒ 名解析走 inproc 兜底 · 先例同 gen-cli-reference 一族）⇒ 192→193。
+	if got := len(gateCheckGoEntry); got != 193 {
+		t.Fatalf("进程内 Go 表项数要 == 193，得到 %d", got)
 	}
 	// ★ 放宽（2026-10-07 退役批）：旧不变量「表键必在名录」⇒「表键 ⇒ 名录 **或** inproc 键 二者其一」。
 	//   退役件（py 已 `git rm`）只余 inproc 那一路（family_gate_check.go 的 inproc 兜底 ⇒ rc=0）；
