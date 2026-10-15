@@ -14,6 +14,7 @@ import (
 //   - 工具调用是 Qwen 风格 XML（<tool_call>），需 --jinja + 外部 chat template 解析
 //   - GGUF 内嵌模板是旧版（raise_exception bug，system 非首条 400）→ 必须外部模板覆盖
 //   - 需 --chat-template-kwargs：enable_thinking / preserve_thinking / auto_disable_thinking_with_tools:false
+//   - 需 --reasoning-budget 256：思考模型必须给思考一个独立上界（GAP-49 口径 —— 保留思考，✗ 不关 thinking）
 //   - "该调不调"重提示（unsloth PR #4769）
 type Ornith struct{}
 
@@ -36,6 +37,10 @@ func (a *Ornith) BuildArgs(entry *registry.ModelEntry, port int) []string {
 		"--host", "127.0.0.1",
 		"--port", fmt.Sprintf("%d", port),
 		"--jinja", // 启用 GGUF 内嵌模板（外部模板覆盖前的基础）
+		// GAP-49 口径（2026-09-26 对照实验定性）：思考模型必须给 --reasoning-budget，
+		// 否则短 max_tokens 的调用会在分析通道里被截断 ⇒ content 空串（实测 256 = finish_reason=stop、正文可读）。
+		// 铁律「思考不能关」⇒ 这里只给思考一个上界，✗ 不改 enable_thinking 的 true。
+		"--reasoning-budget", "256",
 	}
 	// D3 多模态：视觉投影（example-35b-v2-1.5 是 qwen35moe-vlm——agent_models.yaml mmproj 字段）
 	if entry.MMProj != "" {
