@@ -201,7 +201,7 @@ func TestApplyAdapterOverrides_DeclarationBagAndClamp(t *testing.T) {
 	// 调用方给了 999999（> 声明上限 262144）⇒ 钳到 262144（注意 mockAdapter 自己只声明 32768，
 	// 若 fleet 的声明没进袋，上限会退化成默认 32768 —— 用例据此分辨"声明有没有生效"）
 	body := []byte(`{"model":"deepseek-v4-flash","max_tokens":999999,"messages":[{"role":"user","content":"hi"}]}`)
-	out := g.ApplyAdapterOverrides("deepseek-v4-flash", body, &mockAdapter{})
+	out, _ := g.ApplyAdapterOverrides("deepseek-v4-flash", body, &mockAdapter{})
 	var obj map[string]any
 	if err := json.Unmarshal(out, &obj); err != nil {
 		t.Fatal(err)
@@ -214,7 +214,7 @@ func TestApplyAdapterOverrides_DeclarationBagAndClamp(t *testing.T) {
 	}
 	// 调用方没给 ⇒ 动态额度（默认档），而不是适配器写死值 32768 或声明值 262144
 	body2 := []byte(`{"model":"deepseek-v4-flash","messages":[{"role":"user","content":"hi"}]}`)
-	out2 := g.ApplyAdapterOverrides("deepseek-v4-flash", body2, &mockAdapter{})
+	out2, _ := g.ApplyAdapterOverrides("deepseek-v4-flash", body2, &mockAdapter{})
 	var obj2 map[string]any
 	if err := json.Unmarshal(out2, &obj2); err != nil {
 		t.Fatal(err)
@@ -242,7 +242,7 @@ func TestApplyAdapterOverrides_FleetOnlyDeclarationStillClamps(t *testing.T) {
 		config:          fleetWithDecl(t, "deepseek-v4-flash", 524288, 262144),
 	}
 	body := []byte(`{"model":"deepseek-v4-flash","max_tokens":999999,"messages":[{"role":"user","content":"hi"}]}`)
-	out := g.ApplyAdapterOverrides("deepseek-v4-flash", body, ada)
+	out, _ := g.ApplyAdapterOverrides("deepseek-v4-flash", body, ada)
 	var obj map[string]any
 	if err := json.Unmarshal(out, &obj); err != nil {
 		t.Fatal(err)
@@ -298,7 +298,7 @@ func TestApplyAdapterOverrides_OrnithStartedDeclarationReachesBody(t *testing.T)
 	body := []byte(`{"model":"example-35b-v2","messages":[{"role":"user","content":"只回一行：甲-在线"}],"stream":false}`)
 
 	// 反例（**修复前的真机形态**：注册表只 Init 没 Start）⇒ 一个字段都不许进体。
-	out0 := g.ApplyAdapterOverrides("example-35b-v2", body, ada)
+	out0, _ := g.ApplyAdapterOverrides("example-35b-v2", body, ada)
 	var obj0 map[string]any
 	if err := json.Unmarshal(out0, &obj0); err != nil {
 		t.Fatalf("反例输出不是合法 JSON：%v", err)
@@ -314,7 +314,7 @@ func TestApplyAdapterOverrides_OrnithStartedDeclarationReachesBody(t *testing.T)
 	if err := ada.Start(); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	out1 := g.ApplyAdapterOverrides("example-35b-v2", body, ada)
+	out1, _ := g.ApplyAdapterOverrides("example-35b-v2", body, ada)
 	var obj1 map[string]any
 	if err := json.Unmarshal(out1, &obj1); err != nil {
 		t.Fatalf("正例输出不是合法 JSON：%v", err)
@@ -361,7 +361,7 @@ func TestApplyAdapterOverrides_BagCallCarriesPrompt(t *testing.T) {
 		config:          fleetWithDecl(t, "prompt-strict", 262144, 0),
 	}
 	body := []byte(`{"model":"prompt-strict","messages":[{"role":"user","content":"只回一行：甲-在线"}]}`)
-	out := g.ApplyAdapterOverrides("prompt-strict", body, ada)
+	out, _ := g.ApplyAdapterOverrides("prompt-strict", body, ada)
 	var obj map[string]any
 	if err := json.Unmarshal(out, &obj); err != nil {
 		t.Fatalf("输出不是合法 JSON：%v", err)
@@ -370,8 +370,221 @@ func TestApplyAdapterOverrides_BagCallCarriesPrompt(t *testing.T) {
 		t.Fatalf("声明袋调用没带 prompt ⇒ 适配器报错 ⇒ 声明一个都不下发（学 example-35b-v2 的形态门）：实得 %v", obj["temperature"])
 	}
 	// 空 messages 的 body：tokenize 不出 prompt ⇒ 适配器照旧失败、body 原样 —— 与修复前同形（不静默改行为）
-	out2 := g.ApplyAdapterOverrides("prompt-strict", []byte(`{"model":"prompt-strict","messages":[]}`), ada)
+	out2, _ := g.ApplyAdapterOverrides("prompt-strict", []byte(`{"model":"prompt-strict","messages":[]}`), ada)
 	if strings.Contains(string(out2), `"temperature"`) {
 		t.Fatalf("取不到 prompt 时不许凭空造一个（应原样返回 body）：%s", out2)
+	}
+}
+
+// ── ⑨ 输出预算 fail-closed（一号修法 · 2026-10-16）────────────────────────────────────
+//
+// 病象（真机逐字）：本地卵 Qwen3.8-Flash-Next@edge-node（引擎 `-c 32768`）干「读 1448 行缺口账」的活时，
+// 第 2–14 发网关只打一行「⚠️ 输出预算：提示已超上下文（ctx=32768…）——本次不给输出额度（调用方原值
+// 仍按上限口径放行）」⇒ **那 13 发照发**、唯一上限＝引擎 `-c`；末发 usage 恰撞顶
+// （completion=111 / prompt=32657 / total=32768）且正文为空（111 token 极可能全是思考）⇒ 模型在
+// 思考段被 ctx 硬切 ⇒ 子代理循环把那截断文本当「无工具调用的最终答复」⇒ 判 completed ⇒
+// **状态假成功、产物 0 字节**。
+//
+// 本组用例钉**网关侧**那一半（fail-closed）：① 超上下文 ⇒ 拒发；② 剩余不足 ⇒ 拒发；
+// ③ 额度充足 ⇒ 与改前逐字同；④ 开关 = `open` ⇒ 旧行为逐字同（④ 用本波新落的常量，见文件末）。
+//
+// ★ 拒发的**可观测面就是 Body**：拒发 ⇒ 一个字节都不改（✗ 不进任何输出额度、✗ 不改写调用方原值）
+// —— 旧档的特征恰恰是「改写 + 补 max_output_tokens 那一格」，两态据此可分辨。
+
+// outbudgetBody —— 造一个长度**恰为** want 字节的请求体（content 全是 ASCII 'x' ⇒ 无转义，长度线性可控）。
+// callerMax > 0 ⇒ 带上调用方给的那一格 max_tokens（「调用方给了原值」的形态 —— 真机首发就是它）。
+func outbudgetBody(t *testing.T, want, callerMax int) []byte {
+	t.Helper()
+	field := ""
+	if callerMax > 0 {
+		field = `"max_tokens":` + intYAML(callerMax) + `,`
+	}
+	pre := `{"model":"m",` + field + `"messages":[{"role":"user","content":"`
+	post := `"}]}`
+	n := want - len(pre) - len(post)
+	if n < 0 {
+		t.Fatalf("夹具 want=%d 比骨架（%d 字节）还短", want, len(pre)+len(post))
+	}
+	b := []byte(pre + strings.Repeat("x", n) + post)
+	if len(b) != want {
+		t.Fatalf("夹具长度没对齐：want=%d 实得=%d", want, len(b))
+	}
+	return b
+}
+
+// ① 提示已超上下文 ⇒ **拒发**：Body 逐字节不动（旧档：调用方原值 22438 原样放行 + 补 max_output_tokens）。
+func TestOutbudgetFailClosed_OverCtxNoPassThrough(t *testing.T) {
+	// ctx=8192：reserve=max(819,2048)=2048 ⇒ 只要 prompt≈>6144 就已超上下文。
+	body := outbudgetBody(t, 26000, 22438) // prompt≈6500 ⇒ avail = 8192−6500−2048 < 0
+	pe := EstimatePromptTokens(len(body))
+	if pe <= 8192-2048 {
+		t.Fatalf("夹具没造出「已超上下文」：prompt≈%d（要 > %d）", pe, 8192-2048)
+	}
+	res := ApplyTokenBudget(TokenBudgetInput{
+		Model: "m", ForwardBody: body, CtxWindow: 8192, CtxSource: "档案(事实)",
+		Cap: 32768, CapSource: "默认",
+	})
+	if !bytes.Equal(res.Body, body) {
+		t.Fatalf("提示已超上下文 ⇒ 必须拒发（Body 一个字节都不许改）；实得被改写成：%s…", res.Body[:min(80, len(res.Body))])
+	}
+	if bytes.Contains(res.Body, []byte("max_output_tokens")) {
+		t.Fatalf("拒发不许补任何输出额度字段（旧档正是在这里补上 max_output_tokens）：%s", res.Body)
+	}
+}
+
+// ② 剩余输出空间不足（0 < avail < outBudgetMinAvail）⇒ **拒发**：Body 逐字节不动
+// （旧档会给一份被 minOutTokens 兜底成 1024 的额度 —— 比真实剩余空间大得多）。
+func TestOutbudgetFailClosed_RemainderBelowMinNoPassThrough(t *testing.T) {
+	// ctx=4096：reserve=max(409,2048)=2048；prompt≈1750 ⇒ avail ≈ 298（>0 且远小于 512 的量级）。
+	body := outbudgetBody(t, 7000, 0)
+	pe := EstimatePromptTokens(len(body))
+	if pe <= 4096-2048-512 || pe >= 4096-2048 {
+		t.Fatalf("夹具没落进「剩余不足」那一档：prompt≈%d（要在 %d~%d 之间）", pe, 4096-2048-512, 4096-2048)
+	}
+	res := ApplyTokenBudget(TokenBudgetInput{
+		Model: "m", ForwardBody: body, CtxWindow: 4096, CtxSource: "档案(事实)",
+		Cap: 32768, CapSource: "默认",
+	})
+	if !bytes.Equal(res.Body, body) {
+		t.Fatalf("剩余空间不足 ⇒ 必须拒发（Body 一个字节都不许改）；实得被改写成：%s…", res.Body[:min(80, len(res.Body))])
+	}
+}
+
+// ③ 额度充足 ⇒ 与改前**逐字同**（本波不许动正常档：调用方原样 / 没给用动态额度 / 超了钳位）。
+func TestOutbudgetFailClosed_NormalBudgetUnchanged(t *testing.T) {
+	body := outbudgetBody(t, 400, 4096) // ctx=131072 ⇒ 额度充足
+	res := ApplyTokenBudget(TokenBudgetInput{
+		Model: "m", ForwardBody: body, CtxWindow: 131072, CtxSource: "声明(意图)",
+		Cap: maxTokensCapDefault, CapSource: "默认",
+	})
+	var obj map[string]any
+	if err := json.Unmarshal(res.Body, &obj); err != nil {
+		t.Fatal(err)
+	}
+	if v, _ := obj["max_tokens"].(float64); int(v) != 4096 {
+		t.Fatalf("正常档：调用方的 4096 ≤ 上限必须原样放行，实得 %v", obj["max_tokens"])
+	}
+	if v, _ := obj["max_output_tokens"].(float64); int(v) != 4096 {
+		t.Fatalf("正常档：max_output_tokens 也必须写（两种格式都要），实得 %v", obj["max_output_tokens"])
+	}
+	if res.Limit.Clamped || res.Limit.Source != "调用方(原样)" {
+		t.Fatalf("正常档的裁决不许变：%+v", res.Limit)
+	}
+	if want := ClampMaxTokens(4096, maxTokensCapDefault, res.Dyn); res.Limit != want {
+		t.Fatalf("正常档须与 ClampMaxTokens 逐字同源：want=%+v got=%+v", want, res.Limit)
+	}
+}
+
+// ④ 开关两态：默认（未设置）/ 任何**不是恰 `open`** 的取值 ⇒ closed（拒发）；
+//
+//	恰 `open` ⇒ 旧行为**逐字同**（放行 ＋ 那行 ⚠️ 日志 ＋ 调用方原值按上限口径进体）。
+func TestOutbudgetFailClosed_SwitchTwoStates(t *testing.T) {
+	// 真机那一发的形态：ctx=8192、prompt≈6500（已超上下文）、调用方给了 22438。
+	body := outbudgetBody(t, 26000, 22438)
+	in := TokenBudgetInput{Model: "m", ForwardBody: body, CtxWindow: 8192, CtxSource: "档案(事实)",
+		Cap: 32768, CapSource: "默认"}
+
+	// ① 未设置（本机默认档）⇒ closed ⇒ 拒发
+	if got := ApplyTokenBudget(in); !got.Rejected {
+		t.Fatalf("默认档必须 fail-closed（拒发），实得 Rejected=%v", got.Rejected)
+	}
+	// ② 非「恰 open」的各种写法 ⇒ 仍是 closed（判不了就按拒发 —— fail-closed 方向偏安全）
+	for _, v := range []string{"", "closed", "closed ", "OPEN", "Open", "open ", " open", "1", "yes"} {
+		t.Setenv(OutbudgetFailModeEnv, v)
+		if got := ApplyTokenBudget(in); !got.Rejected {
+			t.Fatalf("开关=%q 不是「恰 open」⇒ 必须仍拒发，实得 Rejected=false", v)
+		}
+	}
+	// ③ **恰 open** ⇒ 旧行为逐字同
+	t.Setenv(OutbudgetFailModeEnv, "open")
+	var buf bytes.Buffer
+	oldOut := log.Writer()
+	log.SetOutput(&buf)
+	got := ApplyTokenBudget(in)
+	log.SetOutput(oldOut)
+	if got.Rejected || got.RejectCode != "" || got.RejectReason != "" {
+		t.Fatalf("开关=open 必须退回旧档（不拒发、不带码），实得 %+v", got)
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(got.Body, &obj); err != nil {
+		t.Fatal(err)
+	}
+	if v, _ := obj["max_tokens"].(float64); int(v) != 22438 {
+		t.Fatalf("旧档：调用方原值 22438 按上限口径原样放行，实得 %v", obj["max_tokens"])
+	}
+	if v, _ := obj["max_output_tokens"].(float64); int(v) != 22438 {
+		t.Fatalf("旧档：两种格式都要写，max_output_tokens 实得 %v", obj["max_output_tokens"])
+	}
+	want := "⚠️ 输出预算：提示已超上下文（ctx=8192 来源=档案(事实) prompt≈6500）——本次不给输出额度" +
+		"（调用方原值仍按上限口径放行；不再无条件覆盖）"
+	if !strings.Contains(buf.String(), want) {
+		t.Fatalf("旧档那行日志必须逐字不变：\nwant=%s\ngot=%s", want, buf.String())
+	}
+}
+
+// ⑤ 拒发的**回报面**：Rejected ＋ 机器可识别错误码 ＋ 可读原因（✗ 不是只写一行日志）。
+func TestOutbudgetFailClosed_RejectCodeAndReason(t *testing.T) {
+	// 甲：提示已超上下文（ctx=8192 / prompt≈6500）
+	bodyA := outbudgetBody(t, 26000, 22438)
+	gotA := ApplyTokenBudget(TokenBudgetInput{Model: "m", ForwardBody: bodyA, CtxWindow: 8192,
+		CtxSource: "档案(事实)", Cap: 32768, CapSource: "默认"})
+	if !gotA.Rejected || gotA.RejectCode != outBudgetRejectCodeOverCtx {
+		t.Fatalf("超上下文 ⇒ Rejected=true 且 code=%q，实得 %+v", outBudgetRejectCodeOverCtx, gotA)
+	}
+	for _, seg := range []string{"输出预算", "提示已超上下文", "ctx=8192", "prompt≈6500", "本次拒发", "fail-closed"} {
+		if !strings.Contains(gotA.RejectReason, seg) {
+			t.Fatalf("拒发原因必须逐字可读（缺 %q）：%s", seg, gotA.RejectReason)
+		}
+	}
+	if !bytes.Equal(gotA.Body, bodyA) {
+		t.Fatalf("拒发 ⇒ Body 一个字节都不许动：%s", gotA.Body[:min(80, len(gotA.Body))])
+	}
+
+	// 乙：剩余输出空间不足（0 < avail < outBudgetMinAvail，报话里带阈值）
+	bodyB := outbudgetBody(t, 7000, 0)
+	gotB := ApplyTokenBudget(TokenBudgetInput{Model: "m", ForwardBody: bodyB, CtxWindow: 4096,
+		CtxSource: "档案(事实)", Cap: 32768, CapSource: "默认"})
+	if !gotB.Rejected || gotB.RejectCode != outBudgetRejectCodeRemainder {
+		t.Fatalf("剩余不足 ⇒ Rejected=true 且 code=%q，实得 %+v", outBudgetRejectCodeRemainder, gotB)
+	}
+	for _, seg := range []string{"剩余输出额度不足", "剩余≈298", "< 512", "本次拒发", "fail-closed"} {
+		if !strings.Contains(gotB.RejectReason, seg) {
+			t.Fatalf("拒发原因必须逐字可读（缺 %q）：%s", seg, gotB.RejectReason)
+		}
+	}
+	if !bytes.Equal(gotB.Body, bodyB) {
+		t.Fatalf("拒发 ⇒ Body 一个字节都不许动：%s", gotB.Body[:min(80, len(gotB.Body))])
+	}
+}
+
+// ⑥ 端到端（声明袋 → 裁决 → 回报）：ApplyAdapterOverrides 必须把拒发整枚**回传**给调用方。
+// 这正是「机制在、接线不在」那一格的判据：只改 ApplyTokenBudget 而不把这个返回值交出去 ⇒ 本用例红
+// （旧签名 `[]byte` 拿不到它 ⇒ 网关只能照发，就是本修要治的病）。
+func TestApplyAdapterOverrides_RejectPropagatesToCaller(t *testing.T) {
+	t.Setenv("ZERG_EGG_PROFILE_DIR", t.TempDir()) // 无档案 ⇒ ctx 与上限都走声明袋
+	ada := &bareAdapter{}
+	g := &Gateway{
+		adapterRegistry: map[string]plugin.Plugin{"deepseek-v4-flash": ada},
+		config:          fleetWithDecl(t, "deepseek-v4-flash", 8192, 32768),
+	}
+	body := outbudgetBody(t, 26000, 22438)
+	out, bud := g.ApplyAdapterOverrides("deepseek-v4-flash", body, ada)
+	if !bud.Rejected {
+		t.Fatalf("声明袋里的 ctx=8192 + prompt≈6500 ⇒ 必须拒发并回传，实得 %+v", bud)
+	}
+	if bud.RejectCode == "" || bud.RejectReason == "" {
+		t.Fatalf("拒发必须带回错误码与可读原因（✗ 只写日志）：%+v", bud)
+	}
+	// 拒发**不进任何输出额度**：调用方原值照旧、也不补 max_output_tokens 那一格。
+	// （声明袋里那几处与额度无关的覆盖 —— 如温度 —— 本来就已经落进 body，不在此列。）
+	var obj map[string]any
+	if err := json.Unmarshal(out, &obj); err != nil {
+		t.Fatalf("拒发时交回的请求体仍是合法 JSON：%v", err)
+	}
+	if _, has := obj["max_output_tokens"]; has {
+		t.Fatalf("拒发不许补任何输出额度字段：%s", out[:min(80, len(out))])
+	}
+	if v, _ := obj["max_tokens"].(float64); int(v) != 22438 {
+		t.Fatalf("拒发不许改写调用方原值（应仍是 22438），实得 %v", obj["max_tokens"])
 	}
 }

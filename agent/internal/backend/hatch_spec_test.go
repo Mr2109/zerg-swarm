@@ -10,6 +10,7 @@ package backend
 //   - 映射产物能过 hatch.Spec.Validate（即「原件齐的卵真的能孵」）。
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -965,6 +966,146 @@ func TestHatchSpec_NoProfileIsRejectedByValidate(t *testing.T) {
 }
 
 // argAfter 取 flag 后面的那个参数（找不到返回 ""）。
+// TestHatchSpec_WeightShardGroupExpand 权重分片组展开（llama.cpp `gguf-split` 产物）。
+//
+// 真机故障（2026-10-16 edge-node 实测·逐字）：只挂第 1 片时，引擎在装载期**自算全部片**
+// （upstream src/llama-model-loader.cpp:609-612 llama_get_list_splits ＋ SPLIT_PATH_FORMAT
+// "%s-%05d-of-%05d.gguf" ＋ llama_split_prefix 纯字符串截尾）⇒ 逐字退
+//
+//	E gguf_init_from_file: failed to open GGUF file '/models/…-00002-of-00004.gguf' (No such file or directory)
+//
+// 本用例钉住四态：全片在 ⇒ 每片各落一格 /models/<原名> ＋ WeightFiles 含全片 ＋ -m 仍指第 1 片；
+// 缺片 ⇒ 拒孵并点名缺哪片；带分片号却只有它自己 ⇒ 同样拒孵（绝不静默只挂一片）；
+// 单片（不带分片号）⇒ rewrites/binds/WeightFiles 与改前逐字相同。
+func TestHatchSpec_WeightShardGroupExpand(t *testing.T) {
+	withMainlineEngineProbe(t, "/opt/llama/bin/llama-server")
+	withWorkDirRoot(t)
+
+	const group = "Qwen3.8-Flash-Next-UD-Q4_K_XL"
+	shardName := func(n, total int) string {
+		return fmt.Sprintf("%s-%05d-of-%05d.gguf", group, n, total)
+	}
+
+	t.Run("全片在 ⇒ 逐片落 /models/<原名> · WeightFiles 含全片 · -m 仍指第 1 片", func(t *testing.T) {
+		dir := t.TempDir()
+		shardPath := func(n int) string { return filepath.Join(dir, shardName(n, 4)) }
+		for n := 1; n <= 4; n++ {
+			if err := os.WriteFile(shardPath(n), []byte("x"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		e := &registry.ModelEntry{Backend: "llama-server", File: shardPath(1),
+			SchemaVersion: registry.EggSchemaVersionCurrent}
+		e.SetEggNameForTest("ShardEgg-Full")
+		spec, err := hatchSpecFor(e, "llama-server", 9071, hatchTestProfile())
+		if err != nil {
+			t.Fatalf("四片齐时映射应成功，实得 %v", err)
+		}
+		// 每片各一条只读绑定，落 /models/<原名>；顺序 = 第 1 片（entry.file）→ 2 → 3 → 4
+		want := []string{
+			shardPath(1) + ":" + spaceWeightsDir + "/" + shardName(1, 4),
+			shardPath(2) + ":" + spaceWeightsDir + "/" + shardName(2, 4),
+			shardPath(3) + ":" + spaceWeightsDir + "/" + shardName(3, 4),
+			shardPath(4) + ":" + spaceWeightsDir + "/" + shardName(4, 4),
+		}
+		if len(spec.ExtraROBinds) != len(want) {
+			t.Fatalf("四片齐应恰好 %d 条只读绑定（每片一条 · 第 1 片不重复落），实得 %d 条：%v",
+				len(want), len(spec.ExtraROBinds), spec.ExtraROBinds)
+		}
+		for i, w := range want {
+			if spec.ExtraROBinds[i] != w {
+				t.Errorf("只读绑定[%d] 应为 %q，实得 %q", i, w, spec.ExtraROBinds[i])
+			}
+		}
+		// WeightFiles 含全片（反推循环一字不改 ⇒ 自动并入声明清单）
+		for n := 1; n <= 4; n++ {
+			hit := false
+			for _, wf := range spec.WeightFiles {
+				if filepath.Clean(wf) == filepath.Clean(shardPath(n)) {
+					hit = true
+				}
+			}
+			if !hit {
+				t.Errorf("WeightFiles 应含分片 %q，实得 %v", shardPath(n), spec.WeightFiles)
+			}
+		}
+		// -m 仍指第 1 片（否则引擎 `illegal split file idx`）
+		if got := argAfter(spec.EngineArgs, "-m"); got != spaceWeightsDir+"/"+shardName(1, 4) {
+			t.Errorf("-m 仍应指第 1 片的空内路径 %q，实得 %q（参数=%v）",
+				spaceWeightsDir+"/"+shardName(1, 4), got, spec.EngineArgs)
+		}
+		// 不得出现「整目录挂到 /models」的原形态
+		for _, b := range spec.ExtraROBinds {
+			if strings.HasSuffix(b, ":"+spaceWeightsDir) {
+				t.Errorf("不得有「整目录挂到 %s」的绑定：%q", spaceWeightsDir, b)
+			}
+		}
+		if err := spec.Validate(); err != nil {
+			t.Errorf("四片齐的映射产物应能过孵化声明校验，实得 %v", err)
+		}
+	})
+
+	t.Run("缺片 ⇒ 拒孵且报话点名缺哪片", func(t *testing.T) {
+		dir := t.TempDir()
+		shardPath := func(n int) string { return filepath.Join(dir, shardName(n, 4)) }
+		for _, n := range []int{1, 2, 4} { // 缺第 3 片
+			if err := os.WriteFile(shardPath(n), []byte("x"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		e := &registry.ModelEntry{Backend: "llama-server", File: shardPath(1),
+			SchemaVersion: registry.EggSchemaVersionCurrent}
+		e.SetEggNameForTest("ShardEgg-Missing")
+		_, err := hatchSpecFor(e, "llama-server", 9072, hatchTestProfile())
+		if err == nil {
+			t.Fatal("缺第 3 片时必须拒孵（引擎自算全部片 ⇒ 缺片必在装载期 failed to open GGUF file）")
+		}
+		if !strings.Contains(err.Error(), shardPath(3)) {
+			t.Errorf("拒孵报话应点名缺失的分片 %q，实得 %q", shardPath(3), err.Error())
+		}
+	})
+
+	t.Run("带分片号却只有它自己 ⇒ 拒孵（不静默只挂一片）", func(t *testing.T) {
+		dir := t.TempDir()
+		only := filepath.Join(dir, shardName(1, 4))
+		if err := os.WriteFile(only, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		e := &registry.ModelEntry{Backend: "llama-server", File: only,
+			SchemaVersion: registry.EggSchemaVersionCurrent}
+		e.SetEggNameForTest("ShardEgg-Solo")
+		_, err := hatchSpecFor(e, "llama-server", 9073, hatchTestProfile())
+		if err == nil {
+			t.Fatal("带分片号但同目录缺其余片时必须拒孵（旧行为只挂第 1 片 ⇒ 引擎装载期秒退）")
+		}
+		if !strings.Contains(err.Error(), shardName(2, 4)) {
+			t.Errorf("拒孵报话应点名缺失分片 %q，实得 %q", shardName(2, 4), err.Error())
+		}
+	})
+
+	t.Run("单片（不带分片号）⇒ 旧行为逐字不变", func(t *testing.T) {
+		dir := t.TempDir()
+		one := filepath.Join(dir, "GLM-5.3-Flash-Q4_K_M.gguf")
+		if err := os.WriteFile(one, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		e := &registry.ModelEntry{Backend: "llama-server", File: one,
+			SchemaVersion: registry.EggSchemaVersionCurrent}
+		e.SetEggNameForTest("Single-File-Egg")
+		spec, err := hatchSpecFor(e, "llama-server", 9074, hatchTestProfile())
+		if err != nil {
+			t.Fatalf("单片卵映射应成功，实得 %v", err)
+		}
+		wantB := one + ":" + spaceWeightsDir + "/GLM-5.3-Flash-Q4_K_M.gguf"
+		if len(spec.ExtraROBinds) != 1 || spec.ExtraROBinds[0] != wantB {
+			t.Errorf("单片卵只读绑定应与改前逐字相同（恰 1 条 %q），实得 %v", wantB, spec.ExtraROBinds)
+		}
+		if len(spec.WeightFiles) != 1 || filepath.Clean(spec.WeightFiles[0]) != filepath.Clean(one) {
+			t.Errorf("单片卵 WeightFiles 应与改前逐字相同（恰 1 条 %q），实得 %v", one, spec.WeightFiles)
+		}
+	})
+}
+
 func argAfter(args []string, flag string) string {
 	for i, a := range args {
 		if a == flag && i+1 < len(args) {

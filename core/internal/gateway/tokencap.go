@@ -27,6 +27,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"strings"
 
 	"github.com/Mr2109/zerg-swarm/core/internal/config"
@@ -140,6 +141,44 @@ func RequestMaxTokens(body []byte) int {
 	return best
 }
 
+// ── 输出预算 fail-closed（一号修法 · 2026-10-16）──────────────────────────────────────
+//
+// 环境开关（循既有 `ZERG_*` 范式：`ZERG_EGG_PROFILE_DIR`〔eggprofile.go〕/ `ZERG_ROUTE_PINS`
+// 〔routepin.EnvPath〕/ `ZERG_DEBUG_SAMPLING_DRYRUN`〔obs/sampling〕同型）：
+//
+//	默认 **closed** ⇒ 提示已超/接近上下文、或剩余输出空间不足 ⇒ **拒发**（fail-closed，回错误码）；
+//	**恰** `open`       ⇒ 旧行为**逐字不变**（放行 ＋ 那行 `⚠️ 输出预算：…` 日志）。
+//
+// ★ 逃生阀为什么必须有：线上若出误判，人得能**一键回到旧档**（改环境变量即生效，不必重编）——
+// ✗ 不许写成不可关的硬编码（那等于把旧档永久删掉，超出「收紧默认」的范围）。
+const OutbudgetFailModeEnv = "ZERG_OUTBUDGET_FAIL_MODE"
+
+// 两态字面（写死）：**只有恰等于 `open`** 才是旧行为；其余一切取值（未设置 / 空串 / `OPEN` /
+// `closed` / `open ` 带尾空格 / 乱码）一律 **closed** —— 判不了就按拒发（fail-closed 方向偏安全）。
+const (
+	outbudgetFailModeClosed = "closed"
+	outbudgetFailModeOpen   = "open"
+)
+
+// outBudgetFailClosed —— 现读开关（**每次裁决都现读**，不缓存：改了环境变量当场生效，无需重编）。
+func outBudgetFailClosed() bool {
+	return os.Getenv(OutbudgetFailModeEnv) != outbudgetFailModeOpen
+}
+
+// outBudgetMinAvail —— 剩余输出空间的**硬下限**（可命名常量）：算出的剩余空间低于它 ⇒ 判「不足」⇒ 拒发。
+//
+// 为什么是 512（而不是沿用 minOutTokens 的 1024）：真机末发 `usage` 恰撞顶（completion=111 /
+// prompt=32657 / total=32768）、正文为空（那 111 token 全是思考）⇒ 512 是「还排得下一行有内容的
+// 答复」的量级；低于它等于把这一发交给引擎 `-c` 去硬切。★ 阈值比 minOutTokens 低是**故意的**：
+// 后者是「给多少额度」的兜底（会把只剩几十 token 的窘境粉饰成 1024），前者是「还能不能发」的硬线。
+const outBudgetMinAvail = 512
+
+// 拒发错误码（机器可识别：经 `adp.TransformError` 回给调用方，✗ 不是只写日志）。
+const (
+	outBudgetRejectCodeOverCtx   = "output_budget_prompt_over_ctx"
+	outBudgetRejectCodeRemainder = "output_budget_remainder_below_min"
+)
+
 // TokenBudgetInput 输出预算裁决的入参（结构化：全是 int，位置参数极易写反）。
 type TokenBudgetInput struct {
 	Model       string
@@ -152,11 +191,20 @@ type TokenBudgetInput struct {
 
 // TokenBudgetResult 裁决产物。
 type TokenBudgetResult struct {
-	Body      []byte // 已写回 max_tokens / max_output_tokens 的请求体
+	Body      []byte // 已写回 max_tokens / max_output_tokens 的请求体（**拒发时＝入参原字节**）
 	Limit     TokenLimit
 	Dyn       int // 动态额度（默认值来源；≤0 表示提示已超上下文）
 	CtxUsed   int
 	PromptEst int
+
+	// ★ 一号修法（2026-10-16）新增三格：fail-closed **拒发**的裁决面。
+	//
+	// 拒发时 Body **一个字节都不动**（不进任何输出额度、也不改写调用方原值）；Limit 只剩**诊断**意义
+	// （它记的是「若放行会给多少」，✗ 未写回）。调用方要么整发不发，要么按自己的口径重发小一点的请求
+	// —— ✗ 绝不再「原样放行 + 交引擎去截断」。
+	Rejected     bool   // true = 本次**拒发**（不转发）
+	RejectCode   string // 机器可识别的错误码（空 = 未拒发）
+	RejectReason string // 人可读的拒发理由（含 ctx / prompt≈ / 阈值，逐字可读）
 }
 
 // ApplyTokenBudget 一次请求的输出额度裁决 + 写回请求体（④ 的核心；**纯逻辑**，副作用只有日志）。
@@ -173,6 +221,34 @@ func ApplyTokenBudget(in TokenBudgetInput) TokenBudgetResult {
 		// 钳位**必须**留痕（真机症状正是"声明被静默丢弃、没人看得出上限没生效"）。
 		log.Printf("⚠️ adapter %s: max_tokens clamped: want=%d cap=%d（上限来源=%s；调用方给=%d 动态额度=%d）",
 			in.Model, limit.Want, limit.Cap, in.CapSource, limit.Want, dyn)
+	}
+	// ★★ 一号修法（2026-10-16 · 网关侧 fail-closed）：提示已超/接近上下文、或剩余输出空间 <
+	// outBudgetMinAvail ⇒ **不再放行**，改为**逐字拒发并回报**（Rejected ＋ 错误码 ＋ 可读原因）。
+	//
+	// 为什么必须 fail-closed（真机事故逐字）：本地卵 Qwen3.8-Flash-Next@edge-node（引擎 `-c 32768`）干一件
+	// 「读 1448 行缺口账」的活时，第 2–14 发网关只打一行「本次不给输出额度（调用方原值仍按上限口径
+	// 放行）」⇒ 那 13 发**照发**、唯一上限＝引擎 `-c`；末发 usage 恰撞顶（completion=111 /
+	// prompt=32657 / total=32768）且正文为空（那 111 token 极可能全是思考）⇒ 模型在思考段被 ctx
+	// 硬切，子代理循环把这截断文本当「无工具调用的最终答复」⇒ 判 completed ⇒ **状态假成功、产物
+	// 0 字节**。⇒ 「放行 + 一行日志」拦不住它：调用方拿到的仍是正常响应，必须把错误码**回给调用方**。
+	if outBudgetFailClosed() {
+		avail, cw, pe := outBudgetAvail(ctxUsed, promptEst)
+		if avail <= 0 {
+			res.Rejected = true
+			res.RejectCode = outBudgetRejectCodeOverCtx
+			res.RejectReason = fmt.Sprintf("输出预算：提示已超上下文（ctx=%d 来源=%s prompt≈%d）——本次拒发（fail-closed）",
+				cw, in.CtxSource, pe)
+			log.Printf("⛔ adapter %s: %s | code=%s", in.Model, res.RejectReason, res.RejectCode)
+			return res
+		}
+		if avail < outBudgetMinAvail {
+			res.Rejected = true
+			res.RejectCode = outBudgetRejectCodeRemainder
+			res.RejectReason = fmt.Sprintf("输出预算：剩余输出额度不足（剩余≈%d < %d；ctx=%d 来源=%s prompt≈%d）——本次拒发（fail-closed）",
+				avail, outBudgetMinAvail, cw, in.CtxSource, pe)
+			log.Printf("⛔ adapter %s: %s | code=%s", in.Model, res.RejectReason, res.RejectCode)
+			return res
+		}
 	}
 	if dyn <= 0 {
 		log.Printf("⚠️ 输出预算：提示已超上下文（ctx=%d 来源=%s prompt≈%d）——本次不给输出额度"+
@@ -202,7 +278,10 @@ func ApplyTokenBudget(in TokenBudgetInput) TokenBudgetResult {
 //
 // 兼容口径（写死）：**没有任何 max_tokens 声明**的模型（适配器不声明、fleet 不声明、档案也没有）
 // 行为与改动前**逐字一致**（不进预算分支）——本次不动它们的额度口径。
-func (g *Gateway) ApplyAdapterOverrides(model string, forwardBody []byte, ada plugin.Plugin) []byte {
+// ★ 返回 (请求体, 预算裁决)：fail-closed 拒发时第二枚的 `Rejected`/`RejectCode`/`RejectReason` 非零，
+// **调用方（gateway.go 的请求处理器）必须据此回错误码并中止本次转发** —— ✗ 不许忽略它（忽略了就等于
+// 退回「放行 + 一行日志」那套旧档，那正是本修要治的病）。
+func (g *Gateway) ApplyAdapterOverrides(model string, forwardBody []byte, ada plugin.Plugin) ([]byte, TokenBudgetResult) {
 	// v2.5.12 治本之二（2026-09-24 · 依据 `排查-卵子代理回声与会话串话-v2.5.12-20260924.md` §③ H4）：
 	// 声明袋调用要把 **prompt** 一起给进去。
 	//
@@ -222,11 +301,11 @@ func (g *Gateway) ApplyAdapterOverrides(model string, forwardBody []byte, ada pl
 		log.Printf("⚠️ adapter %s execution failed (using defaults): %v", model, aerr)
 	}
 	if aerr != nil || out.Result == nil {
-		return forwardBody
+		return forwardBody, TokenBudgetResult{}
 	}
 	res, ok := out.Result.(map[string]any)
 	if !ok {
-		return forwardBody
+		return forwardBody, TokenBudgetResult{}
 	}
 	// 温度/采样参数覆盖
 	if t, ok := res["temperature"].(float64); ok {
@@ -259,6 +338,11 @@ func (g *Gateway) ApplyAdapterOverrides(model string, forwardBody []byte, ada pl
 			CapSource:   capSrc,
 		})
 		forwardBody = bud.Body
+		if bud.Rejected {
+			// fail-closed：本次**拒发** —— 整枚裁决交回调用方（错误码 ＋ 可读原因）。
+			// 本函数不碰 IO（转发与否是调用方的事），故这里只如实回传、不多做一步。
+			return forwardBody, bud
+		}
 	}
 	// reasoning_effort 覆盖（思考深度——适配器声明——Mr2109 low）
 	if re, ok := res["reasoning_effort"].(string); ok && re != "" {
@@ -268,7 +352,7 @@ func (g *Gateway) ApplyAdapterOverrides(model string, forwardBody []byte, ada pl
 	if ts, ok := res["timeout_sec"].(int); ok && ts > 0 {
 		g.setRequestTimeout(model, ts)
 	}
-	return forwardBody
+	return forwardBody, TokenBudgetResult{}
 }
 
 // resolveCtxWindow 上下文来源三态（④）：档案(事实) > 声明(意图，已在声明袋里) > 默认。

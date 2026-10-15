@@ -40,22 +40,47 @@ func thinkFactor(model string) float64 {
 	return 1.0
 }
 
-// DynamicMaxTokens — 按剩余空间动态给出输出额度。
+// normalizeOutBudget —— ctx / promptEst 的**同一真源**归一（ctx ≤ 0 ⇒ 保守默认；promptEst < 0 ⇒ 0）。
 //
-// 返回 (maxOut, ctxUsed, promptEst)：
-//
-//	maxOut == 0 ⇒ 提示已超限，调用方必须**拒绝并教学式报错**（不得静默截断、不得退回写死值）。
-func DynamicMaxTokens(model string, ctx, promptEst int) (int, int, int) {
+// 抽出来是为了让「剩余空间」这个量在 DynamicMaxTokens（算**给多少**额度）与 outBudgetAvail
+// （判**还能不能发**）两处**只算一份** —— ✗ 不各写一遍（两把尺必漂：改一处忘另一处）。
+func normalizeOutBudget(ctx, promptEst int) (int, int) {
 	if ctx <= 0 {
 		ctx = defaultCtxWindow // 卵未声明 ⇒ 保守默认（并在日志标注来源，不假设 256k）
 	}
 	if promptEst < 0 {
 		promptEst = 0
 	}
+	return ctx, promptEst
+}
+
+// outBudgetReserve —— 安全余量（与本件抬头那条公式同一真源：ctx×10%，下限 minReserveTokens）。
+func outBudgetReserve(ctx int) int {
 	reserve := ctx / 10
 	if reserve < minReserveTokens {
 		reserve = minReserveTokens
 	}
+	return reserve
+}
+
+// outBudgetAvail —— 本次请求**真正可给的输出空间**（avail = ctx − promptEst − reserve；同源公式）。
+//
+// ★ 为什么阈值判在**它**身上、而不是 DynamicMaxTokens 的返回值：那条返回值被 minOutTokens(1024)
+// 兜底 —— 剩余空间只剩几十 token 时它照样回 1024 ⇒ 拿它当「剩余不足」的判据**等于没判**（阈值被
+// 兜底掩盖）。返回 (avail, ctxUsed, promptEst)：ctxUsed 是归一后的 ctx（日志/报话要能分清来源用）。
+func outBudgetAvail(ctx, promptEst int) (int, int, int) {
+	ctx, promptEst = normalizeOutBudget(ctx, promptEst)
+	return ctx - promptEst - outBudgetReserve(ctx), ctx, promptEst
+}
+
+// DynamicMaxTokens — 按剩余空间动态给出输出额度。
+//
+// 返回 (maxOut, ctxUsed, promptEst)：
+//
+//	maxOut == 0 ⇒ 提示已超限，调用方必须**拒绝并教学式报错**（不得静默截断、不得退回写死值）。
+func DynamicMaxTokens(model string, ctx, promptEst int) (int, int, int) {
+	ctx, promptEst = normalizeOutBudget(ctx, promptEst)
+	reserve := outBudgetReserve(ctx)
 	avail := ctx - promptEst - reserve
 	if avail <= 0 {
 		return 0, ctx, promptEst

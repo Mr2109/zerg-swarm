@@ -112,6 +112,13 @@ var mainlineEngineProbe = detectLlamaServerPath
 // 这里再列一次是因为 registry 的那份未导出（本函数在 backend 包内）。
 var cardEnvKeys = []string{"HIP_VISIBLE_DEVICES", "ROCR_VISIBLE_DEVICES", "CUDA_VISIBLE_DEVICES"}
 
+// weightShardRe 权重分片 gguf 的**尾式**：`-<五位序号>-of-<五位总片数>.gguf`
+// （llama.cpp `gguf-split` 的产物命名；edge-node 实测样本 `Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf`）。
+//
+// 只认尾式、不锚前缀：前缀（组键）在 spaceInputMappings 里按「截掉尾段」现算，口径与
+// scripts/calib/calib-x3-model.sh 的「权重分片」段**同源**（组键 ＝ 前缀 ＋ 总片数）。
+var weightShardRe = regexp.MustCompile(`-([0-9]{5})-of-([0-9]{5})\.gguf$`)
+
 // hatchSpecFor 把一枚卵的声明映射成孵化声明（**纯函数**，fail-closed）。
 //
 // 入参：
@@ -494,6 +501,62 @@ func spaceInputMappings(eggID string, entry *registry.ModelEntry, hostWeightFile
 		return nil, nil, fmt.Errorf("卵 %s：%w", eggID, err)
 	}
 	binds := []string{weightBind}
+
+	// 权重分片组展开（llama.cpp `gguf-split` 产物）——2026-10-16 edge-node 实测定论。
+	//
+	// 为什么必须**逐片**挂：引擎**自己算全部片**，不靠 argv 列出来 —— upstream
+	// src/llama-model-loader.cpp:609-612 `splits = llama_get_list_splits(fname, idx, n_split)`，
+	// 命名式 `SPLIT_PATH_FORMAT = "%s-%05d-of-%05d.gguf"`、`llama_split_prefix` 把尾部
+	// `-<序号>-of-<总片数>.gguf` 当**纯字符串截掉**（含目录）⇒ 派生路径恒为
+	// `<第 1 片目录>/<去序号段基名>-0000N-of-0000M.gguf`。只挂第 1 片时引擎装载期逐字退
+	// `E gguf_init_from_file: failed to open GGUF file '/models/…-00002-of-00004.gguf' (No such file or directory)`。
+	// ⇒ 每片只要以**原名**（含 `-NNNNN-of-MMMMM.gguf`）落到同一个 /models 下，引擎逐片都找得到；
+	// `-m` 仍旧指第 1 片（entry.file）—— 缺片则拒孵并**点名缺哪片**：比「孵起来、引擎装载期秒退」
+	// 更早更清楚（§6.9 静默失效不得当凭据）。文件名不带分片号（单片 gguf）⇒ 零动作，
+	// rewrites/binds/WeightFiles 与改前**逐字相同**。
+	if base := filepath.Base(hostWeightFile); weightShardRe.MatchString(base) {
+		m := weightShardRe.FindStringSubmatch(base)
+		total, cerr := strconv.Atoi(m[2])
+		if cerr != nil || total <= 0 {
+			return nil, nil, fmt.Errorf("卵 %s：权重文件 %q 的分片总片数读不出（%q）——拒孵（组键定不下来，不猜）",
+				eggID, base, m[2])
+		}
+		prefix := base[:len(base)-len(m[0])]
+		shardDir := filepath.Dir(hostWeightFile)
+		shardHost := func(n int) string {
+			return filepath.Join(shardDir, fmt.Sprintf("%s-%05d-of-%05d.gguf", prefix, n, total))
+		}
+		var missing []string
+		for n := 1; n <= total; n++ {
+			if _, serr := os.Stat(shardHost(n)); serr != nil {
+				missing = append(missing, shardHost(n))
+			}
+		}
+		if len(missing) > 0 {
+			return nil, nil, fmt.Errorf("卵 %s：权重文件 %q 是同组 %d 片（组键 %q ＋ `-of-%05d.gguf`）中的一片，但同目录缺 %d 片：%s —— "+
+				"拒孵：引擎装载期会按命名式**自算全部片**（llama.cpp SPLIT_PATH_FORMAT），缺一片就 `failed to open GGUF file`；"+
+				"孵化器只照单挂文件，绝不替卵跳过或缺省缺失的片（§6.9）",
+				eggID, base, total, prefix, total, len(missing), strings.Join(missing, "、"))
+		}
+		for n := 1; n <= total; n++ {
+			host := shardHost(n)
+			if filepath.Clean(host) == filepath.Clean(hostWeightFile) {
+				continue // 第 1 片就是 entry.file 那一格（已绑、已声明）⇒ 不重复落绑定
+			}
+			space := spaceWeightsDir + "/" + filepath.Base(host)
+			if prev, dup := claimed[space]; dup {
+				return nil, nil, fmt.Errorf("卵 %s：权重分片 %q 与 %s 的空间内落点都是 %q——拒孵：逐文件挂载时后挂的会盖住先挂的，"+
+					"落点撞车等于有一份静默不见了", eggID, host, prev, space)
+			}
+			claimed[space] = "权重分片 " + host
+			b, berr := roBind(host, space)
+			if berr != nil {
+				return nil, nil, fmt.Errorf("卵 %s：%w", eggID, berr)
+			}
+			binds = append(binds, b)
+			rewrites = append(rewrites, pathRewrite{host: host, space: space})
+		}
+	}
 
 	if p := strings.TrimSpace(entry.MMProj); p != "" {
 		host := expandTilde(p)

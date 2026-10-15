@@ -802,7 +802,18 @@ func (g *Gateway) handleRequest(w http.ResponseWriter, r *http.Request) {
 	// 超了 ⇒ 钳到上限 + `max_tokens clamped` 日志）。钳位逻辑必须能单独验收 ⇒ 见 tokencap.go
 	// （ApplyTokenBudget / ClampMaxTokens）与 tokencap_test.go。
 	if ada, ok := g.adapterRegistry[model]; ok {
-		forwardBody = g.ApplyAdapterOverrides(model, forwardBody, ada)
+		var bud TokenBudgetResult
+		forwardBody, bud = g.ApplyAdapterOverrides(model, forwardBody, ada)
+		if bud.Rejected {
+			// ★★ 一号修法（2026-10-16 · 网关侧 fail-closed）：提示已超/接近上下文、或剩余输出空间不足
+			// ⇒ **中止本次转发并回错误码**（✗ 不是旧档「放行 + 一行日志」）。
+			// 药引（真机逐字）：第 2–14 发只打了一行「本次不给输出额度（调用方原值仍按上限口径放行）」
+			// ⇒ 网关照发 ⇒ 引擎在 ctx 上硬切思考段 ⇒ 子代理把截断文本当「无工具调用的最终答复」⇒
+			// 判 completed ⇒ **状态假成功、产物 0 字节**。⇒ 必须把错误码回给调用方（fail-closed）。
+			log.Printf("⛔ outbudget fail-closed: model=%s code=%s | %s", model, bud.RejectCode, bud.RejectReason)
+			adp.TransformError(w, http.StatusBadRequest, bud.RejectCode, bud.RejectReason)
+			return
+		}
 	}
 
 	// 2.7 快路径逐字精简（渐进式压缩：50%前每次请求前轻量删噪）
