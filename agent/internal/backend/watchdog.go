@@ -34,7 +34,10 @@ package backend
 //	· `no_progress` 默认 **45 min**，`0` ＝ **关**（进度判卡关闭 ⇒ 只保留「彻底停摆」那条早杀）；
 //	· prefill 预算 = **`est_ctx ÷ 实测 tok/s × 2`**（例：132K ÷ 96 tok/s × 2 ≈ 46 min）——
 //	  按**现读窗口 ÷ 实测速率**算出来，✗ 不写死；
-//	· **有效预算 = `max(no_progress, prefill 预算)`**（两把尺同时在场时取宽的那把）。
+//	· **有效预算 = `max(no_progress, prefill 预算, 单卵时限)`**（几把尺同时在场时取宽的那把）。
+//	· ★ **单卵时限（`EggMax` · CLI `--timeout`）已降为「最终兜底」**：它**不再按时限直接判死**
+//	  （判死只看有没有进度），而是**并入有效预算、只抬不降**（`ProgressBudget`）。
+//	  撤掉独立墙钟判死的理由（严格涵盖的证明）见 `ProgressBudget` 的函数头注。
 //	· ★ 每一层的硬窗口都必须**可配**（env 旋钮齐备）或**可显式豁免**，且**豁免要留痕**（`Waived`）。
 //
 // ★ 判卡后**两级、且有界**（J5）：先 **grace**（请求优雅退出，默认 30 s；批作业档 120–300 s）
@@ -115,9 +118,12 @@ type WatchdogConfig struct {
 	// DeadFlatSamples 正文阶段（T14）：连续几次采样"无推进且 CPU 工时也不动"就**立刻判死**
 	// （提前判死，不必等窗口用满；默认 2 ⇒ 10 s）。这是"彻底停摆"的证据，与"忙但不推进"区分开。
 	DeadFlatSamples int
-	// EggMax 单卵时限（`GAP-20260926-201`）：本枚卵从起跑到判死的最长墙钟上界，默认 0 = 不设
+	// EggMax 单卵时限（`GAP-20260926-201`）：本枚卵从起跑到判死的**最终兜底**值，默认 0 = 不设
 	// （与旧口径逐字一致，一键回退）。★ 它是**可配**的（env `ZERG_EGG_MAX_S` / 逐枚 flag），
 	// 因此不违反"底下不许有不可配的硬 timeout"。
+	//
+	// ★ **已降为「最终兜底」**（✗ 不再是「到点就判死」的独立判据 —— 判死只看有没有进度）：
+	// 它**并入有效进度预算、只抬不降**（见 `ProgressBudget`）；`0` ＝ 本层不参与。
 	EggMax time.Duration
 
 	// ── ★ 两把正交时钟（`GAP-20261014-61` 的落地参数）────────────────────────────────
@@ -259,12 +265,14 @@ func PrefillBudget(estCtxTokens int, tokSPerSec float64) time.Duration {
 	return time.Duration(sec * float64(time.Second))
 }
 
-// ProgressBudget 有效进度预算 = **`max(no_progress, prefill 预算)`**，并给出**为什么是这个值**（进判词/观测面）。
+// progressBudgetBase 进度预算的**基准档**（✗ 不含单卵时限兜底 —— 兜底在 `ProgressBudget` 里并入）。
+//
+// 有效预算 = **`max(no_progress, prefill 预算)`**，并给出**为什么是这个值**（进判词/观测面）。
 //
 // 返回 `(0, 说明)` ＝ **进度判卡关闭**（不是"预算为零"）：
 // 此时只保留「彻底停摆」那条早杀（liveness 与 progress 双双冻结），其余一律不判 ——
 // 这就是 `no_progress: 0 ＝ 关` 那一档的真语义（✗ 不许把它读成"零秒就杀"）。
-func (c WatchdogConfig) ProgressBudget() (time.Duration, string) {
+func (c WatchdogConfig) progressBudgetBase() (time.Duration, string) {
 	np := c.NoProgress
 	pb := c.PrefillBudget
 	whyPB := ""
@@ -291,6 +299,30 @@ func (c WatchdogConfig) ProgressBudget() (time.Duration, string) {
 		return np, "取宽的那把：no_progress " + np.Round(time.Second).String() +
 			" ≥ prefill 预算 " + pb.Round(time.Second).String() + whyPB
 	}
+}
+
+// ProgressBudget 有效进度预算 ＝ **`max(no_progress, prefill 预算, 单卵时限)`**（进判词/观测面）。
+//
+// ★ **单卵时限（`EggMax` · CLI `--timeout` / env `ZERG_EGG_MAX_S`）已降为「最终兜底」**
+//
+//	（用户口径逐字：「DS4 虽然慢，只要他在输出，就应该没问题」）——
+//	它**不再是「到点就判死」的独立判据**，而是**并入有效预算、只抬不降**（取 max）。
+//
+//	为什么撤掉独立的墙钟判死、而不是把它改成「一个更大的数」：
+//	「耐心 ≥ 引擎实测档」的墙钟判死被「progress 冻结 ≥ 预算」这一条**严格涵盖**
+//	（一次请求里 progress 冻结时长必 ≤ 墙钟时长）⇒ 留着它只能在**预算之前**开火，
+//	而那正是「按时间杀**在输出的**慢卵」这条病根（现场：`--timeout 5m` 把一枚
+//	6.27 t/s 正在出 token 的 DS4 卵每 6m40s 杀一次）。⇒ 判死只留一把尺：**有没有进度**。
+//
+//	★ `0` ＝ 三层（no_progress / prefill 预算 / 单卵时限）**都没给** ⇒ 进度判卡关闭。
+func (c WatchdogConfig) ProgressBudget() (time.Duration, string) {
+	budget, why := c.progressBudgetBase()
+	if c.EggMax > budget {
+		budget = c.EggMax
+		why = "单卵时限兜底 " + c.EggMax.Round(time.Second).String() +
+			"（已并入有效预算 · 只抬不降 ∵ 单卵时限降为最终兜底）；原基准档：(" + why + ")"
+	}
+	return budget, why
 }
 
 // ── 单卵时限全通路（GAP-20260926-201）：CLI 旗标 ⇒ 下发体 ⇒ 主控透传 ⇒ 子端逐请求 ──────
@@ -516,7 +548,6 @@ func (w *Watchdog) Wait(done <-chan struct{}) (WatchdogVerdict, string) {
 		return WatchdogOK, ""
 	}
 
-	start := t0
 	budget, budgetWhy := w.cfg.ProgressBudget()
 	grace := w.graceOf()
 	w.obs.ProgressBudgetS = budget.Seconds()
@@ -539,14 +570,16 @@ func (w *Watchdog) Wait(done <-chan struct{}) (WatchdogVerdict, string) {
 
 	flatBoth := 0
 	for windowIdx := 0; ; windowIdx++ {
-		// 单卵时限（`GAP-20260926-201`）：**可配**（flag > env > 0）⇒ 不是"不可配的硬 timeout"。
-		if w.cfg.EggMax > 0 && w.deps.now().Sub(start) >= w.cfg.EggMax {
-			w.obs.CPUUsecDelta = 0
-			w.obs.Verdict = WatchdogStuckNoProgress
-			w.obs.Reason = fmt.Sprintf("单卵时限到（约 %s）⇒ 判卡住（可抬 / 可豁免：ZERG_EGG_MAX_S 或逐枚 --timeout）", w.cfg.EggMax)
-			w.fillClockObs()
-			return WatchdogStuckNoProgress, w.obs.Reason
-		}
+		// ★ 这里**曾经**有一条「单卵时限到 ⇒ 判死」的墙钟分支（`GAP-20260926-201`）。它已按用户口径
+		// **撤除**（「DS4 虽然慢，只要他在输出，就应该没问题」）：判死**只看有没有进度**（下面 ④ 那条），
+		// 单卵时限降为**最终兜底**并入有效预算（`ProgressBudget` ⇒ 只抬耐心、不再单独判死）。
+		// 为什么撤除、而不是留成「一个更大的墙钟」：见 `ProgressBudget` 的函数头注（严格涵盖的证明）。
+		//
+		// 现场病根（撤除它要治的那件事）：EDGE-NODE 的 `zerg-agentd` 日志——
+		//   `[backend] 看门狗判死: model=DeepSeek-V4-Flash-Vision-Exp verdict=stuck_no_progress
+		//    unit=zerg-deepseek-v4-flash-vision-exp 理由=单卵时限到（约 5m0s）⇒ 判卡住（置 crashed）`
+		// 而同刻引擎日志里它在**持续输出**（`gen=200 … decoding 6.27 t/s` → `gen=250 … 0.47 t/s`）
+		// ⇒ 墙钟分支把**活的慢卵**当了死的，约每 6m40s kill+重启一次。
 		// **输出优先**（先做一次非阻塞检查）：头若已经回来，就不再花这个窗口取证据 ——
 		// 否则 select 在两个就绪通道间随机选，可能"抢在 done 前"把已经正常的请求判死。
 		select {

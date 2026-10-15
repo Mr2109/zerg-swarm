@@ -530,7 +530,11 @@ func (h *ChatHandlers) SendMessageTool(w http.ResponseWriter, r *http.Request) {
 		if ierr != nil {
 			return nil, ierr
 		}
-		kr := &loopcore.Response{Content: ir.Content, Reasoning: ir.Reasoning, Finish: "stop",
+		fin := ir.Finish // 上游收尾原因原值（length/tool_calls/stop…）
+		if fin == "" {
+			fin = "stop" // 空值兜底 ⇒ 保旧行为
+		}
+		kr := &loopcore.Response{Content: ir.Content, Reasoning: ir.Reasoning, Finish: fin,
 			TotalTokens: int64(ir.InputTokens + ir.OutputTokens + ir.ReasoningTokens)}
 		for _, tc := range ir.ToolCalls {
 			kr.ToolCalls = append(kr.ToolCalls, loopcore.ToolCall{ID: tc.ID, Name: tc.Name, Args: tc.Args, RawArgs: tc.RawArgs})
@@ -1024,8 +1028,12 @@ func (h *ChatHandlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 		if ierr != nil {
 			return nil, ierr
 		}
+		fin := ir.Finish // 上游收尾原因原值（length/tool_calls/stop…）
+		if fin == "" {
+			fin = "stop" // 空值兜底 ⇒ 保旧行为
+		}
 		kr := &loopcore.Response{
-			Content: ir.Content, Reasoning: ir.Reasoning, Finish: "stop",
+			Content: ir.Content, Reasoning: ir.Reasoning, Finish: fin,
 			TotalTokens: int64(ir.InputTokens + ir.OutputTokens + ir.ReasoningTokens),
 		}
 		for _, tc := range ir.ToolCalls {

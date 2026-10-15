@@ -28,6 +28,10 @@ func (a *Qwen38Flash) BuildArgs(entry *registry.ModelEntry, port int) []string {
 		"-np", "1",
 		"-cb",
 		"--reasoning-preserve", // 思考保留（日志提示：template supports preserving reasoning）
+		// GAP-49 口径（2026-09-26 对照实验定性）：思考模型必须给 --reasoning-budget，
+		// 否则短 max_tokens 的调用会在分析通道里被截断 ⇒ content 空串（实测 256 = finish_reason=stop、正文可读）。
+		// 铁律「思考不能关」⇒ 只给思考一个上界，✗ 不关 thinking。
+		"--reasoning-budget", "256",
 		"--host", "127.0.0.1",
 		"--port", fmt.Sprintf("%d", port),
 	}

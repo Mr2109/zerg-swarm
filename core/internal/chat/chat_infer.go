@@ -78,6 +78,9 @@ type InferResult struct {
 	// T1.4 批量几何：上游响应里抄下来的几何证据（nil = 上游不给/未取到 ⇒ 事件流里字段缺席，绝不编造）。
 	// 消费方：internal/api 的轮次适配器 → chat.ObsTimer.SetGeometry → chat_obs.jsonl 的 geometry 块。
 	Geometry *infergeom.Geometry `json:"geometry,omitempty"`
+	// 收尾原因：上游 chat completions 的 choices[].finish_reason 原值（length/tool_calls/stop…）；
+	// 本结构只承载原值（上游不给就留空），"空 ⇒ stop" 的兜底在消费侧（api/chat_handlers.go）。
+	Finish string `json:"finish_reason,omitempty"`
 }
 
 // sessionIDKey — 批次B(2026-09-10): 对话 session_id 经 ctx 透传给推理层
@@ -314,6 +317,10 @@ func (c *ChatInfer) InferStream(ctx context.Context, model string, sysPrompt str
 			continue
 		}
 		d := ev.Choices[0].Delta
+		// 收尾原因原值捕获（末块才带 finish_reason；空块不覆盖 ⇒ 留最后一次非空值）
+		if ev.Choices[0].FinishReason != "" {
+			res.Finish = ev.Choices[0].FinishReason
+		}
 		if d.ReasoningContent != "" {
 			res.Reasoning += d.ReasoningContent
 			res.ReasoningTokens += len([]rune(d.ReasoningContent)) / 4
@@ -520,6 +527,7 @@ func parseChatResult(raw []byte) (*InferResult, error) {
 				ReasoningContent string         `json:"reasoning_content"`
 				ToolCalls        []chatToolCall `json:"tool_calls"`
 			} `json:"message"`
+			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
 		Usage struct {
 			PromptTokens     int `json:"prompt_tokens"`
@@ -537,6 +545,7 @@ func parseChatResult(raw []byte) (*InferResult, error) {
 	res := &InferResult{}
 	if len(obj.Choices) > 0 {
 		m := obj.Choices[0].Message
+		res.Finish = obj.Choices[0].FinishReason
 		res.Content = m.Content
 		res.Reasoning = m.ReasoningContent
 		if res.Reasoning != "" {

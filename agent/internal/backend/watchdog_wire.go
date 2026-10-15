@@ -190,11 +190,24 @@ type slotsProbe struct {
 
 // eggProgressFunc 读该卵引擎"已处理 token 数"：取所有正在处理槽的 processed 之和。
 // 任何一步失败 ⇒ 返回错误（调用侧据此退化为"只用 CPU 工时"判定，不误杀）。
+// ★★ 两个源（2026-10-16 · 2.5.15「D 进度源」· ✗ 注入点与签名不动）：
+// ① 首选 `/slots`（上一行那句就是它：所有处理中槽的 processed 之和 · llama.cpp 系 · 逐字未变）；
+// ② 回落**引擎自己的输出行** —— 该引擎**没有** `/slots` 时（DS4/DwarfStar 实测 404）⇒ 解析它
+// stderr 里的进度行（`engine_progress.go` 的 `parseEngineProgress`）。
+// ★ 回落只在 `/slots` 读到**非 200** 时发生；回落也读不到 ⇒ 仍按「读不到」返回 —— 与今天**等价**，
+// 零回归、零误杀（读不到 ≠ 没推进 · `progress_guard.go` 的 fail-open 口径一字未动）。
 func (m *Manager) eggProgressFunc(sp *subproc) func() (uint64, error) {
 	port := sp.port
 	return func() (uint64, error) {
 		if port <= 0 {
 			return 0, fmt.Errorf("进度不可读：端口未知")
+		}
+		// ★ 已缓存「这一枚引擎没有 /slots」⇒ 不再每次采样白打一次 404，直接走引擎输出行。
+		if sp.unitProgress.slotsAbsent() {
+			if v, ok := m.engineProgressFromEngine(sp); ok {
+				return v, nil
+			}
+			return 0, fmt.Errorf("进度不可读：该引擎无 /slots（已缓存），且引擎输出行里没有进度")
 		}
 		cl := &http.Client{Timeout: 3 * time.Second}
 		resp, err := cl.Get(fmt.Sprintf("http://127.0.0.1:%d/slots", port))
@@ -203,6 +216,12 @@ func (m *Manager) eggProgressFunc(sp *subproc) func() (uint64, error) {
 		}
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
+			// ★ 回落（2026-10-16 · 2.5.15「D 进度源」）：无 /slots 的引擎（DS4）——
+			// 改读引擎自己的输出行；同时记下缓存，后续采样不再白打 404。
+			sp.unitProgress.noteSlotsAbsent()
+			if v, ok := m.engineProgressFromEngine(sp); ok {
+				return v, nil
+			}
 			return 0, fmt.Errorf("进度不可读：/slots HTTP %d", resp.StatusCode)
 		}
 		raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))

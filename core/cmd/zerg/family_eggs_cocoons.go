@@ -123,7 +123,7 @@ const (
 // `count` **同一体例**（冻结表不动、可选只增）⇒ 不造「表列着、面不产出」的反例，也无需重生成命令页。
 //
 // 两格**逐字照子端**（见上）——本面只投影、不解释。
-var eggOptionalFields = []string{eggFieldLastOutputAgoS, eggFieldWatchdogVerdict}
+var eggOptionalFields = []string{eggFieldLastOutputAgoS, eggFieldWatchdogVerdict, eggFieldModality}
 
 // eggRequired —— 「三格齐」机检用的字段表（少一格 ⇒ 红）。
 var eggRequired = []string{"host", "model", "state"}
@@ -155,6 +155,20 @@ const eggFieldHasProfile = "has_profile"
 // 读那份回据（`eggBackendProbeLive`）⇒ 逐字取它当节点卵的答案。回据里**没有这一枚**
 // （那台没在管它 / 那台答不动）⇒ 落 `unknown`（读不到就是读不到 —— 同 `state` 的 `取不到`）。
 const eggProfileUnknown = "unknown"
+
+// eggFieldModality —— `modality` 这一格的字段名（**逐字取自它投影的载荷键** ——
+// 名册 `GET /api/fleet/models` 的 `"modality"` 那一格，见 `core/internal/api/handlers.go`
+// 的 `"modality": c.Modality`；✗ 不另造词汇）。
+//
+// ★ 本笔（L5「按用途选卵」· C）：卵面此前**零模态** ⇒ 插件连「点得出来」都做不到
+// （一请就退 2 `json_field_unknown:modality`）⇒ 选卵只看「名字 + 主机档序 + 是否已加载
+// + 速度」，**不看用途/模态**。本格把它透到卵面，让「按用途选卵」可机判。
+//
+// ★ 空值留空（✗ 不回落 `text`）：名册里本就有多条没有这一格 ⇒ 卵面**不许编** ——
+// 与 `has_profile` 的第三态 `eggProfileUnknown`（读不到就是读不到）、`state` 的 `取不到`
+// 同一条纪律；且 `--json` 出口遇缺值**整键略去**（`main.go` 的 `emitSelected`）⇒ 插件
+// 必须把「键不在」与「键为空」当**同一态**处理。
+const eggFieldModality = "modality"
 
 // eggProfileDir —— 本 CLI 读得到的**实测档案目录**（口径与子端 `monitor.EggProfileDir` /
 // 主控 `gateway.EggProfileDir` 逐字同源：`ZERG_EGG_PROFILE_DIR` 覆盖 · 缺省 `~/.zerg/egg-profiles`）。
@@ -352,7 +366,7 @@ func projectEggs(c *client, inv *invocation, stderr io.Writer, only string) ([]m
 		resident[host] = set
 	}
 	// ① 名册展开成候选（每个候选 = 一枚卵；同一个模型的多台候选 = 多枚卵）。
-	type cand struct{ host, backend, mem string }
+	type cand struct{ host, backend, mem, modality string }
 	byModel := map[string][]cand{}
 	order := []string{}
 	for _, it := range asList(fleet["models"]) {
@@ -367,7 +381,7 @@ func projectEggs(c *client, inv *invocation, stderr io.Writer, only string) ([]m
 		if _, seen := byModel[id]; !seen {
 			order = append(order, id)
 		}
-		byModel[id] = append(byModel[id], cand{cell(o["host"]), cell(o["backend"]), cell(o["mem_gb"])})
+		byModel[id] = append(byModel[id], cand{cell(o["host"]), cell(o["backend"]), cell(o["mem_gb"]), cell(o["modality"])})
 	}
 	// ③ 主控自己的说法：`host`（它点名的机）+ `status`（它给那一格的原话）。
 	problems := []string{}
@@ -444,6 +458,9 @@ func projectEggs(c *client, inv *invocation, stderr io.Writer, only string) ([]m
 				// 别台卵这一格**不拿本机目录冒充** ⇒ 先落 `unknown`，随后由
 				// `eggReconcileBackends` 逐字取**那一台子端 `/eggs`** 的回据。
 				eggFieldHasProfile: eggProfileCell(localHosts, cd.host, hasProfile[id]),
+				// ★ 本笔（L5「按用途选卵」· C）：`modality` —— 逐字来自名册载荷键 `modality`
+				// （`/api/fleet/models` ⇒ 本件**不新开端点**）。空值留空（✗ 不回落 `text`）。
+				eggFieldModality: cd.modality,
 			})
 		}
 	}
@@ -1018,7 +1035,7 @@ func eggPlanLines(action, eggID, model, machine, eggMaxS string, cands []eggCand
 		reqBody := fmt.Sprintf("{\"machine\":%s,\"model\":%s}", jstr(machine), jstr(model))
 		if eggMaxS != "" {
 			reqBody = fmt.Sprintf("{\"machine\":%s,\"model\":%s,\"egg_max_s\":%s}", jstr(machine), jstr(model), jstr(eggMaxS))
-			lines = append(lines, fmt.Sprintf("单卵时限 : %s 秒（子端 watchdog 的 EggMax —— 到点判卡住；`%s` 那一枚旗标）", eggMaxS, wallclockFlag))
+			lines = append(lines, fmt.Sprintf("单卵时限 : %s 秒（子端 watchdog 的 EggMax —— 已降为**最终兜底**（判死只看有没有进度；它并入有效进度预算、只抬不降，✗ 不再「到点判卡住」）；`%s` 那一枚旗标）", eggMaxS, wallclockFlag))
 		}
 		lines = append(lines, "请求体   : "+reqBody)
 	}

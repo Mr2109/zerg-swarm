@@ -211,8 +211,8 @@ func copyResponseAsSSE(w http.ResponseWriter, resp *http.Response) {
 		}
 	}
 
-	// done 帧
-	writeChatDone(w, flusher, obj)
+	// done 帧（透传上游收尾原因）
+	writeChatDone(w, flusher, obj, finish)
 }
 
 func writeChatDelta(w http.ResponseWriter, flusher http.Flusher, text, finish string) {
@@ -236,13 +236,19 @@ func writeChatToolCalls(w http.ResponseWriter, flusher http.Flusher, tcs []inter
 	}
 }
 
-func writeChatDone(w http.ResponseWriter, flusher http.Flusher, obj map[string]interface{}) {
+func writeChatDone(w http.ResponseWriter, flusher http.Flusher, obj map[string]interface{}, finish string) {
 	usage, _ := obj["usage"].(map[string]interface{})
 	usageJSON, _ := json.Marshal(usage)
 	if usageJSON == nil {
 		usageJSON = []byte("{}")
 	}
-	data := fmt.Sprintf(`{"id":"chatcmpl-local","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":%s}`, string(usageJSON))
+	// 收尾原因保守透传（2026-10-16）：只有 "length"（撞长度截断）透出原值，
+	// 其余（含空值）一律归 "stop" —— 客户端可能依赖字面 "stop" 判「正常完成」。
+	fv := finish
+	if fv != "length" {
+		fv = "stop"
+	}
+	data := fmt.Sprintf(`{"id":"chatcmpl-local","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":%q}],"usage":%s}`, fv, string(usageJSON))
 	WriteSSE(w, flusher, "", data)
 }
 

@@ -107,3 +107,31 @@ func TestStrOrEmpty_PassesRawValue(t *testing.T) {
 		t.Fatalf("非字符串应返回空串，got %q", got)
 	}
 }
+
+// done 帧收尾原因护栏（2026-10-16）：writeChatDone 的 finish_reason 曾硬写 "stop" ⇒
+// 上游 length（撞长度截断）在带工具路被吞掉、判据面看不见截断。本用例锁死「保守透传」契约：
+// 只有 "length" 原值透出，其余（含空值）一律归 "stop"（客户端可能依赖字面 "stop"，保旧行为）。
+func TestWriteChatDone_FinishReasonConservation(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"length", "length"},
+		{"stop", "stop"},
+		{"tool_calls", "stop"},
+		{"", "stop"},
+	}
+	for _, c := range cases {
+		rec := httptest.NewRecorder()
+		writeChatDone(rec, nil, map[string]interface{}{}, c.in)
+		m := firstSSEData(t, rec.Body.String())
+		choices, _ := m["choices"].([]interface{})
+		if len(choices) == 0 {
+			t.Fatalf("finish=%q：done 帧里没有 choices: %#v", c.in, m)
+		}
+		got, _ := choices[0].(map[string]interface{})["finish_reason"].(string)
+		if got != c.want {
+			t.Fatalf("finish=%q：done 帧 finish_reason 应为 %q，实得 %q", c.in, c.want, got)
+		}
+	}
+}

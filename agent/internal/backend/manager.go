@@ -95,6 +95,10 @@ type subproc struct {
 	watchdog *WatchdogObservation
 	// pinUntil Q5：显式 pin 的到期时刻（零值 = 未 pin）。无 TTL 的 pin 不允许——见 Manager.Pin。
 	pinUntil time.Time
+	// unitProgress 引擎输出行进度源的小状态（2.5.15「D 进度源」· 见 `engine_progress.go`）：
+	// 缓存「这一枚引擎没有 /slots」＋ 3 s 节流。挂在 sp 上是因为孵化路径 `sp.proc` 恒 nil。
+	// 零值即可用（无需在构造点初始化）；读写都在它自带的互斥下（同一枚卵的并发请求共享它）。
+	unitProgress engineProgressState
 }
 
 // loadWaiter 请求合并：同模型并发请求共享一个加载槽
