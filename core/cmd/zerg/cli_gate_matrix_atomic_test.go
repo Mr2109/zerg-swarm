@@ -53,11 +53,11 @@ func TestGateMatrix_OutJsonMutex(t *testing.T) {
 	if _, err := os.Stat(outFile); !os.IsNotExist(err) {
 		t.Errorf("同给却落了件（写面兼作判面）：%v", err)
 	}
-	if !strings.Contains(stdout, "out_json_conflict") {
-		t.Errorf("给了 --json ⇒ 错误包封（含 detail=out_json_conflict）应走 stdout，得到 %q", stdout)
-	}
-	if strings.Contains(stdout, `"items":[{"`) {
-		t.Errorf("同给不许出结果面（`items` 该空）：%q", stdout)
+	// ★ 缺口 `GAP-20260929-41`（本批）：`out_json_conflict` 是**用法错**（`kind=usage`）⇒ **不吐包封**
+	//   ⇒ stdout **零字节**（旧断言「包封含 detail=out_json_conflict 应走 stdout」已过期；本断言在
+	//   旧行为下会红 ⇒ 有牙）。本条只认「一个字节都不出」（写面兼作判面那一格也不许出结果面）。
+	if stdout != "" {
+		t.Errorf("`--out` 与 `--json` 同给（用法错）⇒ stdout 必须零字节（GAP-20260929-41），得到 %q", stdout)
 	}
 	if !strings.Contains(stderr, "不许同给") {
 		t.Errorf("判词没点名两档不许同给：%s", stderr)

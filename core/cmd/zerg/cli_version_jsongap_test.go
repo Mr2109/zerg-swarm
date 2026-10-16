@@ -54,10 +54,10 @@ func TestCLIVersionJSONGap_MissingFieldsIsUsageError(t *testing.T) {
 	if rc != want {
 		t.Errorf("`zerg version --json`（不给字段）⇒ 应退用法错 %d（退码表 `usage` · `Q-146`），得到 %d", want, rc)
 	}
-	// ★ 本批起发射闸扩到 `inv.err != nil` ⇒ 非危险档的 K2 也把**错误面**打成机器可读包封走 stdout
-	//   （旧行为 stdout 空 ⇒ 本断言会红 ⇒ 有牙）；**结果面**仍必须空：`items` 一条都不出。
-	if !strings.Contains(out.String(), `"items":[]`) || !strings.Contains(out.String(), `"error"`) {
-		t.Errorf("`zerg version --json`（不给字段）⇒ stdout 必是 `error` 包封且 `items` 空，得到 %d 字节：%q",
+	// ★ 缺口 `GAP-20260929-41`（本批）：非危险档的 K2 也**不吐包封** ⇒ stdout **零字节**
+	//   （旧断言「必是 error 包封且 items 空」已过期；本断言在旧行为下会红 ⇒ 有牙）。
+	if out.Len() != 0 {
+		t.Errorf("`zerg version --json`（不给字段）⇒ stdout 必须 0 字节（GAP-20260929-41），得到 %d 字节：%q",
 			out.Len(), out.String())
 	}
 
@@ -137,8 +137,11 @@ func TestCLIVersionJSONGap_LegalFormsStayZero(t *testing.T) {
 //
 // 判据值**不写死**：期望的那一档从退码表真源（`usageCodeFromTable`）现读 —— 表变了这条当场说话。
 
-// TestCLIQ155_EnvelopeExitCodeSameSourceAsRC —— 正控：包封内 `exit_code` == 进程退码 `rc`，
-// 且用法错那一档的兜底 kind 归位 `usage`（`E1` 单向口径仍成立）。
+// TestCLIQ155_EnvelopeExitCodeSameSourceAsRC —— ★ 缺口 `GAP-20260929-41`（本批）重定口径：
+// `kind=usage` 的失败**不吐包封**（三条 argv 全是用法错）⇒ 判据落到**可观察的那一面**：
+// ① 进程退码 = 退码表的 `usage`（2）· ② stdout **零字节**（就是「不吐包封」本身）·
+// ③ stderr 点名那个坏字段并列合法字段（= 用法错的判词面）。旧断言读 stdout 包封的
+// `error.exit_code`/`kind` 已过期（那一路现在恒零字节）；本断言在旧行为下会红 ⇒ 有牙。
 func TestCLIQ155_EnvelopeExitCodeSameSourceAsRC(t *testing.T) {
 	want := usageCodeFromTable(t)
 
@@ -149,28 +152,15 @@ func TestCLIQ155_EnvelopeExitCodeSameSourceAsRC(t *testing.T) {
 	} {
 		var out, errb bytes.Buffer
 		rc := zerg.RunForTest(argv, &out, &errb)
-		var env struct {
-			Error *struct {
-				Kind     string `json:"kind"`
-				ExitCode int    `json:"exit_code"`
-				Message  string `json:"message"`
-			} `json:"error"`
+		if rc != want {
+			t.Errorf("`zerg %s`：用法错要退 %d（退码表 `usage`），得到 %d", strings.Join(argv, " "), want, rc)
 		}
-		if err := json.Unmarshal(out.Bytes(), &env); err != nil {
-			t.Fatalf("`zerg %s` 的 stdout 不是合法 JSON（失败面包封坏了）：%v · %q",
-				strings.Join(argv, " "), err, out.String())
+		if out.Len() != 0 {
+			t.Errorf("`zerg %s`：用法错 ⇒ stdout 必须零字节（GAP-20260929-41），得到 %q",
+				strings.Join(argv, " "), out.String())
 		}
-		if env.Error == nil {
-			t.Fatalf("`zerg %s` 的失败面要带 `error` 块（§九 M7），得到 %q · stderr=%q",
-				strings.Join(argv, " "), out.String(), errb.String())
-		}
-		if env.Error.ExitCode != rc {
-			t.Errorf("`zerg %s`：包封内 exit_code=%d 与进程退码 rc=%d **不同源**（`Q-155` 的病灶）：%q",
-				strings.Join(argv, " "), env.Error.ExitCode, rc, out.String())
-		}
-		if rc == want && env.Error.Kind != "usage" {
-			t.Errorf("`zerg %s`：用法错的兜底 kind 要 `usage`（`E1` 单向口径），得到 %q",
-				strings.Join(argv, " "), env.Error.Kind)
+		if !strings.Contains(errb.String(), "未知字段") || !strings.Contains(errb.String(), "合法字段:") {
+			t.Errorf("`zerg %s`：stderr 要点名未知字段并列合法字段，得到 %q", strings.Join(argv, " "), errb.String())
 		}
 	}
 }

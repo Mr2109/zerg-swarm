@@ -3,9 +3,10 @@
 // 口径（本枚立的唯一一条）：
 //
 //	`emitErrEnvelope` 收了调用方攒下的按需子键（`invocation.envMeta`）⇒ 命令先把查询上下文
-//	写进 `envMeta`、随后才在出口面失败（如 `--json <闭集外字段>`）时，**失败兜底包封**（main.go
-//	的 `emitErrIfJSON`）也带得出 `query` / `ledger_sha16` 一类格（改前只渲染 `cliError.Meta`、
-//	`envMeta` 一格不带 ⇒ 查询面在错误档拿不到查询上下文）。
+//	写进 `envMeta`、随后在出口面失败时，**失败包封**也带得出 `query` / `ledger_sha16` 一类格
+//	（改前只渲染 `cliError.Meta`、`envMeta` 一格不带 ⇒ 查询面在错误档拿不到查询上下文）。
+//	★ 缺口 `GAP-20260929-41`（本批）：`kind=usage` 的失败**不吐包封** ⇒ 本件的失败载体取
+//	`kind=failed` 的**零命中**支（见下），用法错那一档 stdout 恒零字节、读不到失败包封。
 //
 // 负控（哑化）：把 `errors.go` 的 `envMetaSubkeysJSON(envMeta)` 从失败 `meta` 那行撤掉 ⇒ 本牙必红
 // （靠 `go test -overlay` 的哑化两态验证：不带 overlay 应绿、带哑化 overlay 应红）。
@@ -49,11 +50,17 @@ func TestErrEnvelopeCarriesEnvMeta(t *testing.T) {
 		t.Fatalf("写夹具真源失败：%v", err)
 	}
 
-	// `--json` 点一个**闭集外**字段 ⇒ 出口面在字段校验处失败（已过 `gapLsMetaAdd`）⇒ 走失败兜底包封。
+	// ★ 缺口 `GAP-20260929-41`（本批）：`kind=usage` 的失败**不再补 stdout 包封**（用法错一律
+	//   零字节 · 报错全在 stderr）⇒ 本件不能再拿「`--json` 点闭集外字段」当载体（那一路 stdout
+	//   恒 0 字节，失败包封拿不到了）。改用**零命中**那一支（`--unit` 收窄到不含夹具行的值）：
+	//   它是 `kind=failed`（退码 1），仍由本命令自己走 `emitEnvelopeWith` 出失败包封 ⇒ 本件钉的
+	//   `envMeta` 那几格照旧可读。判据**一字未放宽**：退码精确 + 既有两格 + 本枚那五格逐格在。
 	var out, errb bytes.Buffer
-	rc := RunForTest([]string{"gap", "ls", "--unit", unit, "--json", "__zzbad__"}, &out, &errb)
-	if rc != 2 {
-		t.Fatalf("闭集外字段要退 2（用法错），得到 %d · stdout=%q stderr=%q", rc, out.String(), errb.String())
+	rc := RunForTest([]string{"gap", "ls", "--unit", unit + "/零命中-zz", "--json",
+		"total,hits,query,query_ts,ledger_sha16"}, &out, &errb)
+	if rc != 1 {
+		t.Fatalf("零命中要退 1（`kind=failed` · 「没有」不是「失败」也不是绿），得到 %d · stdout=%q stderr=%q",
+			rc, out.String(), errb.String())
 	}
 	var env struct {
 		Meta map[string]any `json:"meta"`

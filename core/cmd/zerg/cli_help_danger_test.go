@@ -146,21 +146,18 @@ func TestHelpFamilyDanger_BadFieldAndNoArgInvariants(t *testing.T) {
 	bin := zergBinaryFromSource(t)
 	root := syntheticRepo(t, "exit 0\n")
 
-	// 负控：非法字段仍按既有档拒（rc=2 · detail 同源 `json_field_unknown:`）。
-	rc, out, _ := execCase(t, bin, root, "help", "task", "--json", "bogus_zz")
+	// 负控：非法字段仍按既有档拒（rc=2）· ★ 缺口 `GAP-20260929-41`（本批）：用法错**不吐包封**
+	//   ⇒ stdout **零字节**，坏字段名与合法字段表全在 stderr（旧断言「包封里 detail =
+	//   json_field_unknown:bogus_zz」已过期；本断言在旧行为下会红 ⇒ 有牙）。
+	rc, out, errB := execCase(t, bin, root, "help", "task", "--json", "bogus_zz")
 	if rc != 2 {
 		t.Errorf("非法字段 `--json bogus_zz` 要 rc=2，得到 %d", rc)
 	}
-	var env struct {
-		Error struct {
-			Detail string `json:"detail"`
-		} `json:"error"`
+	if out != "" {
+		t.Errorf("非法字段（用法错）⇒ stdout 必须零字节（GAP-20260929-41），得到 %q", out)
 	}
-	if err := json.Unmarshal([]byte(out), &env); err != nil {
-		t.Fatalf("非法字段应出包封（既有形态）：%v · %q", err, out)
-	}
-	if env.Error.Detail != "json_field_unknown:bogus_zz" {
-		t.Errorf("非法字段 detail 要 %q，得到 %q", "json_field_unknown:bogus_zz", env.Error.Detail)
+	if !strings.Contains(errB, `未知字段 "bogus_zz"`) || !strings.Contains(errB, "合法字段:") {
+		t.Errorf("非法字段要在 stderr 点名 `bogus_zz` 并列合法字段：%q", errB)
 	}
 
 	// 对界：不给主题那一态（族名清单机器面）一字不动。

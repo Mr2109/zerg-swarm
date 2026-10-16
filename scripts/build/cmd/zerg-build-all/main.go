@@ -201,9 +201,22 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 	logf := func(format string, a ...any) { fmt.Fprintf(stdout, format+"\n", a...) }
 
+	// ── GAP-20260927-311：--only-* 换件前置比对（fail-closed）─────────────────────
+	// 盘上 bin/build-info.json 的 commit ≠ 本次算出的 sha ⇒ 拒跑任何 --only-* 换件档：
+	// 那些档不写 build-info.json（逐字「其余制品与 build-info.json 一个字节未动」）⇒ 缺省
+	// 一趟全量档对齐身份之前，--only-* 只会在混身份的 bin/ 上再叠一件。
+	if onlyCLI || onlyCore || onlyCompat || onlyAgentd {
+		if b, err := os.ReadFile(filepath.Join(root, "bin", "build-info.json")); err == nil {
+			var bi buildInfo
+			if err := json.Unmarshal(b, &bi); err == nil && bi.Commit != sha {
+				fmt.Fprintf(stderr, "!! build-info.json 的 commit=%s ≠ 本次代码 %s ⇒ 拒换件（--only-* 不写 build-info.json；先跑一趟缺省全量 build-all 对齐身份再换）\n", bi.Commit, sha)
+				return 1
+			}
+		} // build-info.json 读不到/解不动 ⇒ 不拦（全新仓首趟本来就没有它）
+	}
+
 	fmt.Fprintf(stdout, "🏷  版本 %s · 代码 %s · 构建 %s\n", version, sha, buildTime)
 	fmt.Fprintf(stdout, "📁 输出 %s\n", out)
-
 	hasCodesign := lookPath("codesign")
 	hasCargo := lookPath("cargo")
 
@@ -226,6 +239,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 	// ── --only-agentd：子端换件专用档（只写 bin/zerg-agentd 一个文件）─────────────────
 	if onlyAgentd {
 		fmt.Fprintln(stdout, "→ 子端 zerg-agentd（--only-agentd：只写 bin/zerg-agentd 一件）")
+		if sha == "unknown" {
+			fmt.Fprintln(stderr, "!! 仓根不是 git 仓 ⇒ 无法核对 build-info.json 身份 ⇒ 拒换件（--only-agentd；在 git 仓内跑，或改用缺省全量档）")
+			return 1
+		}
 		if !archivePrevPiece(root, filepath.Join(root, "bin", "zerg-agentd"), stdout, stderr) {
 			fmt.Fprintln(stderr, "!! 留档失败 ⇒ 拒换件（bin/zerg-agentd 尚未被覆盖，一个字节未动）")
 			return 1
@@ -398,6 +415,21 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	fmt.Fprintf(stdout, "   📝 build-info.json: version=%s commit=%s\n", version, sha)
+
+	// ── GAP-20260927-311：全量收口四件互检（fail-closed）────────────────────────
+	// 四件制品内嵌身份（`-tags` 嵌入段，`go version -m` 可读）逐件 == 本次 sha —— 不齐 ⇒ 非零退：
+	// 说明某件是旧趟残留（coreBuild/签名中途失败续跑、手放件等），✗ 不许当一趟齐的制品交出去。
+	for _, name := range []string{"zerg", "zerg-core", "zerg-agent", "zerg-compat"} {
+		b := coreOut(name)
+		cmd := exec.Command("go", "version", "-m", b)
+		cmd.Dir, cmd.Env = root, baseEnv
+		outb, err := cmd.Output()
+		want := "-tags=commit=" + sha + ","
+		if err != nil || !strings.Contains(string(outb), want) {
+			fmt.Fprintf(stderr, "❌ 四件互检失败：%s 内嵌 Commit ≠ 本次 %s（或读不出嵌入段）⇒ 非零退\n", name, sha)
+			return 1
+		}
+	}
 
 	if dist {
 		fmt.Fprintln(stdout, "→ 生成校验和（sha256）")

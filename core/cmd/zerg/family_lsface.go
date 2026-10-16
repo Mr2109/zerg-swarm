@@ -75,18 +75,20 @@ var lsFaceFields = []string{"path", "path_bytes", "bytes"}
 
 // lsFacePlan —— 命令面的一面 → A1 出口的**一次调用**（形参只有 A1 的 Face 与 A1 的 Option）。
 type lsFacePlan struct {
-	flag     string        // 面旗标（逐字）
-	face     gitpaths.Face // 传给 gitpaths.List 的面
-	rev      string        // 非空 ⇒ 传 gitpaths.WithRev(rev)
-	prefixOK bool          // A1 的该面吃不吃 WithPrefix（现读：FaceTracked / FaceOthers / FaceDiffCached 三面都吃）
+	flag string        // 面旗标（逐字）
+	face gitpaths.Face // 传给 gitpaths.List 的面
+	rev  string        // 非空 ⇒ 传 gitpaths.WithRev(rev)
+	// ★ GAP-20260927-268：手写 `prefixOK` 已删——该面吃不吃 WithPrefix **现读** face.acceptsPrefix()（A1 唯一真值），映射表不再登记能力位。
 }
 
 // lsFacePlans —— 四个面旗标到 A1 出口的**唯一**映射表（顺序 = 帮助面与错误面的枚举序）。
-// ★ 四面**同形**：一律只填 A1 的面值（+ 必要时 `rev`）与 `prefixOK`，没有旁路、没有缺口位。
+// ★ 四面**同形**：一律只填 A1 的面值（+ 必要时 `rev`），没有旁路、没有缺口位；
+//
+//	吃不吃前缀**不写在这**——由 A1 的 face.AcceptsPrefix() 现读（GAP-20260927-268）。
 var lsFacePlans = []lsFacePlan{
-	{flag: "--tracked", face: gitpaths.FaceTracked, prefixOK: true},
-	{flag: "--others", face: gitpaths.FaceOthers, prefixOK: true},
-	{flag: "--staged", face: gitpaths.FaceDiffCached, prefixOK: true},
+	{flag: "--tracked", face: gitpaths.FaceTracked},
+	{flag: "--others", face: gitpaths.FaceOthers},
+	{flag: "--staged", face: gitpaths.FaceDiffCached},
 	{flag: "--diff", face: gitpaths.FaceDiff},
 }
 
@@ -158,11 +160,11 @@ func cmdLsFace(inv *invocation, stdout, stderr io.Writer) int {
 		return exitBlocked
 	}
 
-	// ── ④ `--prefix`：A1 里**只有** FaceTracked / FaceOthers / FaceDiffCached 三面吃前缀（各面 args() 里
-	//  都有 `pathspecSuffix(cfg)`）⇒ 别面（现读：只有 `--diff`）给了就**明着拒**，不静默丢 ──
+	// ── ④ `--prefix`：吃不吃前缀**现读** plan.face.acceptsPrefix()（A1 唯一真值，GAP-20260927-268）
+	//  ⇒ 别面给了就**明着拒**，不静默丢 ──
 	opt := []gitpaths.Option{}
 	if inv.hasFlag("--prefix") {
-		if !plan.prefixOK {
+		if !plan.face.AcceptsPrefix() {
 			inv.setErr("usage", "prefix_unsupported", plan.face.String()+" 面不吃 --prefix")
 			fmt.Fprintf(stderr, "%s: `%s` 面不吃 `--prefix`（A1 的该面 argv 里没有 pathspec 槽）⇒ 退码 2，不静默忽略\n", progName, flag)
 			fmt.Fprintf(stderr, "用法：%s\n", lsFaceUsage)

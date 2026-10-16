@@ -93,20 +93,17 @@ func TestCodeFind_JSONPathKind(t *testing.T) {
 		t.Errorf("只点旧字段时不许带出 path_kind（向后兼容）：%q", out)
 	}
 
-	// ⑤ 负控：混一坏字段仍按既有档拒（rc=2 · detail 同源 `json_field_unknown:`）
-	rc, out, _ = execCase(t, bin, root, "code", "find", "needle", "--json", "path_kind,zzz_bogus")
+	// ⑤ 负控：混一坏字段仍按既有档拒（rc=2）· ★ 缺口 `GAP-20260929-41`（本批）：用法错**不吐包封**
+	//   ⇒ stdout **零字节**，坏字段名与合法字段表全在 stderr（旧断言「包封里 error.detail =
+	//   json_field_unknown:zzz_bogus」已过期；本断言在旧行为下会红 ⇒ 有牙）。
+	rc, out, errB2 := execCase(t, bin, root, "code", "find", "needle", "--json", "path_kind,zzz_bogus")
 	if rc != 2 {
 		t.Errorf("混一坏字段要 rc=2（既有档），得到 %d", rc)
 	}
-	var envB struct {
-		Error struct {
-			Detail string `json:"detail"`
-		} `json:"error"`
+	if out != "" {
+		t.Errorf("混一坏字段（用法错）⇒ stdout 必须零字节（GAP-20260929-41），得到 %q", out)
 	}
-	if err := json.Unmarshal([]byte(out), &envB); err != nil {
-		t.Fatalf("坏字段应出包封：%v · %q", err, out)
-	}
-	if envB.Error.Detail != "json_field_unknown:zzz_bogus" {
-		t.Errorf("坏字段 detail 要 json_field_unknown:zzz_bogus，得到 %q", envB.Error.Detail)
+	if !strings.Contains(errB2, `未知字段 "zzz_bogus"`) || !strings.Contains(errB2, "合法字段:") {
+		t.Errorf("坏字段要在 stderr 点名 `zzz_bogus` 并列合法字段：%q", errB2)
 	}
 }

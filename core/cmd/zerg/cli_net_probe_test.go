@@ -251,22 +251,22 @@ func TestNetProbe_UsageFace(t *testing.T) {
 		if rc != 2 {
 			t.Errorf("%v ⇒ 退 2（用法错），得到 %d · stderr=%s", bad.argv, rc, errb)
 		}
-		if bad.json {
-			if !strings.Contains(out, `"items":[]`) || !strings.Contains(out, `"error"`) {
-				t.Errorf("%v ⇒ stdout 必是 `error` 包封且 `items` 空，得到 %q", bad.argv, out)
-			}
-		} else if out != "" {
-			t.Errorf("%v ⇒ stdout 必须 0 字节（执行前判），得到 %q", bad.argv, out)
+		// ★ 缺口 `GAP-20260929-41`（本批）：上面四条里带 `--json` 那条也是**用法错** ⇒ stdout
+		//   必须 **0 字节**（与不带 `--json` 的三条同一档）。
+		if out != "" {
+			t.Errorf("%v ⇒ 用法错 stdout 必须 0 字节（执行前判 · GAP-20260929-41），得到 %q", bad.argv, out)
 		}
 	}
-	// 点错字段：也是用法错 2，但**形状与上面四条不同** —— 按 §九 M7 补一个错误包封
-	// （那是错误面）。两条**分开钉**：混在一条断言里会把「0 字节」与「有错误面」并成一件事。
+	// 点错字段：也是用法错 2 ＋ 同一档（不吐包封）—— stdout 零字节、坏字段名与字段表在 stderr。
 	rc, out, errb := netProbeRun(t, bin, env, "net", "probe", "--json", "bogusfield")
 	if rc != 2 {
 		t.Errorf("点名不存在的字段 ⇒ 退 2，得到 %d · stderr=%s", rc, errb)
 	}
-	if !strings.Contains(out, `"kind":"usage"`) || !strings.Contains(out, `"items":[]`) {
-		t.Errorf("点错字段那一档该出**错误包封**（items 空 + error.kind=usage）：%q", out)
+	if out != "" {
+		t.Errorf("点错字段（用法错）⇒ stdout 必须零字节（GAP-20260929-41）：%q", out)
+	}
+	if !strings.Contains(errb, `未知字段 "bogusfield"`) || !strings.Contains(errb, "合法字段:") {
+		t.Errorf("点错字段要在 stderr 点名它并列字段表：%q", errb)
 	}
 	// 字段表**两处同值**（registry 里的字面量 ⟷ `netProbeFields` 那个变量）—— 实测对拍：
 	// `--json` 裸给时 stderr 印的「可选字段」就是 registry 那一份（`fieldListOf` 读它），

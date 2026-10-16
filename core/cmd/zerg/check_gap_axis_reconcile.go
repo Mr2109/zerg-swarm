@@ -90,7 +90,8 @@ const gapAxisRecTool = "check-gap-axis-reconcile.py"
 const gapAxisRecVersion = "v1.1.0" // 5b 补片：+判据戊（现读存在性）· +判据己（轴间一致性）
 const gapAxisRecGateName = "门75 缺口账两轴对账：件面/模块面 桶和 == 账内 仍缺 总数（不等即红 · 阻断）"
 
-const gapAxisRecLedgerName = "zerg-cli-gaps.jsonl"
+// gapAxisRecLedgerName —— 账本名引用登记处 ledger_family.go（✗ 别在本件再写字面名 · GAP-20260927-323）。
+var gapAxisRecLedgerName = ledgerFamilyNames["gaps"]
 
 // 退码（三值 · 与 py `tri` 三档逐格同义）—— 具名常量，不用裸数字
 const (

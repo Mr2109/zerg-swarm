@@ -22,7 +22,6 @@ package main_test
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -551,26 +550,11 @@ func TestModelAddJSONNoFields(t *testing.T) {
 	if rc != wantK2 {
 		t.Fatalf("`--json` 不给字段：rc=%d（要 %d）", rc, wantK2)
 	}
-	// 错误面必须机器可读：合法 JSON 包封 + 点名的 kind/detail。
-	var env struct {
-		Schema string `json:"schema"`
-		Kind   string `json:"kind"`
-		Error  struct {
-			Kind   string `json:"kind"`
-			Detail string `json:"detail"`
-		} `json:"error"`
-	}
-	if err := json.Unmarshal([]byte(out), &env); err != nil {
-		t.Fatalf("危险档的 `--json` 错误面必须是合法包封（§九 M7）：解析失败 %v · stdout=%q", err, out)
-	}
-	// ★ 2026-09-27 同批收口（`GAP-20260927-360` 已修）：本族此前**不报 detail** ⇒ 包封落到
-	//   「（命令未报出 kind，按退码兜底）」，AI 自愈只剩退码。现由 `family_config.go` 的
-	//   `requireJSONFields` 一处收口（拼的是既有口子 `requireFields` + `inv.setErr`），
-	//   与 gap 族 6 处**逐字同 kind 同 detail** ⇒ 判据收到**精确断言**（不许再放宽）。
-	//   （本体原注引的是 `GAP-20260927-361` —— 现读账内 361 实为 `--confirm` 口径那条 ⇒ 逐字订正为 360。）
-	if env.Error.Kind != "usage" || env.Error.Detail != "json_fields_required" {
-		t.Fatalf("错误面该点名 usage/json_fields_required，得到 kind=%q detail=%q · stdout=%q",
-			env.Error.Kind, env.Error.Detail, out)
+	// ★ 缺口 `GAP-20260929-41`（本批）：`--json` 不给字段是**用法错**（`kind=usage`）⇒ **不吐包封**
+	//   ⇒ stdout **零字节**、字段清单走 stderr（旧断言「错误面必须机器可读：合法 JSON 包封 +
+	//   kind/detail」已过期：usage 那一档的机器面现在只在 stderr 上读；本断言在旧行为下会红 ⇒ 有牙）。
+	if out != "" {
+		t.Fatalf("`--json` 不给字段（用法错）：stdout 必须零字节（GAP-20260929-41），得到 %q", out)
 	}
 	if after := fileSHA(t, path); after != before {
 		t.Fatalf("只读用法面却改了文件")
@@ -579,20 +563,18 @@ func TestModelAddJSONNoFields(t *testing.T) {
 
 // 反例探针七之二（**成对负控**）· 非危险档不给 `--json` 字段 ⇒ 仍是「说明面不认 --json」那条**空 stdout**。
 // ★ 与探针七配对：两条形状不同的命令走两条不同的分支，谁被并掉了都会红。
-// ★ 本测试判的是**结果面为空**，不是「stdout 0 字节」—— 两个概念不同：
+// 反例探针七之二（**成对负控**）· 非危险档不给 `--json` 字段 ⇒ 仍是「说明面不认 --json」那条**用法错**。
+// ★ 与探针七配对：两条形状不同的命令走两条不同的分支，谁被并掉了都会红。
+// ★ 缺口 `GAP-20260929-41`（本批）：`kind=usage` 的失败**不吐包封** ⇒ stdout **零字节**
 //
-//	结果面 = `items` 里的读数条目（必须空）；错误面 = `error` 块（本批起**必须有**）。
-//
-// 本批把发射闸从「fields>0 或危险档」扩到「`inv.err != nil` 也发」⇒ 非危险档的 K2 用法错
-// 也把**错误面**打成机器可读包封走 stdout ⇒ 旧断言「stdout 必空」已过期。
-// 新断言（必出包封 + `items` 空）在旧行为下会红 ⇒ 有牙。
+//	（旧断言「必须出包封且 items 空」已过期；本断言在旧行为下会红 ⇒ 有牙）。
 func TestNonDangerJSONNoFieldsStaysEmpty(t *testing.T) {
 	rc, out, _ := runCapture("version", "--json")
 	if rc != usageCodeFromTable(t) {
 		t.Fatalf("非危险档不给字段：rc=%d（要 %d）", rc, usageCodeFromTable(t))
 	}
-	if !strings.Contains(out, `"items":[]`) || !strings.Contains(out, `"error"`) {
-		t.Fatalf("非危险档（说明面）不给 --json 字段：**结果面**必须空（`items` 空）+ 错误面必须是包封，得到 %q", out)
+	if out != "" {
+		t.Fatalf("非危险档（说明面）不给 --json 字段（用法错）：stdout 必须零字节（GAP-20260929-41），得到 %q", out)
 	}
 }
 

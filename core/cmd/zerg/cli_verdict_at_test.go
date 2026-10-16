@@ -79,16 +79,22 @@ func setErrLineOf(t *testing.T, root, rel, anchor string) int {
 }
 
 // ── 正控：一处判定退出 ⇒ `verdict_at` 可读且位置逐字相符 ─────────────────────────────────────
+//
+// ★ 缺口 `GAP-20260929-41`（本批）：`kind=usage` 的失败**不吐包封** ⇒ 本正控的载体从「用法错
+// （缺两侧 · `missing_sides`）」换成**同一件里的 `kind=blocked` 那一处判定退出**
+// （`four_states_cell_unrunnable` · 退码 8 · 仍走统一错误面）—— 判据强度一字未降：
+// 退码/kind/detail 逐字精确 + `verdict_at` 逐字等于**源件里那一处 `setErr` 的行号**（现读现算）。
 func TestVerdictAt_RealCriterionExit(t *testing.T) {
 	root := repoRootFromCLI(t)
 	t.Setenv("ZERG_REPO", root)
 	t.Setenv("ZERG_STATE_DIR", t.TempDir())
 
-	// 人为造一处判定退出：`gate four-states` 缺 `--current` / `--patched` ⇒
-	// 走 `setErr("usage", "missing_sides", …)` 那一枚判定（锚件 = 稳定件 `family_gate_four_states.go`）。
-	kind, detail, at := verdictAtErrOf(t, "gate", "four-states", "--json", "cell")
-	if kind != "usage" || detail != "missing_sides" {
-		t.Fatalf("准备态不对：error.kind=%q detail=%q（要 usage / missing_sides）", kind, detail)
+	// 人为造一处判定退出：`gate four-states` 给两条**跑不动**的命令串 ⇒ 格 A 跑不起来 ⇒
+	// 走 `setErr("blocked", "four_states_cell_unrunnable", …)` 那一枚判定（锚件 = `family_gate_four_states.go`）。
+	kind, detail, at := verdictAtErrOf(t, "gate", "four-states",
+		"--current", "/nope-zz", "--patched", "/nope-zz2", "--json", "cell")
+	if kind != "blocked" || detail != "four_states_cell_unrunnable" {
+		t.Fatalf("准备态不对：error.kind=%q detail=%q（要 blocked / four_states_cell_unrunnable）", kind, detail)
 	}
 	// ① 值域：`<core/cmd/zerg/件.go>:<行号>`（不是空串、不是伪值、"判不了"）。
 	if !verdictAtRe.MatchString(at) {
@@ -96,13 +102,17 @@ func TestVerdictAt_RealCriterionExit(t *testing.T) {
 	}
 	// ② 位置**逐字相符**：现读源件算出那一处 `setErr` 的行号 ⇒ 与 `verdict_at` 逐字比。
 	const rel = "core/cmd/zerg/family_gate_four_states.go"
-	want := rel + ":" + strconv.Itoa(setErrLineOf(t, root, rel, `inv.setErr("usage", "missing_sides"`))
+	want := rel + ":" + strconv.Itoa(setErrLineOf(t, root, rel, `inv.setErr("blocked", "four_states_cell_unrunnable"`))
 	if at != want {
 		t.Fatalf("`verdict_at` = %q，源件现读那一处判定 = %q（要逐字相符）", at, want)
 	}
 }
 
 // ── 负控①：正常路（成功面）不出 `error` 块 ⇒ 没有 `verdict_at` ─────────────────────────────────
+//
+// ★ 缺口 `GAP-20260929-41`（本批）：`kind=usage` 的失败**不吐包封** ⇒ 「同一面判定退出」这一格
+// 不能再拿用法错当载体（那一路 stdout 恒零字节）。改用**同一枚判定面**（`gate four-states`）的
+// `kind=blocked`（退码 8）那一态 —— 它仍走统一错误面（`error.verdict_at` 就在那里读）。
 func TestVerdictAt_AbsentOnNormalPath(t *testing.T) {
 	t.Setenv("ZERG_REPO", repoRootFromCLI(t))
 	t.Setenv("ZERG_STATE_DIR", t.TempDir())
@@ -114,8 +124,8 @@ func TestVerdictAt_AbsentOnNormalPath(t *testing.T) {
 	if strings.Contains(out, "verdict_at") || strings.Contains(out, `"error"`) {
 		t.Fatalf("负控①失败：正常路出了 `error` 块 / `verdict_at`：%q", out)
 	}
-	// 反证（区分度）：同一面**判定退出** ⇒ 该字段真出现（证明这一格不是恒缺）。
-	if _, _, at := verdictAtErrOf(t, "version", "--json", "no_such_field__probe"); at == "" {
+	// 反证（区分度）：同一面**判定退出**（`kind=blocked` · 非 usage）⇒ 该字段真出现（证明这一格不是恒缺）。
+	if _, _, at := verdictAtErrOf(t, "gate", "four-states", "--current", "/nope-zz", "--patched", "/nope-zz2", "--json", "cell"); at == "" {
 		t.Fatal("负控①反证失败：判定退出那一态竟没有 `verdict_at`（字段没接上）")
 	}
 }

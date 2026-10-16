@@ -245,17 +245,16 @@ func TestCiGreen_AbsentRequiredIsBlocked(t *testing.T) {
 	if !strings.Contains(errb, "判不出：docs") {
 		t.Errorf("要逐条点名「判不出」的那一条：\n%s", errb)
 	}
-	// `--json` 的失败路径 = §九 M7 错误包封（**错误面**，不是结果面）。
-	_, out2, _ := ciGreenRun(t, "ci", "green", "--run", rec, "--decl", decl, "--json", "head_sha,verdict")
-	if out2 == "" {
-		t.Error("给了 `--json` 的失败路径要出错误包封（0 字节只留给结果面）")
+	// `--json` 的失败路径：★ 缺口 `GAP-20260929-41`（本批）：这一档起的是**用法错**
+	//   （`--json` 里缺身份格 `caliber` ⇒ `identity_cells_required`）⇒ **不吐包封** ⇒ stdout
+	//   **零字节**、判词与理由全在 stderr（旧断言「给了 `--json` 的失败路径要出错误包封」已过期；
+	//   本断言在旧行为下会红 ⇒ 有牙）。
+	_, out2, errb2 := ciGreenRun(t, "ci", "green", "--run", rec, "--decl", decl, "--json", "head_sha,verdict")
+	if out2 != "" {
+		t.Errorf("用法错（缺身份格 caliber）⇒ stdout 必须零字节（GAP-20260929-41），得到 %q", out2)
 	}
-	var doc map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(strings.TrimSpace(out2)), &doc); err != nil {
-		t.Fatalf("失败包封解不开：%v（%q）", err, out2)
-	}
-	if _, ok := doc["error"]; !ok {
-		t.Errorf("失败包封里没有 `error` 块：%q", out2)
+	if !strings.Contains(errb2, "caliber") {
+		t.Errorf("拒的理由该点名缺的那一格（身份格 caliber）：%q", errb2)
 	}
 }
 
@@ -397,29 +396,25 @@ func TestCiGreen_IdentityCellsRequired(t *testing.T) {
 func TestCiGreen_UsageFace(t *testing.T) {
 	decl, rec := ciGreenFixture(t, "unverified", []string{"core"}, "9999cccc", [][2]string{{"core", "success"}})
 
-	// ★ 两态必须分开钉：**不带 `--json`** ⇒ stdout 仍必须 0 字节；**带 `--json`** ⇒ 错误面（本批起
-	//   发射闸扩到 `inv.err != nil`）必是可机读包封走 stdout，但**结果面**仍必须空（`items` 空）。
+	// ★ 缺口 `GAP-20260929-41`（本批）：下面四条**都是用法错**（`kind=usage`）⇒ 一律 **stdout 零字节**
+	//   （带不带 `--json` 都一样：用法错不吐包封 · 报错与字段表全在 stderr）。旧断言「带 `--json`
+	//   时必出错误包封且 items 空」已过期；本断言在旧行为下会红 ⇒ 有牙。
 	cases := []struct {
 		name string
 		argv []string
-		json bool
 	}{
-		{"缺 --run", []string{"ci", "green", "--decl", decl}, false},
-		{"--run 给两次", []string{"ci", "green", "--run", rec, "--run", rec, "--decl", decl}, false},
-		{"多余位置参数", []string{"ci", "green", rec, "--decl", decl}, false},
-		{"裸 --json", []string{"ci", "green", "--run", rec, "--decl", decl, "--json"}, true},
+		{"缺 --run", []string{"ci", "green", "--decl", decl}},
+		{"--run 给两次", []string{"ci", "green", "--run", rec, "--run", rec, "--decl", decl}},
+		{"多余位置参数", []string{"ci", "green", rec, "--decl", decl}},
+		{"裸 --json", []string{"ci", "green", "--run", rec, "--decl", decl, "--json"}},
 	}
 	for _, c := range cases {
 		rc, out, _ := ciGreenRun(t, c.argv...)
 		if rc != 2 {
 			t.Errorf("%s ⇒ rc=%d（要 2）", c.name, rc)
 		}
-		if c.json {
-			if !strings.Contains(out, `"items":[]`) || !strings.Contains(out, `"error"`) {
-				t.Errorf("%s ⇒ stdout 必是 `error` 包封且 `items` 空，得到 %q", c.name, out)
-			}
-		} else if out != "" {
-			t.Errorf("%s ⇒ 不带 --json 时 stdout 要 0 字节（现读 %d 字节）：%q", c.name, len(out), out)
+		if out != "" {
+			t.Errorf("%s ⇒ 用法错 stdout 要 0 字节（现读 %d 字节）：%q", c.name, len(out), out)
 		}
 	}
 

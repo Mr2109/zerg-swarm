@@ -184,9 +184,9 @@ func TestDocMetaFill_YesAndJSONDiscipline(t *testing.T) {
 		t.Errorf("缺 --yes 时一个字节都不许写：%q", got)
 	}
 
-	// ★ 口径照实（与 `dev edit` 同款 · 本命令是**危险档**）：K2 的码**取自退码表**（`usage` · 归一后 = 2），
-	//   且危险档的 stdout 走**错误包封**（`dev build --json` 现跑 = 285 字节 / rc=2 同一形状）——「0 字节」
-	//   那条只适用于非危险档的结果面（`run()` 里 danger == nil 那一支）。字段清单在 stderr。
+	// ★ 口径照实（缺口 `GAP-20260929-41` · 本批）：K2 是**用法错**（`kind=usage`）⇒ **危险档也一律
+	//   不吐包封** —— `stdout` **零字节**、判词与字段清单全在 stderr（旧断言「危险档的 K2 失败面 =
+	//   错误包封」已过期：发射闸对 usage 那一档不补；本断言在旧行为下会红 ⇒ 有牙）。
 	wantK2 := usageCodeFromTable(t)
 	rc, out, errb := execWithEnv(t, bin, repo, env, "doc", "meta", "fill", "--scope", root, "--dry-run", "--json")
 	if rc != wantK2 {
@@ -195,8 +195,8 @@ func TestDocMetaFill_YesAndJSONDiscipline(t *testing.T) {
 	if !strings.Contains(errb, "可选字段") {
 		t.Errorf("K2 要在 stderr 列可用字段：%q", errb)
 	}
-	if !strings.Contains(out, "\"schema\"") || !strings.Contains(out, "\"error\"") {
-		t.Errorf("危险档的 K2 失败面 = 错误包封（六键 + error 块）：%q", out)
+	if out != "" {
+		t.Errorf("危险档的 K2（用法错）⇒ stdout 必须零字节（GAP-20260929-41），得到 %q", out)
 	}
 	rc, _, _ = execWithEnv(t, bin, repo, env, "doc", "meta", "fill", "--scope", root, "--dry-run", "--json", "nope")
 	if rc != 2 {

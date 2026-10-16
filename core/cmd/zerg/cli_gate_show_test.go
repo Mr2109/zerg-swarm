@@ -152,24 +152,15 @@ func TestGateShowJSON_BadFieldListsLegalFour(t *testing.T) {
 	if !strings.Contains(errb, "scope,mode,criterion,log") {
 		t.Errorf("stderr 要列出四格合法字段（自描述面）：%q", errb)
 	}
-	// ★ GAP-20260928-23（同批：`gate show` 的 `--json` 未知字段 `error.detail` 补字段名，与同族
-	//   `gate results`/`gate explain` 一族同句）。旧断言（逐字留史 · ✗ 不删）：「用法错那一档 stdout
-	//   不许出半份包封」= 断言包封里**不含**坏字段名（旧实现落 detail=`unknown_field` 不带字段名）。
-	//   改后：`error.detail` 必须带字段名（`json_field_unknown:<字段>`）⇒ 翻转成**正向**断言（仍有牙：
-	//   实现退回不带字段名 ⇒ 本格立红）。
-	if !strings.Contains(out, "json_field_unknown:nosuchfield-zz") {
-		t.Errorf("未知字段的 error.detail 要带字段名（json_field_unknown:<字段> · 缺口 GAP-20260928-23）：%q", out)
+	// ★ GAP-20260928-23（旧断言的历史）+ ★ 缺口 `GAP-20260929-41`（本批）：未知字段是**用法错**
+	//   （`kind=usage`）⇒ **不吐包封** ⇒ stdout **零字节**、坏字段名与四格合法字段表全在 stderr
+	//   （旧断言「包封 error.detail 要带 json_field_unknown:<字段>」已过期：usage 那一档的机器面
+	//   现在只在 stderr 上读；本断言在旧行为下会红 ⇒ 有牙）。
+	if out != "" {
+		t.Errorf("闭集外字段（用法错）⇒ stdout 必须零字节（GAP-20260929-41），得到 %q", out)
 	}
-	// `error.kind` 是 AI 自愈的入口：用法错必须是 usage（不许落到「按退码兜底」那条路 ——
-	// 实读会变成 kind=failed/exit_code=1，与 rc=2 自相矛盾）。
-	var env struct {
-		Err map[string]any `json:"error"`
-	}
-	if err := json.Unmarshal([]byte(out), &env); err != nil {
-		t.Fatalf("失败那一档也要是合法包封：%v · %q", err, out)
-	}
-	if env.Err == nil || env.Err["kind"] != "usage" || env.Err["exit_code"] != float64(2) {
-		t.Errorf("闭集外字段的 error 块 = %+v（要 kind=usage · exit_code=2）", env.Err)
+	if !strings.Contains(errb, "nosuchfield-zz") {
+		t.Errorf("未知字段要在 stderr 点名那个坏字段：%q", errb)
 	}
 }
 
@@ -183,18 +174,11 @@ func TestGateShowJSON_UnknownAndAmbiguousAreUsageErrors(t *testing.T) {
 	if !strings.Contains(errb, "最像的合法输入: ") {
 		t.Errorf("未知名要给「最像的合法输入」（K14 第三件）：%q", errb)
 	}
-	var env struct {
-		Items []map[string]string `json:"items"`
-		Err   map[string]any      `json:"error"`
-	}
-	if err := json.Unmarshal([]byte(out), &env); err != nil {
-		t.Fatalf("失败那一档也要是合法包封：%v · %q", err, out)
-	}
-	if len(env.Items) != 0 {
-		t.Errorf("执行前判没过 ⇒ items 必须空（不许给半份）：%+v", env.Items)
-	}
-	if env.Err == nil || env.Err["kind"] != "usage" {
-		t.Errorf("error.kind 要是 usage（AI 自愈靠它）：%+v", env.Err)
+	// ★ 缺口 `GAP-20260929-41`（本批）：未知名是**用法错**（`kind=usage`）⇒ **不吐包封** ⇒ stdout
+	//   **零字节**（旧断言「失败那一档也要是合法包封 + error.kind=usage」已过期；本断言在旧行为下
+	//   会红 ⇒ 有牙）。判词与「最像的合法输入」走 stderr（上面已逐字钉）。
+	if out != "" {
+		t.Errorf("未知名（用法错）⇒ stdout 必须零字节（GAP-20260929-41），得到 %q", out)
 	}
 	// 子串不算命中（`B-4` 的对面）：`合成` 不是逐字名。
 	if rc2, _, _ := runZergRepo(t, root, "gate", "show", "合成", "--json"); rc2 != 2 {

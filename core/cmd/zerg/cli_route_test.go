@@ -272,10 +272,10 @@ func TestRouteLs_UsageFace(t *testing.T) {
 	if rc != 2 {
 		t.Fatalf("裸 --json ⇒ rc=2，得到 %d", rc)
 	}
-	// ★ 本批起发射闸扩到 `inv.err != nil` ⇒ 错误面必走 stdout 的机器可读包封（旧行为「stdout 0 字节」
-	//   下本断言会红 ⇒ 有牙）；**结果面**仍必须空（`items` 一条都不出）—— 与下一档同形。
-	if !strings.Contains(out, `"items":[]`) || !strings.Contains(out, `"error"`) {
-		t.Fatalf("裸 --json ⇒ stdout 必是 `error` 包封且 `items` 空（现读 %d 字节）：%q", len(out), out)
+	// ★ 缺口 `GAP-20260929-41`（本批）：裸 `--json` 是**用法错**（`kind=usage`）⇒ **不吐包封** ⇒
+	//   stdout **零字节**（旧断言「必是 error 包封且 items 空」已过期；本断言在旧行为下会红 ⇒ 有牙）。
+	if out != "" {
+		t.Fatalf("裸 --json（用法错）⇒ stdout 必须零字节（GAP-20260929-41）（现读 %d 字节）：%q", len(out), out)
 	}
 	for _, f := range routeFieldsWant {
 		if !strings.Contains(errb, f) {
@@ -286,19 +286,11 @@ func TestRouteLs_UsageFace(t *testing.T) {
 	if rc2 != 2 {
 		t.Fatalf("未知字段 ⇒ rc=2，得到 %d", rc2)
 	}
-	// 本仓口径（`Q-155` 那条归一 · 见 `cli_version_jsongap_test.go`）：给了 `--json` 时，
-	// 用法错也要出**可读的错包封**（`error.exit_code` 与真退码同源），而 **items 一条都不出**。
-	var bad struct {
-		Items []map[string]string `json:"items"`
-		Error struct {
-			ExitCode int `json:"exit_code"`
-		} `json:"error"`
-	}
-	if err := json.Unmarshal([]byte(out2), &bad); err != nil {
-		t.Fatalf("未知字段那一档该出错包封（%v）：%q", err, out2)
-	}
-	if bad.Error.ExitCode != 2 || len(bad.Items) != 0 {
-		t.Fatalf("未知字段 ⇒ 包封 error.exit_code=2 且 items 空，实得 %q", out2)
+	// ★ 缺口 `GAP-20260929-41`（本批）：未知字段是**用法错**（`kind=usage`）⇒ **不吐包封** ⇒
+	//   stdout **零字节**（旧断言「包封里 error.exit_code=2 且 items 空」已过期；本断言在旧行为下
+	//   会红 ⇒ 有牙）。坏字段名与五格字段表仍逐字钉在 stderr（见下一条）。
+	if out2 != "" {
+		t.Fatalf("未知字段（用法错）⇒ stdout 必须零字节（GAP-20260929-41），实得 %q", out2)
 	}
 	// 命令树登记那一份（现读真源）必须逐格等于判据栏那五格。
 	info, ok := zerg.CommandInfoOfForTest("route ls")

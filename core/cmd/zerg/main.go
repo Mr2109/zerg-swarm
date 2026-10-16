@@ -554,7 +554,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	// `--json <字段>` 的失败路径：把**机器可读**的 `error` 块挂进包封（§九 M7）——
 	// 只在命令自己没往 stdout 写结果时补（写了结果就不改它，避免两个面打架）。
-	if rc != exitOK && inv.jsonGiven && cw.n == 0 && (inv.err != nil || len(inv.fields) > 0 || cmd.danger != nil) {
+	// ★ 缺口 `GAP-20260929-41`：`kind=usage` 的失败**不补 stdout 包封** —— 用法错不是
+	//   结果面（与 K2 的 0 字节档同口径：人读判词 + 字段表已全在 stderr，退码 2 为准），
+	//   `stdout` 留零字节；其余 kind（失败侧 error 包封，§九 M7）照旧补。
+	if rc != exitOK && inv.jsonGiven && cw.n == 0 && (inv.err == nil || inv.err.Kind != "usage") &&
+		(inv.err != nil || len(inv.fields) > 0 || cmd.danger != nil) {
 		emitErrIfJSON(inv, stdout, cmd, rc)
 	}
 	// ★ 缺口 `GAP-20260927-75`：gap 族环境旋钮申报行 —— **追加到 stderr 尾**（✗ 不顶掉首行判词）。

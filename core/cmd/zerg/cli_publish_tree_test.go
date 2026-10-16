@@ -263,22 +263,12 @@ func TestPublishTreeHas_FieldsFace(t *testing.T) {
 		if rc != 2 {
 			t.Errorf("`--json %s` 缺身份格 ⇒ rc=2，得到 %d · stderr=%s", fields, rc, errb)
 		}
-		var doc struct {
-			Items []map[string]string `json:"items"`
-			Error struct {
-				Kind   string `json:"kind"`
-				Detail string `json:"detail"`
-			} `json:"error"`
-		}
-		if err := json.Unmarshal([]byte(out), &doc); err != nil {
-			t.Errorf("`--json %s` 被拒时该出一个**错误包封**：%v · out=%q", fields, err, out)
-			continue
-		}
-		if len(doc.Items) != 0 {
-			t.Errorf("`--json %s` 被拒时 `items` 该是空的（一条读数都不出），得到 %v", fields, doc.Items)
-		}
-		if doc.Error.Kind != "usage" || doc.Error.Detail != "identity_cells_required" {
-			t.Errorf("`--json %s` 的错误块该是 usage/identity_cells_required，得到 %+v", fields, doc.Error)
+		// ★ 缺口 `GAP-20260929-41`（本批）：缺身份格是**用法错**（`kind=usage` ⇒
+		//   `identity_cells_required`）⇒ **不吐包封** ⇒ stdout **零字节**（旧断言「被拒时该出一个
+		//   错误包封 + items 空 + error.kind/detail」已过期；本断言在旧行为下会红 ⇒ 有牙）。
+		//   拒的理由仍逐字钉在 stderr（下一段：含「口径」与 `head_sha`）。
+		if out != "" {
+			t.Errorf("`--json %s` 被拒时 stdout 该零字节（GAP-20260929-41），得到 %q", fields, out)
 		}
 		if !strings.Contains(errb, "口径") || !strings.Contains(errb, "head_sha") {
 			t.Errorf("拒的理由该点名那两格：%s", errb)
@@ -290,14 +280,15 @@ func TestPublishTreeHas_FieldsFace(t *testing.T) {
 	if rc != 0 {
 		t.Fatalf("身份两格齐 ⇒ rc=0，得到 %d · stderr=%s", rc, errb)
 	}
-	// 裸 `--json`（K2 甲档）⇒ 2 + **错误面包封走 stdout**（本批起 `inv.err != nil` 也发射）
-	//   + stderr 列全部可选字段。★ 结果面仍必须空（`items` 空）。
+	// 裸 `--json`（K2 甲档）⇒ 2 + ★ 缺口 `GAP-20260929-41`（本批）：**用法错不吐包封** ⇒ stdout
+	//   **零字节**、字段清单一律走 stderr（旧断言「必是 error 包封且 items 空」已过期；本断言在
+	//   旧行为下会红 ⇒ 有牙）。
 	rc, out, errb := publishTreeRun(t, "publish", "tree", "has", "README.md", "--tree", tree, "--json")
 	if rc != 2 {
 		t.Errorf("裸 `--json` ⇒ rc=2（K2 甲档 · 码取自退码表），得到 %d", rc)
 	}
-	if !strings.Contains(out, `"items":[]`) || !strings.Contains(out, `"error"`) {
-		t.Errorf("裸 `--json` 时 stdout 必是 `error` 包封且 `items` 空，得到 %q", out)
+	if out != "" {
+		t.Errorf("裸 `--json`（用法错）⇒ stdout 必须零字节（GAP-20260929-41），得到 %q", out)
 	}
 	// ⑥ 字段表**两处同值**：命令树那一份 ⟷ 裸 `--json` 时 stderr 印的那一份。
 	info, ok := zerg.CommandInfoOfForTest(publishTreePath)

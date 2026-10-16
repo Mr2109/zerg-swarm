@@ -398,9 +398,9 @@ func TestDevVerifyJSONList(t *testing.T) {
 	if !strings.Contains(out, `"schema":"zerg/v1"`) {
 		t.Errorf("--json 包封第一键不是 schema=zerg/v1：%s", out)
 	}
-	// `--json` 不给字段 ⇒ 退码取自退码表（`usage` · 归一后 = 2）（K2）；本批起发射闸扩到
-	// `inv.err != nil` ⇒ **错误面**必是机器可读包封走 stdout（非危险档不再有「stdout 0 字节」那一档；
-	// 旧行为下本断言会红 ⇒ 有牙），而**结果面**仍必须空（`items` 一条都不出）。
+	// `--json` 不给字段 ⇒ 退码取自退码表（`usage` · 归一后 = 2）（K2）；★ 缺口 `GAP-20260929-41`
+	// （本批）：用法错**不吐包封** ⇒ stdout **零字节**（旧断言「必是 error 包封且 items 空」已过期；
+	// 本断言在旧行为下会红 ⇒ 有牙）。
 	var outB, errB bytes.Buffer
 	wantK2 := usageCodeFromTable(t)
 	rc := zerg.RunForTest([]string{"dev", "verify", "--yes", "--candidate", "DEV-0004", "--results", p, "--json"},
@@ -408,13 +408,12 @@ func TestDevVerifyJSONList(t *testing.T) {
 	if rc != wantK2 {
 		t.Errorf("`--json` 不给字段：rc=%d（要 %d）· stdout=%q", rc, wantK2, outB.String())
 	}
-	if !strings.Contains(outB.String(), `"items":[]`) || !strings.Contains(outB.String(), `"error"`) {
-		t.Errorf("`--json` 不给字段 ⇒ stdout 必是 `error` 包封且 `items` 空，得到 %q", outB.String())
+	if outB.Len() != 0 {
+		t.Errorf("`--json` 不给字段（用法错）⇒ stdout 必须零字节（GAP-20260929-41），得到 %q", outB.String())
 	}
 	// 负控（成对）：同一 `--json` 面在「证据为空」时必须也是 2 ——
 	// 证明「不给结论」不是只在人面生效（机器面偷偷给绿是最坏的一种）。
-	// （`--json` 失败时框架会在 stdout 出**错误包封**，所以这里判的是「退码 + 里面没有判决条目」，
-	//   不是「stdout 0 字节」—— 后者只有 `--json` 不给字段那一档才成立。）
+	// （★ `GAP-20260929-41`：该档也是用法错 ⇒ stdout 零字节；这里判「退码 + 里面没有判决条目」。）
 	outB.Reset()
 	errB.Reset()
 	if rc := zerg.RunForTest([]string{"dev", "verify", "--candidate", "DEV-0004",

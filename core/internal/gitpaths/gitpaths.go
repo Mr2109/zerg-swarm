@@ -253,7 +253,7 @@ func (m UntrackedFilesMode) argValue() (string, bool) {
 
 type config struct {
 	rev      string         // FaceTree / FaceGrep 的树或版本
-	prefixes []string       // FaceTracked / FaceOthers 的 pathspec 前缀（0..N 段，按调用序）
+	prefixes []string       // acceptsPrefix() 四面的 pathspec 前缀（0..N 段，按调用序；谁能吃以 Face.acceptsPrefix 为唯一真值）
 	pattern  string         // FaceGrep 的模式
 	mode     QuoteMode      // C-8：模式走枚举
 	strict   pathspecStrict // C-11：pathspec 匹配契约（枚举，非布尔）
@@ -272,7 +272,7 @@ func WithRev(rev string) Option {
 	}
 }
 
-// WithPrefix —— FaceTracked / FaceOthers / FaceDiffCached 的路径前缀（作为 pathspec 放在 `--` 之后，免选项歧义）。
+// WithPrefix —— FaceTracked / FaceOthers / FaceDiffCached / FaceStatus 四面的路径前缀（作为 pathspec 放在 `--` 之后，免选项歧义）。
 //
 // ★ A1 补面甲：**可给多段** pathspec。首参 + `more...` 按调用序原样落到 `--` 之后，
 // `--` 只出现一次（git 自己把 `--` 之后的段一律当 pathspec、不再当选项）。
@@ -480,7 +480,8 @@ func buildArgv(root string, face Face, cfg *config) ([]string, error) {
 //
 //	N 段（N≥1）⇒ `--` 恰出现一次、其后按调用序跟 N 段。
 //
-// 用途：FaceTracked / FaceOthers 两面同吃（两面都是 pathspec 收件面）。
+// 用途：acceptsPrefix() 在册的四面同吃（FaceTracked / FaceOthers / FaceDiffCached / FaceStatus）——
+// 谁能吃以 Face.acceptsPrefix 为唯一真值，本注释不再手写名单（入口闸在 args 顶部，禁静默丢）。
 func pathspecSuffix(cfg *config) []string {
 	if len(cfg.prefixes) == 0 {
 		return nil
@@ -528,6 +529,15 @@ func (f Face) acceptsUntrackedFiles() bool {
 	return f == FaceStatus
 }
 
+// AcceptsPrefix —— 哪些面吃 `WithPrefix`（pathspec 槽）：**四面**
+// FaceTracked / FaceOthers（ls-files 系）+ FaceDiffCached（`diff --cached <pathspec>`）+ FaceStatus（`status --porcelain <pathspec>`）。
+// ★ 判据同 acceptsErrorUnmatch（「git 该子命令有没有 pathspec 槽」，不是「我们喜不喜欢」）：
+// ls-tree / diff / grep 的 argv 里没有 pathspec 槽 ⇒ 给前缀**硬失败**（入口闸在 args 顶部，禁静默丢）。
+// ★ 本法是「谁能吃前缀」的唯一真值：args() 入口闸与各调用点（现读）都走它，不许再手写名单。
+func (f Face) AcceptsPrefix() bool {
+	return f == FaceTracked || f == FaceOthers || f == FaceDiffCached || f == FaceStatus
+}
+
 // args —— C-2：每一面的 argv 逐条写死在这里，七类面**全部**带 `-z`。
 func (f Face) args(cfg *config) ([]string, error) {
 	// C-11 入口闸：严档只有 ls-files 两面吃；其余面（含未知面值）**硬失败**，
@@ -539,6 +549,11 @@ func (f Face) args(cfg *config) ([]string, error) {
 	// 不许把旋钮静默丢掉（静默丢 = 调用点以为已调档，实际仍是默认档）。
 	if cfg.untracked != UntrackedFilesDefault && !f.acceptsUntrackedFiles() {
 		return nil, fmt.Errorf("gitpaths: %s 面不吃 `--untracked-files=<mode>`（该旋钮只属 status 面：FaceStatus）⇒ 硬失败，不静默丢", f)
+	}
+	// prefix 入口闸：WithPrefix 存的前缀只有 acceptsPrefix() 在册的面吃；
+	// 其余面（含未知面值）**硬失败**，不许把 pathspec 静默丢掉（静默丢 = 调用点以为圈了范围，实际跑了整仓）。
+	if len(cfg.prefixes) > 0 && !f.AcceptsPrefix() {
+		return nil, fmt.Errorf("gitpaths: %s 面不吃 pathspec 前缀（WithPrefix 只属 acceptsPrefix 在册四面：FaceTracked / FaceOthers / FaceDiffCached / FaceStatus）⇒ 硬失败，不静默丢", f)
 	}
 	switch f {
 	case FaceTracked:

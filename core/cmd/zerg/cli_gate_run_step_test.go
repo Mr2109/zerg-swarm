@@ -165,18 +165,11 @@ func TestGateRunStep_UnknownStepIsUsageError(t *testing.T) {
 	if !strings.Contains(errb, "最像的合法输入: ") {
 		t.Errorf("未知名要给「最像的合法输入」（K14 第三件 · 与 agent 族同一方言）：%q", errb)
 	}
-	var env struct {
-		Items []map[string]string `json:"items"`
-		Err   map[string]any      `json:"error"`
-	}
-	if err := json.Unmarshal([]byte(out), &env); err != nil {
-		t.Fatalf("失败那一档也要是合法包封：%v · %q", err, out)
-	}
-	if len(env.Items) != 0 {
-		t.Errorf("执行前判就没过 ⇒ items 必须空（不许给半份）：%+v", env.Items)
-	}
-	if env.Err == nil || env.Err["kind"] != "usage" {
-		t.Errorf("error.kind 要是 usage（AI 自愈靠它）：%+v", env.Err)
+	// ★ 缺口 `GAP-20260929-41`（本批）：`kind=usage` 的失败**不吐包封** ⇒ stdout **零字节**
+	//   （执行前判没过 ⇒ 一条读数都不出；旧断言「失败那一档也要是合法包封 + error.kind=usage」
+	//   已过期 —— 该错现在只在 stderr 上读；本断言在旧行为下会红 ⇒ 有牙）。
+	if out != "" {
+		t.Errorf("未知名（用法错 · 执行前判）⇒ stdout 必须零字节（GAP-20260929-41），得到 %q", out)
 	}
 }
 
@@ -189,10 +182,10 @@ func TestGateRunStep_JSONFieldDiscipline(t *testing.T) {
 	if rc != want {
 		t.Errorf("--json 不给字段 ⇒ 退 %d（K2 那一档 · 取自退码表 `usage`），得到 %d", want, rc)
 	}
-	// ★ 旧断言「stdout 必须 0 字节」已过期：本批起发射闸扩到 `inv.err != nil` ⇒ 错误面必是机器可读
-	//   包封走 stdout（旧行为下本断言会红）；**结果面**仍必须空（`items` 一条都不出）。
-	if !strings.Contains(out, `"items":[]`) || !strings.Contains(out, `"error"`) {
-		t.Errorf("--json 不给字段 ⇒ stdout 必是 `error` 包封且 `items` 空：%q", out)
+	// ★ 缺口 `GAP-20260929-41`（本批）：这是**用法错**（`kind=usage`）⇒ **不吐包封** ⇒ stdout **零字节**
+	//   （旧断言「必是 error 包封且 items 空」已过期；本断言在旧行为下会红 ⇒ 有牙）。
+	if out != "" {
+		t.Errorf("--json 不给字段（用法错）⇒ stdout 必须零字节（GAP-20260929-41）：%q", out)
 	}
 	rc, out, errb := execCase(t, bin, root, "gate", "run", "--json", "step")
 	if rc != 2 {
@@ -201,8 +194,8 @@ func TestGateRunStep_JSONFieldDiscipline(t *testing.T) {
 	if !strings.Contains(errb, "只在**单步档**") {
 		t.Errorf("要明说这条面只挂在单步档上：%q", errb)
 	}
-	if out == "" {
-		t.Errorf("这一档要有错误包封（items 空 + error 块）：%q", out)
+	if out != "" {
+		t.Errorf("`--json` 不在单步档（用法错）⇒ stdout 必须零字节（GAP-20260929-41）：%q", out)
 	}
 }
 

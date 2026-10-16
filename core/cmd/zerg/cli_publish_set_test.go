@@ -203,19 +203,19 @@ func TestPublishSet_JSONMachineFace(t *testing.T) {
 		}
 	}
 	// 缺身份格（口径）：投影掉它 ⇒ 拒（那格是读数的身份，不是可选投影格）。
-	rc, out, _ = publishSetRun(t, "publish", "set", "core/cmd/zerg/main.go",
+	// ★ 缺口 `GAP-20260929-41`（本批）：这一档是**用法错**（`kind=usage` ⇒ `identity_cells_required`）
+	//   ⇒ **不吐包封** ⇒ stdout **零字节**、拒的理由走 stderr（旧断言「包封里 items 空 +
+	//   identity_cells_required」已过期；本断言在旧行为下会红 ⇒ 有牙）。
+	rc, out, errb := publishSetRun(t, "publish", "set", "core/cmd/zerg/main.go",
 		"--json", "path,will_publish")
 	if rc != 2 {
 		t.Fatalf("`--json` 里缺 `caliber` ⇒ rc=2，得到 %d", rc)
 	}
-	// ★ `--json` 这一档的「0 字节」口径照本仓现读的**包封语义**：拒执时**不出读数**（`items` 空）
-	//   + 包封里带 `error.kind=usage`（与「人面 stdout 0 字节」是同一件事的机器面写法 ——
-	//   带 `--json` 时那条错误进包封，不带 `--json` 时 stdout 才是真的 0 字节，见下一格）。
-	if items := publishTreeItems(t, out); len(items) != 0 {
-		t.Errorf("拒执却出了读数：%v", items)
+	if out != "" {
+		t.Errorf("缺身份格（用法错）⇒ stdout 必须零字节（GAP-20260929-41），得到 %q", out)
 	}
-	if !strings.Contains(out, `"identity_cells_required"`) {
-		t.Errorf("拒执的包封里没点出 kind/detail：%s", out)
+	if !strings.Contains(errb, "caliber") || !strings.Contains(errb, "身份") {
+		t.Errorf("拒的理由该点名身份格 `caliber`：%q", errb)
 	}
 }
 

@@ -121,7 +121,8 @@ var cfpgForbid = []struct{ rel, needle string }{
 var cfpgWorktreeFace = []string{"git diff --name-only HEAD", "git status", "git ls-files --others"}
 var cfpgIndexFace = []string{"--cached", cfpgNeedRepoRoot, cfpgNeedCheckout}
 
-var cfpgLedgerHint = []string{"ledger", "judge"}
+// cfpgLedgerHint —— 族名口径引用登记处 ledger_family.go（✗ 别在本件再写字面表 · GAP-20260927-323）。
+var cfpgLedgerHint = ledgerFamilyHints
 
 // ── py 路径语义家族（自写 · ✗ 不用 path/filepath.Join|Abs|Dir）────────────────────────────────
 

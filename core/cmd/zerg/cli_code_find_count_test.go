@@ -109,21 +109,18 @@ func TestCodeFind_JSONCountHitCount(t *testing.T) {
 		t.Errorf("聚合面 `--json path,count` 没出按件 count 格：%q", outC)
 	}
 
-	// ③ 负控：非法字段仍按既有档拒（rc=2 · 机器面 `error.detail` 同源 `json_field_unknown:`）。
-	rcB, outB, _ := execCase(t, bin, root, "code", "find", "needle", "--json", "bogus_zz")
+	// ③ 负控：非法字段仍按既有档拒（rc=2）· ★ 缺口 `GAP-20260929-41`（本批）：用法错**不吐包封**
+	//   ⇒ stdout **零字节**，坏字段名与合法字段表全在 stderr（旧断言「包封里 error.detail =
+	//   json_field_unknown:bogus_zz」已过期；本断言在旧行为下会红 ⇒ 有牙）。
+	rcB, outB, errB := execCase(t, bin, root, "code", "find", "needle", "--json", "bogus_zz")
 	if rcB != 2 {
 		t.Errorf("非法字段 `--json bogus_zz` 要 rc=2（既有档），得到 %d", rcB)
 	}
-	var envB struct {
-		Error struct {
-			Detail string `json:"detail"`
-		} `json:"error"`
+	if outB != "" {
+		t.Errorf("非法字段（用法错）⇒ stdout 必须零字节（GAP-20260929-41），得到 %q", outB)
 	}
-	if err := json.Unmarshal([]byte(outB), &envB); err != nil {
-		t.Fatalf("非法字段 `--json bogus_zz` 应出包封（既有形态）：%v · %q", err, outB)
-	}
-	if envB.Error.Detail != "json_field_unknown:bogus_zz" {
-		t.Errorf("非法字段要按既有 detail 拒：%q（stdout=%q）", envB.Error.Detail, outB)
+	if !strings.Contains(errB, `未知字段 "bogus_zz"`) || !strings.Contains(errB, "合法字段:") {
+		t.Errorf("非法字段要在 stderr 点名 `bogus_zz` 并列合法字段：%q", errB)
 	}
 
 	// ④ 负控：空命中 ⇒ 报「计 0」（`meta.count=0` 在 · 而非整支不见）；退码仍为零命中档 1。
