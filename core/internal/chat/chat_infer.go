@@ -124,6 +124,8 @@ func (c *ChatInfer) Infer(ctx context.Context, model string, sysPrompt string, m
 	if sid := SessionIDFromCtx(ctx); sid != "" {
 		body["session_id"] = sid
 	}
+	// GAP-20261017-14：本轮工具面（恰好一个工具时才有非 nil face ⇒ 裸参数对象可判归属）
+	var face *toolFace
 	if len(tools) > 0 && len(tools[0]) > 0 {
 		// P4-50 修复: __temp__ 是温度标记（收尾轮 0.3）——不是真 tools——必须剥离（node-a 拒绝 Missing tool type）
 		realTools := make([]map[string]any, 0, len(tools[0]))
@@ -133,6 +135,7 @@ func (c *ChatInfer) Infer(ctx context.Context, model string, sysPrompt string, m
 			}
 			realTools = append(realTools, t)
 		}
+		face = soleToolFace(realTools)
 		if len(realTools) > 0 {
 			body["tools"] = realTools
 		}
@@ -181,7 +184,7 @@ func (c *ChatInfer) Infer(ctx context.Context, model string, sysPrompt string, m
 	if os.Getenv("ZERG_DEBUG") != "" {
 		fmt.Printf("[chat:infer] status=%d raw_len=%d raw_head=%s\n", resp.StatusCode, len(raw), truncateArgs(string(raw), 200))
 	}
-	res, perr := parseChatResult(raw)
+	res, perr := parseChatResult(raw, face)
 	// T1.4 批量几何：非流式响应体里同样抄一份（拿不到 ⇒ 不设 ⇒ 事件流里字段缺席，绝不编造）。
 	// ⚠ 响应被截断（node-a 截断容错路径）时 JSON 不完整 ⇒ 解析不出几何 ⇒ 缺席（宁缺不编）。
 	if res != nil {
@@ -225,6 +228,8 @@ func (c *ChatInfer) InferStream(ctx context.Context, model string, sysPrompt str
 		body["session_id"] = sid
 	}
 	body["temperature"] = toolTemp
+	// GAP-20261017-14：本轮工具面（恰好一个工具时才有非 nil face ⇒ 裸参数对象可判归属）
+	var face *toolFace
 	if len(tools) > 0 && len(tools[0]) > 0 {
 		// P4-50 修复: __temp__ 是温度标记（收尾轮 0.3）——不是真 tools——必须剥离（node-a 拒绝 Missing tool type）
 		realTools := make([]map[string]any, 0, len(tools[0]))
@@ -234,6 +239,7 @@ func (c *ChatInfer) InferStream(ctx context.Context, model string, sysPrompt str
 			}
 			realTools = append(realTools, t)
 		}
+		face = soleToolFace(realTools)
 		if len(realTools) > 0 {
 			body["tools"] = realTools
 		}
@@ -351,12 +357,13 @@ func (c *ChatInfer) InferStream(ctx context.Context, model string, sysPrompt str
 	// P4-45 适配器原则（Mr2109: 不同模型不同标准——适配器负责转换）
 	// example-35b-v2 训练格式 = XML 工具调用（模板要求 <tool_call><function=X><parameter=K>V</parameter></function></tool_call>）
 	// 模型输出 XML（正确行为）——系统只认 JSON tool_calls → 适配器补 XML→JSON 转换
-	if len(res.ToolCalls) == 0 && strings.Contains(res.Content, "<tool_call>") {
-		xmlCalls := parseXMLToolCalls(res.Content)
-		if len(xmlCalls) > 0 {
-			res.ToolCalls = xmlCalls
-			res.Content = stripXMLToolCalls(res.Content)
+	// GAP-20261017-14：文本面兜底统一走 parseTextToolCalls（既有三档 ＋ 裸参数对象 ＋ 多开缺闭）
+	if len(res.ToolCalls) == 0 {
+		textCalls, rest, _ := parseTextToolCalls(res.Content, face)
+		if len(textCalls) > 0 {
+			res.ToolCalls = textCalls
 		}
+		res.Content = rest
 	}
 	// T1.4 批量几何：从尾窗那一块里取（**拿不到 ⇒ res.Geometry 保持 nil ⇒ 事件流里字段缺席**）。
 	// 注：上游"只给 system_fingerprint 不给 timings"也算拿到了几何（g.Any() 为真）；
@@ -374,7 +381,7 @@ func (c *ChatInfer) InferStream(ctx context.Context, model string, sysPrompt str
 // parseChatResultTolerant — 容错解析（node-a llama-server 对含 tool_calls 响应固定截断——issue-3889 同类）
 // 截断点在 timings/usage 处——content/reasoning_content/tool_calls 已完整——字符串提取
 // 标准解析失败时调用（故障自愈——不因尾部截断丢整个响应）
-func parseChatResultTolerant(raw []byte) *InferResult {
+func parseChatResultTolerant(raw []byte, face *toolFace) *InferResult {
 	s := string(raw)
 	res := &InferResult{}
 	// content（跳过 null）
@@ -399,11 +406,13 @@ func parseChatResultTolerant(raw []byte) *InferResult {
 		})
 	}
 	// P4-45 XML fallback（example-35b-v2 训练格式——content 里 <tool_call>）
-	if len(res.ToolCalls) == 0 && strings.Contains(res.Content, "<tool_call>") {
-		if xmlCalls := parseXMLToolCalls(res.Content); len(xmlCalls) > 0 {
-			res.ToolCalls = xmlCalls
-			res.Content = stripXMLToolCalls(res.Content)
+	// GAP-20261017-14：统一走 parseTextToolCalls（三档 ＋ 裸参数对象 ＋ 多开缺闭）
+	if len(res.ToolCalls) == 0 {
+		textCalls, rest, _ := parseTextToolCalls(res.Content, face)
+		if len(textCalls) > 0 {
+			res.ToolCalls = textCalls
 		}
+		res.Content = rest
 	}
 	res.OutputTokens = len([]rune(res.Content)) / 2
 	return res
@@ -518,7 +527,7 @@ func firstJSONString(s string) string {
 }
 
 // parseChatResult — 解析 chat completions 响应（content + reasoning_content 分离 + tool_calls）
-func parseChatResult(raw []byte) (*InferResult, error) {
+func parseChatResult(raw []byte, face *toolFace) (*InferResult, error) {
 	var obj struct {
 		Choices []struct {
 			Message struct {
@@ -536,7 +545,7 @@ func parseChatResult(raw []byte) (*InferResult, error) {
 	}
 	if err := json.Unmarshal(raw, &obj); err != nil {
 		// node-a 截断容错（tool_calls 响应在 usage 处断——content/tool_calls 完整）
-		tol := parseChatResultTolerant(raw)
+		tol := parseChatResultTolerant(raw, face)
 		if tol.Content != "" || len(tol.ToolCalls) > 0 || tol.Reasoning != "" {
 			return tol, nil
 		}
@@ -560,11 +569,13 @@ func parseChatResult(raw []byte) (*InferResult, error) {
 		}
 	}
 	// P4-45 XML fallback（example-35b-v2 训练格式——content 里 <tool_call>）
-	if len(res.ToolCalls) == 0 && strings.Contains(res.Content, "<tool_call>") {
-		if xmlCalls := parseXMLToolCalls(res.Content); len(xmlCalls) > 0 {
-			res.ToolCalls = xmlCalls
-			res.Content = stripXMLToolCalls(res.Content)
+	// GAP-20261017-14：统一走 parseTextToolCalls（三档 ＋ 裸参数对象 ＋ 多开缺闭）
+	if len(res.ToolCalls) == 0 {
+		textCalls, rest, _ := parseTextToolCalls(res.Content, face)
+		if len(textCalls) > 0 {
+			res.ToolCalls = textCalls
 		}
+		res.Content = rest
 	}
 	res.InputTokens = obj.Usage.PromptTokens
 	res.OutputTokens = obj.Usage.CompletionTokens
@@ -711,6 +722,221 @@ func extractJSONObjects(s string) []string {
 		}
 	}
 	return out
+}
+
+// ═══════════ GAP-20261017-14：文本工具调用漏解析（单工具面 ＋ 裸参数对象）═══════════
+//
+// 实测两会话（chat_20261017_144532_603050 / chat_20261017_153351_9938cd）末轮的 assistant
+// content 都是「一句正文 ＋ 一个裸参数对象」，既无 <tool_call> 标签、也无 {name,arguments} 外壳：
+//
+//	…现在真写加 --yes。\n{"command":"zerg model add … --yes 2>&1 | head -120; echo "RC=$?""}
+//
+// 旧逻辑（触发条件含 <tool_call> ＋ 只认带 name/function 的对象）⇒ 0 调用、原文当正文交付。
+// 另一形态（chat_20261017_123145_b9ae07）是多开缺闭：
+//
+//	<tool_call>\n<tool_call>…\n{"command":"zerg code find …"}\n</tool_call>
+//
+// 同根：解析器只认「带名字的外壳」，而工具面收窄到只剩一个 zerg 工具后，模型常只吐参数对象。
+// ⇒ 这里补三样本领（既有格式 1/2/3 的行为逐字不变）：
+//  ① 标签外（无标签）的裸参数对象：仅当本轮工具面**恰好一个工具**时认归属（多工具面不猜）；
+//  ② 标签在但外壳不全（多开缺闭）：从标签块里取出那份参数对象（多份取最后一个可解析的）；
+//  ③ 值里带未转义引号（`echo "RC=$?"`）⇒ 逐字保留，不因 JSON 不合法而丢调用。
+// 解不出的坏残片**保持原样**（含标签 ⇒ 上游 bad_format 阶梯照旧接管），绝不静默当正文。
+
+// toolFace — 本轮工具面的「唯一工具」（名 ＋ 声明的参数键）。多工具面 ⇒ nil（不猜归属）。
+type toolFace struct {
+	name  string
+	props []string
+}
+
+// soleToolFace — 从 chat 格式 tools 参数取「恰好一个工具」的面（__temp__ 标记不算工具）。
+func soleToolFace(tools []map[string]any) *toolFace {
+	var face *toolFace
+	n := 0
+	for _, t := range tools {
+		if _, isTemp := t["__temp__"]; isTemp {
+			continue
+		}
+		n++
+		if n > 1 {
+			return nil
+		}
+		fn, _ := t["function"].(map[string]any)
+		if fn == nil {
+			return nil
+		}
+		name, _ := fn["name"].(string)
+		if name == "" {
+			return nil
+		}
+		f := &toolFace{name: name}
+		if ps, ok := fn["parameters"].(map[string]any); ok {
+			if props, ok2 := ps["properties"].(map[string]any); ok2 {
+				for k := range props {
+					f.props = append(f.props, k)
+				}
+			}
+		}
+		face = f
+	}
+	return face
+}
+
+// toolCallSpan — 一个 <tool_call> 块（inner = 开闭标签之间；raw = 含标签原文，供剥离）
+type toolCallSpan struct{ inner, raw string }
+
+// toolCallSpans — 按开标签切块：缺闭 ⇒ 取到文末；多开 ⇒ 归并成一块（b9ae07 形态）。
+func toolCallSpans(content string) []toolCallSpan {
+	const open, closing = "<tool_call>", "</tool_call>"
+	var out []toolCallSpan
+	pos := 0
+	for pos < len(content) {
+		i := strings.Index(content[pos:], open)
+		if i < 0 {
+			break
+		}
+		i += pos
+		j := strings.Index(content[i+len(open):], closing)
+		end := len(content)
+		innerEnd := len(content)
+		if j >= 0 {
+			innerEnd = i + len(open) + j
+			end = innerEnd + len(closing)
+		}
+		out = append(out, toolCallSpan{inner: content[i+len(open) : innerEnd], raw: content[i:end]})
+		if j < 0 {
+			break
+		}
+		pos = end
+	}
+	return out
+}
+
+// argsOnlyFragment — 找**最后一个**参数对象起点（`{"command":` / `{"command": `）。
+// 刻意不依赖 JSON 合法性：模型常把带引号的 shell 片段原样塞进值里（`echo "RC=$?"`），
+// 严格 json.Unmarshal 必失败，而那条调用本身是好的。
+func argsOnlyFragment(s string, face *toolFace) (int, string) {
+	if face == nil {
+		return -1, ""
+	}
+	best := -1
+	for _, p := range face.props {
+		for _, pat := range []string{`{"` + p + `":"`, `{"` + p + `": "`} {
+			if i := strings.LastIndex(s, pat); i > best {
+				best = i
+			}
+		}
+	}
+	if best < 0 {
+		return -1, ""
+	}
+	return best, s[best:]
+}
+
+// decodeArgsFragment — 参数对象文本 → args（单键：值取到末尾右引号，还原转义）。
+func decodeArgsFragment(raw string, face *toolFace) (map[string]any, bool) {
+	if face == nil {
+		return nil, false
+	}
+	t := strings.TrimRight(raw, " \t\r\n")
+	if !strings.HasSuffix(t, "}") {
+		return nil, false
+	}
+	for _, p := range face.props {
+		for _, pat := range []string{`{"` + p + `":"`, `{"` + p + `": "`} {
+			if !strings.HasPrefix(t, pat) {
+				continue
+			}
+			body := strings.TrimSuffix(t[len(pat):len(t)-1], `"`)
+			return map[string]any{p: unescapeJSONString(body)}, true
+		}
+	}
+	return nil, false
+}
+
+// unescapeJSONString — 还原 JSON 字符串里的转义（值侧不做严格校验——见 decodeArgsFragment）。
+func unescapeJSONString(s string) string {
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] != '\\' || i+1 >= len(s) {
+			b.WriteByte(s[i])
+			continue
+		}
+		i++
+		switch s[i] {
+		case 'n':
+			b.WriteByte('\n')
+		case 't':
+			b.WriteByte('\t')
+		case 'r':
+			b.WriteByte('\r')
+		case '"':
+			b.WriteByte('"')
+		case '\\':
+			b.WriteByte('\\')
+		case '/':
+			b.WriteByte('/')
+		case 'u':
+			var code int
+			if i+4 < len(s) {
+				if _, err := fmt.Sscanf(s[i+1:i+5], "%04x", &code); err == nil {
+					b.WriteRune(rune(code))
+					i += 4
+					continue
+				}
+			}
+			b.WriteByte('\\')
+			b.WriteByte(s[i])
+		default:
+			b.WriteByte(s[i])
+		}
+	}
+	return b.String()
+}
+
+// toolCallFromArgs — 参数对象 → 一条工具调用（RawArgs 由 args 序列化，RawCall 存命中原文）。
+func toolCallFromArgs(name string, args map[string]any, rawCall string) agent.ToolCall {
+	rawArgs, _ := json.Marshal(args)
+	return agent.ToolCall{Name: name, Args: args, RawArgs: string(rawArgs), RawCall: rawCall}
+}
+
+// parseTextToolCalls — 从正文取工具调用（GAP-20261017-14）。
+// 返回 calls（可空）· rest（剥掉已认出调用后的正文）· broken（有「像调用但解不出」的残片）。
+func parseTextToolCalls(content string, face *toolFace) ([]agent.ToolCall, string, bool) {
+	spans := toolCallSpans(content)
+	if len(spans) == 0 {
+		// 形态 B：无标签的裸参数对象（只在唯一工具面时认归属）
+		start, raw := argsOnlyFragment(content, face)
+		if start < 0 {
+			return nil, content, false
+		}
+		if args, ok := decodeArgsFragment(raw, face); ok {
+			return []agent.ToolCall{toolCallFromArgs(face.name, args, raw)},
+				strings.TrimSpace(content[:start]), false
+		}
+		// 截断/坏到解不出 ⇒ 裹上标签交给上游 bad_format 阶梯（不静默当正文）
+		return nil, strings.TrimSpace(content[:start]) + "\n<tool_call>\n" + strings.TrimSpace(raw) + "\n</tool_call>", true
+	}
+	// 形态 A：既有三档（格式1 JSON ／ 格式2 多对象 ／ 格式3 纯 XML）——行为逐字不变
+	if calls := parseXMLToolCalls(content); len(calls) > 0 {
+		return calls, stripXMLToolCalls(content), false
+	}
+	// 形态 C：标签在、外壳不全（多开缺闭 ／ 只有参数对象）——逐块取最后一份参数对象
+	var calls []agent.ToolCall
+	rest := content
+	for _, sp := range spans {
+		_, raw := argsOnlyFragment(sp.inner, face)
+		if raw == "" {
+			return nil, content, true // 解不出 ⇒ 原样交上游判坏格式
+		}
+		args, ok := decodeArgsFragment(raw, face)
+		if !ok {
+			return nil, content, true
+		}
+		calls = append(calls, toolCallFromArgs(face.name, args, sp.raw))
+		rest = strings.Replace(rest, sp.raw, "", 1)
+	}
+	return calls, strings.TrimSpace(rest), false
 }
 
 // stripXMLToolCalls — 从 content 剥离 XML 工具调用（剩纯正文）

@@ -1,4 +1,4 @@
-// chat_tool_zergcmd.go — GAP-20261017-09 对话工具面收窄：只剩虫族命令（zerg）
+// chat_tool_zergcmd.go — GAP-20261017-09 对话工具面收窄 ＋ GAP-20261017-11 命令树导航
 //
 // 用户口径（Mr2109，已入账）：「虫族对话 基于虫族 CLI 干活，只能使用虫族命令」
 // ⇒ 对话可调工具**必须是 zerg 子命令**；bash/read/write/edit/glob/grep/ls 一律不得作为对话工具。
@@ -12,6 +12,17 @@
 //	① 对话面禁用集（chatForbiddenTools：硬禁；chatPromptExcluded：仅主提示不出）
 //	② zerg 工具定义（唯一参数 command）
 //	③ zerg 命令硬闸＋执行器（argv 直传，✗ 不经 shell）
+//
+// GAP-20261017-11（命令树导航）另加两处：
+//
+//	④ 工具描述里的命令树导航：族清单摘要（zergCmdFamilies —— **静态导览表**）＋ 强迫先看 help ＋ 三条起手式
+//	⑤ 输出被截断时，在尾部点名「换精确读面」而不是放弃（zergCmdClipNote）
+//
+// 实测铁证（会话 chat_20261017_151842_e25e6e）：模型已能正确发 {name:zerg, command:"zerg gap ls"}
+// （工具面收窄已生效），但**只猜了这一种子命令** —— 推理原文「The output was truncated and didn't show
+// the specific gap I'm looking for. I need to filter the results.」⇒ 它不知道 `zerg gap show <GAP id>`
+// 这个**一字不截**的精确读面存在，也从未跑 `zerg help gap`。⇒ 描述里不给族清单与「先 help」纪律，
+// 模型就只能靠猜；输出截断时不给「换哪条」，它就只能放弃。
 package chat
 
 import (
@@ -135,14 +146,142 @@ func ChatZergToolParam() map[string]any {
 	}
 }
 
-// zergCmdToolDesc — zerg 工具描述（对话工具面唯一工具——讲清硬约束、「先 help」与技能正门）
-const zergCmdToolDesc = "跑一条虫族命令（虫族 CLI —— 对话唯一可用的工具）。" +
+// zergCmdFamily — 命令树里的一个族（族名 ＋ 该族动作数）
+type zergCmdFamily struct {
+	name    string
+	actions int
+}
+
+// zergCmdFamilies — 命令树族清单（**静态导览表**，GAP-20261017-11）。
+//
+// ★ 真源 = `zerg help --json family,actions`（现读命令树派生），✗ 不是这张表。
+// 为什么不在运行时现读：命令树真身在 `cmd/zerg`（package main），chat 包 import 不了它；
+// 也不该在每次渲染工具描述时起一个子进程去问 CLI（给一段文案付一次进程启动成本）。
+// ⇒ 这张表**只供导览**：让模型先知道有哪些族、哪族动作多，再自己去 `zerg help <族>` 查准的。
+//
+// 陈旧是可发现的（✗ 不是静默的）：单测 TestZergCmdFamilyTableMatchesLiveTree 拿这张表与
+// `zerg help --json family,actions` 现读输出逐条对拍（族数 + 每族动作数），命令树一变就红。
+//
+// 序：动作数降序、同数按族名字母序（渲染时不再排序 —— 改表就照这个序插）。
+var zergCmdFamilies = []zergCmdFamily{
+	{"gap", 32},
+	{"agent", 20},
+	{"gate", 18},
+	{"task", 13},
+	{"egg", 12},
+	{"model", 11},
+	{"core", 10},
+	{"dev", 10},
+	{"itask", 9},
+	{"chat", 8},
+	{"publish", 8},
+	{"code", 7},
+	{"build", 6},
+	{"cocoon", 6},
+	{"doc", 6},
+	{"approve", 5},
+	{"skill", 5},
+	{"archive", 4},
+	{"eval", 4},
+	{"fs", 4},
+	{"resource", 4},
+	{"sandbox", 4},
+	{"sched", 4},
+	{"script", 4},
+	{"api", 3},
+	{"calib", 3},
+	{"repo", 3},
+	{"route", 3},
+	{"swap", 3},
+	{"ui", 3},
+	{"context", 2},
+	{"fleet", 2},
+	{"gateway", 2},
+	{"help", 2},
+	{"wall", 2},
+	{"apply", 1},
+	{"ask", 1},
+	{"audit", 1},
+	{"ci", 1},
+	{"config", 1},
+	{"deploy", 1},
+	{"doctor", 1},
+	{"find", 1},
+	{"impact", 1},
+	{"isolate-ro", 1},
+	{"ls-face", 1},
+	{"mcp", 1},
+	{"metrics", 1},
+	{"net", 1},
+	{"plan", 1},
+	{"plugin", 1},
+	{"port", 1},
+	{"propose", 1},
+	{"root", 1},
+	{"update", 1},
+	{"version", 1},
+	{"watch", 1},
+}
+
+// zergCmdFamilySummary — 族清单摘要（形如 "gap(32) agent(20) gate(18) …"）
+func zergCmdFamilySummary() string {
+	var b strings.Builder
+	for i, f := range zergCmdFamilies {
+		if i > 0 {
+			b.WriteByte(' ')
+		}
+		fmt.Fprintf(&b, "%s(%d)", f.name, f.actions)
+	}
+	return b.String()
+}
+
+// zergCmdDescHead — 引言与硬约束段（工具面唯一的工具、首词、禁用元字符、已被撤下的工具、技能正门）
+const zergCmdDescHead = "跑一条虫族命令（虫族 CLI —— 对话唯一可用的工具）。" +
 	"【硬约束】command 的首词必须逐字 zerg（如 \"zerg version\"、\"zerg gap ls\"、" +
 	"\"zerg code show core/internal/chat/chat_tools.go:69\"）；不许管道/重定向/串联/命令替换" +
 	"（; | & < > $( 反引号 与多行 一律 rc=2 拒执）；没有 bash/read/write/edit/glob/grep/ls，" +
 	"也没有 web_search/web_fetch/skill_load/zerg_overview（本对话没有搜网能力——要联网就如实说做不到）。" +
-	"【要看技能】先 \"zerg skill ls\"（清单）再 \"zerg skill show <名>\"（正文）——技能只走这两条。" +
-	"【不确定用法】先跑 \"zerg help\"（全命令树）或 \"zerg help <族名>\"（如 zerg help gap）。"
+	"【要看技能】先 \"zerg skill ls\"（清单）再 \"zerg skill show <名>\"（正文）——技能只走这两条。"
+
+// zergCmdDescHelpFirst — ② 强迫先看 help ＋「输出太大别拿 ls 刷屏」
+const zergCmdDescHelpFirst = "【不确定子命令 ⇒ 先跑 zerg help <族>】子命令名不许猜：" +
+	"不确定某个族里有哪些动作，就先 \"zerg help <族>\"（如 \"zerg help gap\"）——" +
+	"它把该族每条动作的用法串、旗标、是否危险档逐条印出来，查一次的代价远小于猜错重试。" +
+	"【输出太大 ⇒ 换精确读面，别拿 ls 刷屏】\"zerg … ls\" 的输出被截断、看不到你要那一条时，" +
+	"改用「能按 id 精确取」的读面：\"zerg gap show <GAP id>\"（单条全文、一字不截）、" +
+	"\"zerg code show <件>:<行>\"（该行及上下文）、\"zerg gate find <词>\"（按词定位判据）——" +
+	"✗ 别拿 ls 一遍遍刷屏，✗ 也别就此放弃。"
+
+// zergCmdDescExamples — ③ 三条起手式（照着发就能跑）
+const zergCmdDescExamples = "【三条起手式】① \"zerg help gap\"（先看这一族有哪些动作）；" +
+	"② \"zerg gap show GAP-20261017-11\"（按 id 取单条全文——不是 ls）；" +
+	"③ \"zerg code find 'zergCmdToolDesc' --path core\"（按正则找件与行，再用 code show 取上下文）。"
+
+// zergCmdDescFinish — ④ 交答案纪律（GAP-20261017-12 的提示词面）
+//
+// 实测：加了族清单导航后模型**方向全对**（gap show 取到 want → code find → code show，
+// 真读到零命中），却以「让我看源码上下文」这类**下一步打算**收尾 ⇒ 用户拿到过程、没拿到交付物。
+// 这一段只做**先手引导**（软约束）；硬闸在 loopcore 的 natural 前置闸（同类收尾会被要求重答一次）。
+const zergCmdDescFinish = "【任务完成 ⇒ 直接交答案·✗ 不要再调工具】证据够了就停手，正文直接写结论" +
+	"（是什么 / 在哪 / 有没有 / 结论）；✗ 写「让我再看…／我打算…／下一步去查…」**不算完成**——" +
+	"那是过程不是交付；结论照任务要求的形状给（要几行就给几行）。"
+
+// zergCmdToolDesc — zerg 工具描述（对话工具面唯一工具）：硬约束 ＋ 命令树族清单摘要 ＋
+// 「先 help」纪律 ＋ 三条起手式 ＋ 交答案纪律。
+//
+// ★ 用 var 而非 const：族清单摘要由 zergCmdFamilies 派生（单一真源），✗ 别在字面量里再手抄一份
+// 摘要（手抄一份必然与表脱钩，而脱钩了没有任何判据看得见）。
+var zergCmdToolDesc = zergCmdDescBuild()
+
+// zergCmdDescBuild — 拼描述（族数 ＋ 摘要 ＋ 四段）
+func zergCmdDescBuild() string {
+	return zergCmdDescHead +
+		"【命令树·族清单（" + fmt.Sprintf("%d", len(zergCmdFamilies)) + " 族 · 括号内＝该族动作数）】" +
+		zergCmdFamilySummary() + "。" +
+		"（真源 = \"zerg help --json family,actions\"；此表仅供导览，命令树一变就要同步——有单测对拍）" +
+		zergCmdDescHelpFirst + zergCmdDescExamples +
+		zergCmdDescFinish
+}
 
 // zergCmdToolProps — zerg 工具参数 schema（唯一参数 command）
 func zergCmdToolProps() map[string]any {
@@ -307,12 +446,30 @@ func ChatZergCommand(args map[string]any, workDir string) (string, error) {
 	return b.String(), nil
 }
 
-// zergClip — 按**字符**截断（✗ 按字节切会把中文切坏——回给模型的 JSON 会变 U+FFFD）
+// zergClip — 按**字符**截断（✗ 按字节切会把中文切坏——回给模型的 JSON 会变 U+FFFD）。
+//
+// GAP-20261017-11：截断时**必须**在尾部点名「换哪条命令」，✗ 不能只报一句「已截断」——
+// 实测（会话 chat_20261017_151842_e25e6e）模型拿到被截断的 `zerg gap ls` 之后就放弃了
+// （推理原文「The output was truncated and didn't show the specific gap I'm looking for.
+// I need to filter the results.」），因为它不知道还有按 id 精确取的一字不截读面。
+// 提示文案见 zergCmdClipNote（含原样字节数——让模型自己判断该换读面还是收窄条件）。
 func zergClip(s string) string {
 	s = strings.TrimRight(s, "\n")
 	r := []rune(s)
 	if len(r) <= zergCmdOutLimit {
 		return s
 	}
-	return string(r[:zergCmdOutLimit]) + fmt.Sprintf("\n…（共 %d 字符——已截断）", len(r))
+	return string(r[:zergCmdOutLimit]) + "\n…" + zergCmdClipNote(len(s), len(r))
+}
+
+// zergCmdClipNote — 截断提示（原样字节数 / 字符数 ＋ 「改用能按 id 精确取的子命令」）。
+//
+// 措辞三条：① 说清「截断的是显示、不是命令失败」（✗ 别让模型以为命令坏了）；
+// ② 给两条**真存在**的精确读面（gap show / code show）＋一条定位面（help <族>）；
+// ③ 明确「别拿 ls 刷屏、别放弃」——这正是那次会话里模型停下的原因。
+func zergCmdClipNote(bytesN, runesN int) string {
+	return fmt.Sprintf("（输出已截断，共 %d 字节 / %d 字符；只回了前 %d 字符。"+
+		"要找单条目请用能按 id 精确取的子命令：`zerg gap show <GAP id>`（单条全文、一字不截）、"+
+		"`zerg code show <件>:<行>`、`zerg gate find <词>`；不确定该族有哪些动作先 `zerg help <族>`。"+
+		"✗ 别拿 ls 一遍遍刷屏，✗ 也别放弃）", bytesN, runesN, zergCmdOutLimit)
 }

@@ -15,8 +15,13 @@ package chat
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -297,4 +302,181 @@ func TestChatExecGuardBlocksWithdrawnTools(t *testing.T) {
 	if err := ChatExecGuard("sess-guard", ZergCmdToolName, map[string]any{"command": "zerg version"}); err != nil {
 		t.Errorf("ChatExecGuard(zerg) 不该拒：%v", err)
 	}
+}
+
+// ── GAP-20261017-11（命令树导航）的验收判据 ─────────────────────────────────
+//
+// 实测铁证（会话 chat_20261017_151842_e25e6e）：模型能正确发 {name:zerg, command:"zerg gap ls"}，
+// 但只猜了这一种子命令，且拿到截断输出后放弃（推理原文「The output was truncated and didn't show
+// the specific gap I'm looking for.」）⇒ 三面各一条牙：族表对拍 · 描述可见 · 截断点名。
+
+// TestZergCmdFamilyTableMatchesLiveTree — 静态导览表 ↔ 现读命令树（`zerg help --json family,actions`）对拍。
+//
+// 不同进程（命令树真身在 cmd/zerg，chat 包 import 不了）⇒ 只能起子进程问 CLI。
+// 起不来（本机没有 zerg 可执行件 / 该档不支持 --json）⇒ Skip 并注明「跳过了对拍」，
+// ✗ 不静默当绿（跳过会打印原因）。
+func TestZergCmdFamilyTableMatchesLiveTree(t *testing.T) {
+	// 下界先立：表被写坏/截断时先在这一句红，而不是在后面的 map 差集里给出迷惑读数。
+	if len(zergCmdFamilies) < 20 {
+		t.Fatalf("静态族表只有 %d 条 —— 低于下限 20（表被截断或写坏）", len(zergCmdFamilies))
+	}
+	t.Logf("静态族表：%d 族", len(zergCmdFamilies))
+
+	bin, err := zergBinaryPath()
+	if err != nil {
+		t.Skipf("跳过对拍（本机没有 zerg 可执行件）：%v", err)
+	}
+	out, err := exec.Command(bin, "help", "--json", "family,actions").Output()
+	if err != nil {
+		t.Skipf("跳过对拍（%s 的 help --json 面跑不动，拿不到现读真源）：%v", bin, err)
+	}
+	var env struct {
+		Items []struct {
+			Family  string `json:"family"`
+			Actions string `json:"actions"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(out, &env); err != nil {
+		t.Fatalf("现读命令树输出解析不了（%s）：%v", bin, err)
+	}
+	if len(env.Items) == 0 {
+		t.Fatalf("现读命令树给出 0 个族（读不到真源 ⇒ 不给结论，✗ 当绿）")
+	}
+	live := map[string]int{}
+	for _, it := range env.Items {
+		n, aerr := strconv.Atoi(it.Actions)
+		if aerr != nil {
+			t.Fatalf("族 %s 的动作数 %q 不是整数：%v", it.Family, it.Actions, aerr)
+		}
+		live[it.Family] = n
+	}
+	static := map[string]int{}
+	for _, f := range zergCmdFamilies {
+		if _, dup := static[f.name]; dup {
+			t.Errorf("静态族表里 %q 重复出现", f.name)
+		}
+		static[f.name] = f.actions
+	}
+	var missing, extra []string
+	for name, n := range live {
+		sn, ok := static[name]
+		if !ok {
+			missing = append(missing, fmt.Sprintf("%s(%d)", name, n))
+			continue
+		}
+		if sn != n {
+			t.Errorf("族 %s 的动作数：静态表 %d ≠ 现读 %d", name, sn, n)
+		}
+	}
+	for name := range static {
+		if _, ok := live[name]; !ok {
+			extra = append(extra, name)
+		}
+	}
+	sort.Strings(missing)
+	sort.Strings(extra)
+	if len(missing) > 0 || len(extra) > 0 {
+		t.Errorf("静态族表与现读命令树对不上：静态表缺 %v；静态表多 %v"+
+			"（命令树变了就同步 zergCmdFamilies；也可能 bin/ 未重编 ⇒ 现读还是旧树）", missing, extra)
+	}
+	t.Logf("对拍读数：静态 %d 族 / 现读 %d 族", len(static), len(live))
+}
+
+// TestZergCmdToolDescGuidesCommandTree — 描述里必须**肉眼可见**：族清单（≥20 个族名）、
+// 「先 zerg help <族>」纪律、三条起手式、以及「别拿 ls 刷屏 ⇒ 换精确读面」。
+func TestZergCmdToolDescGuidesCommandTree(t *testing.T) {
+	desc := zergCmdToolDesc
+	if strings.TrimSpace(desc) == "" {
+		t.Fatal("工具描述是空的（模型拿不到任何导航）")
+	}
+	// ① 真源声明（让读者知道这张表不是真源）
+	if !strings.Contains(desc, "zerg help --json family,actions") {
+		t.Errorf("描述没写明族清单的真源（zerg help --json family,actions）")
+	}
+	// ② 「先 help」纪律（本单的核心口径）
+	for _, want := range []string{"zerg help <族", "zerg help gap"} {
+		if !strings.Contains(desc, want) {
+			t.Errorf("描述缺「先 help」字样 %q", want)
+		}
+	}
+	// ③ 族名可见数（下界 20：表共几十族，低于 20 说明摘要没接进描述）
+	visible := 0
+	for _, f := range zergCmdFamilies {
+		if strings.Contains(desc, f.name+"(") {
+			visible++
+		}
+	}
+	if visible < 20 {
+		t.Fatalf("描述里可见族名 %d 个 —— 低于下限 20（摘要没接进描述）", visible)
+	}
+	t.Logf("描述里可见族名 %d / %d 个 · 描述 %d 字符", visible, len(zergCmdFamilies), len([]rune(desc)))
+	// ④ 三条起手式（示例要能照着发：两条精确读面 ＋ 一条正则定位）
+	for _, want := range []string{"zerg gap show GAP-", "zerg code find", "zerg code show"} {
+		if !strings.Contains(desc, want) {
+			t.Errorf("描述缺示例 %q", want)
+		}
+	}
+	// ⑤ 「输出太大别拿 ls 刷屏」的口径
+	if !strings.Contains(desc, "刷屏") {
+		t.Errorf("描述没点明「别拿 ls 刷屏」（模型上次就是靠 ls 拿截断输出）")
+	}
+	// ⑥ 交答案纪律（GAP-20261017-12：实测模型方向全对、却以「让我看源码上下文」收尾 ⇒ 描述要把话说死）
+	if !strings.Contains(desc, "直接交答案") || !strings.Contains(desc, "不算完成") {
+		t.Errorf("描述没写明「任务完成就交答案 · 写『我打算…』不算完成」")
+	}
+}
+
+// TestZergClipPointsToExactReadFace — 截断时尾部必须点名「换精确读面」＋ 原样字节数。
+//
+// 两态：① 未超限 ⇒ 输出逐字不改（✗ 别给正常输出也挂一句提示）；
+//
+//	② 超限 ⇒ 带「输出已截断，共 N 字节」＋ 精确读面名字。
+func TestZergClipPointsToExactReadFace(t *testing.T) {
+	small := "rc=0\n版本行\n"
+	if got := zergClip(small); got != strings.TrimRight(small, "\n") {
+		t.Fatalf("未超限的输出被改写了：%q", got)
+	}
+	intact := strings.Repeat("甲", zergCmdOutLimit)
+	if got := zergClip(intact); got != intact {
+		t.Fatalf("恰等于上限的输出不该被标截断（尾差 %d 字符）", len([]rune(got))-len(intact))
+	}
+	big := strings.Repeat("甲", zergCmdOutLimit+500)
+	got := zergClip(big)
+	for _, want := range []string{"输出已截断", "共 " + strconv.Itoa(len(big)) + " 字节", "gap show", "zerg help <族>"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("截断提示缺 %q（实得尾部：%.200q）", want, tailOf(got, 200))
+		}
+	}
+	if n := len([]rune(got)); n <= zergCmdOutLimit {
+		t.Errorf("截断后应仍带回提示（长度 %d ≤ 上限 %d）", n, zergCmdOutLimit)
+	}
+	t.Logf("截断提示尾部：%.200q", tailOf(got, 200))
+}
+
+// TestChatZergCommandTruncationHintsRealRun — 真跑一条必超限的虫族命令（`zerg help`，实测 81KB），
+// 确认截断提示**真的走到模型眼前**（不是一个只被单测调用、产品路径没接上的函数）。
+func TestChatZergCommandTruncationHintsRealRun(t *testing.T) {
+	if _, err := zergBinaryPath(); err != nil {
+		t.Skipf("跳过真跑（本机没有 zerg 可执行件）：%v", err)
+	}
+	res := ExecuteChatTool(ZergCmdToolName, map[string]any{"command": "zerg help"}, ChatToolsWorkDir)
+	if res.Error != "" {
+		t.Fatalf("zerg help 执行失败：%s", res.Error)
+	}
+	if !strings.Contains(res.Content, "输出已截断") {
+		t.Fatalf("`zerg help`（81KB 量级）没有被标截断——提示没接到产品路径上：%.200q", tailOf(res.Content, 200))
+	}
+	if !strings.Contains(res.Content, "gap show") {
+		t.Errorf("截断提示里没给精确读面（gap show）：%.200q", tailOf(res.Content, 200))
+	}
+	t.Logf("真跑截断读数：%.260q", tailOf(res.Content, 260))
+}
+
+// tailOf — 取尾部 n 个字符（日志用；✗ 按字节切会把中文切坏）
+func tailOf(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[len(r)-n:])
 }

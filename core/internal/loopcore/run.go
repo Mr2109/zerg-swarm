@@ -193,6 +193,12 @@ func Run(ctx context.Context, cfg Config, model, sysPrompt string, msgs []map[st
 	searchStreak := map[string]int{}
 	guard := loopguardNew()
 
+	// ── GAP-20261017-12（P0）：natural 前置闸的状态（**只给一次补轮**）──
+	// 实测（chat_20261017_152630_13f8d2）：工具方向全对、exit_kind=natural，正文却是「下一步打算」。
+	// forcedOnce 是「已经补过一轮」的事实位 —— 补过之后**一律照旧收尾**，绝不在收尾处造死循环。
+	forcedOnce := false
+	planFallback := "" // 被闸下的那份「打算」（补轮空产出时退回它，不丢已有内容）
+
 	for round := startRound; round <= lastRound; round++ {
 		obsRound = round // T1.3：本层真实轮次（会话级结论用它当 Rounds，不猜）
 		// 墙钟
@@ -291,6 +297,27 @@ func Run(ctx context.Context, cfg Config, model, sysPrompt string, msgs []map[st
 					break
 				}
 				msgs = append(msgs, map[string]any{"role": "user", "content": "工具调用格式无效（<tool_call> 内必须是一个 JSON 对象 {\"name\": \"工具名\", \"arguments\": {...}}）——请重新输出格式正确的工具调用"})
+				continue
+			}
+			// ── GAP-20261017-12（P0）：natural 前置闸（答案没交 ⇒ 补一轮，只补一次）──
+			// 本分支到此处的事实：本轮零工具调用、非坏格式 ⇒ 原版此处就是"自然收尾"。
+			// 闸判的是**正文形态**（空 / 打算口吻 —— 不判长度、不猜模型意图）：
+			// 判「不算交付」⇒ 注入一条「停手交答案」再跑一轮；第二次仍不交 ⇒ 照旧收尾（不再追加）。
+			if forcedOnce {
+				if strings.TrimSpace(res.Content) == "" && planFallback != "" {
+					res.Content = planFallback // 补轮空产出 ⇒ 退回上一轮正文（宁可给「打算」也不给空）
+				}
+				res.ExitKind = "natural"
+				return res
+			}
+			if need, why := NeedsForcedAnswer(result.Content); need {
+				forcedOnce = true
+				planFallback = result.Content
+				// 这一轮正文**不算交付**：从 Content 挪进 Reasoning（过程不丢，但不当结果给用户）
+				res.Content = ""
+				res.Reasoning = appendReasoning(res.Reasoning, result.Content)
+				emit("loop_hint", mustJSON(map[string]any{"kind": "forced_answer", "why": why}))
+				msgs = append(msgs, map[string]any{"role": "user", "content": ForcedAnswerHint})
 				continue
 			}
 			res.ExitKind = "natural"
@@ -448,6 +475,43 @@ func Run(ctx context.Context, cfg Config, model, sysPrompt string, msgs []map[st
 		// 位置是语义的一部分：只在这一步的边界上落，绝不在步内落（半个状态不可执行也不可解释）。
 		completedStep = round
 		persist(round, "")
+
+		// ── GAP-20261017-13（P0）：末轮带了工具调用 ⇒ **不能就此收工**，必须再给一次「只说结论」的机会 ──
+		// 症状（实测两次）：末轮 content 带 tool call ⇒ 工具执行完循环就到头了 ⇒ 模型**再无轮次**写结论，
+		// 调用方拿到的只有「工具跑了」，没有「结论是什么」。
+		// 本闸只补**一轮**、且补的那一轮**只许文本**：
+		//   · 工具结果已在上面的既有路径里作为 tool 消息追加（不重复执行、不改结果）；
+		//   · 再补一条 user 提示（逐字见 ForcedTextOnlyHint）说明「结果已附上、直接给结论」；
+		//   · 补轮传 nil 工具（模型**结构上**无法再调工具），且与 GAP-12 共用 forcedOnce（只补一次，绝不死循环）。
+		// 终局口径不变：轮次预算确实用尽了 ⇒ 仍记 max_rounds（补轮吃的就是最后一轮预算，不虚报 natural）。
+		if round >= lastRound && len(result.ToolCalls) > 0 && !forcedOnce {
+			forcedOnce = true // 与 GAP-12 的补轮共用同一事实位：两者相加最多补一轮
+			res.ExitKind = "max_rounds"
+			carry := result.Content // 本轮正文（过程）——补轮空产出时退回它，绝不比补之前更少
+			emit("loop_hint", mustJSON(map[string]any{"kind": "forced_text_only"}))
+			// 提示只加给**这一次请求的副本**，不写进可续跑的会话历史：max_rounds 是可续跑终局，
+			// 真被续跑时「不要再调工具」若留在历史里会毒化下一程（它那时正需要工具）。
+			closing := append([]map[string]any(nil), msgs...)
+			closing = append(closing, map[string]any{"role": "user", "content": ForcedTextOnlyHint})
+			final, ferr := d.callInfer(ctx, model, sysPrompt, closing, NoopDelta, nil)
+			if ferr != nil {
+				res.Content = carry // 补轮失败 ⇒ 至少不丢本轮正文（不静默吞掉已有内容）
+				break
+			}
+			res.Usage.TotalTokens += final.TotalTokens
+			res.Reasoning = appendReasoning(res.Reasoning, final.Reasoning)
+			res.Content = final.Content
+			if len(final.ToolCalls) > 0 {
+				// 补轮仍请求工具 ⇒ **不执行、不再补**（否则就是死循环）⇒ 正文退回已有内容并标明原因
+				res.Content = AppendTerminalNote(forcedTextOnlyContent(final.Content, carry), ForcedTextOnlyNote())
+			}
+			break
+		}
+	}
+	// GAP-20261017-12：补轮之后若因别的终局（轮数用尽等）落在这里而 Content 是空的，
+	// 退回被闸下的那份正文 —— 补轮不该让用户拿到的比补之前更少。
+	if strings.TrimSpace(res.Content) == "" && planFallback != "" {
+		res.Content = planFallback
 	}
 	if res.ExitKind == "" {
 		res.ExitKind = "max_rounds"
