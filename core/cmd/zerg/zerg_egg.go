@@ -52,6 +52,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -121,6 +122,10 @@ type zegEntryJSON struct {
 	// MediaType —— ★ 卵1① 的**段类型声明**（OCI 三档闭集 · 可加面键）。★ 用 `omitempty`：
 	// 空串**不落 JSON** ⇒ 旧形态（未标）产出的字节逐字不变（后向兼容）。
 	MediaType string `json:"mediaType,omitempty"`
+	// LinkTarget —— ★ 符号链接段的**原始链名**（相对形式原样保留 ✗ 不 normalize）。
+	// 语义等价 tar 的 `TypeSymlink='2'`：有该键 ⇒ 该段是链、`size=0`、无载荷字节。
+	// ★ `omitempty`：非链段不落键 ⇒ 旧形态的索引字节**逐字不变**（向后兼容 + 旧读端按可加面忽略）。
+	LinkTarget string `json:"linkTarget,omitempty"`
 }
 
 type zegIndexJSON struct {
@@ -155,7 +160,10 @@ type zegEntry struct {
 	SHA256    string
 	Mode      int
 	MediaType string // ★ 卵1① 写端算出的段类型（与读端同一张 `zegSegMediaType`）
-	src       string
+	// LinkTarget —— ★ `GAP-20261018-05`：非空 ⇒ 该段**是符号链接**（`size=0`、无载荷字节，
+	// 语义等价 tar 的 `TypeSymlink='2'`）。**原样保留相对链名**（✗ 不 normalize 成绝对）。
+	LinkTarget string
+	src        string
 }
 
 // ---- 小工具（逐字照 py）---------------------------------------------------------------------
@@ -436,7 +444,14 @@ type zegFsRule struct {
 // zegFsRules —— 特殊文件 / 硬链 / mode 安全子集（逐字照 `§十九` #26：「拒特殊文件〔硬链 / 设备 /
 // FIFO / socket〕· mode 安全子集」）。
 var zegFsRules = []zegFsRule{
-	{Name: "fs_symlink", Why: "符号链接（v1 不支持符号链接：TOCTOU 穿越的经典载体）"},
+	// ★ `GAP-20261018-05`（设计稿 Q4 拍定）：**只许相对链** —— 四条具名拒 + 一条「段自身不合法」，
+	// 取代 v1 那条「符号链接一律拒」。TOCTOU 的防线改成「绝对路径 / 越界 / 成环 / 超深」四道；
+	// 链本身照 `tar` 的 `TypeSymlink='2'` 语义进段表（`size=0`、无载荷字节），重建端用 `os.Symlink` 还原。
+	{Name: "fs_symlink_absolute", Why: "符号链接目标是绝对路径（只许相对链：绝对链把蛋内落点绑死在宿主路径上）"},
+	{Name: "fs_symlink_escape", Why: "相对链解析后越出蛋根（含 `..` 穿出：链成了蛋外的第二入口）"},
+	{Name: "fs_symlink_cycle", Why: "符号链接成环（a→b→a：解析不终止 ＝ 自指式陷阱）"},
+	{Name: "fs_symlink_depth", Why: "符号链接层数超过 8（深链放大解析成本、且是成环的近似形态）"},
+	{Name: "fs_symlink_entry_invalid", Why: "符号链接段自身不合法（链名为空 / size≠0 / 链名超过 4096 字节上限）"},
 	{Name: "fs_device", Why: "设备文件（块设备 / 字符设备）"},
 	{Name: "fs_fifo", Why: "FIFO（命名管道）"},
 	{Name: "fs_socket", Why: "socket"},
@@ -454,13 +469,109 @@ func zegFsWhy(rule string) string {
 	return rule
 }
 
+// ---- ★ 符号链接：只许相对链（`GAP-20261018-05` · 设计稿 Q4 拍板）--------------------------------
+//
+// 口径：链目标**必为相对路径**、解析后**必在蛋根内**、**必不成环**、**层数 ≤ 8**。
+// ★ 路径安全只做**算术**（`filepath.Clean` ＋ `filepath.Rel` 判是否以 `..` 开头），
+// ✗ 不用 `filepath.EvalSymlinks` —— 那会真去读盘 ＝ TOCTOU 的入口。
+// ★ 四道判在这里**逐条具名**（打包端 / 读端 `zegAuditIndexEntries` / 重建端三处共用一张表）。
+const (
+	// zegSymlinkMaxDepth —— 链层数上限（含自身；> 8 即拒 · 防环的第二道保险）。
+	zegSymlinkMaxDepth = 8
+	// zegSymlinkMaxTargetLen —— 链名字节上限（POSIX `PATH_MAX` 同级）。
+	zegSymlinkMaxTargetLen = 4096
+	// zegSymlinkMode —— 段表里给链段记的 mode（链自身的权限位无意义 ⇒ 取安全子集里的 0755）。
+	zegSymlinkMode = 0o755
+)
+
+// zegEmptySHA256 —— 空载荷的 sha256（链段 `size=0` ⇒ 校验面就是它 · ✗ 别把链当空文件读）。
+const zegEmptySHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+
+// zegSymlinkResolve —— 把一条链的**原始相对链名**按「所在目录」解成根相对 slash 路径。
+// 返回 (解出的根相对路径, 是否仍在蛋根内)。★ 纯算术：不读盘、不跟随。
+func zegSymlinkResolve(rel, target string) (string, bool) {
+	joined := path.Join(path.Dir(rel), filepath.ToSlash(target))
+	clean := filepath.Clean(filepath.FromSlash(joined))
+	back, err := filepath.Rel(".", clean)
+	if err != nil {
+		return filepath.ToSlash(clean), false
+	}
+	back = filepath.ToSlash(back)
+	if back == ".." || strings.HasPrefix(back, "../") {
+		return back, false
+	}
+	return back, true
+}
+
+// zegSymlinkOne —— 单条链的**前两道**判：段自身合法（非空 / 不太长）· 目标非绝对 · 解析后不出根。
+func zegSymlinkOne(rel, target string) error {
+	subj := fmt.Sprintf("段 %q 的符号链接（→ %q）", rel, target)
+	if target == "" || len(target) > zegSymlinkMaxTargetLen || strings.ContainsRune(target, 0) {
+		return zegRuleRefuse("D9", "fs_symlink_entry_invalid", zegFsWhy("fs_symlink_entry_invalid"), subj)
+	}
+	if strings.HasPrefix(target, "/") || filepath.IsAbs(target) {
+		return zegRuleRefuse("D9", "fs_symlink_absolute", zegFsWhy("fs_symlink_absolute"), subj)
+	}
+	next, inside := zegSymlinkResolve(rel, target)
+	if !inside {
+		return zegRuleRefuse("D9", "fs_symlink_escape", zegFsWhy("fs_symlink_escape"),
+			fmt.Sprintf("段 %q 的符号链接（→ %q ⇒ 解析到 %q，越出蛋根）", rel, target, next))
+	}
+	return nil
+}
+
+// zegRefuseSymlinkSet —— 一棵树 / 一张段表里**全部**符号链接的联判：先逐条过「绝对 / 越界」，
+// 再按链图走一遍「成环 / 超深」。★ 打包端 · 读端 · 重建端三处共用（＝双向校验）。
+func zegRefuseSymlinkSet(links map[string]string) error {
+	if len(links) == 0 {
+		return nil
+	}
+	rels := make([]string, 0, len(links))
+	for rel := range links {
+		rels = append(rels, rel)
+	}
+	sort.Strings(rels)
+	for _, rel := range rels {
+		if err := zegSymlinkOne(rel, links[rel]); err != nil {
+			return err
+		}
+	}
+	for _, rel := range rels {
+		seen := map[string]bool{rel: true}
+		cur := rel
+		depth := 1
+		for {
+			next, _ := zegSymlinkResolve(cur, links[cur])
+			if _, isLink := links[next]; !isLink {
+				break
+			}
+			if seen[next] {
+				return zegRuleRefuse("D9", "fs_symlink_cycle", zegFsWhy("fs_symlink_cycle"),
+					fmt.Sprintf("段 %q 的符号链接（链走到 %q 又回到已访过的段）", rel, next))
+			}
+			seen[next] = true
+			depth++
+			if depth > zegSymlinkMaxDepth {
+				return zegRuleRefuse("D9", "fs_symlink_depth", zegFsWhy("fs_symlink_depth"),
+					fmt.Sprintf("段 %q 的符号链接（链层数 %d > %d）", rel, depth, zegSymlinkMaxDepth))
+			}
+			cur = next
+		}
+	}
+	return nil
+}
+
 // zegRefuseEntryMode —— 逐条 `zegFsRules` 判一个 `os.FileInfo`（**打包端与重建端共用**；lstat 来的
 // 那个 ⇒ ✗ 不跟随符号链接）。命中 ⇒ 具名拒（D9）。
+//
+// ★ 符号链接**不在这里判**（`GAP-20261018-05`）：只许相对链的四道判在 `zegRefuseSymlinkSet`
+// （打包端 / 读端 / 重建端三处都调它）。走到这里说明调用方漏了分流 ⇒ **fail-closed** 按「段自身不合法」拒。
 func zegRefuseEntryMode(li os.FileInfo, subject string) error {
 	m := li.Mode()
 	switch {
 	case m&os.ModeSymlink != 0:
-		return zegRuleRefuse("D9", "fs_symlink", zegFsWhy("fs_symlink"), subject)
+		return zegRuleRefuse("D9", "fs_symlink_entry_invalid", zegFsWhy("fs_symlink_entry_invalid"),
+			fmt.Sprintf("%s（符号链接须先过 zegRefuseSymlinkSet 分流）", subject))
 	case m&os.ModeDevice != 0:
 		return zegRuleRefuse("D9", "fs_device", zegFsWhy("fs_device"), subject)
 	case m&os.ModeNamedPipe != 0:
@@ -481,6 +592,7 @@ func zegRefuseEntryMode(li os.FileInfo, subject string) error {
 }
 
 // zegRefuseSourceEntry —— 打包端对**源件**的检查（`lstat` ⇒ 逐条具名拒）。
+// ★ 符号链接已由调用方分流（`zegRefuseSymlinkSet`）；这里只判**非链**源件。
 func zegRefuseSourceEntry(fp string) error {
 	li, err := os.Lstat(fp)
 	if err != nil {
@@ -509,6 +621,12 @@ func zegRebuildTarget(root, rel string) (string, error) {
 // 再以 `O_NOFOLLOW|O_TRUNC` 重开；不存在 ⇒ `O_NOFOLLOW|O_EXCL` **原子建**（✗ 静默覆盖盘上非普通件）。
 func zegOpenRebuildTarget(tgt string) (*os.File, error) {
 	if li, err := os.Lstat(tgt); err == nil {
+		// ★ 符号链接**在这里必须拒**（`O_NOFOLLOW` 语义）：重建端 ✗ 顺着盘上已有的链写出去。
+		// 链段的重建走 `zegCreateSymlinkTarget`（先按段表判，再 `os.Symlink`）；走到这里的链 ⇒ 名字冲突。
+		if li.Mode()&os.ModeSymlink != 0 {
+			return nil, zegRuleRefuse("D9", "rebuild_target_symlink",
+				"重建落点已存在且是符号链接（O_NOFOLLOW：✗ 不跟随、✗ 覆盖）", tgt)
+		}
 		if rerr := zegRefuseEntryMode(li, tgt); rerr != nil {
 			return nil, rerr
 		}
@@ -528,11 +646,28 @@ func zegOpenRebuildTarget(tgt string) (*os.File, error) {
 // （✗ 不静默当已标 —— `§十九` #5 的「登记」在卵族命令面的落点）。
 func zegAuditIndexEntries(idx *zegIndex) error {
 	closed := zegMediaTypeClosedSet()
+	// ★ `GAP-20261018-05`：段表里的链**整表联判**一次（绝对 / 越界 / 成环 / 超深）——
+	// 读端守与打包端**同一口径**（「双向校验」）。链名原样取自段表，✗ 不去盘上跟。
+	links := make(map[string]string, len(idx.Entries))
+	for _, e := range idx.Entries {
+		if e.LinkTarget != "" {
+			links[e.Path] = e.LinkTarget
+		}
+	}
+	if err := zegRefuseSymlinkSet(links); err != nil {
+		return err
+	}
 	for _, e := range idx.Entries {
 		if err := zegRefusePath(e.Path); err != nil {
 			return err
 		}
-		if !zegModeSafeSet[e.Mode] {
+		if e.LinkTarget != "" {
+			// ★ 链段：权限位 / setuid 对链本身不适用 ⇒ **跳过 mode 检查**；但段长与链名仍要校。
+			if e.Size != 0 {
+				return zegRuleRefuse("D9", "fs_symlink_entry_invalid", zegFsWhy("fs_symlink_entry_invalid"),
+					fmt.Sprintf("段 %q 是符号链接但 size=%d（链段必须 size=0）", e.Path, e.Size))
+			}
+		} else if !zegModeSafeSet[e.Mode] {
 			return zegRuleRefuse("D9", "fs_mode_unsafe", zegFsWhy("fs_mode_unsafe"),
 				fmt.Sprintf("段 %q 的 mode=%#o", e.Path, e.Mode))
 		}
@@ -558,11 +693,69 @@ func zegAuditIndexEntries(idx *zegIndex) error {
 
 // ---- 收集条目 -------------------------------------------------------------------------------
 
+// zegCollectSymlinks —— 先整棵树收一遍**符号链接**（`Lstat` + `Readlink`，✗ 不跟随、不下钻）：
+// 返回「根相对 slash 路径 → 原始链名」。★ 链名**原样保留**（✗ normalize 成绝对、✗ 改写 `..`）。
+// 用途：`zegRefuseSymlinkSet` 需要**整棵树的链图**才能判「成环 / 超深」（单条链看不出这两类）。
+func zegCollectSymlinks(src string) (map[string]string, error) {
+	links := map[string]string{}
+	var walk func(dir string) error
+	walk = func(dir string) error {
+		des, err := os.ReadDir(dir)
+		if err != nil {
+			return err
+		}
+		for _, de := range des {
+			full := filepath.Join(dir, de.Name())
+			li, lerr := os.Lstat(full)
+			if lerr != nil {
+				return lerr
+			}
+			if li.Mode()&os.ModeSymlink != 0 {
+				rel, rerr := filepath.Rel(src, full)
+				if rerr != nil {
+					return rerr
+				}
+				rel = filepath.ToSlash(rel)
+				if err := zegRefusePath(rel); err != nil {
+					return err
+				}
+				tgt, terr := os.Readlink(full)
+				if terr != nil {
+					return terr
+				}
+				links[rel] = tgt
+				continue // followlinks=False：指向目录的链**不下钻**
+			}
+			if li.IsDir() {
+				if werr := walk(full); werr != nil {
+					return werr
+				}
+			}
+		}
+		return nil
+	}
+	if err := walk(src); err != nil {
+		return nil, err
+	}
+	return links, nil
+}
+
 // zegCollectEntries —— 遍历源目录出条目（**顺序确定**：目录与文件都排序 · ✗ 与 py 逐字同构）。
 // py 的 `os.walk`：先把当前层 scandir 分成 dirs/files、**先出当前层全部文件**再按 dirs 序下钻；
 // 分类用 `entry.is_dir()`（**跟随符号链接**）；`followlinks=False` ⇒ 指向目录的符号链接**只入 dirs、
 // 不下钻**；符号链接的**文件**进 files ⇒ 触发 ValueError。本件逐条复刻。
+//
+// ★ `GAP-20261018-05` 起的偏差（**有意的**）：符号链接不再一律拒 —— 先整树联判「只许相对链」
+// （绝对 / 越界 / 成环 / 超深），过了就以 `LinkTarget` 记成**链段**（`size=0`）；且**分类不再跟随**
+// （链一律进 files 档、✗ 不下钻）⇒ 指向目录的相对链也进段表，✗ 不会被静默丢掉。
 func zegCollectEntries(src string) ([]*zegEntry, error) {
+	links, lerr := zegCollectSymlinks(src)
+	if lerr != nil {
+		return nil, lerr
+	}
+	if err := zegRefuseSymlinkSet(links); err != nil {
+		return nil, err
+	}
 	var entries []*zegEntry
 	var walk func(dir string) error
 	walk = func(dir string) error {
@@ -574,9 +767,12 @@ func zegCollectEntries(src string) ([]*zegEntry, error) {
 		for _, de := range des {
 			name := de.Name()
 			full := filepath.Join(dir, name)
-			// 分类跟随符号链接（os.Stat）；dangling / 报错按「非目录」处理（== py is_dir 抛错的档）。
+			// 分类：符号链接**不跟随**（Lstat 先判）⇒ 一律当「非目录」（入 files 档、不下钻）；
+			// 非链才用 os.Stat 判目录（dangling / 报错按「非目录」处理，与 py `is_dir` 抛错的档对齐）。
 			isDir := false
-			if st, serr := os.Stat(full); serr == nil && st.IsDir() {
+			if li, lerr := os.Lstat(full); lerr == nil && li.Mode()&os.ModeSymlink != 0 {
+				isDir = false
+			} else if st, serr := os.Stat(full); serr == nil && st.IsDir() {
 				isDir = true
 			}
 			if isDir {
@@ -601,6 +797,23 @@ func zegCollectEntries(src string) ([]*zegEntry, error) {
 				return err
 			}
 			// ★ 卵1② 打包端**第二道**：`lstat`（**不跟随**）⇒ 特殊文件 / 硬链 / mode 安全子集，逐条具名拒。
+			// ★ `GAP-20261018-05`：符号链接先分流（只许相对链的四道判已在 `zegRefuseSymlinkSet` 全树过完）
+			// ⇒ 记成**链段**（`size=0` · 链名原样 · `tar TypeSymlink='2'` 语义），✗ 不读成空文件。
+			li, lerr := os.Lstat(fp)
+			if lerr != nil {
+				return lerr
+			}
+			if li.Mode()&os.ModeSymlink != 0 {
+				entries = append(entries, &zegEntry{
+					Path:       rel,
+					Size:       0,
+					SHA256:     zegEmptySHA256,
+					Mode:       zegSymlinkMode,
+					MediaType:  zegMediaTypeOfPath(rel), // ★ 卵1① 写端：与读端**同一张**表
+					LinkTarget: links[rel],
+				})
+				continue
+			}
 			if err := zegRefuseSourceEntry(fp); err != nil {
 				return err
 			}
@@ -649,7 +862,7 @@ func zegMarshalIndex(entries []*zegEntry, align int, now string) ([]byte, error)
 	}
 	ej := make([]zegEntryJSON, 0, len(entries))
 	for _, e := range entries {
-		ej = append(ej, zegEntryJSON{Path: e.Path, Off: e.Off, Size: e.Size, SHA256: e.SHA256, Mode: e.Mode, MediaType: e.MediaType})
+		ej = append(ej, zegEntryJSON{Path: e.Path, Off: e.Off, Size: e.Size, SHA256: e.SHA256, Mode: e.Mode, MediaType: e.MediaType, LinkTarget: e.LinkTarget})
 	}
 	idx := zegIndexJSON{
 		Magic:     zegMagic,
@@ -707,6 +920,10 @@ func zegPack(src, egg string, align int, now string) ([]*zegEntry, error) {
 		}
 		off, _ := out.Seek(0, io.SeekCurrent)
 		e.Off = off
+		// ★ 链段没有载荷字节（`tar TypeSymlink='2'` 语义：`size=0`）⇒ 只占一个对齐位，不拷内容。
+		if e.LinkTarget != "" {
+			continue
+		}
 		in, oerr := os.Open(e.src)
 		if oerr != nil {
 			out.Close()
@@ -964,6 +1181,27 @@ func zegVerify(path, rebuildInto string) ([]string, *zegIndex, error) {
 			if err := os.MkdirAll(filepath.Dir(tgt), 0o755); err != nil {
 				return nil, nil, err
 			}
+			// ★ `GAP-20261018-05`：链段 ⇒ **`os.Symlink(linkname, 目标路径)`**，✗ 不写普通文件。
+			// 链名**原样**落下（相对形式 ✗ 不改写）；链本身**不 chmod**（权限位对链无意义）。
+			// 重建端**再判一次**（双向校验 · ✗ 只信打包端 / 读端）。
+			if e.LinkTarget != "" {
+				if rerr := zegSymlinkOne(e.Path, e.LinkTarget); rerr != nil {
+					return nil, nil, rerr
+				}
+				if li, lerr := os.Lstat(tgt); lerr == nil {
+					if li.Mode()&os.ModeSymlink == 0 {
+						return nil, nil, zegRuleRefuse("D9", "rebuild_target_symlink",
+							"重建落点已存在且不是符号链接（✗ 覆盖盘上普通件）", tgt)
+					}
+					if rerr := os.Remove(tgt); rerr != nil {
+						return nil, nil, rerr
+					}
+				}
+				if serr := os.Symlink(e.LinkTarget, tgt); serr != nil {
+					return nil, nil, serr
+				}
+				continue
+			}
 			if _, err := rf.Seek(e.Off, io.SeekStart); err != nil {
 				return nil, nil, err
 			}
@@ -1023,8 +1261,13 @@ func zegCmdInfo(stdout io.Writer, path string) int {
 		if mt == "" {
 			mt = "未标 mediaType（登记）"
 		}
-		fmt.Fprintf(stdout, "    - %-40s %9d B  off=%d  %s  mediaType=%s  seg=%s\n",
-			e.Path, e.Size, e.Off, sha, mt, zegSegOfPath(e.Path))
+		extra := ""
+		if e.LinkTarget != "" {
+			// ★ 链段逐字点出链名（`GAP-20261018-05`）—— 别让「size=0 的段」看着像空文件。
+			extra = "  linkTarget=" + e.LinkTarget
+		}
+		fmt.Fprintf(stdout, "    - %-40s %9d B  off=%d  %s  mediaType=%s  seg=%s%s\n",
+			e.Path, e.Size, e.Off, sha, mt, zegSegOfPath(e.Path), extra)
 	}
 	return exitOK
 }
@@ -1215,7 +1458,7 @@ func zegSelfTest(stdout, stderr io.Writer) int {
 //	负控 A：同一份「未标」输入走**不审计**的旧形态 ⇒ **放行**（＝证明这道牙不是永真）
 //	负控 B：合法树 pack → verify（重建）⇒ 重建内容与源**逐字节同**（拒执不得伤正路）
 //	负控 C：`setuid` 源件 ⇒ 拒 `fs_mode_unsafe`
-//	负控 D：符号链接源件 ⇒ 拒 `fs_symlink`
+//	负控 D1–D4：符号链接四道拒各自具名（绝对 / 越界 / 成环 / 超深）· 正控 E：三级相对链 pack ⇒ rebuild 链名逐字同
 func zegFormatSelfTest(stdout, stderr io.Writer) int {
 	t, err := os.MkdirTemp("", "zerg-egg-format-selftest")
 	if err != nil {
@@ -1497,31 +1740,120 @@ func zegFormatSelfTest(stdout, stderr io.Writer) int {
 		return zegSelfFail(stderr, fmt.Errorf("负控 C 拒了但没点名 fs_mode_unsafe：%v", cerrC))
 	}
 
-	// ---- 负控 D：符号链接源件 ⇒ 拒 `fs_symlink` ----
-	dsrc := filepath.Join(t, "dsrc")
-	if err := os.MkdirAll(dsrc, 0o755); err != nil {
+	// ---- 负控 D1–D4 ＋ 正控 E：符号链接只许相对链（`GAP-20261018-05`）----
+	// 四道拒必须**各自具名、互不串名**；正控是三级相对链（打得进 ⇒ 重建得回 ⇒ 链名逐字同）。
+	symCase := func(name string, mk func(dir string) error) (string, error) {
+		d := filepath.Join(t, name)
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			return "", err
+		}
+		if err := os.WriteFile(filepath.Join(d, "real.bin"), []byte("z"), 0o644); err != nil {
+			return "", err
+		}
+		if err := mk(d); err != nil {
+			return "", err
+		}
+		return d, nil
+	}
+	symAll := []string{"fs_symlink_absolute", "fs_symlink_escape", "fs_symlink_cycle", "fs_symlink_depth"}
+	symWant := []struct {
+		name string
+		rule string
+		mk   func(dir string) error
+	}{
+		{"d1", "fs_symlink_absolute", func(d string) error {
+			return os.Symlink("/etc/hosts", filepath.Join(d, "link.bin"))
+		}},
+		{"d2", "fs_symlink_escape", func(d string) error {
+			if err := os.MkdirAll(filepath.Join(d, "sub"), 0o755); err != nil {
+				return err
+			}
+			return os.Symlink("../../outside.bin", filepath.Join(d, "sub", "link.bin"))
+		}},
+		{"d3", "fs_symlink_cycle", func(d string) error {
+			if err := os.Symlink("b.bin", filepath.Join(d, "a.bin")); err != nil {
+				return err
+			}
+			return os.Symlink("a.bin", filepath.Join(d, "b.bin"))
+		}},
+		{"d4", "fs_symlink_depth", func(d string) error {
+			for i := 0; i < 10; i++ {
+				tgt := fmt.Sprintf("l%02d.bin", i+1)
+				if i == 9 {
+					tgt = "real.bin"
+				}
+				if err := os.Symlink(tgt, filepath.Join(d, fmt.Sprintf("l%02d.bin", i))); err != nil {
+					return err
+				}
+			}
+			return nil
+		}},
+	}
+	for _, c := range symWant {
+		dir, derr := symCase("sym-"+c.name, c.mk)
+		if derr != nil {
+			return zegSelfFail(stderr, derr)
+		}
+		_, perr := zegPack(dir, filepath.Join(t, "sym-"+c.name+".egg"), 4096, "")
+		if perr == nil {
+			return zegSelfFail(stderr, fmt.Errorf("负控 %s 竟被打包（✗ 必须拒 %s）", c.name, c.rule))
+		}
+		if !strings.Contains(perr.Error(), c.rule) {
+			return zegSelfFail(stderr, fmt.Errorf("负控 %s 拒了但没点名 %s：%v", c.name, c.rule, perr))
+		}
+		for _, other := range symAll {
+			if other != c.rule && strings.Contains(perr.Error(), other) {
+				return zegSelfFail(stderr, fmt.Errorf("负控 %s 串名（本该 %s，报话里还有 %s）：%v", c.name, c.rule, other, perr))
+			}
+		}
+	}
+
+	// ---- 正控 E：三级相对链（`libfoo.so` → `libfoo.so.1` → `libfoo.so.1.12`）----
+	// 打得进 ⇒ 重建得回 ⇒ 重建后 `readlink` 逐字等于原链名、且是链不是普通件。
+	psrc := filepath.Join(t, "sym-ok")
+	if err := os.MkdirAll(psrc, 0o755); err != nil {
 		return zegSelfFail(stderr, err)
 	}
-	real := filepath.Join(dsrc, "real.bin")
-	if err := os.WriteFile(real, []byte("y"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(psrc, "libfoo.so.1.12"), []byte("ELF"), 0o644); err != nil {
 		return zegSelfFail(stderr, err)
 	}
-	if err := os.Symlink(real, filepath.Join(dsrc, "link.bin")); err != nil {
+	if err := os.Symlink("libfoo.so.1.12", filepath.Join(psrc, "libfoo.so.1")); err != nil {
 		return zegSelfFail(stderr, err)
 	}
-	_, cerrD := zegPack(dsrc, filepath.Join(t, "d.egg"), 4096, "")
-	if cerrD == nil {
-		return zegSelfFail(stderr, fmt.Errorf("负控 D 符号链接源件竟被打包（✗ 必须拒）"))
+	if err := os.Symlink("libfoo.so.1", filepath.Join(psrc, "libfoo.so")); err != nil {
+		return zegSelfFail(stderr, err)
 	}
-	if !strings.Contains(cerrD.Error(), "fs_symlink") {
-		return zegSelfFail(stderr, fmt.Errorf("负控 D 拒了但没点名 fs_symlink：%v", cerrD))
+	pegg := filepath.Join(t, "sym-ok.egg")
+	if _, perr := zegPack(psrc, pegg, 4096, ""); perr != nil {
+		return zegSelfFail(stderr, fmt.Errorf("正控 E 三级相对链竟被拒：%v", perr))
+	}
+	prb := filepath.Join(t, "sym-ok-rebuilt")
+	if probs, _, verr := zegVerify(pegg, prb); verr != nil || len(probs) != 0 {
+		return zegSelfFail(stderr, fmt.Errorf("正控 E 重建报错：err=%v probs=%v", verr, probs))
+	}
+	if fi, lerr := os.Lstat(filepath.Join(prb, "libfoo.so.1.12")); lerr != nil || !fi.Mode().IsRegular() {
+		return zegSelfFail(stderr, fmt.Errorf("正控 E 重建后链尾不是普通件：err=%v", lerr))
+	}
+	for _, c := range []struct{ path, want string }{
+		{"libfoo.so", "libfoo.so.1"},
+		{"libfoo.so.1", "libfoo.so.1.12"},
+	} {
+		full := filepath.Join(prb, c.path)
+		fi, lerr := os.Lstat(full)
+		if lerr != nil || fi.Mode()&os.ModeSymlink == 0 {
+			return zegSelfFail(stderr, fmt.Errorf("正控 E 重建后 %s 不是符号链接（err=%v）", c.path, lerr))
+		}
+		got, rerr := os.Readlink(full)
+		if rerr != nil || got != c.want {
+			return zegSelfFail(stderr, fmt.Errorf("正控 E 重建后 %s 的链名 %q ≠ 原件 %q（err=%v）", c.path, got, c.want, rerr))
+		}
 	}
 
 	addKeys := len(auditOld.AdditiveEntryKeys)
 	segN := len(zegSegMediaType)
 	clsN := len(zegMediaTypeClosedSet())
 	malN := len(malicious)
-	fmt.Fprintf(stdout, "self-test（卵1 格式与工具面）通过（4 态 ＋ 4 负控）：① 写端 ⟷ 读端 mediaType 逐条一致（%d 段 · 映射表 %d 段 %d 类）· ② 未标 %d 段 / 未知 %d 段 ⇒ 照 OCI 放行 ＋ 登记（✗ 不 error）· ③ 恶意路径 %d 类逐类必拒且点名规则 · ④ 「同键换语义」mediaType 闭集内却与 path 推出的类不符 ⇒ 拒[%s] 且点名 mediaType_class_mismatch · 负控 A 未标输入走不审计旧形态 ⇒ 放行（牙非永真 · 兼容闸登记可加面段键 %d 个）· 负控 B 合法树 rebuild 逐字节同 · 负控 C setuid 源件 ⇒ 拒[fs_mode_unsafe] · 负控 D 符号链接源件 ⇒ 拒[fs_symlink]\n",
+	fmt.Fprintf(stdout, "self-test（卵1 格式与工具面）通过（4 态 ＋ 4 负控 ＋ 1 正控）：① 写端 ⟷ 读端 mediaType 逐条一致（%d 段 · 映射表 %d 段 %d 类）· ② 未标 %d 段 / 未知 %d 段 ⇒ 照 OCI 放行 ＋ 登记（✗ 不 error）· ③ 恶意路径 %d 类逐类必拒且点名规则 · ④ 「同键换语义」mediaType 闭集内却与 path 推出的类不符 ⇒ 拒[%s] 且点名 mediaType_class_mismatch · 负控 A 未标输入走不审计旧形态 ⇒ 放行（牙非永真 · 兼容闸登记可加面段键 %d 个）· 负控 B 合法树 rebuild 逐字节同 · 负控 C setuid 源件 ⇒ 拒[fs_mode_unsafe] · 负控 D1–D4 符号链接四道拒各自具名且互不串名[fs_symlink_absolute / fs_symlink_escape / fs_symlink_cycle / fs_symlink_depth] · 正控 E 三级相对链（libfoo.so→libfoo.so.1→libfoo.so.1.12）pack ⇒ rebuild 链名逐字同\n",
 		entryN, segN, clsN, unlabeledOld, unknownUnk, malN, zegTierSurface, addKeys)
 	return exitOK
 }

@@ -16,6 +16,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -391,24 +392,62 @@ func TestZergEggMediaPathFourStates(t *testing.T) {
 	}
 	t.Logf("负控 ① 旧形态（不审计）在同一份未标输入上 ⇒ 放行（牙非永真）")
 
-	// 负控 ②：符号链接源件 ⇒ 拒 `fs_symlink`（v1 只挡符号链接 ⇒ 这条是本单扩面的回归牙）
-	lsrc := filepath.Join(dir, "lsrc")
-	if err := os.MkdirAll(lsrc, 0o755); err != nil {
-		t.Fatal(err)
+	// 负控 ②：符号链接「只许相对链」四道具名拒（`GAP-20261018-05`）—— 四条各自点名、互不串名
+	symAll := []string{"fs_symlink_absolute", "fs_symlink_escape", "fs_symlink_cycle", "fs_symlink_depth"}
+	for _, c := range []struct {
+		name string
+		rule string
+		mk   func(d string) error
+	}{
+		{"absolute", "fs_symlink_absolute", func(d string) error {
+			return os.Symlink("/etc/hosts", filepath.Join(d, "link.bin"))
+		}},
+		{"escape", "fs_symlink_escape", func(d string) error {
+			return os.Symlink("../outside.bin", filepath.Join(d, "link.bin"))
+		}},
+		{"cycle", "fs_symlink_cycle", func(d string) error {
+			if err := os.Symlink("b.bin", filepath.Join(d, "a.bin")); err != nil {
+				return err
+			}
+			return os.Symlink("a.bin", filepath.Join(d, "b.bin"))
+		}},
+		{"depth", "fs_symlink_depth", func(d string) error {
+			for i := 0; i < 10; i++ {
+				tgt := fmt.Sprintf("l%02d.bin", i+1)
+				if i == 9 {
+					tgt = "real.bin"
+				}
+				if err := os.Symlink(tgt, filepath.Join(d, fmt.Sprintf("l%02d.bin", i))); err != nil {
+					return err
+				}
+			}
+			return nil
+		}},
+	} {
+		sd := filepath.Join(dir, "lsrc-"+c.name)
+		if err := os.MkdirAll(sd, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(sd, "real.bin"), []byte("z"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := c.mk(sd); err != nil {
+			t.Fatal(err)
+		}
+		_, lerr := zegPack(sd, filepath.Join(dir, "l-"+c.name+".egg"), 4096, "")
+		if lerr == nil {
+			t.Fatalf("负控 ②/%s 符号链接源件竟被打包", c.name)
+		}
+		if !strings.Contains(lerr.Error(), c.rule) {
+			t.Fatalf("负控 ②/%s 拒了但没点名 %s：%v", c.name, c.rule, lerr)
+		}
+		for _, other := range symAll {
+			if other != c.rule && strings.Contains(lerr.Error(), other) {
+				t.Fatalf("负控 ②/%s 串名（本该 %s，报话里还有 %s）：%v", c.name, c.rule, other, lerr)
+			}
+		}
+		t.Logf("负控 ②/%s ⇒ 拒[%s]", c.name, c.rule)
 	}
-	real := filepath.Join(lsrc, "real.bin")
-	if err := os.WriteFile(real, []byte("z"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(real, filepath.Join(lsrc, "link.bin")); err != nil {
-		t.Fatal(err)
-	}
-	if _, lerr := zegPack(lsrc, filepath.Join(dir, "l.egg"), 4096, ""); lerr == nil {
-		t.Fatal("负控 ② 符号链接源件竟被打包")
-	} else if !strings.Contains(lerr.Error(), "fs_symlink") {
-		t.Fatalf("负控 ② 拒了但没点名 fs_symlink：%v", lerr)
-	}
-	t.Logf("负控 ② 符号链接源件 ⇒ 拒[fs_symlink]")
 
 	// 链尾：`--self-test` 四行（旧档 / 卵3① / 卵6 / 卵1）—— ★ 前三行必须**逐字未漂**
 	var so, se strings.Builder
@@ -419,7 +458,7 @@ func TestZergEggMediaPathFourStates(t *testing.T) {
 		"self-test 通过（10 项：3 正例 + 4 负例 + 3 条 xfer 用例）",
 		"self-test（卵3① 并行＋缓存）通过（7 项：3 正例 + 4 负例）",
 		"self-test（卵6 版本与兼容）通过（4 态 ＋ 1 负控）",
-		"self-test（卵1 格式与工具面）通过（4 态 ＋ 4 负控）",
+		"self-test（卵1 格式与工具面）通过（4 态 ＋ 4 负控 ＋ 1 正控）",
 	} {
 		if !strings.Contains(so.String(), frag) {
 			t.Fatalf("--self-test 缺行 %q：%q", frag, so.String())

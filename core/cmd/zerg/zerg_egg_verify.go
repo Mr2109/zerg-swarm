@@ -470,6 +470,27 @@ func zegvRebuild(path string, idx *zegIndex, dst string) error {
 		if err := os.MkdirAll(filepath.Dir(tgt), 0o755); err != nil {
 			return err
 		}
+		// ★ `GAP-20261018-05`：链段 ⇒ **`os.Symlink(linkname, 目标路径)`**，✗ 不写普通文件。
+		// 链名**原样**落下（相对形式 ✗ 不改写）；链本身**不 chmod**（权限位对链无意义）。
+		// 重建端**再判一次**（双向校验 · ✗ 只信打包端 / 读端）。
+		if e.LinkTarget != "" {
+			if rerr := zegSymlinkOne(e.Path, e.LinkTarget); rerr != nil {
+				return rerr
+			}
+			if li, lerr := os.Lstat(tgt); lerr == nil {
+				if li.Mode()&os.ModeSymlink == 0 {
+					return zegRuleRefuse("D9", "rebuild_target_symlink",
+						"重建落点已存在且不是符号链接（✗ 覆盖盘上普通件）", tgt)
+				}
+				if rerr := os.Remove(tgt); rerr != nil {
+					return rerr
+				}
+			}
+			if serr := os.Symlink(e.LinkTarget, tgt); serr != nil {
+				return serr
+			}
+			continue
+		}
 		if _, err := rf.Seek(e.Off, io.SeekStart); err != nil {
 			return err
 		}
