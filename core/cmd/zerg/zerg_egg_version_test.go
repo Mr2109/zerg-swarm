@@ -12,6 +12,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -312,7 +313,7 @@ func TestZegVersionFourStates(t *testing.T) {
 
 	// ---- 态③：`min_readable` 超本端（不可变面不符）⇒ **必拒且点名** ----
 	minEgg := zegTCloneEggWithIdx(t, base, filepath.Join(dir, "minread.egg"), func(m map[string]json.RawMessage) error {
-		m["min_readable"] = json.RawMessage(itoaForLog(zegFormatVersionSigBlock)) // 卵要「主号 2 的读端」
+		m["min_readable"] = json.RawMessage(itoaForLog(zegFormatVersionSigBlock)) // 卵要「更新世代的读端」
 		return nil
 	}, 0)
 	var o3, e3 strings.Builder
@@ -328,7 +329,7 @@ func TestZegVersionFourStates(t *testing.T) {
 	}
 	t.Logf("态③ rc=%d · 档位=%s · 人面=%q", rc3, tier3, msg3)
 
-	// ---- 态④：主号 2 签名块 ⇒ 旧读端**必拒** ----
+	// ---- 态④：主号 3（签名块世代）⇒ 旧读端**必拒** ----
 	sigEgg := zegTCloneEggWithIdx(t, base, filepath.Join(dir, "sigblock.egg"), func(m map[string]json.RawMessage) error {
 		return nil
 	}, zegFormatVersionSigBlock)
@@ -337,7 +338,7 @@ func TestZegVersionFourStates(t *testing.T) {
 	_, sigErr := zegParseIndex(sigEgg)
 	tier4 := tierOfErr(sigErr)
 	if rc4 == exitOK || sigErr == nil {
-		t.Fatalf("态④ 主号 2 签名块竟被旧读端放行（rc=%d err=%v）✗ 不是忽略", rc4, sigErr)
+		t.Fatalf("态④ 主号 %d（签名块世代）竟被旧读端放行（rc=%d err=%v）✗ 不是忽略", zegFormatVersionSigBlock, rc4, sigErr)
 	}
 	msg4 := strings.TrimSpace(o4.String() + e4.String())
 	if tier4 != "D2" || !strings.Contains(msg4, "签名块 v2") {
@@ -395,9 +396,9 @@ func TestZegVersionMinReadableNegativeControl(t *testing.T) {
 	}
 	// ★ 改前形态对**主号不符**的报话必须逐字复刻（改前那一条的原文）
 	if got := zegCompatGateLegacy(zegFormatVersionSigBlock); got == nil {
-		t.Fatalf("改前形态对主号 2 应拒")
-	} else if got.Error() != "格式版本不支持：2" {
-		t.Fatalf("改前形态报话 = %q ≠ 改前原文 %q", got.Error(), "格式版本不支持：2")
+		t.Fatalf("改前形态对主号 %d 应拒", zegFormatVersionSigBlock)
+	} else if want := fmt.Sprintf("格式版本不支持：%d", zegFormatVersionSigBlock); got.Error() != want {
+		t.Fatalf("改前形态报话 = %q ≠ 改前原文 %q", got.Error(), want)
 	}
 	// 两态对拍：牙 ⇒ 拒；改前形态 ⇒ 放行 —— 两个结论必须不同（否则这枚牙是永真的）
 	_, errTooth := zegParseIndex(minEgg)
@@ -428,7 +429,9 @@ func TestZegVersionSelfTestChain(t *testing.T) {
 	if !strings.Contains(out.String(), "self-test（卵6 版本与兼容）通过（4 态 ＋ 1 负控）") {
 		t.Fatalf("卵6 自检行缺失：%q", out.String())
 	}
-	for _, frag := range []string{"① 可加面未知段 ⇒ 照旧跑", "② 同键换语义", "③ min_readable=2 > 本端 1 ⇒ 拒[D3]", "④ 主号 2 签名块 ⇒ 拒[D2]", "负控"} {
+	for _, frag := range []string{"① 可加面未知段 ⇒ 照旧跑", "② 同键换语义",
+		fmt.Sprintf("③ min_readable=%d > 本端 %d ⇒ 拒[D3]", zegFormatVersionSigBlock, zegFormatVer),
+		fmt.Sprintf("④ 主号 %d 签名块 ⇒ 拒[D2]", zegFormatVersionSigBlock), "负控"} {
 		if !strings.Contains(out.String(), frag) {
 			t.Fatalf("卵6 自检行缺片段 %q：%q", frag, out.String())
 		}

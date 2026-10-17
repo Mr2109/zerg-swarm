@@ -147,6 +147,292 @@ func TestZergEggVerifyDetectsCorruption(t *testing.T) {
 	}
 }
 
+// ---- ⑤ v2 布局（段表化 ＋ 引擎段在尾）：闭环 · 只写尾部 · v1 后向兼容 -------------------------
+//
+// 这三组是设计稿 Q3 的**机检物**：① v2 打完能读回（info 面 version=2 / gen / 引擎段在尾）＋
+// `--rebuild-into` 三级链逐字同 ＋ 1 MiB 假 GGUF sha 前后一致；② 升引擎只写尾部（数据区 sha 不变 ·
+// 写区间起点越过非引擎段末尾 · inode 不变）＋ 负控「改权重段必拒」；③ 盘上 v1 卵仍 rc=0（后向兼容）。
+
+// zegTV2BuildTree —— v2 夹具树（9 段：权重 1 MiB 假 GGUF ＋ 引擎 4 段含三级相对链 ＋ 配方/契约 4 段）。
+func zegTV2BuildTree(t *testing.T, root string) {
+	t.Helper()
+	for _, d := range []string{"model", "engine", "bin", "sysroot/lib"} {
+		if err := os.MkdirAll(filepath.Join(root, filepath.FromSlash(d)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	w := make([]byte, 1<<20)
+	copy(w, []byte("GGUF"))
+	for i := 4; i < len(w); i++ {
+		w[i] = byte(i % 251)
+	}
+	if err := os.WriteFile(filepath.Join(root, "model", "demo.gguf"), w, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{
+		"config.json":           `{"arch":"v2-test"}`,
+		"contract/policy.json":  `{"policy":1}`,
+		"bin/run.sh":            "#!/bin/sh\nexec ./engine/zerg-engine\n",
+		"engine/zerg-engine":    "#!/bin/sh\necho engine-v1\n",
+		"engine/libfoo.so.1.12": "ELF-foo-1.12",
+		"sysroot/lib/libc.so.6": "stub-libc",
+	}
+	for rel, body := range files {
+		full := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Chmod(filepath.Join(root, "bin", "run.sh"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Join(root, "engine", "zerg-engine"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("libfoo.so.1.12", filepath.Join(root, "engine", "libfoo.so.1")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("libfoo.so.1", filepath.Join(root, "engine", "libfoo.so")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// zegTV2Run 走**真命令面**（`zergEggGateMain`）取 rc/stdout/stderr。
+func zegTV2Run(argv ...string) (int, string, string) {
+	var o, e strings.Builder
+	rc := zergEggGateMain(&o, &e, argv)
+	return rc, o.String(), e.String()
+}
+
+// TestZergEggV2ClosedLoop —— ③ v2 闭环五验：info 面 / 重建 / 三级链 / 权重 sha / 段序。
+func TestZergEggV2ClosedLoop(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "tree")
+	zegTV2BuildTree(t, src)
+	egg := filepath.Join(dir, "v2.egg")
+
+	rc, out, errb := zegTV2Run("pack", src, egg, "--align", "4096")
+	if rc != exitOK {
+		t.Fatalf("pack rc=%d err=%q", rc, errb)
+	}
+	if !strings.Contains(out, "v2 布局") {
+		t.Fatalf("pack 没印 v2 布局行：%q", out)
+	}
+	// 段数：夹具固定 9 段（自印 N ＋ 下界断言 ⇒ 抽空/少段都当场红）
+	const wantSegs = 9
+	idx, err := zegParseIndex(egg)
+	if err != nil {
+		t.Fatalf("v2 卵读不回：%v", err)
+	}
+	if len(idx.Entries) < wantSegs {
+		t.Fatalf("段数 %d 低于下限 %d（夹具打空 ⇒ fail-closed）", len(idx.Entries), wantSegs)
+	}
+	if len(idx.Entries) != wantSegs {
+		t.Fatalf("段数 %d ≠ 夹具固定 %d", len(idx.Entries), wantSegs)
+	}
+	if idx.Layout != zegV2LayoutVer || idx.Version != zegV2LayoutVer || idx.Gen != 1 {
+		t.Fatalf("布局/主号/gen = %d/%d/%d（要 2/2/1）", idx.Layout, idx.Version, idx.Gen)
+	}
+	// ① info 面：version=2 · gen · 引擎段在尾（`cocoon info` 走的就是这条壳）
+	rc, out, errb = zegTV2Run("info", egg)
+	if rc != exitOK {
+		t.Fatalf("info rc=%d err=%q", rc, errb)
+	}
+	for _, frag := range []string{"version=2", "布局=v2", "gen=1", "引擎段在尾=是"} {
+		if !strings.Contains(out, frag) {
+			t.Fatalf("info 面缺 %q：%q", frag, out)
+		}
+	}
+	// ② 引擎段必须全在尾部（判据与 info 同源）
+	if !zegV2EngineAtTail(idx.Entries) {
+		t.Fatalf("引擎段不在尾：%v", zegV2SegOrder(idx.Entries))
+	}
+	// ③ `--rebuild-into` ＋ 三级链逐字同
+	reb := filepath.Join(dir, "rebuilt")
+	rc, _, errb = zegTV2Run("verify", egg, "--rebuild-into", reb)
+	if rc != exitOK {
+		t.Fatalf("verify --rebuild-into rc=%d err=%q", rc, errb)
+	}
+	for _, c := range []struct{ path, want string }{
+		{"engine/libfoo.so", "libfoo.so.1"},
+		{"engine/libfoo.so.1", "libfoo.so.1.12"},
+	} {
+		full := filepath.Join(reb, filepath.FromSlash(c.path))
+		li, lerr := os.Lstat(full)
+		if lerr != nil || li.Mode()&os.ModeSymlink == 0 {
+			t.Fatalf("重建后 %s 不是符号链接（err=%v）", c.path, lerr)
+		}
+		if got, rerr := os.Readlink(full); rerr != nil || got != c.want {
+			t.Fatalf("重建后 %s 的链名 %q ≠ 原件 %q（err=%v）", c.path, got, c.want, rerr)
+		}
+	}
+	if fi, lerr := os.Lstat(filepath.Join(reb, "bin", "run.sh")); lerr != nil || fi.Mode().Perm() != 0o755 {
+		t.Fatalf("重建后 bin/run.sh 权限不是 0755：err=%v mode=%v", lerr, fi.Mode())
+	}
+	// ④ 1 MiB 假 GGUF 的 sha256 前后一致
+	a, _ := os.ReadFile(filepath.Join(src, "model", "demo.gguf"))
+	b, _ := os.ReadFile(filepath.Join(reb, "model", "demo.gguf"))
+	if sha256.Sum256(a) != sha256.Sum256(b) {
+		t.Fatalf("1 MiB 假 GGUF 重建后 sha256 不一致")
+	}
+	// ⑤ 内容寻址缓存对 v2 也成立（键 = `<卵内容 sha>.egg`；v2 的复核束取「8 KiB 整头 ＋ 尾表字节」）
+	eggBytes, err := os.ReadFile(egg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(eggBytes)
+	cached := filepath.Join(dir, "cached")
+	if err := os.MkdirAll(cached, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	caddr := filepath.Join(cached, hex.EncodeToString(sum[:])+".egg")
+	if err := os.WriteFile(caddr, eggBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(zegvCacheEnv, filepath.Join(cached, "cache"))
+	if rc, out, errb := zegTV2Run("verify", caddr); rc != exitOK {
+		t.Fatalf("v2 内容寻址卵首次 verify rc=%d err=%q", rc, errb)
+	} else if !strings.Contains(out, "未命中") {
+		t.Fatalf("首次应未命中缓存：%q", out)
+	}
+	if rc, out, errb := zegTV2Run("verify", caddr); rc != exitOK {
+		t.Fatalf("v2 内容寻址卵二次 verify rc=%d err=%q", rc, errb)
+	} else if !strings.Contains(out, zegvCacheMark) {
+		t.Fatalf("v2 卵二次 verify 未命中缓存（复核束对 v2 没接上）：%q", out)
+	}
+}
+
+// TestZergEggV2UpgradeOnlyTouchesTail —— ④ 升引擎只写尾部（含负控：改权重段必拒）。
+func TestZergEggV2UpgradeOnlyTouchesTail(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "tree")
+	zegTV2BuildTree(t, src)
+	egg := filepath.Join(dir, "up.egg")
+	if rc, _, errb := zegTV2Run("pack", src, egg, "--align", "4096"); rc != exitOK {
+		t.Fatalf("pack rc=%d err=%q", rc, errb)
+	}
+	before, err := os.ReadFile(egg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fi0, err := os.Stat(egg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	idx0, err := zegParseIndex(egg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 只改一个**只属引擎段**的小文件
+	eng := filepath.Join(src, "engine", "zerg-engine")
+	if err := os.WriteFile(eng, []byte("#!/bin/sh\necho engine-v2\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rc, out, errb := zegTV2Run("pack", src, egg, "--update")
+	if rc != exitOK {
+		t.Fatalf("--update rc=%d err=%q", rc, errb)
+	}
+	for _, frag := range []string{"升引擎完成", "gen 1 → 2", "起点 > 末尾 = true", "sha256 前后一致 = true"} {
+		if !strings.Contains(out, frag) {
+			t.Fatalf("升引擎读数缺 %q：%q", frag, out)
+		}
+	}
+	fi1, err := os.Stat(egg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// ① inode 不变（原地写、没换件）＋ 体积只增不减
+	if fi0.Size() <= 0 || fi1.Size() < fi0.Size() {
+		t.Fatalf("体积异常：%d → %d", fi0.Size(), fi1.Size())
+	}
+	if !os.SameFile(fi0, fi1) {
+		t.Fatalf("inode 变了 ⇒ 不是原地追加")
+	}
+	// ② 数据区逐字节同（[8 KiB, 旧 file_len)：权重/配方/契约段一个字节未动）
+	after, err := os.ReadFile(egg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !(idx0.FileLen > zegV2HeaderBytes && int64(len(before)) >= idx0.FileLen && int64(len(after)) >= idx0.FileLen) {
+		t.Fatalf("区间越界（旧 file_len=%d before=%d after=%d）", idx0.FileLen, len(before), len(after))
+	}
+	if sha256.Sum256(before[zegV2HeaderBytes:idx0.FileLen]) != sha256.Sum256(after[zegV2HeaderBytes:idx0.FileLen]) {
+		t.Fatalf("数据区 sha256 变了 ⇒ 前面被重写（升引擎必须只写尾部）")
+	}
+	// ③ 权重段那一坨字节直接对拍
+	weightOff, weightSize := int64(-1), int64(0)
+	for _, e := range idx0.Entries {
+		if e.Path == "model/demo.gguf" {
+			weightOff, weightSize = e.Off, e.Size
+		}
+	}
+	if weightOff < 0 || weightSize != 1<<20 {
+		t.Fatalf("夹具里找不到 1 MiB 权重段（off=%d size=%d）", weightOff, weightSize)
+	}
+	if sha256.Sum256(before[weightOff:weightOff+weightSize]) != sha256.Sum256(after[weightOff:weightOff+weightSize]) {
+		t.Fatalf("权重段字节变了（✗ 升引擎只许追加引擎段）")
+	}
+	// ④ gen 单调 ＋ 升级后仍自洽（新引擎内容读得出）
+	idx1, err := zegParseIndex(egg)
+	if err != nil {
+		t.Fatalf("升级后读不回：%v", err)
+	}
+	if idx1.Gen != idx0.Gen+1 {
+		t.Fatalf("gen %d → %d（要 +1）", idx0.Gen, idx1.Gen)
+	}
+	if probs, _, verr := zegVerify(egg, ""); verr != nil || len(probs) != 0 {
+		t.Fatalf("升级后 verify 报问题：err=%v probs=%v", verr, probs)
+	}
+	// ⑤ 负控：改权重段 ⇒ 升级必拒，且件零字节变动
+	snap := after
+	if err := os.WriteFile(filepath.Join(src, "model", "demo.gguf"), []byte("GGUF-changed"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rc, _, errb = zegTV2Run("pack", src, egg, "--update")
+	if rc == exitOK {
+		t.Fatalf("改了权重段竟被原地升级（✗ 必须拒）")
+	}
+	if !strings.Contains(errb, "非引擎段") {
+		t.Fatalf("拒了但没点名「非引擎段」：%q", errb)
+	}
+	now, err := os.ReadFile(egg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sha256.Sum256(snap) != sha256.Sum256(now) {
+		t.Fatalf("拒执却动了件（%d → %d B）", len(snap), len(now))
+	}
+}
+
+// TestZergEggV1BackwardCompat —— ② 盘上 v1 卵仍 rc=0（读端必顶 v1 · 写端才默认 v2）。
+func TestZergEggV1BackwardCompat(t *testing.T) {
+	// 仓内既有 v1 夹具（`agent/internal/eggpkg/testdata/demo.egg` · 2 段 · 未标 mediaType 的老形态）
+	demo := filepath.Join("..", "..", "..", "agent", "internal", "eggpkg", "testdata", "demo.egg")
+	if _, err := os.Stat(demo); err != nil {
+		t.Skipf("仓内 v1 夹具不在（%v）⇒ 本机无法取这一格读数", err)
+	}
+	rc, out, errb := zegTV2Run("verify", demo)
+	if rc != exitOK {
+		t.Fatalf("v1 卵 verify rc=%d err=%q", rc, errb)
+	}
+	if !strings.Contains(out, "校验通过") {
+		t.Fatalf("v1 卵 verify 没报通过：%q", out)
+	}
+	rc, out, errb = zegTV2Run("info", demo)
+	if rc != exitOK {
+		t.Fatalf("v1 卵 info rc=%d err=%q", rc, errb)
+	}
+	if !strings.Contains(out, "version=1") {
+		t.Fatalf("v1 卵 info 没印 version=1：%q", out)
+	}
+	if strings.Contains(out, "布局=v2") {
+		t.Fatalf("v1 卵被印成 v2（✗ 两种布局混了）：%q", out)
+	}
+}
+
 // ---- ③ ★ A 类止血牙（哑化 `defer os.RemoveAll(t)` ⇒ 本用例必红）--------------------------------
 
 func TestZergEggSelfTestRecyclesTemp(t *testing.T) {
@@ -459,6 +745,8 @@ func TestZergEggMediaPathFourStates(t *testing.T) {
 		"self-test（卵3① 并行＋缓存）通过（7 项：3 正例 + 4 负例）",
 		"self-test（卵6 版本与兼容）通过（4 态 ＋ 1 负控）",
 		"self-test（卵1 格式与工具面）通过（4 态 ＋ 4 负控 ＋ 1 正控）",
+		// ★ 第五行 = v2 布局（段表化 ＋ 引擎段在尾）—— ✗ 与前四行混行（前四行契约读数一字不动）
+		"self-test（卵 v2 布局）通过（6 态 ＋ 2 负控）",
 	} {
 		if !strings.Contains(so.String(), frag) {
 			t.Fatalf("--self-test 缺行 %q：%q", frag, so.String())
@@ -466,8 +754,13 @@ func TestZergEggMediaPathFourStates(t *testing.T) {
 	}
 	lines := strings.Split(strings.TrimRight(so.String(), "\n"), "\n")
 	lineN := len(lines)
-	if lineN != 4 {
-		t.Fatalf("--self-test 行数 = %d ≠ 4（四档必须分开印）", lineN)
+	// 自印 N ＋ 下界（抽空/少一行即 fail-closed）：四档历史面 ＋ v2 档 = **5 行**。
+	const wantLines = 5
+	if lineN < wantLines {
+		t.Fatalf("--self-test 行数 = %d 低于下限 %d（抽空 ⇒ fail-closed）", lineN, wantLines)
 	}
-	t.Logf("--self-test 末行（卵1 那行）= %q", lines[lineN-1])
+	if lineN != wantLines {
+		t.Fatalf("--self-test 行数 = %d ≠ %d（五档必须分开印）", lineN, wantLines)
+	}
+	t.Logf("--self-test 末行（v2 那行）= %q", lines[lineN-1])
 }

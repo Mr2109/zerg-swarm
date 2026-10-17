@@ -50,6 +50,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"os"
 	"path"
@@ -65,8 +66,11 @@ import (
 
 // ---- 常量（逐字照 py 顶部）------------------------------------------------------------------
 const (
-	zegMagic        = "ZEGG"
-	zegFormatVer    = 1
+	zegMagic = "ZEGG"
+	// zegFormatVer —— **本端（读端）认知的格式主号**：v2 起 = 段表化布局（8 KiB 双槽头 ＋ 尾段表）。
+	// ★ 分工（三枚常量，✗ 别混）：`zegFormatVerV1` = 1（历史布局 · 读端**仍支持** ⇒ 后向兼容）、
+	//   `zegV2LayoutVer` = 2（现读默认写端 `zegPackV2` 出的布局）、本常量 = **本端主号**（＝ 2）。
+	zegFormatVer    = zegV2LayoutVer
 	zegToolName     = "zerg-egg"
 	zegToolVersion  = "1.0.0"
 	zegMinAlign     = 4096
@@ -150,6 +154,18 @@ type zegIndex struct {
 	// 但必须**登记并印出**（✗ 不许静默当已标）。
 	UnlabeledMedia []string
 	UnknownMedia   []string
+	// ---- ★ v2 布局面（v1 卵这些字段为零值：`Layout=1`、其余 0/空 ⇒ 旧面逐字不变）------------------
+	// Layout —— 布局主号（1 = 历史 v1 · 2 = 段表化 v2）。
+	Layout int
+	// Gen / UUID —— 头槽里的**代际**与**卵唯一号**（★ 续传令牌取 `(uuid, gen, table_sha256)`，
+	// ✗ 绝不用整件 ETag —— 追加式格式里整件 digest 每加一段就变）。
+	Gen  int64
+	UUID string
+	// TableOff / TableLen / FileLen / TableSHA —— 段表的落点/长度、数据末尾、表内容 sha256（十六进制）。
+	TableOff int64
+	TableLen int64
+	FileLen  int64
+	TableSHA string
 }
 
 // zegEntry —— 打包期的条目（多一个内部 `src`，**不进 JSON**）。
@@ -194,11 +210,12 @@ func zegSha256File(path string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// zegBuildPrefix —— 固定 32 字节前缀的**唯一实现**（zegParseIndex 与之同源）。
+// zegBuildPrefix —— **v1** 固定 32 字节前缀的**唯一实现**（`zegParseIndexV1` 与之同源）。
+// ★ 前缀里的主号恒 `zegFormatVerV1`（＝1）：v2 的头是 8 KiB 双槽（见 `zegV2SlotEncode`），✗ 不走这里。
 func zegBuildPrefix(align int, indexLen int) []byte {
 	b := make([]byte, zegHeaderPrefix)
 	copy(b[0:4], zegMagic)
-	binary.LittleEndian.PutUint32(b[4:8], uint32(zegFormatVer))
+	binary.LittleEndian.PutUint32(b[4:8], uint32(zegFormatVerV1))
 	binary.LittleEndian.PutUint64(b[8:16], uint64(align))
 	binary.LittleEndian.PutUint64(b[16:24], uint64(indexLen))
 	return b
@@ -854,8 +871,636 @@ func zegCollectEntries(src string) ([]*zegEntry, error) {
 
 // ---- 打包 -----------------------------------------------------------------------------------
 
+// ---- v2 布局：段表化 ＋ 引擎段放尾（设计稿 Q3 已拍 · 本件唯一真源）------------------------------
+//
+// 形状（★ 与 v1 不兼容 ⇒ 主号 2；旧读端由主号闸 **D2 前向拒**，✗ 不按旧偏移猜着读）：
+//
+//	[0, 8192)          固定头：**两槽 × 4096**，各带 `gen`（单调）＋ `crc32c`；读时取「crc 有效且 gen 最大」
+//	[align, file_len)  数据段：**非引擎段在前（路径序）· 引擎段一律最后（路径序）**
+//	table_off          `= align_up(file_len, 65536)` ⇒ **段表放文件尾**
+//	[table_off, +len)  段表（JSON · 与 v1 **同一份键形状**：magic/version/align/tool/created_at/entries）
+//
+// 提交点 = **头槽指针翻转**（表不双写 —— 依据 LMDB「Transaction N writes meta page #(N % 2)」）：
+//
+//	data/engine → fsync → table → fsync → header(slot = gen % 2) → fsync（darwin 另加 F_FULLFSYNC）
+//
+// 任一步崩 ⇒ 旧 gen 那一槽仍 crc 有效且指向旧表 ⇒ **旧代仍可读**。升引擎只**追加**新引擎段
+// ＋ 重写尾表 ＋ 翻一次头槽 ⇒ **前面的权重/配方段一个字节都不碰**（证据面见 `zegV2UpgradeEngine`）。
+const (
+	// zegFormatVerV1 —— v1 主号（历史布局：32 B 前缀 ＋ 变长索引 ＋ 按路径序的段）。读端**仍支持**。
+	zegFormatVerV1 = 1
+	// zegV2LayoutVer —— v2 主号：段表化布局（双槽头 ＋ 尾段表 ＋ 引擎段在尾）。
+	zegV2LayoutVer = 2
+	// zegV2HeaderBytes / zegV2SlotBytes —— 固定头 8 KiB ＝ 双槽 × 4 KiB（两槽交替写 ⇒ 指针翻转即提交点）。
+	zegV2HeaderBytes = 8 << 10
+	zegV2SlotBytes   = 4 << 10
+	// zegV2TableAlign —— 段表落点：`file_len` 之后第一个 64 KiB 边界。
+	zegV2TableAlign = 64 << 10
+	// zegV2TableMaxBytes —— 读段表时的分配上界（防畸形头把内存吃光）。
+	zegV2TableMaxBytes = 64 << 20
+	// zegSegEngine —— 段分类里「引擎段」的取值（排序与 info/升级都读它 ⇒ 单点真源）。
+	zegSegEngine = "引擎段"
+	// 头槽内字段偏移（little endian · 槽 = 4096 B：前 96 B 语义 ＋ 4 B crc32c，其余留后续可加面）。
+	zegV2OffMagic    = 0
+	zegV2OffLayout   = 4
+	zegV2OffGen      = 8
+	zegV2OffFileLen  = 16
+	zegV2OffTableOff = 24
+	zegV2OffTableLen = 32
+	zegV2OffAlign    = 40
+	zegV2OffUUID     = 48
+	zegV2OffTableSHA = 64
+	zegV2OffCRC      = 96
+	zegV2CRCSpan     = 96
+	// zegV2FCNTLFullFsync —— Darwin 的 `F_FULLFSYNC`（`fsync` 在 macOS 上不保证落盘）。
+	// ★ 只在 `runtime.GOOS == "darwin"` 那一支用（Linux 无此常量 ⇒ ✗ 不写 `syscall.F_FULLFSYNC`）。
+	zegV2FCNTLFullFsync = 51
+)
+
+// zegV2Slot —— 一个头槽的内容（**唯一提交点**：翻转它才算这一代落成）。
+type zegV2Slot struct {
+	Gen      int64
+	FileLen  int64
+	TableOff int64
+	TableLen int64
+	Align    int64
+	UUID     [16]byte
+	TableSHA [32]byte
+	Slot     int
+}
+
+// zegV2CRC32C —— 头槽校验（Castagnoli 多项式，与 OCI/etcd 的 crc32c 同族）。
+func zegV2CRC32C(b []byte) uint32 { return crc32.Checksum(b, crc32.MakeTable(crc32.Castagnoli)) }
+
+// zegV2SlotEncode —— 把一个槽编成 4096B（前 96B 语义 ＋ 末位 crc32c，其余补零 ⇒ 可加面留白）。
+func zegV2SlotEncode(s zegV2Slot) []byte {
+	b := make([]byte, zegV2SlotBytes)
+	copy(b[zegV2OffMagic:], zegMagic)
+	binary.LittleEndian.PutUint32(b[zegV2OffLayout:], uint32(zegV2LayoutVer))
+	binary.LittleEndian.PutUint64(b[zegV2OffGen:], uint64(s.Gen))
+	binary.LittleEndian.PutUint64(b[zegV2OffFileLen:], uint64(s.FileLen))
+	binary.LittleEndian.PutUint64(b[zegV2OffTableOff:], uint64(s.TableOff))
+	binary.LittleEndian.PutUint64(b[zegV2OffTableLen:], uint64(s.TableLen))
+	binary.LittleEndian.PutUint64(b[zegV2OffAlign:], uint64(s.Align))
+	copy(b[zegV2OffUUID:zegV2OffUUID+16], s.UUID[:])
+	copy(b[zegV2OffTableSHA:zegV2OffTableSHA+32], s.TableSHA[:])
+	binary.LittleEndian.PutUint32(b[zegV2OffCRC:], zegV2CRC32C(b[:zegV2CRCSpan]))
+	return b
+}
+
+// zegV2SlotDecode —— 解一个槽；magic / 布局主号 / crc 任一不符 ⇒ `(槽, false)`（**坏槽不参与择优**）。
+func zegV2SlotDecode(b []byte, slot int) (zegV2Slot, bool) {
+	var s zegV2Slot
+	if len(b) < zegV2SlotBytes || string(b[zegV2OffMagic:zegV2OffMagic+4]) != zegMagic {
+		return s, false
+	}
+	if binary.LittleEndian.Uint32(b[zegV2OffLayout:]) != uint32(zegV2LayoutVer) {
+		return s, false
+	}
+	if zegV2CRC32C(b[:zegV2CRCSpan]) != binary.LittleEndian.Uint32(b[zegV2OffCRC:]) {
+		return s, false
+	}
+	s.Gen = int64(binary.LittleEndian.Uint64(b[zegV2OffGen:]))
+	s.FileLen = int64(binary.LittleEndian.Uint64(b[zegV2OffFileLen:]))
+	s.TableOff = int64(binary.LittleEndian.Uint64(b[zegV2OffTableOff:]))
+	s.TableLen = int64(binary.LittleEndian.Uint64(b[zegV2OffTableLen:]))
+	s.Align = int64(binary.LittleEndian.Uint64(b[zegV2OffAlign:]))
+	copy(s.UUID[:], b[zegV2OffUUID:zegV2OffUUID+16])
+	copy(s.TableSHA[:], b[zegV2OffTableSHA:zegV2OffTableSHA+32])
+	s.Slot = slot
+	return s, true
+}
+
+// zegV2AlignUp —— 向上取整到 a（a 为 2 的幂；a ≤ 1 ⇒ 原样）。
+func zegV2AlignUp(n, a int64) int64 {
+	if a <= 1 {
+		return n
+	}
+	if r := n % a; r != 0 {
+		return n + (a - r)
+	}
+	return n
+}
+
+// zegV2PickSlot —— 读头 8 KiB，取「**crc 有效且 gen 最大**」那个槽（★ 读端只看这一条规则）。
+// 两槽的 gen 不同（初打 = 槽0 gen0 基线 / 槽1 gen1 现行；升引擎 = 槽 (gen%2) 交替）⇒ 取大者即最新代。
+func zegV2PickSlot(f *os.File) (zegV2Slot, error) {
+	head := make([]byte, zegV2HeaderBytes)
+	if _, err := f.ReadAt(head, 0); err != nil {
+		return zegV2Slot{}, zegRuleRefuse("D1", "v2_header_short",
+			"v2 固定头要 8 KiB（双槽），读不满 ⇒ 拒（✗ 不猜）", "卵的头")
+	}
+	s0, ok0 := zegV2SlotDecode(head[0:zegV2SlotBytes], 0)
+	s1, ok1 := zegV2SlotDecode(head[zegV2SlotBytes:2*zegV2SlotBytes], 1)
+	switch {
+	case ok0 && ok1:
+		if s1.Gen > s0.Gen {
+			return s1, nil
+		}
+		return s0, nil
+	case ok0:
+		return s0, nil
+	case ok1:
+		return s1, nil
+	}
+	return zegV2Slot{}, zegRuleRefuse("D1", "v2_header_no_valid_slot",
+		"v2 双槽的 crc32c 都不对（没有可提交的世代 ⇒ 拒，✗ 按半截头猜）", "卵的头")
+}
+
+// zegV2ShaRange —— 对 [off, off+n) 现算 sha256（升级前后各算一次 ⇒ 「前面没被重写」的机器证据）。
+func zegV2ShaRange(f *os.File, off, n int64) (string, error) {
+	h := sha256.New()
+	buf := make([]byte, 1<<20)
+	for n > 0 {
+		k := int64(len(buf))
+		if n < k {
+			k = n
+		}
+		m, err := f.ReadAt(buf[:k], off)
+		if m > 0 {
+			h.Write(buf[:m])
+			off += int64(m)
+			n -= int64(m)
+		}
+		if err != nil {
+			if n == 0 && err == io.EOF {
+				break
+			}
+			return "", err
+		}
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// zegV2FullSync —— 落盘语义：先 `fsync`，darwin 再补一刀 `F_FULLFSYNC`（✗ 只靠 fsync 不保证到盘）。
+func zegV2FullSync(f *os.File) error {
+	if err := f.Sync(); err != nil {
+		return err
+	}
+	if runtime.GOOS == "darwin" {
+		if _, _, e := syscall.Syscall(syscall.SYS_FCNTL, f.Fd(), uintptr(zegV2FCNTLFullFsync), 0); e != 0 {
+			return e
+		}
+	}
+	return nil
+}
+
+// zegV2Inode —— 取 st_ino（升级是**原地写** ⇒ inode 不变；作「没有换件」的旁证）。
+func zegV2Inode(fi os.FileInfo) uint64 {
+	if st, ok := fi.Sys().(*syscall.Stat_t); ok {
+		return uint64(st.Ino)
+	}
+	return 0
+}
+
+// zegV2OrderEngineLast —— v2 段序：**非引擎段在前 · 引擎段一律最后**（两段各自保持原路径序）。
+func zegV2OrderEngineLast(entries []*zegEntry) []*zegEntry {
+	out := make([]*zegEntry, 0, len(entries))
+	for _, e := range entries {
+		if zegSegOfPath(e.Path) != zegSegEngine {
+			out = append(out, e)
+		}
+	}
+	for _, e := range entries {
+		if zegSegOfPath(e.Path) == zegSegEngine {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// zegV2EngineAtTail —— 段表里「引擎段是否全在尾部」（info 面与自检共用同一判据）。
+func zegV2EngineAtTail(entries []zegEntryJSON) bool {
+	seen := false
+	for _, e := range entries {
+		if zegSegOfPath(e.Path) == zegSegEngine {
+			seen = true
+			continue
+		}
+		if seen {
+			return false
+		}
+	}
+	return true
+}
+
+// zegV2ParseIndex —— v2 读端（唯一入口仍由 `zegParseIndex` 分派）：头取槽 → 表 → JSON → 审计。
+// ★ 头的每个字段都当**不可信输入**判：align / 表长 / 表落点 / file_len / 表 sha256 逐条有闸。
+func zegV2ParseIndex(f *os.File) (*zegIndex, error) {
+	slot, err := zegV2PickSlot(f)
+	if err != nil {
+		return nil, err
+	}
+	fi, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	size := fi.Size()
+	if slot.Align < zegMinAlign || !zegIsPow2(slot.Align) {
+		return nil, zegRuleRefuse("D4", "v2_header_align_invalid",
+			"头槽里的 align 不是 2 的幂或 < 4096（读端只信文件里记的 align）", "卵的头槽")
+	}
+	if slot.TableLen <= 0 || slot.TableLen > zegV2TableMaxBytes {
+		return nil, zegRuleRefuse("D1", "v2_table_len_invalid",
+			"头槽里的段表长度不合理（≤0 或超上界）", "卵的头槽")
+	}
+	if slot.TableOff < zegV2HeaderBytes || slot.TableOff%zegV2TableAlign != 0 ||
+		slot.TableOff+slot.TableLen > size {
+		return nil, zegRuleRefuse("D1", "v2_table_out_of_range",
+			"段表落点不合规（须在 8 KiB 头之后、64 KiB 对齐、且不出文件末尾）", "卵的头槽")
+	}
+	if slot.FileLen < zegV2HeaderBytes || slot.FileLen > slot.TableOff {
+		return nil, zegRuleRefuse("D1", "v2_file_len_invalid",
+			"头槽里的 file_len 不在 [8 KiB, 段表落点] 区间", "卵的头槽")
+	}
+	body := make([]byte, slot.TableLen)
+	if _, err := f.ReadAt(body, slot.TableOff); err != nil {
+		return nil, fmt.Errorf("段表读不满（off=%d len=%d）：%v", slot.TableOff, slot.TableLen, err)
+	}
+	if sum := sha256.Sum256(body); sum != slot.TableSHA {
+		return nil, zegRuleRefuse("D1", "v2_table_sha_mismatch",
+			"段表字节与头里的 sha256 记录不符（指针指向一张坏表 ⇒ 拒，✗ 不猜）", "卵的段表")
+	}
+	// ★ 与 v1 同源的三道（面审计 / 主号 / `min_readable` 牙）：✗ 不另写第二份判据。
+	if _, err := zegCompatGateIndexBody(body); err != nil {
+		return nil, err
+	}
+	var raw zegIndexJSON
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return nil, err
+	}
+	if raw.Magic != zegMagic {
+		return nil, fmt.Errorf("段表里的 magic 不符（不是 %s 文件）", zegMagic)
+	}
+	if raw.Version != zegV2LayoutVer {
+		return nil, fmt.Errorf("段表里的 version=%d ≠ %d（头与表不一致）", raw.Version, zegV2LayoutVer)
+	}
+	if raw.Align != slot.Align {
+		return nil, fmt.Errorf("段表里的 align=%d 与头槽 align=%d 不一致", raw.Align, slot.Align)
+	}
+	idx := &zegIndex{
+		Magic:     raw.Magic,
+		Version:   raw.Version,
+		Align:     raw.Align,
+		Tool:      raw.Tool,
+		CreatedAt: raw.CreatedAt,
+		Entries:   raw.Entries,
+		Layout:    zegV2LayoutVer,
+		Gen:       slot.Gen,
+		UUID:      hex.EncodeToString(slot.UUID[:]),
+		TableOff:  slot.TableOff,
+		TableLen:  slot.TableLen,
+		FileLen:   slot.FileLen,
+		TableSHA:  hex.EncodeToString(slot.TableSHA[:]),
+	}
+	for _, e := range idx.Entries {
+		if e.Off < zegV2HeaderBytes || e.Off+e.Size > slot.FileLen {
+			return nil, zegRuleRefuse("D1", "v2_segment_outside_data",
+				fmt.Sprintf("段 %q 的 [off,off+size)=[%d,%d) 落在数据区 [%d,%d] 之外",
+					e.Path, e.Off, e.Off+e.Size, zegV2HeaderBytes, slot.FileLen), "卵的段表")
+		}
+	}
+	if err := zegAuditIndexEntries(idx); err != nil {
+		return nil, err
+	}
+	return idx, nil
+}
+
+// zegPackV2 —— **写端默认档**（命令面 `cocoon pack` 走它）：打一枚 v2 卵。
+// 写序照 ③：data/engine → fsync → table → fsync → header（槽 0 基线 gen0，槽 1 现行 gen1）→ fsync。
+func zegPackV2(src, egg string, align int, now string) ([]*zegEntry, *zegV2Slot, error) {
+	if align == 0 {
+		align = zegAlignOf()
+	}
+	if !zegIsPow2(int64(align)) || align < zegMinAlign {
+		return nil, nil, fmt.Errorf("align 必须是 2 的幂且 >= %d（收到 %d）", zegMinAlign, align)
+	}
+	entries, err := zegCollectEntries(src)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(entries) == 0 {
+		return nil, nil, fmt.Errorf("源目录里没有文件：%s", src)
+	}
+	entries = zegV2OrderEngineLast(entries)
+	var uuid [16]byte
+	if _, err := rand.Read(uuid[:]); err != nil {
+		return nil, nil, err
+	}
+	out, err := os.Create(egg)
+	if err != nil {
+		return nil, nil, err
+	}
+	fail := func(e error) ([]*zegEntry, *zegV2Slot, error) {
+		out.Close()
+		os.Remove(egg)
+		return nil, nil, e
+	}
+	if _, err := out.WriteAt(make([]byte, zegV2HeaderBytes), 0); err != nil { // 头块占位（真头最后写）
+		return fail(err)
+	}
+	cur := zegV2AlignUp(zegV2HeaderBytes, int64(align))
+	for _, e := range entries {
+		cur = zegV2AlignUp(cur, int64(align))
+		e.Off = cur
+		if e.LinkTarget != "" { // 链段：`size=0` ⇒ 只占对齐位、不拷载荷
+			continue
+		}
+		in, oerr := os.Open(e.src)
+		if oerr != nil {
+			return fail(oerr)
+		}
+		if _, serr := out.Seek(cur, io.SeekStart); serr != nil {
+			in.Close()
+			return fail(serr)
+		}
+		n, cerr := io.Copy(out, in)
+		in.Close()
+		if cerr != nil {
+			return fail(cerr)
+		}
+		if n != e.Size {
+			return fail(fmt.Errorf("写入长度与统计不符"))
+		}
+		cur += n
+	}
+	if err := zegV2FullSync(out); err != nil { // ③ 第一刀：数据先落盘
+		return fail(err)
+	}
+	fileLen := int64(zegV2HeaderBytes)
+	for _, e := range entries {
+		if end := e.Off + e.Size; end > fileLen {
+			fileLen = end
+		}
+	}
+	table, err := zegMarshalIndexVer(entries, align, now, zegV2LayoutVer)
+	if err != nil {
+		return fail(err)
+	}
+	tableOff := zegV2AlignUp(fileLen, zegV2TableAlign)
+	if _, err := out.WriteAt(table, tableOff); err != nil {
+		return fail(err)
+	}
+	if err := zegV2FullSync(out); err != nil { // ③ 第二刀：表落盘
+		return fail(err)
+	}
+	sum := sha256.Sum256(table)
+	base := zegV2Slot{Gen: 0, FileLen: fileLen, TableOff: tableOff, TableLen: int64(len(table)),
+		Align: int64(align), UUID: uuid, TableSHA: sum}
+	if _, err := out.WriteAt(zegV2SlotEncode(base), 0); err != nil { // 槽 0 = gen 0（基线，指向同一张表）
+		return fail(err)
+	}
+	curSlot := base
+	curSlot.Gen = 1 // ★ 槽 = gen % 2 ⇒ gen 1 落槽 1（这一刀才是提交点）
+	if _, err := out.WriteAt(zegV2SlotEncode(curSlot), zegV2SlotBytes); err != nil {
+		return fail(err)
+	}
+	if err := zegV2FullSync(out); err != nil { // ③ 第三刀：头落盘
+		return fail(err)
+	}
+	if err := out.Close(); err != nil {
+		return nil, nil, err
+	}
+	return entries, &curSlot, nil
+}
+
+// zegV2UpgradeReport —— 升引擎的读数（★ 验收要的「前面没被重写」证据全在这）。
+type zegV2UpgradeReport struct {
+	GenOld         int64
+	GenNew         int64
+	UUID           string
+	EnginesChanged []string
+	EnginesDropped []string
+	BytesAppended  int64
+	FirstWriteOff  int64  // 本次**唯一**写区间的起点
+	NonEngineEnd   int64  // 非引擎段（权重/配方/契约）的最大末尾
+	DataSHABefore  string // [8 KiB, 旧 file_len) ＝ **全部数据段**（含权重/配方/引擎）的摘要
+	DataSHAAfter   string
+	FileLenOld     int64
+	FileLenNew     int64
+	TableOffOld    int64
+	TableOffNew    int64
+	InodeBefore    uint64
+	InodeAfter     uint64
+	Changed        bool
+}
+
+// zegV2UpgradeEngine —— **升引擎只写尾部**：读旧 v2 头 → 只把「变了的引擎段」追加到旧末尾之后
+// → 重写尾表 → 翻一次头槽（gen+1）。★ 非引擎段必须逐字不变（变了 ⇒ 拒，让调用方整件重打）。
+// ★ 证据面：`FirstWriteOff > NonEngineEnd`（写区间起点在所有权重/配方段之后）＋
+//
+//	`DataSHABefore == DataSHAAfter`（[8 KiB, 旧 file_len) **全部数据段**逐字节同；头不在这一区 ——
+//	头本来就要翻，那正是提交点）＋ inode 不变（原地写、没换件）。
+func zegV2UpgradeEngine(egg, src, now string) (*zegV2UpgradeReport, error) {
+	f, err := os.OpenFile(egg, os.O_RDWR, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	fi0, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	head := make([]byte, 8)
+	if _, err := f.ReadAt(head, 0); err != nil {
+		return nil, fmt.Errorf("卵太短，读不满 8 字节头：%v", err)
+	}
+	if string(head[0:4]) != zegMagic {
+		return nil, fmt.Errorf("magic 不符（不是 %s 文件）", zegMagic)
+	}
+	if ver := binary.LittleEndian.Uint32(head[4:8]); ver != zegV2LayoutVer {
+		return nil, fmt.Errorf("升引擎只吃 v2 卵（本件 version=%d）—— v1 请先整件重打成 v2（✗ 按旧偏移原地改）", ver)
+	}
+	slot, err := zegV2PickSlot(f)
+	if err != nil {
+		return nil, err
+	}
+	oldIdx, err := zegParseIndex(egg)
+	if err != nil {
+		return nil, err
+	}
+	rep := &zegV2UpgradeReport{
+		GenOld: slot.Gen, GenNew: slot.Gen, UUID: hex.EncodeToString(slot.UUID[:]),
+		FileLenOld: slot.FileLen, FileLenNew: slot.FileLen, TableOffOld: slot.TableOff,
+		InodeBefore: zegV2Inode(fi0),
+	}
+	oldByPath := make(map[string]zegEntryJSON, len(oldIdx.Entries))
+	for _, e := range oldIdx.Entries {
+		oldByPath[e.Path] = e
+	}
+	fresh, err := zegCollectEntries(src)
+	if err != nil {
+		return nil, err
+	}
+	if len(fresh) == 0 {
+		return nil, fmt.Errorf("源目录里没有文件：%s", src)
+	}
+	freshByPath := make(map[string]*zegEntry, len(fresh))
+	for _, e := range fresh {
+		freshByPath[e.Path] = e
+	}
+	var appends []*zegEntry
+	for _, e := range fresh {
+		old, ok := oldByPath[e.Path]
+		if zegSegOfPath(e.Path) != zegSegEngine {
+			if !ok {
+				return nil, fmt.Errorf("升引擎只许改引擎段：源目录新增了非引擎段 %q（旧段表里没有）", e.Path)
+			}
+			if old.SHA256 != e.SHA256 || old.Size != e.Size || old.Mode != e.Mode || old.LinkTarget != e.LinkTarget {
+				return nil, fmt.Errorf("升引擎只许改引擎段：非引擎段 %q 的内容/权限变了（旧 sha256=%s）⇒ 拒原地升级，请整件重打",
+					e.Path, zegShortSHA(old.SHA256))
+			}
+			e.Off = old.Off // 偏移照旧 ⇒ 那位字节不会被写
+			continue
+		}
+		if ok && old.SHA256 == e.SHA256 && old.Size == e.Size && old.Mode == e.Mode && old.LinkTarget == e.LinkTarget {
+			e.Off = old.Off // 引擎段没变 ⇒ 复用旧偏移（不重写）
+			continue
+		}
+		appends = append(appends, e)
+		rep.EnginesChanged = append(rep.EnginesChanged, e.Path)
+	}
+	for _, old := range oldIdx.Entries {
+		if _, ok := freshByPath[old.Path]; ok {
+			continue
+		}
+		if zegSegOfPath(old.Path) != zegSegEngine {
+			return nil, fmt.Errorf("升引擎只许改引擎段：非引擎段 %q 在源目录里没了 ⇒ 拒原地升级", old.Path)
+		}
+		rep.EnginesDropped = append(rep.EnginesDropped, old.Path)
+	}
+	// 段序：非引擎段照**旧表序**（偏移不动）· 引擎段按路径序排在最后。
+	ordered := make([]*zegEntry, 0, len(fresh))
+	for _, old := range oldIdx.Entries {
+		if zegSegOfPath(old.Path) == zegSegEngine {
+			continue
+		}
+		if e, ok := freshByPath[old.Path]; ok {
+			ordered = append(ordered, e)
+		}
+	}
+	engines := make([]*zegEntry, 0, len(fresh))
+	for _, e := range fresh {
+		if zegSegOfPath(e.Path) == zegSegEngine {
+			engines = append(engines, e)
+		}
+	}
+	ordered = append(ordered, engines...)
+	for _, e := range oldIdx.Entries {
+		if zegSegOfPath(e.Path) != zegSegEngine {
+			if end := e.Off + e.Size; end > rep.NonEngineEnd {
+				rep.NonEngineEnd = end
+			}
+		}
+	}
+	if len(appends) == 0 && len(rep.EnginesDropped) == 0 {
+		rep.Changed = false // 没变化 ⇒ 不动（gen 不增、零字节写）
+		return rep, nil
+	}
+	// ★ 证据面①：数据区 [8 KiB, 旧 file_len) 的摘要 —— **头不属于这一区**（头本来就要翻，那正是提交点）。
+	before, err := zegV2ShaRange(f, zegV2HeaderBytes, slot.FileLen-zegV2HeaderBytes)
+	if err != nil {
+		return nil, err
+	}
+	rep.DataSHABefore = before
+	// 追加区起点：**旧表之后**的第一个对齐界（✗ 不覆盖旧表 —— 它是崩前的唯一提交记录）。
+	base := zegV2AlignUp(slot.TableOff+slot.TableLen, slot.Align)
+	if base < slot.TableOff+slot.TableLen {
+		base = slot.TableOff + slot.TableLen
+	}
+	rep.FirstWriteOff = base
+	cur := base
+	for _, e := range appends {
+		cur = zegV2AlignUp(cur, slot.Align)
+		e.Off = cur
+		if e.LinkTarget != "" {
+			continue
+		}
+		in, oerr := os.Open(e.src)
+		if oerr != nil {
+			return nil, oerr
+		}
+		if _, serr := f.Seek(cur, io.SeekStart); serr != nil {
+			in.Close()
+			return nil, serr
+		}
+		n, cerr := io.Copy(f, in)
+		in.Close()
+		if cerr != nil {
+			return nil, cerr
+		}
+		if n != e.Size {
+			return nil, fmt.Errorf("写入长度与统计不符：%s", e.Path)
+		}
+		cur += n
+		rep.BytesAppended += n
+	}
+	if err := zegV2FullSync(f); err != nil { // ③ 第一刀：新引擎段落盘
+		return nil, err
+	}
+	fileLenNew := int64(zegV2HeaderBytes)
+	for _, e := range ordered {
+		if end := e.Off + e.Size; end > fileLenNew {
+			fileLenNew = end
+		}
+	}
+	rep.FileLenNew = fileLenNew
+	table, err := zegMarshalIndexVer(ordered, int(slot.Align), now, zegV2LayoutVer)
+	if err != nil {
+		return nil, err
+	}
+	tableOffNew := zegV2AlignUp(fileLenNew, zegV2TableAlign)
+	rep.TableOffNew = tableOffNew
+	if _, err := f.WriteAt(table, tableOffNew); err != nil {
+		return nil, err
+	}
+	if err := f.Truncate(tableOffNew + int64(len(table))); err != nil {
+		return nil, err
+	}
+	if err := zegV2FullSync(f); err != nil { // ③ 第二刀：表落盘
+		return nil, err
+	}
+	sum := sha256.Sum256(table)
+	next := zegV2Slot{
+		Gen: slot.Gen + 1, FileLen: fileLenNew, TableOff: tableOffNew, TableLen: int64(len(table)),
+		Align: slot.Align, UUID: slot.UUID, TableSHA: sum,
+	}
+	if _, err := f.WriteAt(zegV2SlotEncode(next), int64(next.Gen%2)*zegV2SlotBytes); err != nil {
+		return nil, err
+	}
+	if err := zegV2FullSync(f); err != nil { // ③ 第三刀：头（唯一提交点）
+		return nil, err
+	}
+	after, err := zegV2ShaRange(f, zegV2HeaderBytes, slot.FileLen-zegV2HeaderBytes)
+	if err != nil {
+		return nil, err
+	}
+	rep.DataSHAAfter = after
+	rep.GenNew = next.Gen
+	rep.Changed = true
+	if fi1, ferr := f.Stat(); ferr == nil {
+		rep.InodeAfter = zegV2Inode(fi1)
+	}
+	return rep, nil
+}
+
+// zegShortSHA —— sha256 前 16 位（只给人看；✗ 不参与判据）。
+func zegShortSHA(s string) string {
+	if len(s) > 16 {
+		return s[:16]
+	}
+	return s
+}
+
 // zegMarshalIndex —— 生成索引 JSON 字节（**与 py `json.dumps` 同源**：紧凑 + 不转义非 ASCII + 不转义 HTML）。
 func zegMarshalIndex(entries []*zegEntry, align int, now string) ([]byte, error) {
+	// ★ v1 写端（历史契约 · golden 与向后兼容夹具都靠它）：主号恒 1，✗ 别改成 zegFormatVer。
+	return zegMarshalIndexVer(entries, align, now, zegFormatVerV1)
+}
+
+// zegMarshalIndexVer —— 同一份索引 JSON 形状，主号由调用方给（v1 写端 = 1 / v2 写端 = 2）。
+// ★ 键集合与字段序**一字不动**（段表 v1/v2 共用同一份形状 ⇒ 旧读端的可加面判据不用改）。
+func zegMarshalIndexVer(entries []*zegEntry, align int, now string, ver int) ([]byte, error) {
 	created := now
 	if created == "" {
 		created = time.Now().UTC().Format("2006-01-02T15:04:05") + "Z"
@@ -866,7 +1511,7 @@ func zegMarshalIndex(entries []*zegEntry, align int, now string) ([]byte, error)
 	}
 	idx := zegIndexJSON{
 		Magic:     zegMagic,
-		Version:   zegFormatVer,
+		Version:   ver,
 		Align:     int64(align),
 		Tool:      zegToolJSON{Name: zegToolName, Version: zegToolVersion},
 		CreatedAt: created,
@@ -973,7 +1618,8 @@ func zegPack(src, egg string, align int, now string) ([]*zegEntry, error) {
 
 // ---- 解析索引 -------------------------------------------------------------------------------
 
-// zegParseIndex —— 解析索引（与 zegMarshalIndex 同源的唯一读端）。
+// zegParseIndex —— 解析索引（**唯一读端**：v1 与 v2 都在这里分派，✗ 不开第二份解析器）。
+// ★ 分派只按固定头的前 8 B：`magic` ＋ `version`；主号闸先跑（D2 前向拒 / D3 过旧拒），再按布局走。
 func zegParseIndex(path string) (*zegIndex, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -986,15 +1632,27 @@ func zegParseIndex(path string) (*zegIndex, error) {
 	}
 	magic := hdr[0:4]
 	ver := int(binary.LittleEndian.Uint32(hdr[4:8]))
-	align := int64(binary.LittleEndian.Uint64(hdr[8:16]))
-	n := int64(binary.LittleEndian.Uint64(hdr[16:24]))
 	if string(magic) != zegMagic {
 		return nil, fmt.Errorf("magic 不符（不是 %s 文件）：%s", zegMagic, zegPyBytesRepr(magic))
 	}
-	// ★ 卵6：**主号闸**（前向拒 D2 —— 含「签名块 v2 ＝ 主号 2 ⇒ 旧读端必拒」；过旧拒 D3）。
+	// ★ 卵6：**主号闸**（前向拒 D2；过旧拒 D3）—— 两种布局共用同一道闸（✗ 各写一份）。
 	if err := zegCompatGateMainVersion(ver, zegVersionSitePrefix); err != nil {
 		return nil, err
 	}
+	switch ver {
+	case zegFormatVerV1:
+		return zegParseIndexV1(f, hdr)
+	case zegV2LayoutVer:
+		return zegV2ParseIndex(f)
+	}
+	return nil, fmt.Errorf("格式版本不支持：%d", ver)
+}
+
+// zegParseIndexV1 —— **v1 布局**的读端（历史形态逐字保留：32 B 前缀 ＋ 变长索引 ＋ 按路径序的段）。
+// ★ `zegPack`（v1 写端）与盘上所有既有 `.egg` 走这一条 ⇒ ✗ 不许按 v2 的偏移去读它。
+func zegParseIndexV1(f *os.File, hdr []byte) (*zegIndex, error) {
+	align := int64(binary.LittleEndian.Uint64(hdr[8:16]))
+	n := int64(binary.LittleEndian.Uint64(hdr[16:24]))
 	if !zegIsPow2(align) || align < zegMinAlign {
 		return nil, fmt.Errorf("前缀里的 align 不合理：%d", align)
 	}
@@ -1018,7 +1676,8 @@ func zegParseIndex(path string) (*zegIndex, error) {
 	if raw.Magic != zegMagic {
 		return nil, fmt.Errorf("magic 不符（不是 %s 文件）", zegMagic)
 	}
-	if raw.Version != zegFormatVer {
+	// ★ 前缀与索引体的主号必须**同一个**（v1 档 = 1）；✗ 别拿本端主号去比 —— 那是 v2 的号。
+	if raw.Version != zegFormatVerV1 {
 		return nil, fmt.Errorf("格式版本不支持：%d", raw.Version)
 	}
 	if !zegIsPow2(raw.Align) || raw.Align < zegMinAlign {
@@ -1031,6 +1690,7 @@ func zegParseIndex(path string) (*zegIndex, error) {
 		Tool:      raw.Tool,
 		CreatedAt: raw.CreatedAt,
 		Entries:   raw.Entries,
+		Layout:    zegFormatVerV1,
 	}
 	// ★ 卵1② ＋ 卵1①：读端**逐段审计**（path / mode / mediaType 三道）—— 这是「双向校验」的另一半；
 	// 跑在结构化解码之后、返回之前（拒 ⇒ 具名 `*zegRefusal`，点名档位与规则）。
@@ -1248,6 +1908,21 @@ func zegCmdInfo(stdout io.Writer, path string) int {
 	fmt.Fprintf(stdout, "  magic=%s version=%d align=%d（%d KiB）\n", idx.Magic, idx.Version, idx.Align, idx.Align/1024)
 	fmt.Fprintf(stdout, "  产出工具=%s %s  产出时间=%s\n", idx.Tool.Name, idx.Tool.Version, idx.CreatedAt)
 	fmt.Fprintf(stdout, "  段数=%d  文件大小=%.1f KiB\n", len(idx.Entries), float64(fi.Size())/1024)
+	// ★ v2 面（设计稿 Q3）：版本/代际/卵唯一号/尾表落点/引擎段是否在尾 —— 逐条能读出才算数。
+	if idx.Layout == zegV2LayoutVer {
+		last := ""
+		if n := len(idx.Entries); n > 0 {
+			last = idx.Entries[n-1].Path
+		}
+		atTail := "否"
+		if zegV2EngineAtTail(idx.Entries) {
+			atTail = "是"
+		}
+		fmt.Fprintf(stdout, "  ★ 布局=v2（段表化）  gen=%d  uuid=%s\n", idx.Gen, idx.UUID)
+		fmt.Fprintf(stdout, "  段表=%d..%d（%d B · file_len=%d · 64 KiB 对齐落点）  table_sha256=%s\n",
+			idx.TableOff, idx.TableOff+idx.TableLen, idx.TableLen, idx.FileLen, zegShortSHA(idx.TableSHA))
+		fmt.Fprintf(stdout, "  引擎段在尾=%s（末段=%s）\n", atTail, last)
+	}
 	// ★ 卵1①：索引与签名段自身的声明（OCI manifest 档 —— 段表即该段）。
 	fmt.Fprintf(stdout, "  索引段 mediaType=%s（OCI manifest）\n", zegMediaManifest)
 	for _, e := range idx.Entries {
@@ -1858,6 +2533,246 @@ func zegFormatSelfTest(stdout, stderr io.Writer) int {
 	return exitOK
 }
 
+// zegV2SelfTest —— v2 布局自检（**六态 ＋ 两负控**）：打完能读回 · 双槽 crc 有效 · gen 单调递增 ·
+// 升引擎只写尾部（前缀 sha 前后一致 ＋ 写区间起点在非引擎段之后 ＋ inode 不变）· 三级链完整 ·
+// 负控 A「改权重段 ⇒ 升级必拒」· 负控 B「v1 卵 ⇒ `--update` 必拒（只吃 v2）」。
+func zegV2SelfTest(stdout, stderr io.Writer) int {
+	t, err := os.MkdirTemp("", "zerg-egg-v2-selftest")
+	if err != nil {
+		fmt.Fprintf(stderr, "%s: %v\n", zegProg, err)
+		return exitFail
+	}
+	defer os.RemoveAll(t) // 自回收（TMPDIR 前后 delta=0）
+
+	src := filepath.Join(t, "tree")
+	for _, d := range []string{"model", "engine", "sysroot/lib"} {
+		if err := os.MkdirAll(filepath.Join(src, filepath.FromSlash(d)), 0o755); err != nil {
+			return zegSelfFail(stderr, err)
+		}
+	}
+	// 1 MiB 假权重（真 GGUF magic）—— 验收里「权重段前后 sha 一致」的那一枚。
+	weight := make([]byte, 1<<20)
+	copy(weight, []byte("GGUF"))
+	if _, err := rand.Read(weight[4:]); err != nil {
+		return zegSelfFail(stderr, err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "model", "w.gguf"), weight, 0o644); err != nil {
+		return zegSelfFail(stderr, err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "config.json"), []byte(`{"arch":"v2"}`), 0o644); err != nil {
+		return zegSelfFail(stderr, err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "sysroot", "lib", "libc.so.6"), []byte("stub"), 0o644); err != nil {
+		return zegSelfFail(stderr, err)
+	}
+	enginePath := filepath.Join(src, "engine", "zerg-engine")
+	if err := os.WriteFile(enginePath, []byte("#!/bin/sh\necho v1\n"), 0o755); err != nil {
+		return zegSelfFail(stderr, err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "engine", "libfoo.so.1.12"), []byte("ELF"), 0o644); err != nil {
+		return zegSelfFail(stderr, err)
+	}
+	if err := os.Symlink("libfoo.so.1.12", filepath.Join(src, "engine", "libfoo.so.1")); err != nil {
+		return zegSelfFail(stderr, err)
+	}
+	if err := os.Symlink("libfoo.so.1", filepath.Join(src, "engine", "libfoo.so")); err != nil {
+		return zegSelfFail(stderr, err)
+	}
+	egg := filepath.Join(t, "v2.egg")
+	entries, slot, err := zegPackV2(src, egg, 4096, "2000-01-01T00:00:00Z")
+	if err != nil {
+		return zegSelfFail(stderr, err)
+	}
+	weightSHA0, err := zegSha256File(filepath.Join(src, "model", "w.gguf"))
+	if err != nil {
+		return zegSelfFail(stderr, err)
+	}
+
+	// ---- 态①：打完能读回（版本 / 段数 / 代际 / 卵唯一号 / 引擎段在尾）----
+	idx, err := zegParseIndex(egg)
+	if err != nil {
+		return zegSelfFail(stderr, fmt.Errorf("态① v2 卵读不回：%v", err))
+	}
+	if idx.Layout != zegV2LayoutVer || idx.Version != zegV2LayoutVer {
+		return zegSelfFail(stderr, fmt.Errorf("态① 读回的布局/主号=%d/%d（要 2/2）", idx.Layout, idx.Version))
+	}
+	if idx.Gen != 1 || slot.Gen != 1 || len(idx.UUID) != 32 {
+		return zegSelfFail(stderr, fmt.Errorf("态① gen=%d（要 1）· uuid=%q（要 32 hex）", idx.Gen, idx.UUID))
+	}
+	if len(idx.Entries) != len(entries) || len(idx.Entries) != 7 {
+		return zegSelfFail(stderr, fmt.Errorf("态① 段数 写端 %d ⟷ 读端 %d（夹具要 7 段）", len(entries), len(idx.Entries)))
+	}
+	if !zegV2EngineAtTail(idx.Entries) {
+		return zegSelfFail(stderr, fmt.Errorf("态① 引擎段不在尾：%v", zegV2SegOrder(idx.Entries)))
+	}
+	if want := "engine/zerg-engine"; idx.Entries[len(idx.Entries)-1].Path != want {
+		return zegSelfFail(stderr, fmt.Errorf("态① 末段=%q（引擎段按路径序排在最后 ⇒ 要 %q）",
+			idx.Entries[len(idx.Entries)-1].Path, want))
+	}
+
+	// ---- 态②：header 双槽 crc 有效（两槽都能解出来，且 gen 一大一小）----
+	both, gens, err := zegV2ReadBothSlots(egg)
+	if err != nil {
+		return zegSelfFail(stderr, err)
+	}
+	if !both {
+		return zegSelfFail(stderr, fmt.Errorf("态② header 双槽不是都 crc 有效"))
+	}
+	if !(gens[1] > gens[0]) {
+		return zegSelfFail(stderr, fmt.Errorf("态② 两槽 gen 不单调（槽0=%d 槽1=%d）", gens[0], gens[1]))
+	}
+
+	// ---- 态③④：升引擎（改一个只属引擎段的小文件）⇒ gen 单调递增 ＋ 只写尾部 ----
+	if err := os.WriteFile(enginePath, []byte("#!/bin/sh\necho v2\n"), 0o755); err != nil {
+		return zegSelfFail(stderr, err)
+	}
+	if err := os.Chmod(enginePath, 0o755); err != nil {
+		return zegSelfFail(stderr, err)
+	}
+	rep1, err := zegV2UpgradeEngine(egg, src, "2000-01-01T00:01:00Z")
+	if err != nil {
+		return zegSelfFail(stderr, fmt.Errorf("态③ 升引擎失败：%v", err))
+	}
+	if !rep1.Changed || rep1.GenNew != rep1.GenOld+1 || rep1.GenNew != 2 {
+		return zegSelfFail(stderr, fmt.Errorf("态③ gen 不是 +1 单调（%d → %d · changed=%v）",
+			rep1.GenOld, rep1.GenNew, rep1.Changed))
+	}
+	if !(rep1.FirstWriteOff > rep1.NonEngineEnd) {
+		return zegSelfFail(stderr, fmt.Errorf("态④ 写区间起点 %d 没越过非引擎段末尾 %d（前面可能被重写）",
+			rep1.FirstWriteOff, rep1.NonEngineEnd))
+	}
+	if rep1.DataSHABefore != rep1.DataSHAAfter {
+		return zegSelfFail(stderr, fmt.Errorf("态④ 数据区 sha 变了（%s → %s）⇒ 前面被重写",
+			zegShortSHA(rep1.DataSHABefore), zegShortSHA(rep1.DataSHAAfter)))
+	}
+	if rep1.InodeBefore != rep1.InodeAfter || rep1.InodeBefore == 0 {
+		return zegSelfFail(stderr, fmt.Errorf("态④ inode 变了（%d → %d）⇒ 不是原地追加",
+			rep1.InodeBefore, rep1.InodeAfter))
+	}
+	idx1, err := zegParseIndex(egg)
+	if err != nil {
+		return zegSelfFail(stderr, err)
+	}
+	if idx1.Gen != 2 {
+		return zegSelfFail(stderr, fmt.Errorf("态③ 升级后读回 gen=%d（要 2）", idx1.Gen))
+	}
+	// 再升一次（同一文件再改）⇒ gen 3（★ 两槽交替：2 落槽 0、3 落槽 1）
+	if err := os.WriteFile(enginePath, []byte("#!/bin/sh\necho v3\n"), 0o755); err != nil {
+		return zegSelfFail(stderr, err)
+	}
+	rep2, err := zegV2UpgradeEngine(egg, src, "2000-01-01T00:02:00Z")
+	if err != nil {
+		return zegSelfFail(stderr, err)
+	}
+	if rep2.GenNew != 3 {
+		return zegSelfFail(stderr, fmt.Errorf("态③ 第二次升级 gen=%d（要 3 ⇒ 单调递增）", rep2.GenNew))
+	}
+	idx2, err := zegParseIndex(egg)
+	if err != nil || idx2.Gen != 3 {
+		return zegSelfFail(stderr, fmt.Errorf("态③ 第二次升级后读回失败或 gen 不对：err=%v gen=%d", err, idx2.Gen))
+	}
+
+	// ---- 态⑤：升级后整件仍自洽（verify 0 problem ＋ 重建的引擎内容 == 新内容 ＋ 权重段 sha 不变）----
+	probs, _, err := zegVerify(egg, filepath.Join(t, "rebuilt"))
+	if err != nil || len(probs) != 0 {
+		return zegSelfFail(stderr, fmt.Errorf("态⑤ 升级后 verify 报问题：err=%v probs=%v", err, probs))
+	}
+	got, err := os.ReadFile(filepath.Join(t, "rebuilt", "engine", "zerg-engine"))
+	if err != nil {
+		return zegSelfFail(stderr, err)
+	}
+	if string(got) != "#!/bin/sh\necho v3\n" {
+		return zegSelfFail(stderr, fmt.Errorf("态⑤ 重建后的引擎内容不是新内容：%q", string(got)))
+	}
+	weightSHA1, err := zegSha256File(filepath.Join(t, "rebuilt", "model", "w.gguf"))
+	if err != nil {
+		return zegSelfFail(stderr, err)
+	}
+	if weightSHA0 != weightSHA1 {
+		return zegSelfFail(stderr, fmt.Errorf("态⑤ 权重段 sha 前后不一致（%s → %s）",
+			zegShortSHA(weightSHA0), zegShortSHA(weightSHA1)))
+	}
+
+	// ---- 态⑥：三级链在 v2 下仍逐字完好（重建后 readlink 逐字同）----
+	for _, c := range []struct{ path, want string }{
+		{"engine/libfoo.so", "libfoo.so.1"},
+		{"engine/libfoo.so.1", "libfoo.so.1.12"},
+	} {
+		full := filepath.Join(t, "rebuilt", "engine", filepath.Base(c.path))
+		li, lerr := os.Lstat(full)
+		if lerr != nil || li.Mode()&os.ModeSymlink == 0 {
+			return zegSelfFail(stderr, fmt.Errorf("态⑥ 重建后 %s 不是符号链接（err=%v）", c.path, lerr))
+		}
+		if link, rerr := os.Readlink(full); rerr != nil || link != c.want {
+			return zegSelfFail(stderr, fmt.Errorf("态⑥ 重建后 %s 的链名 %q ≠ 原件 %q（err=%v）",
+				c.path, link, c.want, rerr))
+		}
+	}
+
+	// ---- 负控 A：改**权重段** ⇒ 升级必拒（且件一个字节不动）----
+	before, err := os.ReadFile(egg)
+	if err != nil {
+		return zegSelfFail(stderr, err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "model", "w.gguf"), append(weight[:len(weight)-1:len(weight)-1], 0x00), 0o644); err != nil {
+		return zegSelfFail(stderr, err)
+	}
+	if _, uerr := zegV2UpgradeEngine(egg, src, ""); uerr == nil {
+		return zegSelfFail(stderr, fmt.Errorf("负控 A 改了权重段竟被原地升级（✗ 必须拒）"))
+	} else if !strings.Contains(uerr.Error(), "非引擎段") {
+		return zegSelfFail(stderr, fmt.Errorf("负控 A 拒了但没点名「非引擎段」：%v", uerr))
+	}
+	after, err := os.ReadFile(egg)
+	if err != nil {
+		return zegSelfFail(stderr, err)
+	}
+	if string(before) != string(after) {
+		return zegSelfFail(stderr, fmt.Errorf("负控 A 拒执却动了件（%d → %d B）", len(before), len(after)))
+	}
+
+	// ---- 负控 B：v1 卵走 `--update` ⇒ 必拒（只吃 v2）----
+	v1egg := filepath.Join(t, "v1.egg")
+	if _, perr := zegPack(src, v1egg, 4096, "2000-01-01T00:00:00Z"); perr != nil {
+		return zegSelfFail(stderr, perr)
+	}
+	if _, uerr := zegV2UpgradeEngine(v1egg, src, ""); uerr == nil {
+		return zegSelfFail(stderr, fmt.Errorf("负控 B v1 卵竟被原地升级（✗ 只吃 v2）"))
+	} else if !strings.Contains(uerr.Error(), "只吃 v2") {
+		return zegSelfFail(stderr, fmt.Errorf("负控 B 拒了但没点名「只吃 v2」：%v", uerr))
+	}
+
+	fmt.Fprintf(stdout, "self-test（卵 v2 布局）通过（6 态 ＋ 2 负控）：① v2 打完能读回（主号 2 · %d 段 · gen=1 · uuid 32 hex · 引擎段在尾）· ② header 双槽 crc 有效且 gen 单调（槽0=%d < 槽1=%d）· ③ 连升两次 gen 1→2→3 单调递增 · ④ 升引擎只写尾部（写区间起点 %d > 非引擎段末尾 %d · 数据区 sha 前后一致 · inode 不变）· ⑤ 升级后 verify 0 problem 且重建内容/权重 sha 不变 · ⑥ 三级相对链重建后 readlink 逐字同 · 负控 A 改权重段 ⇒ 拒「非引擎段」且件零字节变动 · 负控 B v1 卵 ⇒ 拒「只吃 v2」\n",
+		len(idx.Entries), gens[0], gens[1], rep1.FirstWriteOff, rep1.NonEngineEnd)
+	return exitOK
+}
+
+// zegV2ReadBothSlots —— 自检用：两槽都解得开才算 crc 有效；返回 (都有效, [槽0 gen, 槽1 gen])。
+func zegV2ReadBothSlots(path string) (bool, [2]int64, error) {
+	var gens [2]int64
+	f, err := os.Open(path)
+	if err != nil {
+		return false, gens, err
+	}
+	defer f.Close()
+	head := make([]byte, zegV2HeaderBytes)
+	if _, err := io.ReadFull(f, head); err != nil {
+		return false, gens, err
+	}
+	s0, ok0 := zegV2SlotDecode(head[0:zegV2SlotBytes], 0)
+	s1, ok1 := zegV2SlotDecode(head[zegV2SlotBytes:2*zegV2SlotBytes], 1)
+	gens[0], gens[1] = s0.Gen, s1.Gen
+	return ok0 && ok1, gens, nil
+}
+
+// zegV2SegOrder —— 自检报话用：段序的「段分类」串（只给人看）。
+func zegV2SegOrder(entries []zegEntryJSON) []string {
+	out := make([]string, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, e.Path+"|"+zegSegOfPath(e.Path))
+	}
+	return out
+}
+
 func zegSelfFail(stderr io.Writer, err error) int {
 	fmt.Fprintf(stderr, "%s: 自检失败：%v\n", zegProg, err)
 	return exitFail
@@ -1876,12 +2791,15 @@ type zegArgs struct {
 	selfTest    bool
 	chunkSize   int
 	nowVal      string
+	// update —— ★ 升引擎的**内部路径**（隐藏取旗标 · 照 `--now`/`--workers` 同款：✗ 不进帮助面）：
+	// `pack <源目录> <既有 v2 卵> --update` ⇒ 只把变了的**引擎段**追加到旧末尾之后 ＋ 翻一次头槽。
+	update bool
 	// workers —— 卵3① 的**隐藏取旗标**（`--workers N` · 照 `--now` 的同款：✗ 不进帮助面 ⇒ 不污染 `-h` 对拍）。
 	// 0 ＝ 自动档（并发度 `W = clamp(ceil(D/h), 1, NumCPU)` · `h` 由内存探针现测）。
 	workers int
 }
 
-var zegOpts = []string{"--align", "--rebuild-into", "--self-test", "--chunk-size", "--help", "--now", "--workers"}
+var zegOpts = []string{"--align", "--rebuild-into", "--self-test", "--chunk-size", "--help", "--now", "--workers", "--update"}
 
 // zegResolveOpt —— 精确命中优先；否则唯一前缀；多命中 ⇒ 歧义串；零命中 ⇒ ""。
 func zegResolveOpt(name string) (string, string) {
@@ -1951,6 +2869,8 @@ func zegParseArgv(argv []string) (*zegArgs, string) {
 				return a, "HELP"
 			case "--self-test":
 				a.selfTest = true
+			case "--update":
+				a.update = true
 			case "--align":
 				v, ok := take()
 				if !ok {
@@ -2049,7 +2969,11 @@ func zergEggGateMain(stdout, stderr io.Writer, argv []string) int {
 		if rc := zegVersionSelfTest(stdout, stderr); rc != exitOK {
 			return rc
 		}
-		return zegFormatSelfTest(stdout, stderr)
+		if rc := zegFormatSelfTest(stdout, stderr); rc != exitOK {
+			return rc
+		}
+		// ★ 第五行：v2 布局（段表化 ＋ 引擎段在尾）—— ✗ 与前四行混行（前四行契约读数一字不动）。
+		return zegV2SelfTest(stdout, stderr)
 	}
 	switch a.cmd {
 	case "pack":
@@ -2061,13 +2985,47 @@ func zergEggGateMain(stdout, stderr io.Writer, argv []string) int {
 		if !a.alignSet {
 			eff = zegAlignOf()
 		}
-		entries, err := zegPack(a.a, a.b, a.align, a.nowVal)
+		if a.update {
+			// ★ 升引擎只写尾部（设计稿 Q3 的核心）：证据面三条一起印 —— 写区间 / 前缀 sha / inode。
+			rep, uerr := zegV2UpgradeEngine(a.b, a.a, a.nowVal)
+			if uerr != nil {
+				fmt.Fprintf(stderr, "%s: %v\n", zegProg, uerr)
+				return exitFail
+			}
+			if !rep.Changed {
+				fmt.Fprintf(stdout, "升引擎：无变化 ⇒ 不动（gen=%d 不增 · 零字节写）\n", rep.GenOld)
+				return exitOK
+			}
+			fmt.Fprintf(stdout, "升引擎完成（原地追加 · 只写尾部）：gen %d → %d · 引擎段新写 %d 段 %d B",
+				rep.GenOld, rep.GenNew, len(rep.EnginesChanged), rep.BytesAppended)
+			if len(rep.EnginesDropped) > 0 {
+				fmt.Fprintf(stdout, " · 弃用旧引擎段 %d 段", len(rep.EnginesDropped))
+			}
+			fmt.Fprintf(stdout, "\n")
+			fmt.Fprintf(stdout, "  写区间 = [%d, EOF) · 非引擎段（权重/配方/契约）末尾 = %d ⇒ 起点 > 末尾 = %v\n",
+				rep.FirstWriteOff, rep.NonEngineEnd, rep.FirstWriteOff > rep.NonEngineEnd)
+			fmt.Fprintf(stdout, "  数据区 [%d, %d) 的 sha256 前后一致 = %v（%s）· inode %d → %d\n",
+				zegV2HeaderBytes, rep.FileLenOld, rep.DataSHABefore == rep.DataSHAAfter, zegShortSHA(rep.DataSHAAfter),
+				rep.InodeBefore, rep.InodeAfter)
+			fmt.Fprintf(stdout, "  段表 %d → %d（file_len %d → %d · uuid=%s）\n",
+				rep.TableOffOld, rep.TableOffNew, rep.FileLenOld, rep.FileLenNew, rep.UUID)
+			return exitOK
+		}
+		entries, slot, err := zegPackV2(a.a, a.b, a.align, a.nowVal)
 		if err != nil {
 			fmt.Fprintf(stderr, "%s: %v\n", zegProg, err)
 			return exitFail
 		}
 		fi, _ := os.Stat(a.b)
 		fmt.Fprintf(stdout, "已打包 %d 个文件 → %s（align=%d，%.1f KiB）\n", len(entries), a.b, eff, float64(fi.Size())/1024)
+		engines := 0
+		for _, e := range entries {
+			if zegSegOfPath(e.Path) == zegSegEngine {
+				engines++
+			}
+		}
+		fmt.Fprintf(stdout, "  ★ v2 布局：gen=%d · uuid=%s · 引擎段 %d 段在尾（%d 段）· 段表@%d · 段表 sha256=%s\n",
+			slot.Gen, hex.EncodeToString(slot.UUID[:]), engines, len(entries), slot.TableOff, zegShortSHA(hex.EncodeToString(slot.TableSHA[:])))
 		return exitOK
 	case "info":
 		return zegCmdInfo(stdout, a.a)

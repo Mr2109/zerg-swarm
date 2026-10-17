@@ -1,11 +1,14 @@
 // zerg_egg_version.go —— 卵6（版本与兼容）的实现面：**不可变面/可加面二分类** · **min_readable 牙**
-// · **签名块 v2 ＝ 主号 2（旧读端必拒）** · **13 档报话/退码表（D1–D13 · D6 拆 D6a/D6b）**。
+// · **签名块世代 ＝ 主号 3（旧读端必拒）** —— ★ 主号 **2 已被【段表化】占用**（设计稿 Q3 已拍 ·
+// `zerg_egg.go` 的 `zegV2LayoutVer`）⇒ 签名块顺延到 3（见常量 `zegFormatVersionSigBlock` 的注）；
+// · **13 档报话/退码表（D1–D13 · D6 拆 D6a/D6b）**。
 //
 // 真源（只读）：
 //   - 设计稿 §十六 16.5（版本双分类 R1/R2 · 13 档表 · 漏点 F1「min_readable 有声明无牙」/ F2「加签名块必升主号」）
 //   - 设计稿 §11.2 不变量（本批**只加不删**地补第 7 条：字段二分类 · 照 erofs `feature_compat`/`feature_incompat` 双位图）
-//   - 设计稿 §11.5（签名块 v2 ＝ 主号 2、旧读端必拒）
+//   - 设计稿 §11.5（签名块 v2 ＝ 主号 2、旧读端必拒）§ 2026-10-18 顺延：段表化占 2 ⇒ 签名块落 3
 //   - 设计稿 §十九 #29（二分类写死）· #30（min_readable **先给牙**）· #4（D7/D8 退码归 **1**）· #31（签名块 v2）· #28（不许跳版）
+//     ★ #31 的「主号 2」这一格 2026-10-18 顺延为 **3**（段表化先占了 2；旧读端对 2/3 都走 D2 前向拒）
 //
 // 三条落判（用户 2026-10-15 已拍 · 逐字照做）：
 //
@@ -58,12 +61,16 @@ import (
 	"strings"
 )
 
-// ---- 一 · 版本常量（三分：本端主号 / 本端最低可读 / 签名块 v2）-----------------------------------
+// ---- 一 · 版本常量（三分：本端主号 / 本端最低可读 / 签名块世代）-----------------------------------
 
 const (
-	// zegFormatVersionSigBlock —— **签名块 v2 ＝ 主号 2**（§11.5 · §十九 #31 · 片5 F2）：
-	// 「加签名块 = 结构变更 ⇒ 必升主号 ⇒ 旧读端必拒」；★ ✗ 不是「忽略」—— 忽略会把签名块当成数据段读。
-	zegFormatVersionSigBlock = 2
+	// zegFormatVersionSigBlock —— **签名块世代的主号**（§11.5 · §十九 #31 · 片5 F2）：
+	// 「加签名块 = 结构变更 ⇒ 必升主号 ⇒ 旧读端必拒」；★ ✗ 不是「忽略」—— 忽略会把预留块当成数据段读。
+	// ★★ **2026-10-18 顺延（段表化落地）**：设计稿原把签名块钉在**主号 2**，而设计稿 Q3 拍定的**段表化**
+	//   先占了主号 2（`zerg_egg.go` 的 `zegV2LayoutVer` ＝ 8 KiB 双槽头 ＋ 尾段表 ＋ 引擎段在尾）⇒
+	//   签名块世代顺延到 **3**。口径不变：**旧读端对 2 与 3 一律 D2 前向拒**（`zegCompatGateMainVersion`）；
+	//   `egg_sign.go` 的 `eggSlotV2Major = 2`（「indexMajor ≥ 2 ⇒ 旧读端拒」）**仍然成立**，那件未动。
+	zegFormatVersionSigBlock = 3
 	// zegMinReadableVersion —— **本端（读端）仍能读懂的最低主号**（＝读端侧 `min_readable`）。v1 端 = 1。
 	// ★ 与**卵侧**声明的 `min_readable`（索引 JSON 里的可加面键）是**互为镜像的两格**：
 	//   卵声明 `min_readable` > 本端主号 ⇒ 拒 D3（卵在说「你得够新」）；
@@ -183,10 +190,10 @@ var zegVersionTiers = []zegVersionTier{
 		Msg: "拒孵：不是卵（magic 期望 ZEGG，实读十六进制）", Code: exitUsage,
 		Basis: "§11.1 固定前缀；erofs「magic 不符 ⇒ 读者必须拒」",
 		Now:   "已实现：zerg_egg.go 前缀档报 `magic 不符（不是 ZEGG 文件）：b'…'` · 索引体档报 `magic 不符（不是 ZEGG 文件）`（报话与目标串不同）"},
-	{Tier: "D2", Trigger: "`version` 高于本机认知（**前向** · 含签名块 v2 ＝ 主号 2）",
+	{Tier: "D2", Trigger: "`version` 高于本机认知（**前向** · 含段表化 2 / 签名块世代 3）",
 		Who: "读端 `zegCompatGateMainVersion`（前缀 ＋ 索引体两处同源）",
 		Msg: "拒孵：卵格式 version 高于本机认知 —— 不按新格式猜着跑；请升级孵化器（或用卵内茧壁兜底）", Code: exitUsage,
-		Basis: "§11.5（签名块 v2 ＝ 主号 2 · 旧读端必拒）· §十九 #31 · 片5 F2；`compat/migrate.go` `ErrSchemaTooNew`",
+		Basis: "§11.5（签名块 v2 ＝ 主号 2 · 旧读端必拒；★ 2026-10-18 主号 2 转给段表化 ⇒ 签名块落 3）· §十九 #31 · 片5 F2；`compat/migrate.go` `ErrSchemaTooNew`",
 		Now:   "已实现（本件）：报话点名「前向拒」＋主号两枚 ＋ 签名块 v2 那条；改前只有一句 `格式版本不支持：%d`"},
 	{Tier: "D3", Trigger: "`version` 低于本端最低可读（**过旧**）／**卵声明 `min_readable` > 本端主号**",
 		Who: "读端 `zegCompatGateMinReadable`（★ 本件**新给牙**的那一格）",
@@ -401,8 +408,8 @@ func zegAuditIndexSurface(body []byte) (zegSurfaceAudit, error) {
 func zegCompatGateMainVersion(mainVer int, site string) error {
 	if mainVer == zegFormatVersionSigBlock {
 		return &zegRefusal{Tier: "D2", Msg: fmt.Sprintf(
-			"拒孵：卵格式 version=%d 高于本机认知 %d —— 前向拒（★ 签名块 v2 ＝ 主号 2 ⇒ 旧读端**必拒**，✗ 不是忽略：忽略会把签名块当数据段读；§11.5 / §十九 #31）；请升级孵化器（或用卵内茧壁兜底）[%s]",
-			mainVer, zegFormatVer, site)}
+			"拒孵：卵格式 version=%d 高于本机认知 %d —— 前向拒（★ 签名块 v2 世代 ＝ 主号 ≥ %d（主号 2 是段表化）⇒ 旧读端**必拒**，✗ 不是忽略：忽略会把预留块当数据段读；§11.5 / §十九 #31）；请升级孵化器（或用卵内茧壁兜底）[%s]",
+			mainVer, zegFormatVer, zegFormatVersionSigBlock, site)}
 	}
 	if mainVer > zegFormatVer {
 		return &zegRefusal{Tier: "D2", Msg: fmt.Sprintf(
@@ -549,7 +556,7 @@ func zegCompatTableJSON() ([]byte, error) {
 //	① 同主号**可加面**未知段 ⇒ 旧读端**照旧跑**（不 error）
 //	② 同主号**不可变面改语义** ⇒ **必拒**（点名 `zegTierSurface`）
 //	③ **`min_readable` 超本端**（不可变面不符）⇒ **必拒且点名**（D3）★ 本格就是新牙的那一格
-//	④ **主号 2 签名块** ⇒ 旧读端**必拒**（D2）
+//	④ **主号 3（签名块世代）** ⇒ 旧读端**必拒**（D2）
 //	负控：同一份 `min_readable` 超本端输入走**改前形态**（`zegCompatGateLegacy`）必须**放行**，
 //	      且与牙的结论**必须不同** ⇒ 哑化牙 ⇒ 本格红。
 func zegVersionSelfTest(stdout, stderr io.Writer) int {
@@ -661,7 +668,7 @@ func zegVersionSelfTest(stdout, stderr io.Writer) int {
 
 	// ---- 态③：`min_readable` 超本端 ⇒ 必拒且点名（D3）----
 	eggMin, err := build("minread.egg", editIdx(func(m map[string]json.RawMessage) error {
-		putRaw(m, "min_readable", fmt.Sprintf("%d", zegFormatVersionSigBlock)) // 卵要「主号 2 的读端」
+		putRaw(m, "min_readable", fmt.Sprintf("%d", zegFormatVersionSigBlock)) // 卵要「更新世代（%d）的读端」
 		return nil
 	}), 0)
 	if err != nil {
@@ -679,14 +686,14 @@ func zegVersionSelfTest(stdout, stderr io.Writer) int {
 		return zegSelfFail(stderr, fmt.Errorf("负控前提不成立：改前形态在同一输入上竟也拒（%v）", legErr))
 	}
 
-	// ---- 态④：主号 2 签名块 ⇒ 旧读端必拒（D2）----
+	// ---- 态④：主号 3（签名块世代）⇒ 旧读端必拒（D2）----
 	eggSig, err := build("sigblock.egg", func(idx []byte) ([]byte, error) { return idx, nil }, zegFormatVersionSigBlock)
 	if err != nil {
 		return zegSelfFail(stderr, err)
 	}
 	_, sigErr := zegParseIndex(eggSig)
 	if sigErr == nil {
-		return zegSelfFail(stderr, fmt.Errorf("态④ 主号 2 签名块竟被旧读端放行（✗ 必拒 · 不是忽略）"))
+		return zegSelfFail(stderr, fmt.Errorf("态④ 主号 %d（签名块世代）竟被旧读端放行（✗ 必拒 · 不是忽略）", zegFormatVersionSigBlock))
 	}
 	if ref, ok := sigErr.(*zegRefusal); !ok || ref.Tier != "D2" || !strings.Contains(ref.Msg, "签名块 v2") {
 		return zegSelfFail(stderr, fmt.Errorf("态④ 拒了但没点名签名块 v2/D2：%v", sigErr))

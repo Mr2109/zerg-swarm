@@ -386,6 +386,32 @@ func zegvReadPhys(f *os.File, fi os.FileInfo) (zegvPhys, error) {
 	if _, err := f.ReadAt(prefix, 0); err != nil {
 		return p, err
 	}
+	// ★ v2（段表化）：头是 8 KiB 双槽、段表在文件尾 ⇒ ↙
+	//   ① 前缀摘要取**整个 8 KiB 头**（两槽都在内 ⇒ 任一代提交都改它，✗ 只看 32 B 会漏掉槽 1 的翻转）；
+	//   ② 索引摘要取**尾表字节**（`table_off/table_len` 由「crc 有效且 gen 最大」那个槽给）。
+	if int(binary.LittleEndian.Uint32(prefix[4:8])) == zegV2LayoutVer {
+		head := make([]byte, zegV2HeaderBytes)
+		if _, err := f.ReadAt(head, 0); err != nil {
+			return p, err
+		}
+		sum := sha256.Sum256(head)
+		p.PrefixSHA = hex.EncodeToString(sum[:])
+		slot, serr := zegV2PickSlot(f)
+		if serr != nil {
+			return p, serr
+		}
+		if slot.TableLen <= 0 || slot.TableLen > zegvIdxMaxBytes || slot.TableOff < zegV2HeaderBytes {
+			return p, fmt.Errorf("v2 段表落点不合理（off=%d len=%d）", slot.TableOff, slot.TableLen)
+		}
+		body := make([]byte, slot.TableLen)
+		if _, err := f.ReadAt(body, slot.TableOff); err != nil {
+			return p, err
+		}
+		sum = sha256.Sum256(body)
+		p.IndexSHA = hex.EncodeToString(sum[:])
+		p.IndexLen = slot.TableLen
+		return p, nil
+	}
 	sum := sha256.Sum256(prefix)
 	p.PrefixSHA = hex.EncodeToString(sum[:])
 	n := int64(binary.LittleEndian.Uint64(prefix[16:24]))
