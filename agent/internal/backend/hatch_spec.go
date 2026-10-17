@@ -174,6 +174,7 @@ func hatchSpecFor(entry *registry.ModelEntry, engineImpl string, port int, profi
 	if egg != nil {
 		spec.EggRoot = egg.Root
 		spec.EggLoaderDir = egg.LoaderDir
+		spec.EggBinDir = egg.BinDir
 		spec.EnginePathInSpace = egg.EnginePath
 	} else {
 		hostEngine, herr := engineHostPath(entry, engineImpl)
@@ -472,6 +473,7 @@ func engineLibMappings(eggID string, entry *registry.ModelEntry) ([]pathRewrite,
 type eggWiring struct {
 	Root           string        // 蛋展开目录（宿主）
 	LoaderDir      string        // 蛋内 loader 目录（宿主；落到空间 /lib64 与 /lib）
+	BinDir         string        // 蛋内 sysroot/bin（宿主；落到空间 /bin —— 里面那枚 sh 是包装 exec 的入口）
 	EnginePath     string        // 引擎在空间内的路径（/engine/<目录基名>/<可执行名>）
 	EngineLibDirs  []string      // 喂 LD_LIBRARY_PATH 的引擎侧目录（空间内；顺序即搜索顺序）
 	LibRewrites    []pathRewrite // 声明库目录的宿主 → 空间改写表（供 env 值改写）
@@ -492,6 +494,17 @@ const (
 	// eggEngineSubdir / eggLibsSubdir —— 蛋展开目录下的两个约定子目录。
 	eggEngineSubdir = "engine"
 	eggLibsSubdir   = "libs"
+	// eggSysrootSubdir —— 蛋内「系统镜像」的约定子目录（`sysroot/lib` 与 `sysroot/bin` 同层）。
+	//
+	// `sysroot/bin` 提供空间里的 `/bin`：蛋模式**不挂宿主 `/usr`**（GAP-20261018-11）⇒ `/bin` 没有
+	// 兜底来源，而**凡声明了按卵环境变量**的卵入口就是 `/bin/sh -c 'export …; exec "$@"'`
+	// （bwrap `--setenv` 在 0.11.1 上必失败）⇒ 缺它逐字 `bwrap: execvp /bin/sh: No such file or
+	// directory`（rc=1，edge-node 实测，GAP-20261018-12）。取现成段位（与 `sysroot/lib` 同层，打包端本
+	// 就把它当普通源目录内容收进蛋），✗ 不另起一个蛋内路径。
+	// 与 `hatch` 包的 `eggSysrootSubdir` **同值**（跨包契约：两个包不互相依赖）。
+	eggSysrootSubdir = "sysroot"
+	// eggBinSubdir —— `sysroot` 下放 `/bin` 那一层；蛋里那枚 sh 的路径 = `sysroot/bin/sh`。
+	eggBinSubdir = "bin"
 	// eggRocblasSpaceDir rocBLAS 数据目录在空间内的落点 = **宿主上的默认绝对路径**
 	// （它的由来见上面文件头 ①；版本层再往下拼）。
 	eggRocblasSpaceDir = "/opt/rocm/lib/rocblas"
@@ -558,6 +571,34 @@ func eggWiringFor(eggID string, entry *registry.ModelEntry, engineImpl string) (
 			"（PT_INTERP 的落点无处安放：这条绑定会把一个空目录挂到 /lib64）", eggID, loader)
 	}
 	w.LoaderDir = loader
+
+	// ①b 蛋内 `/bin` 的来源（`<root>/sysroot/bin`，里面必须有一枚 `sh`）
+	//
+	// 为什么是硬要求（GAP-20261018-12）：蛋模式**不挂宿主 `/usr`**（GAP-20261018-11）⇒ usrmerge 那条
+	// `--symlink usr/bin /bin` 退场，空间里没有任何 `/bin` 来源；而本函数产出的 spec **恒带**
+	// `LD_LIBRARY_PATH`（⑤ 的 hatchEnv 会生成）⇒ 入口必然是包装 exec `/bin/sh -c 'export …; exec "$@"'`
+	// ⇒ 空根档逐字 `bwrap: execvp /bin/sh: No such file or directory`（rc=1，edge-node 真跑）。
+	// 取**现成段位** `sysroot/bin`（与 `sysroot/lib` 同层），不另起蛋内路径、不改蛋格式。
+	binDir := filepath.Join(root, eggSysrootSubdir, eggBinSubdir)
+	if st, serr := os.Stat(binDir); serr != nil || !st.IsDir() {
+		return nil, fmt.Errorf("卵 %s：蛋里没有 %s/%s 这一层（%v）——拒孵：蛋模式不挂宿主 /usr，"+
+			"空间里的 /bin/sh 只能由蛋提供（打蛋时把一枚 sh 收进「源目录/%s/%s/sh」，"+
+			"它要在蛋内 sysroot 里跑得起来：静态或闭包齐）",
+			eggID, eggSysrootSubdir, eggBinSubdir, serr, eggSysrootSubdir, eggBinSubdir)
+	}
+	const eggBinShName = "sh"
+	shSt, sherr := os.Stat(filepath.Join(binDir, eggBinShName))
+	if sherr != nil {
+		return nil, fmt.Errorf("卵 %s：蛋内 %s/%s 里没有 %q（%v）——拒孵：包装 exec 的入口就是它"+
+			"（缺的空根档逐字 `bwrap: execvp /bin/sh: No such file or directory`，rc=1）",
+			eggID, eggSysrootSubdir, eggBinSubdir, eggBinShName, sherr)
+	}
+	if !shSt.Mode().IsRegular() || shSt.Mode().Perm()&0o111 == 0 {
+		return nil, fmt.Errorf("卵 %s：蛋内 %s/%s/%s 不是可执行的普通件（mode=%v）——拒孵："+
+			"空间里 `/bin/sh` 起不来（包装 exec 会 execve 失败）",
+			eggID, eggSysrootSubdir, eggBinSubdir, eggBinShName, shSt.Mode())
+	}
+	w.BinDir = binDir
 
 	// ② 引擎可执行：在蛋里按**基名**找，必须唯一
 	exeBase, err := eggExeBase(entry, engineImpl)

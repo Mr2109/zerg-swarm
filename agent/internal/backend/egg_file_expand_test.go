@@ -92,6 +92,17 @@ func buildExpandFixture(t *testing.T) (src, engBin, engLib, libsBin string) {
 	write(filepath.Join(src, "model", "demo.gguf"), gguf, 0o644)
 	write(filepath.Join(src, "config.json"), []byte(`{"arch":"egg6"}`), 0o644)
 
+	// 蛋内系统镜像的 `/bin`（GAP-20261018-12）：蛋模式不挂宿主 `/usr` ⇒ 空间里的 `/bin` 没有任何
+	// 兜底来源，而包装 exec 的入口就是 `/bin/sh`。真机（Linux）上收**真 sh 的字节**，让端到端那半
+	// 有意义；开发机（macOS）上没有可收的同形件 ⇒ 落一枚 stub（本夹具证的是**argv 形状**，
+	// 真 sh ＋ 真闭包的自包含读数由 edge-node 夹具与 `TestBuildBwrapArgv_EggModeRealBwrap` 给）。
+	mk(filepath.Join(src, "sysroot", "bin"))
+	shBody := []byte("stub-sh\n")
+	if b, err := os.ReadFile("/bin/sh"); err == nil && len(b) > 4 && b[0] == 0x7f {
+		shBody = b
+	}
+	write(filepath.Join(src, "sysroot", "bin", "sh"), shBody, 0o755)
+
 	// 引擎目录（基名 = bin ⇒ 蛋内 engine/bin/…）
 	engBin = filepath.Join(sep, "eng", "bin")
 	mk(engBin)
@@ -194,10 +205,16 @@ func TestEggFile_ExpandThenBwrapArgv(t *testing.T) {
 		{"--ro-bind", filepath.Join(root, "libs"), "/libs"},
 		{"--ro-bind", filepath.Join(root, "engine", "lib"), "/lib64"},
 		{"--ro-bind", filepath.Join(root, "engine", "lib"), "/lib"},
+		{"--ro-bind", filepath.Join(root, "sysroot", "bin"), "/bin"},
 	} {
 		if !argvHas(argv, want...) {
 			t.Fatalf("argv 里没有 %v（前 60 元素：%v）", want, argv[:min(60, len(argv))])
 		}
+	}
+	// 蛋模式一条宿主系统路径都不挂（GAP-20261018-11）：/usr 与 usrmerge 的 /bin /sbin 链接全退场。
+	if argvHas(argv, "--ro-bind", "/usr", "/usr") ||
+		argvHas(argv, "--symlink", "usr/bin", "/bin") || argvHas(argv, "--symlink", "usr/sbin", "/sbin") {
+		t.Fatalf("蛋模式仍挂着宿主 /usr（或它的 usrmerge 别名）⇒ libc 会解析到宿主那件：%v", argv)
 	}
 	if spec.EnginePathInSpace != "/engine/bin/llama-server" {
 		t.Fatalf("EnginePathInSpace=%q", spec.EnginePathInSpace)

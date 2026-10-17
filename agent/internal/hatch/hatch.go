@@ -38,6 +38,11 @@
 //	   到 `/models`：那会把同目录别的模型一起带进空间（真机 `ls /models` 列出好几个模型），而且
 //	   `/models` 一旦成了只读挂载，逐文件绑定就落不进去（`bwrap: Can't create file …:
 //	   Read-only file system`，与缺陷 5 同类）。判据同步见 hatch_check.go。
+//	⑧ **从蛋孵化时一条宿主系统路径都不挂**（2026-10-18，GAP-20261018-11/12）：宿主 `/usr` 一挂，
+//	   空间里的 libc 就可能是**宿主那件**（edge-node 实测 `maps` = 宿主 inode），「从蛋自包含」变成假象。
+//	   蛋模式因此：不挂 `/usr`、不留 `usr/bin` `usr/sbin` 两条 usrmerge 链接、`/bin` 改由蛋内
+//	   `sysroot/bin` 提供（那枚 `sh` 是包装 exec 的入口，蛋里必须带 —— 否则空根档逐字
+//	   `bwrap: execvp /bin/sh: No such file or directory`，rc=1）。
 //
 // 本文件是**平台无关**部分：声明校验 + 命令行构造（纯函数，可在 macOS 上单测）。
 // 真正执行（起单元 / 停单元）在 hatch_linux.go，非 Linux 平台在 hatch_other.go 明确拒绝。
@@ -87,6 +92,17 @@ type Spec struct {
 	// 不存在；glibc 的序是 DT_RPATH → **LD_LIBRARY_PATH** → DT_RUNPATH ⇒ 映射侧生成的
 	// `LD_LIBRARY_PATH`（含 `/engine/<目录基名>`）在 RUNPATH 之前生效，**不必改写 RUNPATH**。
 	EggLoaderDir string
+	// EggBinDir 蛋内 `/bin` 的来源目录（宿主侧；约定 `<EggRoot>/sysroot/bin`，蛋里的 `sh` 就在里面）。
+	//
+	// **蛋模式必填**（GAP-20261018-12）。理由＝蛋模式**不挂宿主 `/usr`**（见 BuildBwrapArgv ①），
+	// 于是 usrmerge 那条 `--symlink usr/bin /bin` 随之退场 ⇒ 空间里没有 `/bin/sh`；而**凡声明了
+	// 按卵环境变量的卵**入口就是 `/bin/sh -c 'export …; exec "$@"'`（bwrap `--setenv` 在
+	// bubblewrap 0.11.1 上必失败，见文件头坑④）⇒ 空根档逐字
+	// `bwrap: execvp /bin/sh: No such file or directory`（rc=1，edge-node 真跑）。
+	// 取的是**现成段位**（`sysroot/` 与 `sysroot/lib` 同层，打包端本来就收这一层），不另起蛋内路径。
+	//
+	// 不从蛋孵化时本字段必须为空（那时 `/bin` 走 usrmerge 链接，逐字不变）。
+	EggBinDir string
 
 	// WeightPath 该卵权重所在的**宿主侧**路径（原来语义「文件或目录」，现在只剩出证/日志用途）。
 	//
@@ -179,6 +195,19 @@ func (s Spec) Validate() error {
 		if len(s.EngineRoots) > 0 {
 			return fmt.Errorf("蛋孵化声明同时给了 EngineRoots=%v —— 拒：两套引擎挂载源（宿主目录与蛋），不说谁盖谁", s.EngineRoots)
 		}
+		// 蛋内 `/bin`（包装 exec 的入口 sh 在里面）**必填**：蛋模式不挂宿主 `/usr`，`/bin` 只能由蛋给。
+		// 缺它的后果不是「警告」而是空根档当场 execvp 失败（rc=1）——故在声明面就拒，不留到真机。
+		if s.EggBinDir == "" {
+			return fmt.Errorf("蛋孵化声明缺 egg_bin_dir（蛋内 %s/bin）—— 拒孵：蛋模式不挂宿主 /usr，"+
+				"空间里的 /bin/sh 只能由蛋提供（缺它包装 exec 逐字报 "+
+				"`bwrap: execvp /bin/sh: No such file or directory`，rc=1）", eggSysrootSubdir)
+		}
+		if !strings.HasPrefix(s.EggBinDir, "/") {
+			return fmt.Errorf("蛋内 /bin 来源目录必须是宿主侧绝对路径，实得 %q", s.EggBinDir)
+		}
+	} else if s.EggBinDir != "" {
+		return fmt.Errorf("蛋内 /bin 来源目录（egg_bin_dir=%q）只在蛋孵化时有意义——拒："+
+			"不从蛋孵化时 /bin 就是 usrmerge 符号链接（指向宿主 /usr），两套来源不说谁盖谁", s.EggBinDir)
 	}
 	// 权重：**两个字段都空**才算「没声明权重」⇒ 拒孵（fail-closed 不放宽：一条声明路都不给就走人，
 	// 绝不孵一个空手进来的空间）。
@@ -246,6 +275,14 @@ const spaceModelsDir = "/models"
 // eggEngineSubdir 蛋展开目录下「引擎树」的约定子目录名（与 `cocoon pack --engine-dir` 的落点
 // `engine/<目录基名>/…` 同源；本包只认这一层，蛋内更深的结构由打包端决定）。
 const eggEngineSubdir = "engine"
+
+// eggSysrootSubdir 蛋展开目录下「系统镜像」的约定子目录名（`sysroot/lib` 与 `sysroot/bin` 同层）。
+//
+// 打包端把 `sysroot/…` 当**普通源目录内容**收进蛋（`sysroot/lib/libc.so.6` 早已是这个段位），
+// 孵化端只认这一层：`sysroot/bin` 提供空间里的 `/bin` —— 蛋模式不挂宿主 `/usr`
+// （GAP-20261018-11），而包装 exec 的入口 `/bin/sh` 必须有人提供（GAP-20261018-12）。
+// 与 `backend/hatch_spec.go` 的 `eggSysrootSubdir` **同值**（跨包契约：两个包不互相依赖）。
+const eggSysrootSubdir = "sysroot"
 
 // spaceWeightLanding 声明文件在空间内的落点（`/models/<基名>`）。
 //
@@ -426,11 +463,28 @@ func BuildBwrapArgv(s Spec) ([]string, error) {
 	if err := s.Validate(); err != nil {
 		return nil, err
 	}
-	argv := []string{
-		// ① 全新根：只读挂系统目录（usrmerge 下 /bin /lib /lib64 /sbin 都是 /usr 的链接）
-		"--ro-bind", "/usr", "/usr",
-		"--symlink", "usr/bin", "/bin",
-		"--symlink", "usr/sbin", "/sbin",
+	// ① 全新根：系统目录的来源
+	//
+	// **不是从蛋孵化**：宿主 `/usr` 整棵只读挂进来，`/bin` `/sbin` 走 usrmerge 符号链接
+	// （逐字不变 —— 这条分支是本函数的零回归面）。
+	//
+	// **从蛋孵化**：**一条宿主系统路径都不挂**（GAP-20261018-11「假自包含」）。此前 `--ro-bind /usr /usr`
+	// 恒在 argv 里，于是空间里的 libc 实际是宿主那件：edge-node 真跑读数（Qwen3.8-Flash-Next 沙箱）
+	// = `maps` 里 `dev 103:06 inode 14288394`（宿主 /usr）；**手工剔掉这一条**（49→46 元素）后
+	// rc 仍 0，且 `maps` 变成 `dev 00:2e inode 17349` —— **逐值等于展开目录里那件**
+	// ⇒ 蛋内 sysroot 本来就够用，是 argv 没把它当回事。自包含的唯一硬证就是这条 inode 相等。
+	// `/bin` 改由蛋内 `sysroot/bin` 提供（`EggBinDir`，Validate 已强制非空）：蛋模式入口若是包装
+	// exec，用的就是里面那枚 `sh`；usrmerge 的 `usr/bin` `usr/sbin` 两条链接随之**退场**（否则
+	// 空间里留下两条指向已不存在的 `/usr` 的悬挂链接，等于给「谁提供 /bin」留两种说法）。
+	var argv []string
+	if s.EggRoot != "" {
+		argv = append(argv, "--ro-bind", s.EggBinDir, "/bin")
+	} else {
+		argv = append(argv,
+			"--ro-bind", "/usr", "/usr",
+			"--symlink", "usr/bin", "/bin",
+			"--symlink", "usr/sbin", "/sbin",
+		)
 	}
 	// ①b `/lib` 与 `/lib64` 的落点
 	//
@@ -529,7 +583,13 @@ func BuildBwrapArgv(s Spec) ([]string, error) {
 	return argv, nil
 }
 
-// shPath 空间内的 shell。`/bin` 是 usrmerge 符号链接（文件头坑①），真机实测可用。
+// shPath 空间内的 shell（包装 exec 的入口）。
+//
+// 两种来源，落点相同：
+//
+//	非蛋孵化：`/bin` 是 usrmerge 符号链接（文件头坑①），真机实测可用；
+//	蛋孵化：`/bin` 是蛋内 `sysroot/bin` 的只读绑定（宿主 `/usr` 一条都不挂 —— GAP-20261018-11/12），
+//	        这枚 sh 就是蛋里带的那一枚。
 const shPath = "/bin/sh"
 
 // wrapperArg0 包装脚本的 `$0`（**不参与** `exec "$@"`）。

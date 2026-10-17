@@ -4,11 +4,15 @@
 // 走的是**真链路**：`hatchSpecFor(...)` → `hatch.BuildBwrapArgv`（不另写一份配方副本 ——
 // 两份口径必然漂，漂了还都不报红）。钉住的四件事：
 //
-//	① 挂了什么：`<蛋>/engine` → `/engine`、`<蛋>/libs` → `/libs`、`<蛋>/engine/lib` → `/lib64` 与 `/lib`；
+//	① 挂了什么：`<蛋>/engine` → `/engine`、`<蛋>/libs` → `/libs`、`<蛋>/engine/lib` → `/lib64` 与 `/lib`、
+//	   `<蛋>/sysroot/bin` → `/bin`；**且一条宿主系统路径都不挂**（不挂 `/usr`、不留 usrmerge 的
+//	   `/bin` `/sbin` 链接 —— 否则「从蛋自包含」是假象，空间里的 libc 会解析到宿主那件，GAP-20261018-11）；
 //	② 引擎在空间里叫什么：`/engine/<目录基名>/<可执行名>`（蛋内保留了 `--engine-dir` 的基名）；
 //	③ 环境：`LD_LIBRARY_PATH` = 声明库落点 ＋ 引擎侧目录（蛋里的引擎不在 `/engine` 根上）；
 //	   `ROCBLAS_TENSILE_LIBPATH` = 空间内 `.hsaco` 目录（DT_NEEDED 看不见的那 556 MB 的入口）；
-//	④ fail-closed：蛋里缺库目录 / 同名引擎两份 / 两个 rocBLAS 版本层 / 蛋目录读不到 —— 全部具名拒孵。
+//	④ fail-closed：蛋里缺库目录 / 同名引擎两份 / 两个 rocBLAS 版本层 / 蛋目录读不到 /
+//	   缺 `sysroot/bin/sh`（蛋模式的 `/bin` 无人提供，包装 exec 会 execvp 失败，GAP-20261018-12）
+//	   —— 全部具名拒孵。
 package backend
 
 import (
@@ -47,6 +51,10 @@ func eggFixture(t *testing.T) string {
 	file("libs/bin/libggml-hip.so.0")
 	dir("engine/rocblas/5.1.0/library")
 	file("engine/rocblas/5.1.0/library/TensileLibrary_gfx1100.hsaco")
+	// 蛋内系统镜像里的 sh（GAP-20261018-12）：蛋模式不挂宿主 /usr ⇒ /bin 只能由蛋给，
+	// 而包装 exec 的入口就是它。夹具里是**普通可执行件**（真蛋里是真 sh）。
+	dir("sysroot/bin")
+	file("sysroot/bin/sh")
 	return root
 }
 
@@ -98,6 +106,9 @@ func TestEggHatch_MountsComeFromExpandedEgg(t *testing.T) {
 		t.Fatalf("蛋挂载源没接上：EggRoot=%q EggLoaderDir=%q（期望 %q / %q）",
 			spec.EggRoot, spec.EggLoaderDir, root, filepath.Join(root, "engine/lib"))
 	}
+	if spec.EggBinDir != filepath.Join(root, "sysroot", "bin") {
+		t.Fatalf("蛋内 /bin 来源没接上：EggBinDir=%q（期望 %q）", spec.EggBinDir, filepath.Join(root, "sysroot/bin"))
+	}
 	if len(spec.EngineRoots) != 0 {
 		t.Errorf("蛋孵化时不该再有宿主 EngineRoots，实得 %v", spec.EngineRoots)
 	}
@@ -124,10 +135,18 @@ func TestEggHatch_MountsComeFromExpandedEgg(t *testing.T) {
 		{"--ro-bind", filepath.Join(root, "engine", "lib"), "/lib64"},
 		{"--ro-bind", filepath.Join(root, "engine", "lib"), "/lib"},
 		{"--ro-bind", filepath.Join(root, "engine", "rocblas"), "/opt/rocm/lib/rocblas"},
+		{"--ro-bind", filepath.Join(root, "sysroot", "bin"), "/bin"},
 	} {
 		if !argvHas(argv, want...) {
 			t.Errorf("缺绑定 %v（实得 argv：%v）", want, argv)
 		}
+	}
+	// 蛋模式**一条宿主系统路径都不挂**（GAP-20261018-11「假自包含」）：/usr 与两条 usrmerge 别名退场。
+	if argvHas(argv, "--ro-bind", "/usr", "/usr") {
+		t.Errorf("蛋模式仍在挂宿主 /usr ⇒ libc 会解析到宿主那件（假自包含）：%v", argv)
+	}
+	if argvHas(argv, "--symlink", "usr/bin", "/bin") || argvHas(argv, "--symlink", "usr/sbin", "/sbin") {
+		t.Errorf("蛋模式不该再有 usrmerge 的 /bin /sbin 链接（指向已不存在的 /usr）：%v", argv)
 	}
 	// 宿主构建目录不得再出现在空间里（换源的关键判据）
 	for _, a := range argv {
@@ -213,6 +232,34 @@ func TestEggHatch_FailClosed(t *testing.T) {
 				}
 			},
 			want: "没有 ld-linux",
+		},
+		{
+			// GAP-20261018-12：蛋模式不挂宿主 /usr ⇒ 空间里的 /bin/sh 只能由蛋提供。
+			name: "蛋里没有 sysroot/bin 这一层",
+			prep: func(t *testing.T, root string) {
+				if err := os.RemoveAll(filepath.Join(root, "sysroot")); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "没有 sysroot/bin",
+		},
+		{
+			name: "蛋里 sysroot/bin 里没有 sh",
+			prep: func(t *testing.T, root string) {
+				if err := os.Remove(filepath.Join(root, "sysroot", "bin", "sh")); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: `没有 "sh"`,
+		},
+		{
+			name: "蛋里 sysroot/bin/sh 不可执行",
+			prep: func(t *testing.T, root string) {
+				if err := os.Chmod(filepath.Join(root, "sysroot", "bin", "sh"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "不是可执行的普通件",
 		},
 	}
 	for _, c := range cases {
