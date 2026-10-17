@@ -10529,6 +10529,442 @@
    "want_rc": 2,
    "want_stdout_bytes": 0,
    "why": "给了 `--json` 而没给字段 ⇒ 用法错 2（与同族 `fs unprotected` / `gap diff` 同口径）· stdout 0 字节（本命令不报 error.kind ⇒ 包封不补 · K2 甲档 0 字节档）· 不给结论"
+  },
+  {
+   "argv": [
+    "chat",
+    "--nosuchflag-zz"
+   ],
+   "command": "chat",
+   "id": "chat#未知旗标",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标（✗ 连主控都不探）"
+  },
+  {
+   "argv": [
+    "chat",
+    "--schema",
+    "zerg/v9"
+   ],
+   "command": "chat",
+   "id": "chat#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "argv": [
+    "chat",
+    "new",
+    "--nosuchflag-zz"
+   ],
+   "command": "chat new",
+   "id": "chat/new#未知旗标",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标（✗ 连主控都不探）"
+  },
+  {
+   "argv": [
+    "chat",
+    "new",
+    "--schema",
+    "zerg/v9"
+   ],
+   "command": "chat new",
+   "id": "chat/new#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "argv": [
+    "chat",
+    "ls",
+    "--nosuchflag-zz"
+   ],
+   "command": "chat ls",
+   "id": "chat/ls#未知旗标",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标（✗ 连主控都不探）"
+  },
+  {
+   "argv": [
+    "chat",
+    "ls",
+    "--schema",
+    "zerg/v9"
+   ],
+   "command": "chat ls",
+   "id": "chat/ls#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "argv": [
+    "chat",
+    "send",
+    "--nosuchflag-zz"
+   ],
+   "command": "chat send",
+   "id": "chat/send#未知旗标",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标（✗ 连主控都不探）"
+  },
+  {
+   "argv": [
+    "chat",
+    "send",
+    "--schema",
+    "zerg/v9"
+   ],
+   "command": "chat send",
+   "id": "chat/send#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "argv": [
+    "chat",
+    "show",
+    "--nosuchflag-zz"
+   ],
+   "command": "chat show",
+   "id": "chat/show#未知旗标",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标（✗ 连主控都不探）"
+  },
+  {
+   "argv": [
+    "chat",
+    "show",
+    "--schema",
+    "zerg/v9"
+   ],
+   "command": "chat show",
+   "id": "chat/show#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "argv": [
+    "chat",
+    "abort",
+    "--nosuchflag-zz"
+   ],
+   "command": "chat abort",
+   "id": "chat/abort#未知旗标",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标（✗ 连主控都不探）"
+  },
+  {
+   "argv": [
+    "chat",
+    "abort",
+    "--schema",
+    "zerg/v9"
+   ],
+   "command": "chat abort",
+   "id": "chat/abort#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "argv": [
+    "chat",
+    "steer",
+    "--nosuchflag-zz"
+   ],
+   "command": "chat steer",
+   "id": "chat/steer#未知旗标",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标（✗ 连主控都不探）"
+  },
+  {
+   "argv": [
+    "chat",
+    "steer",
+    "--schema",
+    "zerg/v9"
+   ],
+   "command": "chat steer",
+   "id": "chat/steer#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "argv": [
+    "chat",
+    "rm",
+    "--nosuchflag-zz"
+   ],
+   "command": "chat rm",
+   "id": "chat/rm#未知旗标",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标（✗ 连主控都不探）"
+  },
+  {
+   "argv": [
+    "chat",
+    "rm",
+    "--schema",
+    "zerg/v9"
+   ],
+   "command": "chat rm",
+   "id": "chat/rm#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "argv": [
+    "chat",
+    "--json",
+    "name"
+   ],
+   "command": "chat",
+   "id": "chat#说明面不认 --json",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "裸条**不是字段面**（它是说明面：`zerg chat [<子命令>]`）⇒ `--json <字段>` 一律拒收，取退码表的 `usage` ⇒ 用法错 · `stdout` **零字节**（K2 甲档）· ✗ 不静默吞"
+  },
+  {
+   "argv": [
+    "chat",
+    "rm",
+    "x"
+   ],
+   "command": "chat rm",
+   "id": "chat/rm#缺 --yes（D2）",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "D2 缺 `--yes` ⇒ fail-closed · 真跑一律不执行（§九 M3 C2）· 与同族先例 `egg release` 同格形"
+  },
+  {
+   "argv": [
+    "chat",
+    "new",
+    "--json"
+   ],
+   "command": "chat new",
+   "id": "chat/new#--json 不给字段",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "给了 `--json` 而没给字段 ⇒ **用法错**（K2 甲档 · 码取自退码表 `usage`：判词与字段清单走 stderr）· `stdout` **零字节**"
+  },
+  {
+   "argv": [
+    "chat",
+    "ls",
+    "--json"
+   ],
+   "command": "chat ls",
+   "id": "chat/ls#--json 不给字段",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "给了 `--json` 而没给字段 ⇒ **用法错**（K2 甲档 · 码取自退码表 `usage`：判词与字段清单走 stderr）· `stdout` **零字节**"
+  },
+  {
+   "argv": [
+    "chat",
+    "send",
+    "--json"
+   ],
+   "command": "chat send",
+   "id": "chat/send#--json 不给字段",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "给了 `--json` 而没给字段 ⇒ **用法错**（K2 甲档 · 码取自退码表 `usage`：判词与字段清单走 stderr）· `stdout` **零字节**"
+  },
+  {
+   "argv": [
+    "chat",
+    "show",
+    "--json"
+   ],
+   "command": "chat show",
+   "id": "chat/show#--json 不给字段",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "给了 `--json` 而没给字段 ⇒ **用法错**（K2 甲档 · 码取自退码表 `usage`：判词与字段清单走 stderr）· `stdout` **零字节**"
+  },
+  {
+   "argv": [
+    "chat",
+    "abort",
+    "--json"
+   ],
+   "command": "chat abort",
+   "id": "chat/abort#--json 不给字段",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "给了 `--json` 而没给字段 ⇒ **用法错**（K2 甲档 · 码取自退码表 `usage`：判词与字段清单走 stderr）· `stdout` **零字节**"
+  },
+  {
+   "argv": [
+    "chat",
+    "steer",
+    "--json"
+   ],
+   "command": "chat steer",
+   "id": "chat/steer#--json 不给字段",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "给了 `--json` 而没给字段 ⇒ **用法错**（K2 甲档 · 码取自退码表 `usage`：判词与字段清单走 stderr）· `stdout` **零字节**"
+  },
+  {
+   "argv": [
+    "chat",
+    "rm",
+    "--json"
+   ],
+   "command": "chat rm",
+   "id": "chat/rm#--json 不给字段",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "给了 `--json` 而没给字段 ⇒ **用法错**（K2 甲档 · 码取自退码表 `usage`：判词与字段清单走 stderr）· `stdout` **零字节**"
+  },
+  {
+   "argv": [
+    "chat"
+   ],
+   "command": "chat",
+   "id": "chat#非 TTY 裸跑 ⇒ 退 2",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "2026-10-17 拍定「**裸跑按 TTY 分流**」：**无 TTY** ⇒ 退出码取退码表的 `usage` ＋ 提示走 stderr（有 TTY 档进 REPL —— 骨架归 T9）· `stdout` **零字节**（守「stdout 只放协议帧 ⇒ 可管道」）"
+  },
+  {
+   "argv": [
+    "chat",
+    "zz-无此动作-zz"
+   ],
+   "command": "chat",
+   "id": "chat#未知子命令",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "裸条的**手写防线**（`len(inv.args) > 0` ⇒ 一律拒）—— ✗ 不静默进 REPL（`resolve` 会把未知名交给裸条）；同族先例 = `cmdHelp` 的 `help zzz`"
+  },
+  {
+   "argv": [
+    "chat",
+    "ls",
+    "--limit",
+    "0"
+   ],
+   "command": "chat ls",
+   "id": "chat/ls#--limit 值无效",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "`--limit` 非正整数 ⇒ 用法错（**执行前判**，✗ 不进 HTTP 档）；同族先例 `--window` 值域"
+  },
+  {
+   "argv": [
+    "chat",
+    "send"
+   ],
+   "command": "chat send",
+   "id": "chat/send#缺提示",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "`chat send <提示>` 缺提示 ⇒ 用法错（管道档要 `-` 从 stdin 读 · §5.5 ③）· `stdout` **零字节**"
+  },
+  {
+   "argv": [
+    "chat",
+    "send",
+    "hi",
+    "--new",
+    "--session",
+    "chat_20261017_000000_ab12cd"
+   ],
+   "command": "chat send",
+   "id": "chat/send#--new 与 --session 同给",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "`--new`（新开一个会话）与 `--session`/`--last`/`--last-in-cwd` **不许同给** ⇒ 用法错 · 执行前判"
+  },
+  {
+   "argv": [
+    "chat",
+    "show"
+   ],
+   "command": "chat show",
+   "id": "chat/show#缺目标",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "三枚会话来源（`--session`/`--last`/`--last-in-cwd`）一个都没给 ⇒ 用法错 · `stdout` **零字节**"
+  },
+  {
+   "argv": [
+    "chat",
+    "show",
+    "zz-无此会话-zz"
+   ],
+   "command": "chat show",
+   "id": "chat/show#会话 id 形状不合法",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "`O-12` **只认完整 id**（形状真源 = `chatSessionIDRe`）⇒ 形状不合法一律拒（✗ 不做前缀解析 / ✗ 不做标题解析）"
+  },
+  {
+   "argv": [
+    "chat",
+    "abort"
+   ],
+   "command": "chat abort",
+   "id": "chat/abort#缺目标",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "`chat abort <id>` 缺会话 id ⇒ 用法错 · 执行前判 · `stdout` **零字节**"
+  },
+  {
+   "argv": [
+    "chat",
+    "steer"
+   ],
+   "command": "chat steer",
+   "id": "chat/steer#缺目标或文字",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "`chat steer <id> <文字>` 两枚位置参数缺任一 ⇒ 用法错 · 执行前判（✗ 不落库语义在服务端）"
+  },
+  {
+   "argv": [
+    "chat",
+    "rm"
+   ],
+   "command": "chat rm",
+   "id": "chat/rm#缺目标",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "`chat rm <id>` 缺会话 id ⇒ 用法错 · 执行前判（★ 缺 id 先于 D2 确认档判）"
+  },
+  {
+   "argv": [
+    "chat",
+    "rm",
+    "chat_20261017_000000_ab12cd",
+    "--dry-run",
+    "--yes"
+   ],
+   "command": "chat rm",
+   "id": "chat/rm#--dry-run 与 --yes 同给",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "两道确认档自相矛盾（`--dry-run` 只出计划件 ⟷ `--yes` 真写）⇒ 共享判定 `dryRunYesConflict`（`guard.go` 同一处 · ✗ 不另写一句判词）· 用法错 · `stdout` **零字节**"
   }
  ],
  "tiers": {

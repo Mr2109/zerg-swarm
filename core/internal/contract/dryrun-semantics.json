@@ -1344,6 +1344,13 @@
    "语义": "dryrun.v1",
    "零副作用判据": "`Store.GC(true)` 那一支（本件 `if dryRun {` 段）只把可删卵名逐个填进 `rep.Deleted` ＋ 置 `rep.Note = \"干跑：只出计划，未删任何件、未取 df 读数\"` 后返回 ⇒ **一个卵件都不删**（`os.Remove` 只在非干跑支）、**不取 df**（`s.sample()` 只在非干跑支）、不改引用计数 / 不改名册态 / 不写删却审计（三者均只在真删支）；真删只在 `dryRun == false` 且引用计数归零、态在回收面（`reclaimable` / `broken`）时发生。",
    "备注": "登记依据 = 门⑩ `R1 未登记件`（本单源码现编件现跑点名即红）：本件现读含 `DryRun` 字段（`json:\"dry_run\"`）、`GC(dryRun bool)` 形参 ＋ 干跑分支字面 ⇒ 进扫描面。它是 `--dry-run` 一套语义在**卵库存储层**的实现站点（`dry_run=true` 只报计划），与 CLI 写面同口径。走既有的 `dryrun.v1` 一套语义，**不是第五套语义**。来源路 卵2（`core/internal/store/eggstore/` 地基 · `gc.go` 系 22 件之一）；本单 F45 补登。"
+  },
+  {
+   "file": "core/cmd/zerg/family_chat.go",
+   "类": "命令面实现件（`zerg chat` 族 · 八条 path：裸条 ＋ 七条子命令）：**真干跑站点**（`chat rm` 的 `--dry-run` 计划件）＋ 其余子命令/裸条的**字样引用**（同一套 `dryrun.v1` 语义 —— ✗ 不另立）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "`zerg chat rm <id> --dry-run` ⇒ 退码 0 · 计划件走 **stdout**（不带 `--json` 那一档；给了 `--json` ⇒ 计划件走 stderr、stdout 只留六键包封）（动作 / 危险档 / 目标 / 请求 / 它会动 / 执行要 / 来源 逐格）＋ stderr 一行同义判词 · **零 HTTP**（✗ 不碰主控、✗ 不删会话、✗ 不改任何状态；实测两次读数逐字同）；**`J-5` 已实现（2026-10-17）**：`--dry-run --json` 档 ⇒ 六键包封走 stdout、人面计划件走 stderr（干跑支 `planOut := stdout; if inv.jsonGiven { planOut = stderr }` · 与真写档同走 `selectJSON` 一处出口）；`--dry-run` 与 `--yes` 同给 ⇒ 用法错（共享判定 `guard.go` 的 `dryRunYesConflict` · ✗ 不执行）",
+   "备注": "登记依据 = 门⑩ `R1 未登记件`（门78 面① 现读点名「`core/cmd/zerg/family_chat.go` 含 dry-run 语义但未登记」⇒ 缺）：本件现读**真读** `inv.dryRun` 并据此分行（`cmdChatRm`）。同族先例 = `family_egg.go` / `family_core_db.go`（命令面三态 · 真读 `inv.dryRun` ⇒ 按真站点登记）。★ ✗ 不造 `dryrun.v2`（并入既有 `id=dryrun.v1`）。★ 2026-10-17（T4 · 门面随动 · DEV-3019）。"
   }
  ]
 

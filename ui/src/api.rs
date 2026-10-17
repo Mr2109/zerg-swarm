@@ -5,45 +5,35 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::sync::{Arc, Mutex, OnceLock};
 
-/// 主控 API 基址（2026-09-11 B 批：环境无关化——ZERG_api_base() 可覆盖，默认本机 8580）
+/// 主控 API 基址（2026-10-17 O-21：与 CLI 同源——端口真源 = `statepath.CorePort()`
+/// （`ZERG_PORT` → 8580）；旧旋钮 `ZERG_api_base()` 名字带括号 ⇒ 死旋钮、没人能设出来）
 pub fn api_base() -> &'static str {
     static BASE: OnceLock<String> = OnceLock::new();
     BASE.get_or_init(|| {
-        std::env::var("ZERG_api_base()")
+        std::env::var("ZERG_PORT")
             .ok()
             .map(|v| v.trim().to_string())
-            .filter(|v| !v.is_empty())
+            .filter(|v| v.parse::<u16>().map(|p| p > 0).unwrap_or(false))
+            .map(|p| format!("http://127.0.0.1:{}", p))
             .unwrap_or_else(|| "http://127.0.0.1:8580".to_string())
     })
     .as_str()
 }
 /// 共享令牌（2026-09-11 A 批：不再硬编码——库内零明文）
-/// 解析顺序：环境变量 ZERG_AUTH_TOKEN → ZERG_API_TOKEN → ~/.zerg-ui-prefs.json 的 auth_token → ~/.zerg/token
+/// 解析顺序（2026-10-17 O-21：与 CLI `credentials.go` 同一链）：
+/// `env:ZERG_TOKEN` → `file:~/.zerg/token`；✗ 不再读 UI 独有的一级 `prefs.auth_token`
 pub fn api_token() -> &'static str {
     static TOKEN: OnceLock<String> = OnceLock::new();
     TOKEN
         .get_or_init(|| {
-            for k in ["ZERG_AUTH_TOKEN", "ZERG_api_token()"] {
-                if let Ok(v) = std::env::var(k) {
-                    let v = v.trim().to_string();
-                    if !v.is_empty() {
-                        return v;
-                    }
+            if let Ok(v) = std::env::var("ZERG_TOKEN") {
+                let v = v.trim().to_string();
+                if !v.is_empty() {
+                    return v;
                 }
             }
             if let Some(home) = std::env::var_os("HOME") {
                 let home = std::path::PathBuf::from(home);
-                // UI 偏好文件（用户可在其中持久化令牌）——2026-09-13：新落点优先、旧落点兼容
-                if let Some(txt) = read_prefs() {
-                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&txt) {
-                        if let Some(t) = v.get("auth_token").and_then(|x| x.as_str()) {
-                            let t = t.trim();
-                            if !t.is_empty() {
-                                return t.to_string();
-                            }
-                        }
-                    }
-                }
                 // 共享令牌文件（与主控/子端同源）
                 if let Ok(txt) = std::fs::read_to_string(home.join(".zerg/token")) {
                     let t = txt.trim();
@@ -52,19 +42,21 @@ pub fn api_token() -> &'static str {
                     }
                 }
             }
-            eprintln!("[api] no shared token configured (ZERG_AUTH_TOKEN or ~/.zerg/token) — the controller API will return 401");
+            eprintln!("[api] no shared token configured (ZERG_TOKEN or ~/.zerg/token) — the controller API will return 401");
             String::new()
         })
         .as_str()
 }
-/// 网关（AI 动力）基址（ZERG_ai_base() 可覆盖，默认本机 8082）
+/// 网关（AI 动力）基址（2026-10-17 O-21：与 CLI 同源——端口真源 = `statepath.GatewayPort()`
+/// （`ZERG_GATEWAY_PORT` → 8082）；旧旋钮 `ZERG_ai_base()` 名字带括号 ⇒ 死旋钮）
 pub fn ai_base() -> &'static str {
     static BASE: OnceLock<String> = OnceLock::new();
     BASE.get_or_init(|| {
-        std::env::var("ZERG_ai_base()")
+        std::env::var("ZERG_GATEWAY_PORT")
             .ok()
             .map(|v| v.trim().to_string())
-            .filter(|v| !v.is_empty())
+            .filter(|v| v.parse::<u16>().map(|p| p > 0).unwrap_or(false))
+            .map(|p| format!("http://127.0.0.1:{}", p))
             .unwrap_or_else(|| "http://127.0.0.1:8082".to_string())
     })
     .as_str()
@@ -1038,7 +1030,7 @@ pub fn create_chat_session_async(model: String) -> SharedResult<Value> {
     runtime().spawn(async move {
         let client = http_client_json();
         let url = format!("{}/api/chat/sessions", api_base());
-        let body = serde_json::json!({"model": model});
+        let body = serde_json::json!({"model": model, "source": "desktop"});
         let resp = client
             .post(&url)
             .header("X-Auth-Token", api_token())
@@ -1207,32 +1199,49 @@ pub fn chat_send_stream_async(
                                         None
                                     };
                                     if let Some(v) = &parsed {
-                                        if let Some(t) = v.get("type").and_then(|x| x.as_str()) {
-                                            let txt = v.get("text").and_then(|x| x.as_str()).unwrap_or("");
-                                            match t {
-                                                "reasoning" => st.reasoning.push_str(txt),
-                                                "output" => st.content.push_str(txt),
-                                                "tool_start" => {
-                                                    // P4-35 工具执行中状态（name 字段——执行前事件）
-                                                    st.tool_name = v.get("name").and_then(|x| x.as_str()).map(|s| s.to_string());
+                                        // 2026-10-17 O-18 拍板：分派键 = SSE 的 `event:` 名
+                                        // （旧实现按 payload.type 分派，而 13 类事件里只有 delta 带 type ⇒
+                                        // tool_start/tool/tool_ping/compacting/compact_done 五分支恒不命中）
+                                        match ev_name.as_deref() {
+                                            Some("delta") => {
+                                                // 仅 delta 的载荷带 type（闭集：reasoning/output）
+                                                let txt = v.get("text").and_then(|x| x.as_str()).unwrap_or("");
+                                                match v.get("type").and_then(|x| x.as_str()) {
+                                                    Some("reasoning") => st.reasoning.push_str(txt),
+                                                    Some("output") => st.content.push_str(txt),
+                                                    _ => {}
                                                 }
-                                                "compacting" => {
-                                                    // P4-39 T5: 上下文压缩进行中（Hermes "compacting" 状态）
-                                                    st.compacting = true;
-                                                }
-                                                "compact_done" => {
-                                                    st.compacting = false;
-                                                }
-                                                "tool" => {
-                                                    // P4-35 工具执行完成——清除执行中状态（结果事件）
-                                                    st.tool_name = None;
-                                                }
-                                                "tool_ping" => {
-                                                    // P4-36 工具执行心跳——计时（UI 显示"执行中 N 秒"）
-                                                    st.tool_elapsed = v.get("elapsed").and_then(|x| x.as_u64()).unwrap_or(0) as usize;
-                                                }
-                                                _ => {}
                                             }
+                                            Some("tool_start") => {
+                                                // P4-35 工具执行中状态（name 字段——执行前事件）
+                                                st.tool_name = v.get("name").and_then(|x| x.as_str()).map(|s| s.to_string());
+                                            }
+                                            Some("tool") => {
+                                                // P4-35 工具执行完成——清除执行中状态（结果事件）
+                                                st.tool_name = None;
+                                            }
+                                            Some("tool_ping") => {
+                                                // P4-36 工具执行心跳——计时（UI 显示"执行中 N 秒"）
+                                                st.tool_elapsed = v.get("elapsed").and_then(|x| x.as_u64()).unwrap_or(0) as usize;
+                                            }
+                                            Some("compacting") => {
+                                                // P4-39 T5: 上下文压缩进行中（Hermes "compacting" 状态）
+                                                st.compacting = true;
+                                            }
+                                            Some("compact_done") => {
+                                                st.compacting = false;
+                                            }
+                                            // done / error 由下方既有分支回收（done ⇒ st.done＋steer_undrained；error ⇒ st.error）
+                                            Some("done") | Some("error") => {}
+                                            // 未消费白名单（✗ 不静默吞）：契约 13 类里已登记、本客户端暂不驱动任何状态
+                                            Some("retry") => {}
+                                            Some("retry_done") => {}
+                                            Some("loop_hint") => {}
+                                            Some("resume") => {}
+                                            Some("checkpoint_failed") => {}
+                                            // 契约外的未知事件名：出声，✗ 不静默吞
+                                            Some(other) => eprintln!("[api] unknown SSE: {}", other),
+                                            None => {}
                                         }
                                         if let Some(e) = v.get("error").and_then(|x| x.as_str()) {
                                             st.error = Some(e.to_string());

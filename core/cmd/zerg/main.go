@@ -456,6 +456,18 @@ func run(args []string, stdout, stderr io.Writer) int {
 			inv.unknown = append(inv.unknown, f)
 		}
 	}
+	// ★ 本单（T3 · `zerg chat` 族 · 2026-10-17）：本族八枚旗标在解析面刚上户口（三枚取值进
+	//   `valueFlagName` · 五枚布尔各一条专用 `case`）⇒ **全族共用**；若不在此收口，别族（usage
+	//   未列它们的命令）真给它们会从「未知旗标 2」退化成**静默吞**（硬约束⑤：既有命令的退码
+	//   与输出**一字不动**）。形状逐字照拄上面 `--roster` 那条：把不归本命令的那一枚**补回
+	//   `inv.unknown`** ⇒ 由下面**同一条**判词 + 同一个退码 2 收口（不另写判词 · 不另取码）。
+	//   `chat` 族 7 条命令的 usage 已按需列出它们 ⇒ 归它们（既有命令一字不动）。
+	for _, f := range []string{"--session", "--images", "--window", "--new", "--archived",
+		"--no-stream", "--markdown", "--last-in-cwd"} {
+		if inv.hasFlag(f) && !usageDeclaresFlag(cmd, f) {
+			inv.unknown = append(inv.unknown, f)
+		}
+	}
 	if len(inv.unknown) > 0 && !cmd.passthrough {
 		fmt.Fprintf(stderr, "%s: 未知旗标 %q\n", progName, inv.unknown[0])
 		fmt.Fprintf(stderr, "See '%s --help'。\n", progName)
@@ -3012,6 +3024,105 @@ func init() {
 			endpoint: "",
 			run:      cmdPluginLs,
 		},
+		// ---- `zerg chat` 族（**人类正门** · `P-1` 乙案 · 设计稿 v0.3 §5）----
+		// 首版 **7 条**子命令（`F-1` 拍定 = `new`/`ls`/`send`/`show`/`abort`/`steer`/`rm`）。
+		// 形态 = **薄壳**（打请求 + 渲染）：语义全在服务端（`core/internal/api/chat_handlers.go` ·
+		// `core/internal/chat/**`），壳里**一个字都不重写**（§0 第一原则 · §9.1 第 3 条）；
+		// 实现件 = `core/cmd/zerg/family_chat.go`（本族的 HTTP 出口 / 事件读法 / 错误分档全在它里）。
+		// ★ ✗ **不登记**（`O-5`/`O-6` 已给理由）：`send-tool` / `regenerate` / `message_edit` / `search`
+		//   —— 真敲它们是「未知命令」（退码 2），✗ 不是「有登记无实现」。
+		// ★ 裸 `zerg chat`（交互 REPL 入口 · §5.5 ①）—— **2026-10-17 Mr2109 拍定：登记裸条 · 按 TTY 分流**
+		//   （本条**订正**同批早先那句「裸条归 T9 ⇒ 不登记 ⇒ 否则 +8 ≠ 255」）：
+		//   **有 TTY ⇒ 进 REPL**（骨架归 T9）· **无 TTY ⇒ 退 2 ＋ 提示走 stderr** · **`--help` ⇒ rc=0**；
+		//   先例 = 现读全树唯一的 **`help`**（裸条 ＋ 同族动作**并存**）。⇒ **命令树 path 数 248 → 256**：
+		//   **+8** 条 = 7 条子命令 ＋ 裸条 `chat`。★ 早先写的 **255**（= 只算 7 条）是 T9 勘定给的旧值、
+		//   **已被本拍定作废** —— 随动面（门⑪ `commands` / 门78 `count` / cli-matrix / 命令页）一律按 **256** 刷。
+		{
+			path:    []string{"chat"},
+			kind:    "Chat",
+			summary: "对话正门：**裸跑按 TTY 分流**（有 TTY ⇒ 进交互 REPL · 无 TTY ⇒ 退 2 ＋ 提示）· 7 条子命令见下行（§5.5 ①）",
+			usage:   "zerg chat [<子命令>]",
+			arity:   "any",
+			args:    []string{"子命令（裸跑 = 交互 REPL · 无 TTY ⇒ 退 2）"},
+			run:     cmdChatRoot,
+		},
+		{
+			path:     []string{"chat", "new"},
+			kind:     "ChatNew",
+			summary:  "新建一个对话会话（人类正门的起手式 · `POST /api/chat/sessions` · §5.1 第 1 行）",
+			usage:    "zerg chat new [--model 名] [--title 题] [--source 名] [--json <字段>]",
+			arity:    "none",
+			fields:   chatNewFields,
+			endpoint: "POST /api/chat/sessions",
+			run:      cmdChatNew,
+		},
+		{
+			path:     []string{"chat", "ls"},
+			kind:     "ChatLs",
+			summary:  "列会话（`GET /api/chat/sessions`；归档默认隐藏 · `--archived` 含 · §5.1 第 2 行）",
+			usage:    "zerg chat ls [--archived] [--source 名] [--limit N] [--json <字段>]",
+			arity:    "none",
+			fields:   chatLsFields,
+			endpoint: "GET /api/chat/sessions",
+			run:      cmdChatLs,
+		},
+		{
+			path:     []string{"chat", "send"},
+			kind:     "ChatSend",
+			summary:  "对话主写面（SSE 流式 · `POST /api/chat/sessions/{id}/send`；`--json`/非 TTY/`--no-stream` ⇒ 非流式 · §7.5）",
+			usage:    "zerg chat send <提示> [--session <id>] [--new] [--last] [--last-in-cwd] [--model 名] [--images <路径>…] [--no-stream] [--markdown] [--wait] [--json <字段>]",
+			arity:    "any",
+			args:     []string{"提示（`-` = 从 stdin 读 · 零 shell 解释 · §5.5 ③）"},
+			fields:   chatSendFields,
+			endpoint: "POST /api/chat/sessions/{id}/send",
+			run:      cmdChatSend,
+		},
+		{
+			path:     []string{"chat", "show"},
+			kind:     "ChatShow",
+			summary:  "读回会话与消息（`GET /{id}` · `--window <mid>` 走 `GET /{id}/window` 召回窗口 · §5.1 第 4 行）",
+			usage:    "zerg chat show [<id>] [--session <id>] [--last] [--last-in-cwd] [--limit N] [--window <mid>] [--json <字段>]",
+			arity:    "any",
+			args:     []string{"会话 id（完整 id · 可省 —— 与 `--session`/`--last` 三选一）"},
+			fields:   chatShowFields,
+			endpoint: "GET /api/chat/sessions/{id}",
+			run:      cmdChatShow,
+		},
+		{
+			path:     []string{"chat", "abort"},
+			kind:     "ChatAbort",
+			summary:  "中断运行中的轮次（`POST /{id}/abort`；已流出内容由服务端落库附「（已中断）」· §7.4）",
+			usage:    "zerg chat abort <id> [--json <字段>]",
+			arity:    "any",
+			args:     []string{"会话 id（完整 id）"},
+			fields:   chatAbortFields,
+			endpoint: "POST /api/chat/sessions/{id}/abort",
+			run:      cmdChatAbort,
+		},
+		{
+			path:     []string{"chat", "steer"},
+			kind:     "ChatSteer",
+			summary:  "生成中插话（`POST /{id}/steer` · 挂**下一次工具结果**；`turn_running=false` ⇒ 服务端不入库 · `O-4`）",
+			usage:    "zerg chat steer <id> <文字> [--json <字段>]",
+			arity:    "any",
+			args:     []string{"会话 id（完整 id）", "插话文字"},
+			fields:   chatSteerFields,
+			endpoint: "POST /api/chat/sessions/{id}/steer",
+			run:      cmdChatSteer,
+		},
+		{
+			path:     []string{"chat", "rm"},
+			kind:     "ChatRm",
+			summary:  "删会话（**写面 fail-closed**：`--dry-run` 出计划件 · 缺 `--yes` ⇒ 2 · `DELETE /{id}` · §5.1 第 7 行）",
+			usage:    "zerg chat rm <id> [--dry-run | --yes] [--json <字段>]",
+			arity:    "any",
+			args:     []string{"会话 id（完整 id）"},
+			fields:   chatRmFields,
+			danger:   &dangerSpec{dangerD2, "会话 id", "**硬删**一个会话与其消息（服务端 `DeleteSession` ⇒ `deleted:true`）—— **不可逆**：删掉的消息取不回来", "设计稿 §5.1 第 7 行 · §5.2（写面 fail-closed）· 同族先例 `gateway breakers`（D2）", false, dangerScopeRemote},
+			opened:   true,
+			endpoint: "DELETE /api/chat/sessions/{id}",
+			run:      cmdChatRm,
+		},
 		// ---- §十八.3 融合四件（批 E · T-59）----
 		// 依赖次序（**不许倒**）：能力路由（T-41 的 id 规范化真源）→ `ask` → 意图 schema → `plan`/`apply`。
 		{
@@ -4858,6 +4969,25 @@ func parseInvocation(args []string) (*invocation, error) {
 			inv.kvSet(a, "true")
 		case a == "--vet":
 			inv.kvSet(a, "true")
+		// `zerg chat` 族的五枚**布尔**旗标（T3 · 2026-10-17 · 本枚）：与 `--aging`/`--stale`/
+		// `--allow-drifted` 同一种形态（写进 `inv.kv`（`kvSet`）⇒ 全族共用 · `foreignFlag` 看得见）；
+		// ★ 必须在下面「未知旗标」兜底**之前**上户口，否则族里写着它们会一律退 2「未知旗标」。
+		// ★ **✗ 不进 `valueFlagName`**（那张表是**取值**旗标名表 · 门73 判据丙）。语义面：
+		//   `--new` = `O-2`（一次性发话 · ✗ 不加 `--once`）· `--archived` = `chat ls` 含归档 ·
+		//   `--no-stream` = §7.5 非流式档 · `--markdown` = `O-9` 渲染 opt-in ·
+		//   `--last-in-cwd` = `O-16`（把 `--last` 收窄到本工作区）。
+		//   ★ 五枚**各写一条** `case`（✗ 不许合并成一串 `||`：门73 的取数面按 `case a == "--x"`
+		//   逐条现读，合并时它只读得到前者 ⇒ 后者被判「解析面不认」= 假红）。
+		case a == "--new":
+			inv.kvSet(a, "true")
+		case a == "--archived":
+			inv.kvSet(a, "true")
+		case a == "--no-stream":
+			inv.kvSet(a, "true")
+		case a == "--markdown":
+			inv.kvSet(a, "true")
+		case a == "--last-in-cwd":
+			inv.kvSet(a, "true")
 		// `code find` 的**短形**上下文/归一旗标（缺口 `GAP-20260927-250/252` · 本枚）：
 		//   `-i`（大小写归一 · 布尔）· `-A<N>`/`--after <N>`（后文）· `-B<N>`/`--before <N>`（前文）·
 		//   `-C<N>`（前后各 N，POSIX grep 惯用 · 与缺口症状逐字 `-A2`/`-C1` 同形）。
@@ -5199,6 +5329,18 @@ func valueFlagName(a string) string {
 	switch a {
 	case "--capability", "--prefer", "--min-ctx", "--min-mem-gb",
 		"--timeout", "--out", "--target-ref":
+		return a
+	}
+	// `zerg chat` 族旗标（T3 · 2026-10-17 · 本枚 · **只增**）：三枚**取值**旗标 ——
+	// `--session <id>`（续接既有会话 · `O-12`：只认**完整** id）· `--images <路径>`（可重复 ⇒ 多图）·
+	// `--window <mid>`（`chat show` 的召回窗口锚）。
+	// ★ 与上面各排同一口径：值照收，语义在 `family_chat.go` 里判；★ 本排是名字表「唯一真源」⇒
+	//   不登记就一律退 2「未知旗标」= 新旗标等于不可用（同族先例：`--allow-cross-root` 那一排）。
+	// ★ 本族的**布尔**旗标（`--new`/`--archived`/`--no-stream`/`--markdown`/`--last-in-cwd`）
+	//   **✗ 不进本表**：它们各写一条 `parseInvocation` 专用 `case`（门73 判据丙：布尔进名字表 =
+	//   值/无值两态不一致；同族先例 `--no-fallback` 的那次形态纠正）。
+	switch a {
+	case "--session", "--images", "--window":
 		return a
 	}
 	// ★ 2026-09-28（缺口 `GAP-20260928-127` 的 ⑥ · 本枚）：`--no-fallback` **从本表移出** ——

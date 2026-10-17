@@ -134,14 +134,14 @@ func uiStartTailTo(logPath string, n int, stderr io.Writer) {
 }
 
 // uiStartChildEnv —— 照脚本的启动环境：先 `cd REPO_ROOT` 并 `[ -f .env ] && set -a; . ./.env; set +a`，
-// 随后启动器把**权威令牌**注入 `ZERG_AUTH_TOKEN`（`~/.zerg/token` · 非空才注入 ⇒ 压过 `.env` 同名）。
+// 随后启动器把**权威令牌**注入 `ZERG_TOKEN`（`~/.zerg/token` · 非空才注入 ⇒ 压过 `.env`/环境里的同名）。
 // 覆盖序：进程环境 < `.env` 赋值 < 令牌文件（与 python 侧 `os.environ[...] = _v` 同序）。
 func uiStartChildEnv(root string) []string {
 	env := uiStartLoadDotenv(root, os.Environ())
 	if home, err := os.UserHomeDir(); err == nil {
 		if b, err := os.ReadFile(filepath.Join(home, ".zerg", "token")); err == nil {
 			if v := strings.TrimSpace(string(b)); v != "" {
-				env = uiStartEnvSet(env, "ZERG_AUTH_TOKEN", v)
+				env = uiStartEnvSet(env, "ZERG_TOKEN", v)
 			}
 		}
 	}
