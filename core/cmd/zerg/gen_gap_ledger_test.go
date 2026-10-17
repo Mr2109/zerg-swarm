@@ -23,11 +23,64 @@ import (
 	"testing"
 )
 
-// gglTestExport —— 夹具"导出器"的确定产物（亦 = 生成件应逐字节相同的内容）。
-const gglTestExport = "## 缺口真源导出（**只列未闭**） · 2026-09-26\n\n| id | 状态 |\n|---|---|\n| GAP-1 | 仍缺 |\n"
+// gglTestExport —— 夹具"导出器"的裸档产物（`zerg gap export` 单件直出 · 件头 + 按面行与索引同形）。
+const gglTestExport = "## 缺口真源导出（**只列未闭**） · 2026-09-26\n" +
+	"\n" +
+	"> 生成件：由 `zerg gap export` 从真源 `x` 生成 —— **不许手改** ✗（手改会被门禁判红）。\n" +
+	"> 真源条数 **3** · 未闭 **2** · 已闭 **1**（其中「不做」**0**）\n" +
+	"> 按面：命令面 2 · 门禁面 0 · 文档面 0 · 公开面 0 · 换件面 0 · 归档面 0\n" +
+	"\n" +
+	"### 命令面（2 条）\n" +
+	"\n" +
+	"- `GAP-1` P0 · **仍缺** · a · 想要 `w` · 判据 `c`\n" +
+	"- `GAP-2` P1 · **仍缺** · b · 想要 `w` · 判据 `c`\n"
+
+// gglTestIdxName / gglTestPageName —— 夹具拆件族的两件（索引 + 一页）。
+const (
+	gglTestIdxName  = "缺口总账-20260926.md"
+	gglTestPageName = "缺口总账-20260926-命令面-p01.md"
+)
+
+// gglTestIndex —— 夹具索引件（= `gap export --out` 的索引形状：件头 + 按面 + 面小节 + 页声明 + 页脚）。
+const gglTestIndex = "## 缺口真源导出（**只列未闭**） · 20260926\n" +
+	"\n" +
+	"> 生成件：由 `zerg gap export --out` 从真源 `x` 生成 —— **不许手改** ✗（手改会被门禁判红）。\n" +
+	"> 真源条数 **3** · 未闭 **2** · 已闭 **1**（其中「不做」**0**）\n" +
+	"> 按面：命令面 2 · 门禁面 0 · 文档面 0 · 公开面 0 · 换件面 0 · 归档面 0\n" +
+	"> 拆件：一级 = 面（空面不出件）· 二级 = 每页 120 条 · 页件名 `缺口总账-<日期>-<面>-pNN.md`\n" +
+	"\n" +
+	"### 命令面（2 条 · 1 页）\n" +
+	"\n" +
+	"- 第 1 页：`缺口总账-20260926-命令面-p01.md` · 面内 1–2 条\n" +
+	"\n" +
+	"（本清册由 CLI 生成 · 未闭 2 条 · 件数 2（索引 1 + 页 1））\n"
+
+// gglTestPage —— 夹具页件（页头 + 元行 + 两条 + 页脚）。
+const gglTestPage = "# 命令面 · 缺口总账 20260926\n" +
+	"\n" +
+	"> 第 1 页·本页 2 条·面内 1–2 条·本面共 2 条\n" +
+	"> 真源 = `x` · 面内顺序 = `(prioRank, id)` 稳定序 · 单行上限 200 字符 · 生成件**不许手改** ✗\n" +
+	"\n" +
+	"- `GAP-1` P0 · **仍缺** · a · 想要 `w` · 判据 `c`\n" +
+	"- `GAP-2` P1 · **仍缺** · b · 想要 `w` · 判据 `c`\n" +
+	"\n" +
+	"（本页由 CLI 生成 · 面内 1–2 条 · 本面共 2 条）\n"
+
+// gglTestExporter —— 夹具"导出器"脚本：裸档 ⇒ 打单件直出；`--out <目录> --yes` ⇒ 落拆件族
+// （与 `family_gap_export.go` 的 `--out` 支同形：先页件、后索引件）。
+func gglTestExporter() string {
+	return "#!/bin/sh\n" +
+		"if [ \"$3\" = \"--out\" ]; then\n" +
+		"  mkdir -p \"$4\"\n" +
+		"  cat > \"$4/" + gglTestPageName + "\" <<'GGLX'\n" + gglTestPage + "GGLX\n" +
+		"  cat > \"$4/" + gglTestIdxName + "\" <<'GGLX'\n" + gglTestIndex + "GGLX\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"printf '%s' " + shSingleQuote(gglTestExport) + "\n"
+}
 
 // gglTestFixture —— 建一棵仓外假仓：`<base>/repo/{bin/zerg, scripts/docs/}` ＋ 兄弟文档树
-// `<base>/Zerg-内部文档/项目文档/v2.5.13/缺口总账-20260926.md` ＋ `<base>/state/gaps.jsonl`。
+// （索引位先放一件**占位**：模拟"漂移态"）＋ `<base>/state/gaps.jsonl`。
 // 返回 (base, repoRoot, gapsPath)。
 func gglTestFixture(t *testing.T) (string, string, string) {
 	t.Helper()
@@ -36,15 +89,14 @@ func gglTestFixture(t *testing.T) (string, string, string) {
 	if err := os.MkdirAll(filepath.Join(root, "bin"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	exporter := "#!/bin/sh\nprintf '%s' " + shSingleQuote(gglTestExport) + "\n"
-	if err := os.WriteFile(filepath.Join(root, "bin", "zerg"), []byte(exporter), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "bin", "zerg"), []byte(gglTestExporter()), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	docs := filepath.Join(base, "Zerg-内部文档", "项目文档", "v2.5.13")
 	if err := os.MkdirAll(docs, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(docs, "缺口总账-20260926.md"), []byte("# placeholder\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(docs, gglTestIdxName), []byte("# placeholder\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	state := filepath.Join(base, "state")
@@ -257,13 +309,17 @@ func TestGglSelfTestAllPass(t *testing.T) {
 	}
 }
 
-// ── 主逻辑：产物逐字节同 + 两态（漂移/绿/落盘）──────────────────────────
+// ── 主逻辑：族口径（漂移/落盘/绿 三态 · A 案 GAP-20261017-16）─────────────
 
+// TestGglMainProductByteIdentical —— 名字沿用旧案（当时断的是「件字节 == 单件直出字节」）。
+// A 案（GAP-20261017-16）后断的是**生成件族闭合**：索引件 == `--out` 的索引件 · 页件在盘 ·
+// 索引声明 ⟷ 页件头 ⟷ 条目数三方相符（见主件「生成件族判据」节）。✗ 不再比总字节（族 ⟷ 单件天然不同）。
 func TestGglMainProductByteIdentical(t *testing.T) {
 	base, root, gaps := gglTestFixture(t)
-	tgt := filepath.Join(base, "Zerg-内部文档", "项目文档", "v2.5.13", "缺口总账-20260926.md")
+	dir := filepath.Join(base, "Zerg-内部文档", "项目文档", "v2.5.13")
+	tgt := filepath.Join(dir, gglTestIdxName)
 
-	// 态① 漂移（占位 14B ≠ 直出）⇒ check rc=1
+	// 态① 漂移（索引位放的是占位件，不是 `--out` 的索引件）⇒ check rc=1
 	var so, se bytes.Buffer
 	rc := gglMain(&so, &se, gglArgs{check: true, source: gaps}, root)
 	if rc != 1 {
@@ -273,31 +329,122 @@ func TestGglMainProductByteIdentical(t *testing.T) {
 		t.Errorf("drift stdout 缺判红：%q", so.String())
 	}
 
-	// 态② emit 落盘 ⇒ 产物逐字节 == 直出
+	// 态② emit ⇒ 走唯一拆件写者（索引 + 页件落盘），随后自判绿
 	so.Reset()
 	se.Reset()
-	rc = gglMain(&so, &se, gglArgs{emit: true, source: gaps}, root)
-	if rc != 0 {
+	if rc := gglMain(&so, &se, gglArgs{emit: true, source: gaps}, root); rc != 0 {
 		t.Fatalf("emit rc = %d, want 0\n%s", rc, so.String())
 	}
 	got, err := os.ReadFile(tgt)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(got) != gglTestExport {
-		t.Errorf("生成件与直出不逐字节同\n got=%q\nwant=%q", string(got), gglTestExport)
+	if string(got) != gglTestIndex {
+		t.Errorf("索引件与 `--out` 产出不逐字同\n got=%q\nwant=%q", string(got), gglTestIndex)
 	}
-	if !strings.Contains(so.String(), fmt.Sprintf("✓ 落盘（覆盖漂移件 · 旧件 14 字节 ⇒ 新件 %d 字节）", len([]byte(gglTestExport)))) {
+	if _, err := os.Stat(filepath.Join(dir, gglTestPageName)); err != nil {
+		t.Errorf("页件未落盘：%v", err)
+	}
+	if !strings.Contains(so.String(), "✓ 落盘（`gap export --out` 重生成完成 · 生成件族 == 导出件族（索引 1 + 页 1") {
 		t.Errorf("emit stdout 判定行不逐字：%q", so.String())
 	}
-	// 两态：落盘后重跑 check ⇒ 绿（逐字节相同）
+
+	// 态③ 落盘后重跑 check ⇒ 绿（族闭合）
 	so.Reset()
-	rc = gglMain(&so, &se, gglArgs{check: true, source: gaps}, root)
-	if rc != 0 {
+	if rc := gglMain(&so, &se, gglArgs{check: true, source: gaps}, root); rc != 0 {
 		t.Fatalf("green check rc = %d, want 0\n%s", rc, so.String())
 	}
-	if !strings.Contains(so.String(), fmt.Sprintf("✓ 生成件 == 直出（逐字节相同 · %d 字节）", len([]byte(gglTestExport)))) {
+	if !strings.Contains(so.String(), fmt.Sprintf("✓ 生成件族 == 导出件族（索引 1 + 页 1 · 未闭 2 条 · Σ页条目 2 · 面 6 · 索引 %d 字节）", len([]byte(gglTestIndex)))) {
 		t.Errorf("green stdout 不逐字：%q", so.String())
+	}
+}
+
+// ── 族判据的牙（负控 · 与仓外负控实测同口径）──────────────────────────────
+
+func TestGglFamilyJudgeNegatives(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fresh := func() {
+		write(gglTestIdxName, gglTestIndex)
+		write(gglTestPageName, gglTestPage)
+	}
+	judge := func(exportOut string) gglFamilyVerdict {
+		body, err := os.ReadFile(filepath.Join(dir, gglTestIdxName))
+		if err != nil {
+			return gglJudgeFamily(nil, "20260926", exportOut)
+		}
+		return gglJudgeFamily(gglParseIndex(filepath.Join(dir, gglTestIdxName), dir, string(body)), "20260926", exportOut)
+	}
+
+	// 正控：族闭合 ⇒ OK
+	fresh()
+	if v := judge(gglTestExport); !v.OK {
+		t.Fatalf("正控应绿，实得红：%v", v.Red)
+	}
+	if v := judge(gglTestExport); len(v.Notes) != 0 {
+		t.Errorf("正控不该有观察值：%v", v.Notes)
+	}
+
+	// ① 索引件不在盘 ⇒ 红（点名「不在盘」）
+	if err := os.Remove(filepath.Join(dir, gglTestIdxName)); err != nil {
+		t.Fatal(err)
+	}
+	if v := judge(gglTestExport); v.OK || !strings.Contains(v.Verdict, "生成件不在盘") {
+		t.Errorf("缺索引件应判红并点名不在盘，实得：%+v", v)
+	}
+
+	// ② 拆件缺一页 ⇒ 红（点名页件）
+	fresh()
+	if err := os.Remove(filepath.Join(dir, gglTestPageName)); err != nil {
+		t.Fatal(err)
+	}
+	if v := judge(gglTestExport); v.OK || !strings.Contains(v.Verdict, "页件不在盘") {
+		t.Errorf("缺页件应判红并点名，实得：%+v", v)
+	}
+
+	// ③ 索引里改一个面条数（命令面 2→1）⇒ 红（内部不闭合）
+	fresh()
+	write(gglTestIdxName, strings.Replace(gglTestIndex, "命令面 2 ·", "命令面 1 ·", 1))
+	if v := judge(gglTestExport); v.OK || !strings.Contains(v.Verdict, "判红") {
+		t.Errorf("改面条数应判红，实得：%+v", v)
+	}
+
+	// ④ 页件里删一条 ⇒ 红（现读条目 ≠ 声明）
+	fresh()
+	write(gglTestPageName, strings.Replace(gglTestPage, "- `GAP-2` P1 · **仍缺** · b · 想要 `w` · 判据 `c`\n", "", 1))
+	if v := judge(gglTestExport); v.OK || !strings.Contains(v.Verdict, "现读条目 1 条") {
+		t.Errorf("删一条应判红并点名条目数，实得：%+v", v)
+	}
+
+	// ⑤ 索引条数多于真源 ⇒ 红（多于真源 = 手改）
+	fresh()
+	write(gglTestIdxName, strings.Replace(gglTestIndex, "命令面 2 ·", "命令面 3 ·", 1))
+	if v := judge(gglTestExport); v.OK || !strings.Contains(v.Verdict, "判红") {
+		t.Errorf("多于真源应判红，实得：%+v", v)
+	}
+
+	// ⑥ 真源少一条（索引 2 > 直出 1）⇒ 红
+	fresh()
+	shrunk := strings.Replace(gglTestExport, "> 按面：命令面 2 ·", "> 按面：命令面 1 ·", 1)
+	if v := judge(shrunk); v.OK || !strings.Contains(v.Verdict, "多于真源") {
+		t.Errorf("索引多于真源应判红，实得：%+v", v)
+	}
+
+	// ⑦ 真源多一条（索引落后）⇒ **不判红**、只报白归因（派生量不设红灯）
+	fresh()
+	grown := strings.Replace(gglTestExport, "> 按面：命令面 2 ·", "> 按面：命令面 3 ·", 1)
+	grown = strings.Replace(grown, "未闭 **2**", "未闭 **3**", 1)
+	v := judge(grown)
+	if !v.OK {
+		t.Fatalf("索引落后应只报白（不判红），实得：%v", v.Red)
+	}
+	if len(v.Notes) == 0 {
+		t.Errorf("索引落后必须打印归因观察值（✗ 静默）")
 	}
 }
 

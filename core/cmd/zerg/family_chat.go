@@ -174,7 +174,9 @@ func cmdChatRoot(inv *invocation, stdout, stderr io.Writer) int {
 				inv.args[0], progName),
 			exitCodeOf("usage"))
 	}
-	if !inv.tty {
+	// ★ `inv.tty` 只看 **stdout**；REPL 还要**能读**：stdin 不是真终端（`zerg chat < /dev/null`）时
+	// 进 REPL 只会立刻读到 EOF ⇒ 与「无 TTY」同一档收口（同 rc 2 · 同一句提示）。
+	if !inv.tty || !isTTYFile(os.Stdin) {
 		return chatReportErr(inv, stderr, "usage", "subcommand_required",
 			"非交互（无 TTY）下裸跑 `zerg chat` 没有意义：请加子命令（`zerg chat new|ls|send|show|abort|steer|rm`），或进 TTY 使用交互模式",
 			exitCodeOf("usage"))
@@ -182,17 +184,16 @@ func cmdChatRoot(inv *invocation, stdout, stderr io.Writer) int {
 	return chatEnterREPL(inv, stdout, stderr)
 }
 
-// chatEnterREPL —— **REPL 入口的唯一落点**（T9 承接面）。
+// chatEnterREPL —— **REPL 入口**（T9 已落地 · 实现在 `family_chat_repl.go` 的 `chatREPLRun`）。
 //
-// ★ 本路（T3 = 命令壳）只把**入口**接出来：骨架（非全屏行式 · 输入路由优先级表 · `Ctrl-C` 三格 ·
-// busy 三档 · stdout 纯净自检）归 **T9**（`O-7` 已拍：Go × 非全屏行式 REPL · `bubbletea v2` inline
-// 或零新依赖手写）。★ 未落地期间**fail-closed**：不给结论（退码 2）＋ 明说「骨架未落地」——
-// ✗ 不假装进了 REPL、✗ 也不静默退 0（§5.3：「不给结论」= 2）。
+// ★ 形态（`O-7` 已拍）：**Go × 非全屏行式**（✗ 全屏 TUI · ✗ 引依赖：骨架手写，借系统的 `stty`）。
+// 本函数只做一件薄事 —— 把进程的三个标准流交给 REPL（✗ 在这里塞行为：键位面 / 会话选择 /
+// 流式渲染全在 `family_chat_repl.go`，一处实现一处可核）。
+//
+// ★ 退码：正常退出（`/exit` · `/quit` · Ctrl-D · 连按两次 Ctrl-C）一律 `0`；会话建不出来 /
+// 续接 id 形状不对 ⇒ 那一档自己的码（`2` / `8` / `12` …，由 `chatReportErr` 给）。
 func chatEnterREPL(inv *invocation, stdout, stderr io.Writer) int {
-	_ = stdout
-	return chatReportErr(inv, stderr, "usage", "repl_not_landed",
-		"交互 REPL 骨架**未落地**（归 T9：Go × 非全屏行式 · `O-7`）⇒ 有 TTY 下裸跑**不给结论**（退码 2）；请加子命令：new | ls | send | show | abort | steer | rm",
-		exitCodeOf("usage"))
+	return chatREPLRun(inv, os.Stdin, stdout, stderr)
 }
 
 // ---- 错误分类（照 `fetchInv` 同一口径 · 补 404/409/507/400 四档 —— §5.3）--------------------

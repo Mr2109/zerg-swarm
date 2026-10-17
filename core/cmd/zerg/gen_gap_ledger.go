@@ -45,6 +45,15 @@
 //	    **运行输出**；本件（落 `core/cmd/zerg/`）**不在自身扫描面内**。量化：全件零绝对私有路径字面量
 //	    （零 `/Volumes`、零 `/Users`）、退码仅 0/1/2（⊆ 真源退码表已登记集）、零「JSON 键名连续引号原串」。
 //
+// ★ 2026-10-17（A 案 · `GAP-20261017-16`）**判据口径改成「生成件族」**：`zerg gap export --out <目录>`
+// 落的不是单件直出，而是「拆件索引（1.3~1.6KB）+ 每面每 120 条一页」的件族（真源 `family_gap_export.go`
+// 的 `gapExportWriteFiles`）⇒ 旧判据「件字节 == 单件直出字节」与 `--out` 的产出**结构上不可相等**，
+// `--check` 恒红（实测「件 1367 字节 vs 直出 26360 字节」；历史对照 2026-09-27 那期 1637B 索引 + 9 页同形）。
+// 现判据 = G1 索引在盘 / G2 索引日期 == 直出日期 / G3 面集相等 / G4 逐页件在盘且「索引声明 ⟷ 页件头 ⟷
+// 条目数」三方相符 / G5 索引内部闭合（Σ页条目 == 未闭 == 各面声明 == 页脚）/ G6 对真源只判「多于」（手改）
+// 而「少于」只报白并归因（派生量不设红灯 · 追平口径归只报告档 门63）。详见本件「生成件族判据」节。
+// 写面（`--emit`）同步改成**走唯一拆件写者** `bin/zerg gap export --out <目录> --yes`（不再自己写单件直出）。
+//
 // 本单边界（照实）：**只落码、不接线** —— 不注册命令、不删 py 原件、无调用点（M2 刻意状态）。
 package main
 
@@ -409,7 +418,410 @@ func gglReadBytes(path string) ([]byte, bool) {
 	return b, true
 }
 
+// ═══════════════════ 生成件族（索引 1 + 页 N）判据（A 案 · GAP-20261017-16）═══════════════════
+//
+// 口实：`zerg gap export --out <目录>` 落的是「拆件索引 + 每面每 120 条一页」的生成件族
+// （真源 `family_gap_export.go` 的 `gapExportWriteFiles`）。索引件是入口（只有全部页件写成才落它），
+// 页件名 `缺口总账-<日期>-<面>-pNN.md`。旧判据把「件字节 == 单件直出字节」当唯一形态 ⇒ 与 `--out`
+// 的产出**结构上不可相等**（索引 1.3~1.6KB ⟷ 直出 26KB）⇒ `--check` 恒红（`GAP-20261017-16`）。
+//
+// 现判据（族口径 · 与只报告档 门63 `check-gap-ledger-view` 的 R1 同形态，但本门是**阻断**档）：
+//
+//	G1 索引件在盘（当期日期 `缺口总账-YYYYMMDD.md`；兼容历史命名 `缺口总账-YYYY-MM-DD.md`）—— 不在 ⇒ 红
+//	G2 索引头日期 == 现跑直出日期 —— 不等 ⇒ 红
+//	G3 索引 `> 按面` 的面集 == 直出面集（六值闭集逐面）—— 不等 ⇒ 红
+//	G4 索引点名的每一页 ⇒ 页件在同一目录在盘 · 页件头（面 / 日期 / 本面共 N 条）与索引逐项相符 ·
+//	   页内条目数 == 本页声明 == 索引区间长度 ⇒ 任一不符 ⇒ 红
+//	G5 内部闭合：Σ页内条目 == 件头「未闭」== 各面 `### 面（N 条 · P 页）`之和 == `> 按面` 之和
+//	   == 页脚「未闭」· 页脚「件数」== 1 + 页数 ⇒ 任一不等 ⇒ 红
+//	G6 对真源直出：每面条数 / 未闭 / 真源条数 **多于** 直出 ⇒ 红（多于真源 = 手改或真源回退，
+//	   结构性不可能）；**少于** ⇒ 只报白并归因（派生量不设红灯：真源每 `gap add` 一条就 +1，若判红则
+//	   本门在每次加缺口后必红，且与门63 R1b「当期是否追平」的只报告口径重复）。
+//
+// ★ 六值面闭集复用 `gapImpactClosed`（`family_gap_export.go` 的真源），✗ 不另抄一份。
+
+const gglLedgerPrefix = "缺口总账"
+
+var (
+	// 索引件首行：`## 缺口真源导出（**只列未闭**） · <YYYYMMDD|YYYY-MM-DD>`
+	gglIdxTitleRE = regexp.MustCompile(`^## 缺口真源导出（\*\*只列未闭\*\*）[ \t]*·[ \t]*(\d{8}|\d{4}-\d{2}-\d{2})[ \t]*$`)
+	// 件头计数器（索引件与 stdout 直出同一形状）。
+	gglIdxHdrRE = regexp.MustCompile(`真源条数 \*\*(\d+)\*\* · 未闭 \*\*(\d+)\*\* · 已闭 \*\*(\d+)\*\*（其中「不做」\*\*(\d+)\*\*）`)
+	// `> 按面：命令面 48 · 门禁面 15 · …`（索引件与 stdout 直出都有这一行）。
+	gglIdxFaceRE = regexp.MustCompile(`(?m)^> 按面：(.+)$`)
+	gglIdxFaceKV = regexp.MustCompile(`^(\S+) (\d+)$`)
+	// 面小节：`### 命令面（48 条 · 1 页）`
+	gglIdxSecRE = regexp.MustCompile(`^### ([^（]+)（(\d+) 条 · (\d+) 页）$`)
+	// 页声明：`- 第 1 页：`缺口总账-20261017-命令面-p01.md` · 面内 1–48 条`
+	gglIdxPageRE = regexp.MustCompile("^- 第 (\\d+) 页：`([^`]+)` · 面内 (\\d+)[–-](\\d+) 条$")
+	// 页脚：`（本清册由 CLI 生成 · 未闭 78 条 · 件数 6（索引 1 + 页 5））`
+	gglIdxFootRE = regexp.MustCompile(`^（本清册由 CLI 生成 · 未闭 (\d+) 条 · 件数 (\d+)（索引 1 \+ 页 (\d+)））$`)
+	// 页件首行：`# 门禁面 · 缺口总账 20261017`
+	gglPageHdrRE = regexp.MustCompile(`^# ([^·]+?) · 缺口总账 (\d{8}|\d{4}-\d{2}-\d{2})$`)
+	// 页件元行：`> 第 1 页·本页 14 条·面内 1–14 条·本面共 14 条`
+	gglPageMetaRE = regexp.MustCompile(`^> 第 (\d+) 页·本页 (\d+) 条·面内 (\d+)[–-](\d+) 条·本面共 (\d+) 条$`)
+)
+
+// gglFamilyVerdict —— 族判据结论（Verdict 一行人面 · Red 逐条红因 · Notes 观察值·不判红）。
+type gglFamilyVerdict struct {
+	OK      bool
+	Verdict string
+	Red     []string
+	Notes   []string
+}
+
+// gglPageDecl —— 索引声明的页（G4 的逐页对拍单元）。
+type gglPageDecl struct {
+	Face   string
+	No     int
+	Name   string
+	Lo, Hi int
+}
+
+// gglFamilyRead —— 当期生成件族的现读（索引件解析 + 逐页件读）。Red 非空即结构性不闭合。
+type gglFamilyRead struct {
+	Path      string
+	Bytes     int
+	Date      string
+	SrcTotal  int
+	Open      int
+	Closed    int
+	NoDecide  int
+	FaceCount map[string]int
+	SectionN  map[string]int
+	SectionP  map[string]int
+	Pages     []gglPageDecl
+	PageSum   int
+	FootOpen  int
+	FootFiles int
+	FootPages int
+	Red       []string
+}
+
+// gglDate8 —— `YYYY-MM-DD` 与 `YYYYMMDD` 归一成 date8（两代 `--out` 都用过）。
+func gglDate8(s string) string { return strings.ReplaceAll(s, "-", "") }
+
+// gglReadFamily —— 读当期生成件族：索引件先按现行命名找，找不到再试历史命名；都不在 ⇒ nil。
+func gglReadFamily(docs, ver, date8, tgt string) *gglFamilyRead {
+	dir := gglPyJoin(docs, gglLedgerDir, ver)
+	path := tgt
+	body, ok := gglReadBytes(path)
+	if !ok {
+		alt := ""
+		if len(date8) == 8 {
+			alt = gglPyJoin(dir, gglLedgerPrefix+"-"+date8[:4]+"-"+date8[4:6]+"-"+date8[6:]+".md")
+		}
+		if alt != "" {
+			if b2, ok2 := gglReadBytes(alt); ok2 {
+				path, body, ok = alt, b2, true
+			}
+		}
+	}
+	if !ok {
+		return nil
+	}
+	return gglParseIndex(path, dir, string(body))
+}
+
+// gglParseIndex —— 解析索引件 + 逐页件现读；结构性不符一律进 Red（fail-closed：读不出也是红）。
+func gglParseIndex(path, dir, body string) *gglFamilyRead {
+	norm := strings.ReplaceAll(strings.ReplaceAll(body, "\r\n", "\n"), "\r", "\n")
+	f := &gglFamilyRead{Path: path, Bytes: len([]byte(body)),
+		FaceCount: map[string]int{}, SectionN: map[string]int{}, SectionP: map[string]int{}}
+	lines := strings.Split(norm, "\n")
+
+	// ① 首非空行 = 件头（日期）
+	sawLine := false
+	for _, ln := range lines {
+		if strings.TrimSpace(ln) == "" {
+			continue
+		}
+		sawLine = true
+		if m := gglIdxTitleRE.FindStringSubmatch(strings.TrimRight(ln, "\r")); m != nil {
+			f.Date = gglDate8(m[1])
+		} else {
+			f.Red = append(f.Red, "索引件首行不是 `## 缺口真源导出（**只列未闭**） · <日期>`（不是本门的生成件）")
+		}
+		break
+	}
+	if !sawLine {
+		f.Red = append(f.Red, "索引件是空件（一个非空行都没有）")
+		return f
+	}
+	// ② 件头计数器
+	if m := gglIdxHdrRE.FindStringSubmatch(norm); m != nil {
+		f.SrcTotal, _ = strconv.Atoi(m[1])
+		f.Open, _ = strconv.Atoi(m[2])
+		f.Closed, _ = strconv.Atoi(m[3])
+		f.NoDecide, _ = strconv.Atoi(m[4])
+	} else {
+		f.Red = append(f.Red, "索引件缺件头计数行 `> 真源条数 **N** · 未闭 **N** · 已闭 **N**（其中「不做」**N**）`")
+	}
+	// ③ `> 按面`
+	if m := gglIdxFaceRE.FindStringSubmatch(norm); m != nil {
+		for _, seg := range strings.Split(m[1], " · ") {
+			kv := gglIdxFaceKV.FindStringSubmatch(strings.TrimSpace(seg))
+			if kv == nil {
+				f.Red = append(f.Red, fmt.Sprintf("`> 按面` 段写法不合法：%q", strings.TrimSpace(seg)))
+				continue
+			}
+			n, _ := strconv.Atoi(kv[2])
+			f.FaceCount[kv[1]] = n
+		}
+	} else {
+		f.Red = append(f.Red, "索引件缺 `> 按面：…` 行（面集无从对拍）")
+	}
+	// ④ 面小节 + 页声明
+	for _, ln := range lines {
+		if m := gglIdxSecRE.FindStringSubmatch(strings.TrimRight(ln, "\r")); m != nil {
+			n, _ := strconv.Atoi(m[2])
+			p, _ := strconv.Atoi(m[3])
+			face := strings.TrimSpace(m[1])
+			f.SectionN[face] = n
+			f.SectionP[face] = p
+			continue
+		}
+		if m := gglIdxPageRE.FindStringSubmatch(strings.TrimRight(ln, "\r")); m != nil {
+			no, _ := strconv.Atoi(m[1])
+			lo, _ := strconv.Atoi(m[3])
+			hi, _ := strconv.Atoi(m[4])
+			face := ""
+			if i := strings.LastIndex(m[2], "-p"); i > 0 {
+				if j := strings.LastIndex(m[2][:i], "-"); j > 0 {
+					face = m[2][j+1 : i]
+				}
+			}
+			f.Pages = append(f.Pages, gglPageDecl{Face: face, No: no, Name: m[2], Lo: lo, Hi: hi})
+		}
+	}
+	// ⑤ 页脚（末个非空行；✗ 不用整件 `^…$` —— 无 `(?m)` 时 `^` 只认整件开头）
+	foot := ""
+	for k := len(lines) - 1; k >= 0; k-- {
+		if strings.TrimSpace(lines[k]) != "" {
+			foot = strings.TrimRight(lines[k], "\r")
+			break
+		}
+	}
+	if m := gglIdxFootRE.FindStringSubmatch(foot); m != nil {
+		f.FootOpen, _ = strconv.Atoi(m[1])
+		f.FootFiles, _ = strconv.Atoi(m[2])
+		f.FootPages, _ = strconv.Atoi(m[3])
+	} else {
+		f.Red = append(f.Red, "索引件缺页脚 `（本清册由 CLI 生成 · 未闭 N 条 · 件数 N（索引 1 + 页 N））`")
+	}
+	// ⑥ 逐页件（G4）
+	for i := range f.Pages {
+		pd := &f.Pages[i]
+		pb, ok := gglReadBytes(gglPyJoin(dir, pd.Name))
+		if !ok {
+			f.Red = append(f.Red, fmt.Sprintf("页件不在盘：`%s`（索引点名了它）", pd.Name))
+			continue
+		}
+		ptxt := strings.ReplaceAll(strings.ReplaceAll(string(pb), "\r\n", "\n"), "\r", "\n")
+		hdrFace, hdrDate, faceTotal, pageDeclared, pageNo := "", "", -1, -1, -1
+		bullets := 0
+		for _, ln := range strings.Split(ptxt, "\n") {
+			ln = strings.TrimRight(ln, "\r")
+			if hdrFace == "" {
+				if m := gglPageHdrRE.FindStringSubmatch(ln); m != nil {
+					hdrFace, hdrDate = strings.TrimSpace(m[1]), gglDate8(m[2])
+					continue
+				}
+			}
+			if pageNo < 0 {
+				if m := gglPageMetaRE.FindStringSubmatch(ln); m != nil {
+					pageNo, _ = strconv.Atoi(m[1])
+					pageDeclared, _ = strconv.Atoi(m[2])
+					faceTotal, _ = strconv.Atoi(m[5])
+					continue
+				}
+			}
+			if strings.HasPrefix(ln, "- `GAP-") {
+				bullets++
+			}
+		}
+		want := pd.Hi - pd.Lo + 1
+		switch {
+		case hdrFace == "" || hdrDate != f.Date:
+			f.Red = append(f.Red, fmt.Sprintf("页件 `%s` 首行不合（要 `# <面> · 缺口总账 %s`）", pd.Name, f.Date))
+		case pageNo < 0:
+			f.Red = append(f.Red, fmt.Sprintf("页件 `%s` 缺元行 `> 第 N 页·本页 N 条·面内 a–b 条·本面共 N 条`", pd.Name))
+		default:
+			if hdrFace != pd.Face {
+				f.Red = append(f.Red, fmt.Sprintf("页件 `%s` 面名 %q ≠ 件名面 %q", pd.Name, hdrFace, pd.Face))
+			}
+			if pageNo != pd.No {
+				f.Red = append(f.Red, fmt.Sprintf("页件 `%s` 元行页号 %d ≠ 索引页号 %d", pd.Name, pageNo, pd.No))
+			}
+			if pageDeclared != want {
+				f.Red = append(f.Red, fmt.Sprintf("页件 `%s` 元行「本页 %d 条」≠ 索引区间 %d–%d（%d 条）", pd.Name, pageDeclared, pd.Lo, pd.Hi, want))
+			}
+			if bullets != want {
+				f.Red = append(f.Red, fmt.Sprintf("页件 `%s` 现读条目 %d 条 ≠ 索引区间 %d–%d（%d 条）", pd.Name, bullets, pd.Lo, pd.Hi, want))
+			}
+			if faceTotal >= 0 {
+				if n, ok := f.SectionN[hdrFace]; ok && n != faceTotal {
+					f.Red = append(f.Red, fmt.Sprintf("页件 `%s` 「本面共 %d 条」≠ 索引小节 `### %s（%d 条 …）`", pd.Name, faceTotal, hdrFace, n))
+				}
+			}
+		}
+		f.PageSum += bullets
+	}
+	// ⑦ 内部闭合（G5）
+	sumSec, sumPages, sumFaces := 0, 0, 0
+	for _, n := range f.SectionN {
+		sumSec += n
+	}
+	for _, p := range f.SectionP {
+		sumPages += p
+	}
+	for _, n := range f.FaceCount {
+		sumFaces += n
+	}
+	if len(f.SectionN) > 0 && sumSec != f.Open {
+		f.Red = append(f.Red, fmt.Sprintf("各面 `### 面（N 条 …）` 之和 %d ≠ 件头「未闭 %d」", sumSec, f.Open))
+	}
+	if sumPages != len(f.Pages) {
+		f.Red = append(f.Red, fmt.Sprintf("各面声明页数之和 %d ≠ 索引列出的页数 %d", sumPages, len(f.Pages)))
+	}
+	if len(f.FaceCount) > 0 && sumFaces != f.Open {
+		f.Red = append(f.Red, fmt.Sprintf("`> 按面` 六面之和 %d ≠ 件头「未闭 %d」", sumFaces, f.Open))
+	}
+	if f.PageSum != f.Open {
+		f.Red = append(f.Red, fmt.Sprintf("Σ页内条目 %d ≠ 件头「未闭 %d」（漏页 / 重页 / 手改）", f.PageSum, f.Open))
+	}
+	if f.FootOpen != f.Open {
+		f.Red = append(f.Red, fmt.Sprintf("页脚「未闭 %d」≠ 件头「未闭 %d」", f.FootOpen, f.Open))
+	}
+	if f.FootFiles != len(f.Pages)+1 {
+		f.Red = append(f.Red, fmt.Sprintf("页脚「件数 %d」≠ 1 + 页数 %d", f.FootFiles, len(f.Pages)))
+	}
+	if f.FootPages != len(f.Pages) {
+		f.Red = append(f.Red, fmt.Sprintf("页脚「页 %d」≠ 索引列出的页数 %d", f.FootPages, len(f.Pages)))
+	}
+	return f
+}
+
+// gglLiveCounts —— 从现跑直出（stdout 面）取面计数与未闭/真源总数（与索引件同一张件头形状）。
+func gglLiveCounts(out string) (map[string]int, int, int) {
+	faces := map[string]int{}
+	if m := gglIdxFaceRE.FindStringSubmatch(out); m != nil {
+		for _, seg := range strings.Split(m[1], " · ") {
+			if kv := gglIdxFaceKV.FindStringSubmatch(strings.TrimSpace(seg)); kv != nil {
+				n, _ := strconv.Atoi(kv[2])
+				faces[kv[1]] = n
+			}
+		}
+	}
+	open, src := 0, 0
+	if m := gglIdxHdrRE.FindStringSubmatch(out); m != nil {
+		src, _ = strconv.Atoi(m[1])
+		open, _ = strconv.Atoi(m[2])
+	}
+	return faces, open, src
+}
+
+// gglJudgeFamily —— 族判据主体（G1…G6）。✗ 不比总字节：直出是单件、落盘是族，字节天然不同。
+func gglJudgeFamily(f *gglFamilyRead, date8, exportOut string) gglFamilyVerdict {
+	v := gglFamilyVerdict{}
+	if f == nil {
+		v.Red = append(v.Red, "索引件不在盘：`"+gglLedgerPrefix+"-"+date8+".md`（历史命名 `"+gglLedgerPrefix+"-YYYY-MM-DD.md` 亦不在）")
+		v.Verdict = "生成件不在盘（索引件与历史命名件都读不到） ⇒ 判红（漂移）"
+		return v
+	}
+	v.Red = append(v.Red, f.Red...)
+	if f.Date != date8 {
+		v.Red = append(v.Red, fmt.Sprintf("索引头日期 %s ≠ 现跑直出日期 %s（索引不是当期件）", f.Date, date8))
+	}
+	liveFaces, liveOpen, liveSrc := gglLiveCounts(exportOut)
+	for _, face := range gapImpactClosed {
+		ic, iok := f.FaceCount[face]
+		lc, lok := liveFaces[face]
+		if iok != lok {
+			v.Red = append(v.Red, fmt.Sprintf("面集不符：`%s` %s索引、%s直出", face, gglPresence(iok), gglPresence(lok)))
+			continue
+		}
+		if ic > lc {
+			v.Red = append(v.Red, fmt.Sprintf("面 `%s` 索引 %d 条 > 直出 %d 条（多于真源 = 手改或真源回退）", face, ic, lc))
+		} else if ic < lc {
+			v.Notes = append(v.Notes, fmt.Sprintf("面 `%s` 索引 %d 条 < 直出 %d 条（真源自上次导出后新增 %d 条 · 追平走 `zerg gap export --out <目录> --yes`）", face, ic, lc, lc-ic))
+		}
+	}
+	for face := range f.FaceCount {
+		if _, ok := liveFaces[face]; !ok {
+			v.Red = append(v.Red, fmt.Sprintf("面集不符：索引多出 `%s`（直出里没有这一面）", face))
+		}
+	}
+	if f.Open > liveOpen {
+		v.Red = append(v.Red, fmt.Sprintf("索引「未闭 %d」> 直出「未闭 %d」（多于真源）", f.Open, liveOpen))
+	} else if f.Open < liveOpen {
+		v.Notes = append(v.Notes, fmt.Sprintf("索引「未闭 %d」< 直出「未闭 %d」⇒ 索引落后 %d 条（真源新增、非手改；追平归只报告档 门63 R1b）", f.Open, liveOpen, liveOpen-f.Open))
+	}
+	if f.SrcTotal > liveSrc {
+		v.Red = append(v.Red, fmt.Sprintf("索引「真源条数 %d」> 直出「真源条数 %d」（多于真源 = 手改）", f.SrcTotal, liveSrc))
+	}
+	if len(v.Red) > 0 {
+		more := ""
+		if len(v.Red) > 1 {
+			more = fmt.Sprintf("，共 %d 处", len(v.Red))
+		}
+		v.Verdict = "生成件族不闭合（" + v.Red[0] + more + "） ⇒ 判红（漂移）"
+		return v
+	}
+	v.OK = true
+	v.Verdict = fmt.Sprintf("生成件族 == 导出件族（索引 1 + 页 %d · 未闭 %d 条 · Σ页条目 %d · 面 %d · 索引 %d 字节）",
+		len(f.Pages), f.Open, f.PageSum, len(f.FaceCount), f.Bytes)
+	return v
+}
+
+// gglPresence —— 面集差异的措辞（在 / 不在）。
+func gglPresence(ok bool) string {
+	if ok {
+		return "在"
+	}
+	return "不在"
+}
+
+// gglRunExportOut —— 现跑唯一拆件写者 `<仓根>/bin/zerg gap export --out <目录> --yes`（D2 档：`--yes` 才真写）。
+func gglRunExportOut(repoRoot, dir string) (string, map[string]string) {
+	bin := gglExportBin(repoRoot)
+	full := bin + " gap export --out " + dir + " --yes"
+	ctx, cancel := context.WithTimeout(context.Background(), gglExportTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, "gap", "export", "--out", dir, "--yes")
+	cmd.Dir = repoRoot
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	if err := cmd.Run(); err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return "timeout", map[string]string{"cmd": full, "msg": fmt.Sprintf("超时 %d 秒", int(gglExportTimeout.Seconds()))}
+		}
+		var ee *exec.Error
+		if errors.As(err, &ee) && errors.Is(ee.Err, exec.ErrNotFound) {
+			return "no_bin", map[string]string{"cmd": bin, "msg": ee.Err.Error()}
+		}
+		var xe *exec.ExitError
+		if errors.As(err, &xe) {
+			if err := ctx.Err(); err != nil {
+				return "timeout", map[string]string{"cmd": full, "msg": fmt.Sprintf("超时 %d 秒", int(gglExportTimeout.Seconds()))}
+			}
+			se := strings.TrimSpace(errb.String())
+			if len(se) > 400 {
+				se = se[len(se)-400:]
+			}
+			return "rc", map[string]string{"cmd": full, "rc": strconv.Itoa(xe.ExitCode()), "stderr": se}
+		}
+		return "no_bin", map[string]string{"cmd": bin, "msg": err.Error()}
+	}
+	return "ok", map[string]string{"cmd": full}
+}
+
 // gglWriteAtomic —— 固定后缀 tmp + fsync + 原子 rename；写后读回逐字节比。
+//
+// ★ 本版**无调用点**（照实）：A 案（`GAP-20261017-16`）起 `--emit` 的写面**委托唯一拆件写者**
+// `bin/zerg gap export --out <目录> --yes`（先页件、后索引件）—— 本件不再自己写单件直出，也不再
+// 自己落索引件。原语保留：将来若本件真接管写面，原子写 + 写后读回是既有口径（✗ 别改成裸 WriteFile）。
 func gglWriteAtomic(path string, data []byte) bool {
 	tmp := path + ".tmp"
 	f, err := os.Create(tmp)
@@ -1189,40 +1601,46 @@ func gglMain(stdout, stderr io.Writer, a gglArgs, repoRoot string) int {
 			[]gglKV{{"bytes", strconv.Itoa(len([]byte(out)))}})
 	}
 	tgt := gglTargetPath(docs, ver, date8)
-	want := []byte(out)
-	has, hasOK := gglReadBytes(tgt)
-	drift := !hasOK || !bytes.Equal(has, want)
-
+	liveBytes := len([]byte(out))
 	q := gglQidProbe(a.source)
 
 	verdict := ""
 	rc := 0
+	drift := false
+	fam := gglReadFamily(docs, ver, date8, tgt)
+	var fv gglFamilyVerdict
 	if mode == "emit" {
-		switch {
-		case !hasOK:
-			verdict = "落盘（新件）"
-		case bytes.Equal(has, want):
-			verdict = "落盘（逐字节相同 · 重生成无变化）"
-		default:
-			verdict = fmt.Sprintf("落盘（覆盖漂移件 · 旧件 %d 字节 ⇒ 新件 %d 字节）", len(has), len(want))
-		}
-		if !gglWriteAtomic(tgt, want) {
+		// 写面 = **唯一拆件写者**（`gap export --out <目录> --yes`）；本件不再自己把单件直出写进索引位
+		// （旧口径那样写会毁掉拆件族：索引被 26KB 单件覆盖、页件成孤儿、门63 当场红）。
+		dir := gglPyJoin(docs, gglLedgerDir, ver)
+		if st2, eread2 := gglRunExportOut(repoRoot, dir); st2 != "ok" {
+			read := []gglKV{}
+			for _, k := range []string{"cmd", "msg", "stderr", "rc"} {
+				if v, ok := eread2[k]; ok {
+					read = append(read, gglKV{k, v})
+				}
+			}
 			return gglBail(stdout, a.jsonOut, mode, docs, ver, exportBin,
-				fmt.Sprintf("写后读回不一致：`%s`", tgt), []gglKV{{"path", tgt}})
+				fmt.Sprintf("拆件写者跑不动（%s）⇒ 一个字节都没落（不许当落盘成功）", st2), read)
 		}
-		rc = 0
-	} else if drift {
-		var detail string
-		if !hasOK {
-			detail = "不在盘"
-		} else {
-			detail = fmt.Sprintf("与直出不符（件 %d 字节 vs 直出 %d 字节）", len(has), len(want))
+		fam = gglReadFamily(docs, ver, date8, tgt)
+		fv = gglJudgeFamily(fam, date8, out)
+		verdict = "落盘（`gap export --out` 重生成完成 · " + fv.Verdict + "）"
+		if !fv.OK {
+			rc = 1
 		}
-		verdict = fmt.Sprintf("生成件%s ⇒ 判红（漂移）", detail)
-		rc = 1
 	} else {
-		verdict = fmt.Sprintf("生成件 == 直出（逐字节相同 · %d 字节）", len(want))
-		rc = 0
+		fv = gglJudgeFamily(fam, date8, out)
+		verdict = fv.Verdict
+		if !fv.OK {
+			drift = true
+			rc = 1
+		}
+	}
+	famBytes, famPages, famOpen, famSum, famFaces := 0, 0, 0, 0, 0
+	if fam != nil {
+		famBytes, famPages, famOpen = fam.Bytes, len(fam.Pages), fam.Open
+		famSum, famFaces = fam.PageSum, len(fam.FaceCount)
 	}
 
 	qidRC := -1
@@ -1240,7 +1658,11 @@ func gglMain(stdout, stderr io.Writer, a gglArgs, repoRoot string) int {
 		if drift && mode != "emit" {
 			reds = append(reds, gglJObj([]gglKV{
 				{"rule", gglJStr("R1")}, {"what", gglJStr(verdict)},
-				{"read", gglJObj([]gglKV{{"target", gglJStr(tgt)}})},
+				{"read", gglJObj([]gglKV{
+					{"target", gglJStr(tgt)},
+					{"index_bytes", gglJInt(famBytes)},
+					{"export_bytes", gglJInt(liveBytes)},
+				})},
 			}))
 		}
 		qidItemState := "report"
@@ -1253,8 +1675,15 @@ func gglMain(stdout, stderr io.Writer, a gglArgs, repoRoot string) int {
 			reds = append(reds, gglJObj([]gglKV{{"rule", gglJStr("R2")}, {"what", gglJStr(gglQidVerdict(q))}, {"read", gglJObj([]gglKV{{"qid", gglJObj([]gglKV{{"enabled", gglJBool(q.enabled)}, {"with_qid", gglJInt(q.withQid)}, {"total", gglJInt(q.total)}, {"rc", gglQidRC(q.rc)}, {"bad_format", gglPyStrListPairs(q.badFormat)}, {"dup", gglPyStrDup(q.dup)}})}})}}))
 		}
 		var problems []string
+		for _, r := range fv.Red {
+			problems = append(problems, gglJObj([]gglKV{{"rule", gglJStr("R1")}, {"what", gglJStr(r)}, {"read", gglJObj(nil)}}))
+		}
 		if q.problem != "" {
 			problems = append(problems, gglJObj([]gglKV{{"rule", gglJStr("R2")}, {"what", gglJStr(q.problem)}, {"read", gglJObj(nil)}}))
+		}
+		var warns []string
+		for _, n := range fv.Notes {
+			warns = append(warns, gglJStr(n))
 		}
 		obj := gglJObj([]gglKV{
 			{"schema", gglJStr("zerg/v1")},
@@ -1270,7 +1699,15 @@ func gglMain(stdout, stderr io.Writer, a gglArgs, repoRoot string) int {
 				{"version_dir", gglJStr(ver)},
 				{"target", gglJStr(tgt)},
 				{"rel", gglJStr(rel)},
-				{"bytes", gglJInt(len(want))},
+				{"bytes", gglJInt(famBytes)},
+				{"export_bytes", gglJInt(liveBytes)},
+				{"family", gglJObj([]gglKV{
+					{"index_files", gglJInt(1)},
+					{"pages", gglJInt(famPages)},
+					{"open", gglJInt(famOpen)},
+					{"page_entries", gglJInt(famSum)},
+					{"faces", gglJInt(famFaces)},
+				})},
 				{"export_bin", gglJStr(exportBin)},
 				{"export_cmd", gglJStr(eread["cmd"])},
 				{"qid", gglQidJSON(q)},
@@ -1281,19 +1718,19 @@ func gglMain(stdout, stderr io.Writer, a gglArgs, repoRoot string) int {
 				gglJObj([]gglKV{{"rule", gglJStr("-")}, {"what", gglJStr(verdict)}, {"read", gglJObj(nil)}}),
 				gglJObj([]gglKV{{"rule", gglJStr("R2")}, {"what", gglJStr(gglQidVerdict(q))}, {"read", gglJObj(nil)}}),
 			})},
-			{"warnings", gglJArr(nil)},
+			{"warnings", gglJArr(warns)},
 			{"truncated", gglJBool(false)},
 		})
 		echo(obj)
 		return rc
 	}
-	echo("── 结转账生成件（" + gglVersion + " · 设计稿 v1.3 §0 第 ③ 序）──")
+	echo("── 结转账生成件（" + gglVersion + " · 设计稿 v1.3 §0 第 ③ 序 · A 案：族口径）──")
 	echo("  导出器 : " + exportBin + " gap export（**现跑**）")
 	echo("  文档仓 : " + docs)
-	echo(fmt.Sprintf("  落点   : %s（%d 字节 · 版本线 %s）", rel, len(want), ver))
+	echo(fmt.Sprintf("  落点   : %s（索引 %d 字节 · 直出 %d 字节 · 版本线 %s）", rel, famBytes, liveBytes, ver))
 	sub := "只判/只打 · 不改任何件"
 	if mode == "emit" {
-		sub = "写盘"
+		sub = "写盘（走唯一拆件写者 `gap export --out`）"
 	}
 	echo(fmt.Sprintf("  模式   : %s（%s）", mode, sub))
 	mark := "✓"
@@ -1301,6 +1738,12 @@ func gglMain(stdout, stderr io.Writer, a gglArgs, repoRoot string) int {
 		mark = "✗"
 	}
 	echo(mark + " " + verdict)
+	for _, r := range fv.Red {
+		echo("  ✗ " + r)
+	}
+	for _, n := range fv.Notes {
+		echo("  ⚠ " + n)
+	}
 	echo(fmt.Sprintf("  qid    : %s（真源 `%s`）", gglQidVerdict(q), q.probe))
 	return rc
 }

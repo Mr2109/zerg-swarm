@@ -838,7 +838,7 @@
    "file": "core/cmd/zerg/gen_gap_ledger.go",
    "类": "生成器档：**真 dry-run 站点**（`gen-gap-ledger.py` 的 Go 真搬 —— `--dry-run` ⇒ `mode=\"dry\"` 只打落点与差异、零副作用）",
    "语义": "dryrun.v1",
-   "零副作用判据": "`--dry-run` ⇒ 只**读**真源（现跑 `<仓根>/bin/zerg gap export` 取 stdout 逐字节照落）并 **print** 落点 / 差异 / 模式行，写盘只存在于 `--emit` 那一支（`gglWriteAtomic`：tmp + fsync + 原子 rename + 写后读回）⇒ `--dry-run` 一个字节都不落；不碰服务 / 不占端口 / 不改 git 状态。",
+   "零副作用判据": "`--dry-run` ⇒ 只**读**真源（现跑 `<仓根>/bin/zerg gap export` 取其 stdout 直出，与当期生成件**族**做结构化对拍）并 **print** 落点 / 族读数 / 模式行，写盘只存在于 `--emit` 那一支（**委托唯一拆件写者** `bin/zerg gap export --out <目录> --yes`：先页件、后索引件）⇒ `--dry-run` 一个字节都不落；不碰服务 / 不占端口 / 不改 git 状态。",
    "备注": "登记依据 = 门⑩ `R1 未登记件`（M2 Go 真搬）：py 原件 `scripts/docs/gen-gap-ledger.py` 已登记（「脚本侧（文档生成）· 真站点」），本件是其 Go 真搬的**真站点**（与 `gen_cli_reference.go` 的「字样引用」相对）。"
   }
 ,
