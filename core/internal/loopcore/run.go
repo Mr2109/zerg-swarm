@@ -307,6 +307,17 @@ func Run(ctx context.Context, cfg Config, model, sysPrompt string, msgs []map[st
 				if strings.TrimSpace(res.Content) == "" && planFallback != "" {
 					res.Content = planFallback // 补轮空产出 ⇒ 退回上一轮正文（宁可给「打算」也不给空）
 				}
+				// GAP-20261017-15（P0）：补轮之后**仍然零正文** ⇒ 不得记 natural。
+				// natural 的语义是「已交付终答」（顶部 FinalAnswer 判据同此口径：ExitKind=="natural" && 正文非空）；
+				// 实测 chat_20261017_161924_71a510 就落过「零调用 + 空正文 + natural」——CLI 侧一切正常，
+				// 用户拿到的却什么都没有（连"我没查到"都没有）。这里改记 no_conclusion：非自然终局 ⇒
+				// 下面第⑤段的四终局说明会把「退出原因」写进产出（报白），观测面也据此不判 FinalAnswer。
+				if strings.TrimSpace(res.Content) == "" {
+					// 只改 ExitKind（观测面/CLI 侧据此报白）；**不**给空产出加料——
+					// 既有契约「空产出 ⇒ 原样返回（不崩不加料）」由 output_claims_test 钉着。
+					res.ExitKind = "no_conclusion"
+					return res
+				}
 				res.ExitKind = "natural"
 				return res
 			}

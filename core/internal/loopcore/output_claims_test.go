@@ -180,11 +180,14 @@ func TestOutputClaims_NoClaimsOrEmptyOutputKeepsBehavior(t *testing.T) {
 		t.Fatalf("无引用载体 ⇒ 非自然出口说明形态不得变：%q", res.Content)
 	}
 
-	// ③-b 空产出（正文为空、零回执）：不崩、不加说明、仍算自然收尾
+	// ③-b 空产出（正文为空、零回执）：不崩、不加料。
+	// ★ GAP-20261017-15（P0）改判：零调用 + 零结论**不再记 natural** —— natural 的语义是「已交付终答」，
+	// 而「什么都没交」记 natural 正是本单实测到的病（chat_20261017_161924_71a510：exit_kind=natural、
+	// 用户拿到空气）。正文口径不变（仍不加人造文本；报白走 ExitKind）。
 	empty, _ := mockInfer([]Response{{Content: ""}})
 	eres := Run(context.Background(), Config{MaxRounds: 3}, "m", "sys", nil, Deps{Infer: empty})
-	if eres.ExitKind != "natural" || eres.Content != "" {
-		t.Fatalf("空产出 ⇒ 原样返回（不崩不加料）：kind=%q 正文=%q", eres.ExitKind, eres.Content)
+	if eres.ExitKind != "no_conclusion" || eres.Content != "" {
+		t.Fatalf("空产出 ⇒ 原样返回（不崩不加料）且不记 natural：kind=%q 正文=%q", eres.ExitKind, eres.Content)
 	}
 	if chk := VerifyOutputClaims([]Claim{}, eres.Traces); chk.Declared || chk.HasFailure() {
 		t.Fatalf("空引用列表 ⇒ 不判：%+v", chk)

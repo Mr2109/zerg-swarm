@@ -126,9 +126,10 @@ func (c *ChatInfer) Infer(ctx context.Context, model string, sysPrompt string, m
 	}
 	// GAP-20261017-14：本轮工具面（恰好一个工具时才有非 nil face ⇒ 裸参数对象可判归属）
 	var face *toolFace
+	var realTools []map[string]any
 	if len(tools) > 0 && len(tools[0]) > 0 {
 		// P4-50 修复: __temp__ 是温度标记（收尾轮 0.3）——不是真 tools——必须剥离（node-a 拒绝 Missing tool type）
-		realTools := make([]map[string]any, 0, len(tools[0]))
+		realTools = make([]map[string]any, 0, len(tools[0]))
 		for _, t := range tools[0] {
 			if _, isTemp := t["__temp__"]; isTemp {
 				continue
@@ -139,6 +140,11 @@ func (c *ChatInfer) Infer(ctx context.Context, model string, sysPrompt string, m
 		if len(realTools) > 0 {
 			body["tools"] = realTools
 		}
+	}
+	// GAP-20261017-15：请求里**没带** tools ⇒ 本轮真实工具面是「提示面工具」（见 promptSoleFace）。
+	// 「带了一个只含 __temp__ 的标记」= 调用方**显式**声明本轮没有工具面（收尾轮）⇒ 不兜底。
+	if len(tools) == 0 || len(tools[0]) == 0 {
+		face = promptSoleFace()
 	}
 	data, err := json.Marshal(body)
 	if err != nil {
@@ -230,9 +236,10 @@ func (c *ChatInfer) InferStream(ctx context.Context, model string, sysPrompt str
 	body["temperature"] = toolTemp
 	// GAP-20261017-14：本轮工具面（恰好一个工具时才有非 nil face ⇒ 裸参数对象可判归属）
 	var face *toolFace
+	var realTools []map[string]any
 	if len(tools) > 0 && len(tools[0]) > 0 {
 		// P4-50 修复: __temp__ 是温度标记（收尾轮 0.3）——不是真 tools——必须剥离（node-a 拒绝 Missing tool type）
-		realTools := make([]map[string]any, 0, len(tools[0]))
+		realTools = make([]map[string]any, 0, len(tools[0]))
 		for _, t := range tools[0] {
 			if _, isTemp := t["__temp__"]; isTemp {
 				continue
@@ -243,6 +250,11 @@ func (c *ChatInfer) InferStream(ctx context.Context, model string, sysPrompt str
 		if len(realTools) > 0 {
 			body["tools"] = realTools
 		}
+	}
+	// GAP-20261017-15：请求里**没带** tools ⇒ 本轮真实工具面是「提示面工具」（见 promptSoleFace）。
+	// 「带了一个只含 __temp__ 的标记」= 调用方**显式**声明本轮没有工具面（收尾轮）⇒ 不兜底。
+	if len(tools) == 0 || len(tools[0]) == 0 {
+		face = promptSoleFace()
 	}
 	data, err := json.Marshal(body)
 	dumpPrompt(data) // 诊断：ZERG_DUMP_PROMPT 存在时转储实际请求体（默认关）
@@ -780,6 +792,21 @@ func soleToolFace(tools []map[string]any) *toolFace {
 		face = f
 	}
 	return face
+}
+
+// promptSoleFace — GAP-20261017-15：「提示面工具」的唯一面。
+//
+// 生产对话路径（P4-46/47 口径）把工具 schema 写进系统提示的 <tools>，请求体**不发** tools 字段
+// ⇒ `soleToolFace(nil)` 恒为 nil ⇒ GAP-20261017-14 的「裸参数对象」兜底在生产面**从未生效**
+// （实测 chat_20261017_161924_71a510：`{"command":"zerg gate check …"}` 从第 2 轮起 0 调用，
+// 正文原样落库、exit_kind=natural）。
+//
+// 补法只做一件事：请求没带 tools 时，按**提示面**唯一工具补一个 face。
+// 「没带」= 变参为空或传了空切片；**传了非空切片**（哪怕里面只有一个 __temp__ 温度标记）一律视为
+// 调用方显式声明了本轮工具面（收尾轮就是这样传的）⇒ 不兜底，收尾轮永远不会被认出工具调用。
+// 判据仍是「恰好一个工具」——多工具面照旧返回 nil（不猜归属，见 TestLooseToolCalls_NoFaceDoesNotGuess）。
+func promptSoleFace() *toolFace {
+	return soleToolFace(BuildToolsParam())
 }
 
 // toolCallSpan — 一个 <tool_call> 块（inner = 开闭标签之间；raw = 含标签原文，供剥离）
