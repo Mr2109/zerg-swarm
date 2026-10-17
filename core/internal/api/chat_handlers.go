@@ -239,7 +239,7 @@ func (h *ChatHandlers) CreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = json.NewDecoder(r.Body).Decode(&req)
 	if req.Model == "" {
-		req.Model = "example-35b-v2" // 默认（Mr2109）
+		req.Model = "Qwen3.8-Flash-Next" // 默认（Mr2109 2026-10-17 定：example-35b-v2 后端长期不在且工具调用 bad_format；Qwen3.8-Flash-Next 已跑多次清缺口真活且 natural）
 	}
 	if req.Source == "" {
 		req.Source = "desktop"

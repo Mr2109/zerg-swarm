@@ -1145,8 +1145,13 @@ var chsBaseline = chsBaselineSet{
 	//   `zerg gate check check-help-shape --emit-baseline --bin <新制品>` 取数照抄（**禁手写** —— 件头纪律）。
 	//   危险档面（`help dangerous`）与 `help config` **不动**：本批四条命令零危险档（别名是本地状态、
 	//   `chat ask` 只发一轮对话）。
-	"help --all":     {HasLines: true, Lines: 462, HasBytes: true, Bytes: 248342},
-	"help":           {HasLines: true, Lines: 337, HasBytes: true, Bytes: 84679, HasLast: true, Last: "      非交互用 `--token-stdin`；详见 `zerg help credentials`）。"},
+	// ★ 2026-10-17（本枚 · `GAP-20261001-69` 的前置工具 `zerg code const-dup` 一条新 path）：
+	//   `help --all` 与裸 `help` 各 **+2 行**（族内一条新命令 ⇒ 两处各多一行用法行 ＋ 族级段随动）；
+	//   字节由现跑 `zerg gate check check-help-shape --emit-baseline` 取数照抄（**禁手写** —— 件头纪律）。
+	//   危险档面（`help dangerous` 127 行 / 48993 字节 · 115 条）与 `help config`（21 / 1748）**一分未变**：
+	//   本命令零危险档、零配置项 ⇒ 这是「没有顺手放宽」的反证，不是省了没量。
+	"help --all":     {HasLines: true, Lines: 464, HasBytes: true, Bytes: 248949},
+	"help":           {HasLines: true, Lines: 339, HasBytes: true, Bytes: 85286, HasLast: true, Last: "      非交互用 `--token-stdin`；详见 `zerg help credentials`）。"},
 	"help dangerous": {HasLines: true, Lines: 127, HasBytes: true, Bytes: 48993, HasRows: true, Rows: 115, HasTail: true, Tail: "上表 115 条：**已开放 102 条**（确认档齐就真执行 —— 逐条见上行标记）；**未开放 13 条**（真跑一律**拒执**、退码 2 = 不给结论，只有 `--dry-run` 出计划件 = 退码 0）。"},
 	"help config":    {HasLines: true, Lines: 21, HasBytes: true, Bytes: 1748},
 }

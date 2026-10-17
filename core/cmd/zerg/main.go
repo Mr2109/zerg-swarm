@@ -1767,6 +1767,20 @@ func init() {
 			endpoint: "",
 			run:      cmdCodeAuditReadings,
 		},
+
+		// ---- 同值异名常量的只读面（缺口 `GAP-20261001-69` 的前置工具 · 本枚）----
+		// ★ 只读（L0）：零写盘；**不改**任何重复常量、**不改**任何调用点 —— 本单只造工具。
+		{
+			path:     []string{"code", "const-dup"},
+			kind:     "CodeConstDup",
+			summary:  "扫**同值异名常量**（只读 · 同一个字符串值被多个常量各抄一份 ⇒ 逐条列 值 / 保留名 / 被废弃名·件:行 / 归属类）· 缺口 `GAP-20261001-69` 的前置工具",
+			usage:    "zerg code const-dup --path <件或目录> [--glob <模式>] [--root <仓根>] [--json <字段>] [--fail-on-hit]",
+			arity:    "none",
+			args:     []string{"（不收位置参数：件/目录由 --path 给）"},
+			fields:   ccdFields,
+			endpoint: "",
+			run:      cmdCodeConstDup,
+		},
 		{
 			path:     []string{"repo", "status"},
 			kind:     "RepoStatus",
@@ -5131,6 +5145,14 @@ func parseInvocation(args []string) (*invocation, error) {
 		case a == "--hidden":
 			inv.kvSet(a, "true")
 		case a == "--include-runtime":
+			inv.kvSet(a, "true")
+
+		// ★ 本枚（缺口 `GAP-20261001-69` 的前置工具 `code const-dup`）：`--fail-on-hit` 是**布尔**旗标
+		//   —— 命中 >0 ⇒ 退 1（供 CI 用）；不给它 ⇒ 命中再多也退 0（**默认不红**）。写进 `inv.kv`
+		//   （`kvSet`）而不是单开字段 ⇒ `foreignFlag` 看得见它（不归本命令用 ⇒ 仍 rc=2 点名）。
+		//   ★ 布尔旗标**不**进 `valueFlagName` 名字表（门73 判据丙会判红），且**单独一条 case**
+		//   （与 `--hidden` 同一条教训：合并写只读得到前者）。
+		case a == "--fail-on-hit":
 			inv.kvSet(a, "true")
 		// ★ 2026-10-05（缺口 `GAP-20261005-68`）：`ask` 的 `--no-fallback` **已摘牌**（从命令树移除）——
 		//   它此前在命令树登记（用法串 + 本处解析 case）却在**全库零消费者**（`cmdAsk` 从不读

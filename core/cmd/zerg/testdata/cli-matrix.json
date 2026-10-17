@@ -11874,6 +11874,43 @@
    "want_rc": 2,
    "want_stdout_bytes": 0,
    "why": "`alias set` 必须点名 `--session <完整 id>` ⇒ 缺它退 2（✗ 不按标题/前缀猜 · `O-12` 只认完整 id）"
+  },
+  {
+   "id": "code/const-dup#未知旗标",
+   "command": "code const-dup",
+   "argv": [
+    "code",
+    "const-dup",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "code/const-dup#不认的契约主号",
+   "command": "code const-dup",
+   "argv": [
+    "code",
+    "const-dup",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "code/const-dup#--json 不给字段",
+   "command": "code const-dup",
+   "argv": [
+    "code",
+    "const-dup",
+    "--json"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "给了 --json 不给字段 ⇒ 2 + stdout 0 字节（§4.1 K2 甲档 · 码**取自退码表** `usage`）"
   }
  ],
  "tiers": {
