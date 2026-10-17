@@ -747,6 +747,8 @@ func TestZergEggMediaPathFourStates(t *testing.T) {
 		"self-test（卵1 格式与工具面）通过（4 态 ＋ 4 负控 ＋ 1 正控）",
 		// ★ 第五行 = v2 布局（段表化 ＋ 引擎段在尾）—— ✗ 与前四行混行（前四行契约读数一字不动）
 		"self-test（卵 v2 布局）通过（6 态 ＋ 2 负控）",
+		// ★ 第六行 = 引擎闭包 · sysroot（`--engine-dir` ＋ 缺件即拒）—— ✗ 与前五行混行
+		"self-test（引擎闭包 · sysroot）通过（4 态 ＋ 3 负控）",
 	} {
 		if !strings.Contains(so.String(), frag) {
 			t.Fatalf("--self-test 缺行 %q：%q", frag, so.String())
@@ -754,13 +756,154 @@ func TestZergEggMediaPathFourStates(t *testing.T) {
 	}
 	lines := strings.Split(strings.TrimRight(so.String(), "\n"), "\n")
 	lineN := len(lines)
-	// 自印 N ＋ 下界（抽空/少一行即 fail-closed）：四档历史面 ＋ v2 档 = **5 行**。
-	const wantLines = 5
+	// 自印 N ＋ 下界（抽空/少一行即 fail-closed）：四档历史面 ＋ v2 档 ＋ 闭包档 = **6 行**。
+	const wantLines = 6
 	if lineN < wantLines {
 		t.Fatalf("--self-test 行数 = %d 低于下限 %d（抽空 ⇒ fail-closed）", lineN, wantLines)
 	}
 	if lineN != wantLines {
-		t.Fatalf("--self-test 行数 = %d ≠ %d（五档必须分开印）", lineN, wantLines)
+		t.Fatalf("--self-test 行数 = %d ≠ %d（六档必须分开印）", lineN, wantLines)
 	}
-	t.Logf("--self-test 末行（v2 那行）= %q", lines[lineN-1])
+	t.Logf("--self-test 末行（闭包那行）= %q", lines[lineN-1])
+}
+
+// ---- ⑥ ★ 引擎闭包 · sysroot（卵沙箱第 3 步）四态亲测 + 两枚负控 --------------------------------
+
+// TestZergEggEngineClosureSysroot —— `--engine-dir`（把引擎目录连同其 .so 收进蛋）＋ 闭包自检。
+//
+// 四态**全走真命令面**（`zergEggGateMain`：pack / info）—— ✗ 不只调内部函数：
+//
+//	① 完整闭包（含 soname 链）⇒ pack rc=0 · stdout 印「全命中 ✓」· `info` 里 .so 段落在「引擎段」；
+//	② 抽掉一个**被 NEEDED** 的 .so ⇒ pack 失败且逐字点名「缺 `lib…` · 被 … 需要」；
+//	③ 抽掉 loader（`ld-linux*`）⇒ pack 失败且点名 ld-linux*；
+//	④ `--engine-dir` 给到非 pack 子命令 ⇒ 退 2（✗ 静默忽略）。
+//	负控① 同一份缺件树走**不审计**的 v1 `zegPack` ⇒ 成功（＝②③ 的红来自闭包自检，不是路径/mode 规则）；
+//	负控② 构建树的 0775 mode ⇒ 归一后仍能打包（且不是靠放宽安全子集：蛋内段恒 0644/0755）。
+func TestZergEggEngineClosureSysroot(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src")
+	eng := filepath.Join(dir, "build", "bin")
+	for _, d := range []string{src, eng} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write := func(p string, b []byte, mode os.FileMode) {
+		t.Helper()
+		if err := os.WriteFile(p, b, mode); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(p, mode); err != nil { // 防 umask 改写
+			t.Fatal(err)
+		}
+	}
+	// 源目录：权重/配方（无动态件）—— 打蛋的「正常内容」。
+	write(filepath.Join(src, "recipe.json"), []byte("{\"n_gpu_layers\": 99}\n"), 0o644)
+	write(filepath.Join(src, "weights.gguf"), []byte("GGUF-fake\n"), 0o644)
+	// 引擎目录：exe NEEDED 里含 soname `libggml.so.0`（真件只有 libggml.so.0.1 ＋ 一条相对链）
+	write(filepath.Join(eng, "llama-server"), zegSynthELF([]string{
+		"libggml.so.0", "libstdc++.so.6", zegClosureLibc, zegClosureLibm,
+	}), 0o775) // ★ 构建树的 0775：负控②
+	write(filepath.Join(eng, "libggml.so.0.1"), zegSynthELF([]string{zegClosureLibc}), 0o775)
+	if err := os.Symlink("libggml.so.0.1", filepath.Join(eng, "libggml.so.0")); err != nil {
+		t.Fatal(err)
+	}
+	write(filepath.Join(eng, "libstdc++.so.6"), []byte("synth-stdcxx"), 0o755)
+	// 恒必带三件（真闭包里它们来自 /lib/x86_64-linux-gnu，这里由构建脚本显式交进来）
+	write(filepath.Join(eng, zegClosureLibc), []byte("synth-libc"), 0o755)
+	write(filepath.Join(eng, zegClosureLibm), []byte("synth-libm"), 0o755)
+	write(filepath.Join(eng, "ld-linux-x86-64.so.2"), []byte("synth-loader"), 0o755)
+
+	run := func(argv ...string) (int, string, string) {
+		var so, se strings.Builder
+		rc := zergEggGateMain(&so, &se, argv)
+		return rc, so.String(), se.String()
+	}
+
+	// ---- 态① 完整闭包 ⇒ rc=0，且 info 里 .so 落在「引擎段」 ----
+	egg := filepath.Join(dir, "ok.egg")
+	rc, out, errS := run("pack", src, egg, "--engine-dir", eng)
+	if rc != exitOK {
+		t.Fatalf("态① pack rc=%d out=%q err=%q", rc, out, errS)
+	}
+	for _, frag := range []string{"引擎闭包自检", "全命中 ✓", "引擎目录 1 个已收进蛋"} {
+		if !strings.Contains(out, frag) {
+			t.Fatalf("态① pack 输出缺 %q：%q", frag, out)
+		}
+	}
+	rc, out, errS = run("info", egg)
+	if rc != exitOK {
+		t.Fatalf("态① info rc=%d out=%q err=%q", rc, out, errS)
+	}
+	for _, frag := range []string{"engine/bin/libggml.so.0 ", "engine/bin/ld-linux-x86-64.so.2", "seg=引擎段"} {
+		if !strings.Contains(out, frag) {
+			t.Fatalf("态① info 缺 %q（.so 段没落进引擎段？）：%q", frag, out)
+		}
+	}
+	// soname 靠**链名**命中：链段必须真的进段表（size=0 ＋ linkTarget）
+	if !strings.Contains(out, "linkTarget=libggml.so.0.1") {
+		t.Fatalf("态① soname 链段没进段表：%q", out)
+	}
+
+	// ---- 负控② 0775 的构建树件 ⇒ 蛋内段恒 0644/0755（归一而非放宽安全子集；`zegModeSafeSet` 一字未改）----
+	idx, perr := zegParseIndex(egg)
+	if perr != nil {
+		t.Fatalf("负控② 读不回索引：%v", perr)
+	}
+	seen775 := 0
+	for _, e := range idx.Entries {
+		if !zegModeSafeSet[e.Mode] {
+			t.Fatalf("负控② 蛋内段 %q 的 mode=%#o 不在安全子集（归一没生效 / 子集被放宽）", e.Path, e.Mode)
+		}
+		if e.Path == "engine/bin/libggml.so.0.1" || e.Path == "engine/bin/llama-server" {
+			seen775++
+			if e.Mode != 0o755 {
+				t.Fatalf("负控② 来源 0775 的可执行段 %q 归一成 %#o（要 0755）", e.Path, e.Mode)
+			}
+		}
+	}
+	if seen775 != 2 {
+		t.Fatalf("负控② 该有 2 个来自 0775 的可执行段，实得 %d", seen775)
+	}
+
+	// ---- 态② 抽掉被 NEEDED 的 libggml.so.0（链）⇒ 名点名拒 ----
+	bad := filepath.Join(dir, "bad.egg")
+	if err := os.Remove(filepath.Join(eng, "libggml.so.0")); err != nil {
+		t.Fatal(err)
+	}
+	rc, out, errS = run("pack", src, bad, "--engine-dir", eng)
+	if rc == exitOK {
+		t.Fatalf("态② 缺一个 NEEDED 的 soname 竟打成了蛋：%q", out)
+	}
+	if !strings.Contains(errS, "缺 `libggml.so.0`") || !strings.Contains(errS, "llama-server") {
+		t.Fatalf("态② 报话没点名缺件与发起方：%q", errS)
+	}
+	if _, serr := os.Stat(bad); serr == nil {
+		t.Fatalf("态② 失败档竟留下了半截蛋 %s", bad)
+	}
+	// 负控① 同一份缺件树走**不审计**的 v1 打包 ⇒ 必须成功（＝红来自本检）
+	if _, verr := zegPack(src, filepath.Join(dir, "neg1.egg"), 4096, "2000-01-01T00:00:00Z"); verr != nil {
+		t.Fatalf("负控① 不审计的旧档在**源目录**上就失败了（那本检的红分不清来源）：%v", verr)
+	}
+
+	// ---- 态③ 抽掉 loader ⇒ 点名 ld-linux* ----
+	if err := os.Remove(filepath.Join(eng, "ld-linux-x86-64.so.2")); err != nil {
+		t.Fatal(err)
+	}
+	rc, _, errS = run("pack", src, filepath.Join(dir, "noloader.egg"), "--engine-dir", eng)
+	if rc == exitOK {
+		t.Fatalf("态③ 缺 loader 竟打成了蛋")
+	}
+	if !strings.Contains(errS, "缺 `"+zegClosureLoaderPrefix+"*`") {
+		t.Fatalf("态③ 报话没点名 loader：%q", errS)
+	}
+
+	// ---- 态④ `--engine-dir` 给到非 pack 子命令 ⇒ 退 2（✗ 静默忽略）----
+	rc, _, errS = run("info", egg, "--engine-dir", eng)
+	if rc != exitUsage {
+		t.Fatalf("态④ --engine-dir 配 info 竟 rc=%d（要 2）", rc)
+	}
+	if !strings.Contains(errS, "只对 `pack` 有效") {
+		t.Fatalf("态④ 报话没点名原因：%q", errS)
+	}
 }

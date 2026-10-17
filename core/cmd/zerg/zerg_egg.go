@@ -86,8 +86,9 @@ const (
 )
 
 // zegHelpText —— `-h` / 无参数时打的帮助正文（**逐字节**取自 py 3.9 系现跑 · 506 字节 · COLUMNS=80）。
-const zegHelpText = "usage: zerg-egg.py [-h] [--align ALIGN] [--rebuild-into REBUILD_INTO]\n" +
-	"                   [--self-test] [--chunk-size CHUNK_SIZE]\n" +
+const zegHelpText = "usage: zerg-egg.py [-h] [--align ALIGN] [--engine-dir ENGINE_DIR]\n" +
+	"                   [--rebuild-into REBUILD_INTO] [--self-test]\n" +
+	"                   [--chunk-size CHUNK_SIZE]\n" +
 	"                   [{pack,info,verify,xfer}] [a] [b]\n" +
 	"\n" +
 	"卵的单文件封装工具（*.egg）\n" +
@@ -100,14 +101,18 @@ const zegHelpText = "usage: zerg-egg.py [-h] [--align ALIGN] [--rebuild-into REB
 	"optional arguments:\n" +
 	"  -h, --help            show this help message and exit\n" +
 	"  --align ALIGN\n" +
+	"  --engine-dir ENGINE_DIR\n" +
+	"                        打蛋时**一起收进蛋**的引擎目录（可给多次 ⇒ 蛋内 engine/<目录基名>/…；\n" +
+	"                        闭包缺件会打蛋失败并逐条点名 —— 只收目录，收谁由构建脚本决定）\n" +
 	"  --rebuild-into REBUILD_INTO\n" +
 	"  --self-test\n" +
 	"  --chunk-size CHUNK_SIZE\n" +
 	"                        xfer 的分块大小（默认 64 MiB）\n"
 
 // zegUsageText —— 错误档先打的 `usage:` 三行（与 help 正文同源片段）。
-const zegUsageText = "usage: zerg-egg.py [-h] [--align ALIGN] [--rebuild-into REBUILD_INTO]\n" +
-	"                   [--self-test] [--chunk-size CHUNK_SIZE]\n" +
+const zegUsageText = "usage: zerg-egg.py [-h] [--align ALIGN] [--engine-dir ENGINE_DIR]\n" +
+	"                   [--rebuild-into REBUILD_INTO] [--self-test]\n" +
+	"                   [--chunk-size CHUNK_SIZE]\n" +
 	"                   [{pack,info,verify,xfer}] [a] [b]\n"
 
 // ---- 索引结构（字段序 == py 的 json 插入序，✗ 别改序）----------------------------------------
@@ -1168,7 +1173,12 @@ func zegV2ParseIndex(f *os.File) (*zegIndex, error) {
 
 // zegPackV2 —— **写端默认档**（命令面 `cocoon pack` 走它）：打一枚 v2 卵。
 // 写序照 ③：data/engine → fsync → table → fsync → header（槽 0 基线 gen0，槽 1 现行 gen1）→ fsync。
-func zegPackV2(src, egg string, align int, now string) ([]*zegEntry, *zegV2Slot, error) {
+//
+// ★ 卵沙箱第 3 步：`engineDirs` = 打蛋时**一起收进蛋**的引擎目录（可给多次 ⇒ 蛋内 `engine/<基名>/…`）。
+// 收完**一律过闭包自检**（`zegClosureGate` ⇒ 见 `zerg_egg_closure.go`）：缺一件 NEEDED / 缺
+// loader / 缺 libc / 缺 libm ⇒ **当场失败并逐条点名**，且**在写第一个字节之前**就失败（✗ 不产半截蛋）。
+// 不给 `engineDirs` 时行为与旧档**逐字不变**（只多跑一遍只读自检：无动态件 ⇒ 不要求三件）。
+func zegPackV2(src, egg string, align int, now string, engineDirs ...string) ([]*zegEntry, *zegV2Slot, error) {
 	if align == 0 {
 		align = zegAlignOf()
 	}
@@ -1179,8 +1189,26 @@ func zegPackV2(src, egg string, align int, now string) ([]*zegEntry, *zegV2Slot,
 	if err != nil {
 		return nil, nil, err
 	}
-	if len(entries) == 0 {
+	if len(entries) == 0 && len(engineDirs) == 0 {
 		return nil, nil, fmt.Errorf("源目录里没有文件：%s", src)
+	}
+	// ★ 引擎目录（sysroot）：段路径 `engine/<基名>/…` ⇒ 段分类恒「引擎段」；撞名即拒。
+	if len(engineDirs) > 0 {
+		taken := make(map[string]string, len(entries))
+		for _, e := range entries {
+			taken[e.Path] = "源目录"
+		}
+		for _, d := range engineDirs {
+			ee, derr := zegEngineDirEntries(d, taken)
+			if derr != nil {
+				return nil, nil, derr
+			}
+			entries = append(entries, ee...)
+		}
+	}
+	// ★ 闭包自检（本单核心）：缺件 ⇒ 具名拒，且**在落盘之前**（✗ 不产半截蛋）。
+	if _, gerr := zegClosureGate(entries); gerr != nil {
+		return nil, nil, gerr
 	}
 	entries = zegV2OrderEngineLast(entries)
 	var uuid [16]byte
@@ -2797,9 +2825,12 @@ type zegArgs struct {
 	// workers —— 卵3① 的**隐藏取旗标**（`--workers N` · 照 `--now` 的同款：✗ 不进帮助面 ⇒ 不污染 `-h` 对拍）。
 	// 0 ＝ 自动档（并发度 `W = clamp(ceil(D/h), 1, NumCPU)` · `h` 由内存探针现测）。
 	workers int
+	// engineDirs —— ★ 卵沙箱第 3 步：打蛋时**一起收进蛋**的引擎目录（可给多次 ⇒ 蛋内 `engine/<基名>/…`）。
+	// 只对 `pack` 有效；收谁由调用方（构建脚本）决定，打蛋端只做**只读闭包自检**（见 zerg_egg_closure.go）。
+	engineDirs []string
 }
 
-var zegOpts = []string{"--align", "--rebuild-into", "--self-test", "--chunk-size", "--help", "--now", "--workers", "--update"}
+var zegOpts = []string{"--align", "--engine-dir", "--rebuild-into", "--self-test", "--chunk-size", "--help", "--now", "--workers", "--update"}
 
 // zegResolveOpt —— 精确命中优先；否则唯一前缀；多命中 ⇒ 歧义串；零命中 ⇒ ""。
 func zegResolveOpt(name string) (string, string) {
@@ -2891,6 +2922,12 @@ func zegParseArgv(argv []string) (*zegArgs, string) {
 					return nil, fmt.Sprintf("argument --chunk-size: invalid int value: '%s'", v)
 				}
 				a.chunkSize = n
+			case "--engine-dir":
+				v, ok := take()
+				if !ok {
+					return nil, fmt.Sprintf("argument %s: expected one argument", name)
+				}
+				a.engineDirs = append(a.engineDirs, v)
 			case "--rebuild-into":
 				v, ok := take()
 				if !ok {
@@ -2973,7 +3010,15 @@ func zergEggGateMain(stdout, stderr io.Writer, argv []string) int {
 			return rc
 		}
 		// ★ 第五行：v2 布局（段表化 ＋ 引擎段在尾）—— ✗ 与前四行混行（前四行契约读数一字不动）。
-		return zegV2SelfTest(stdout, stderr)
+		if rc := zegV2SelfTest(stdout, stderr); rc != exitOK {
+			return rc
+		}
+		// ★ 第六行：引擎闭包 · sysroot（`--engine-dir` ＋ 缺件即拒）—— ✗ 与前五行混行。
+		return zegClosureSelfTest(stdout, stderr)
+	}
+	if len(a.engineDirs) > 0 && a.cmd != "pack" {
+		fmt.Fprintf(stderr, "%s: `--engine-dir` 只对 `pack` 有效（收到子命令 %q ⇒ ✗ 静默忽略）\n", zegProg, a.cmd)
+		return exitUsage
 	}
 	switch a.cmd {
 	case "pack":
@@ -2984,6 +3029,10 @@ func zergEggGateMain(stdout, stderr io.Writer, argv []string) int {
 		eff := a.align
 		if !a.alignSet {
 			eff = zegAlignOf()
+		}
+		if a.update && len(a.engineDirs) > 0 {
+			fmt.Fprintf(stderr, "%s: `--engine-dir` 与 `--update` 互斥（升引擎只**追加引擎段**、不收目录；要换闭包请重打一枚蛋）\n", zegProg)
+			return zegExitToolUsage
 		}
 		if a.update {
 			// ★ 升引擎只写尾部（设计稿 Q3 的核心）：证据面三条一起印 —— 写区间 / 前缀 sha / inode。
@@ -3011,7 +3060,7 @@ func zergEggGateMain(stdout, stderr io.Writer, argv []string) int {
 				rep.TableOffOld, rep.TableOffNew, rep.FileLenOld, rep.FileLenNew, rep.UUID)
 			return exitOK
 		}
-		entries, slot, err := zegPackV2(a.a, a.b, a.align, a.nowVal)
+		entries, slot, err := zegPackV2(a.a, a.b, a.align, a.nowVal, a.engineDirs...)
 		if err != nil {
 			fmt.Fprintf(stderr, "%s: %v\n", zegProg, err)
 			return exitFail
@@ -3026,6 +3075,24 @@ func zergEggGateMain(stdout, stderr io.Writer, argv []string) int {
 		}
 		fmt.Fprintf(stdout, "  ★ v2 布局：gen=%d · uuid=%s · 引擎段 %d 段在尾（%d 段）· 段表@%d · 段表 sha256=%s\n",
 			slot.Gen, hex.EncodeToString(slot.UUID[:]), engines, len(entries), slot.TableOff, zegShortSHA(hex.EncodeToString(slot.TableSHA[:])))
+		// ★ 闭包自检的**过档读数**（有动态件才印；缺件这条路走不到这里 —— 已在写盘前失败）。
+		if rep, rerr := zegClosureAudit(entries); rerr == nil && rep.Dynamic > 0 {
+			fmt.Fprintf(stdout, "  ★ %s\n", rep.zegClosureSummary())
+		}
+		if len(a.engineDirs) > 0 {
+			// ★ 归一**逐件机检**（✗ 不静默改写）：数与来源 mode 不符的引擎段，人面明说。
+			norm := 0
+			for _, e := range entries {
+				if e.src == "" || !strings.HasPrefix(e.Path, zegEngineSegRoot+"/") {
+					continue
+				}
+				if fi, serr := os.Stat(e.src); serr == nil && int(fi.Mode().Perm()) != e.Mode {
+					norm++
+				}
+			}
+			fmt.Fprintf(stdout, "  引擎目录 %d 个已收进蛋（落点 engine/<基名>/… · 段分类恒「引擎段」）· mode 归一 %d 件（安装语义 0755/0644 · 安全子集不变）\n",
+				len(a.engineDirs), norm)
+		}
 		return exitOK
 	case "info":
 		return zegCmdInfo(stdout, a.a)

@@ -27,6 +27,10 @@ type EggParityCell struct {
 	Note     string `json:"note,omitempty"` // 与 F21 的差（若有）
 }
 
+// ★ 2026-10-18 重锚（只改行号、**判据语义一字未动**）：`core/cmd/zerg/zerg_egg.go` 在
+// 「引擎闭包 · sysroot」（`--engine-dir`）那一批里新增了若干行 ⇒ 本表 B 侧 10 个 `file:line` 锚
+// 整体下移（前段 +5 / v2 打包段之后 +28）。锚的判据仍是「该文件第 N 行仍含这句 code」——
+// 逐条按现读重算（不是放宽：`anchorLive` 一字未改）。
 type parityAnchor struct {
 	file string
 	line int
@@ -55,44 +59,44 @@ func eggParityEntries() []parityEntry {
 			a:   "核对：索引里 align 必须等于前缀 align，不符 ⇒ 拒",
 			b:   "不核对：前缀与索引体各自取值、各自验，无交叉比对",
 			aAn: parityAnchor{"agent/internal/eggpkg/eggpkg.go", 106, "idx.Align != align"},
-			bAn: parityAnchor{"core/cmd/zerg/zerg_egg.go", 1683, "raw.Align < zegMinAlign"}},
+			bAn: parityAnchor{"core/cmd/zerg/zerg_egg.go", 1711, "raw.Align < zegMinAlign"}},
 		{no: 2, field: "读端 path 规则集",
 			a:    "拒 {空 / 绝对 / 非 Clean / 含 .. / 重复}（五类）",
 			b:    "拒 zegPathRules 十二类（另含 Windows 保留名 / 尾随点 / 反斜杠 / NUL / 非 NFC 等）",
 			aAn:  parityAnchor{"agent/internal/eggpkg/eggpkg.go", 121, `e.Path == ""`},
-			bAn:  parityAnchor{"core/cmd/zerg/zerg_egg.go", 446, "func zegRefusePath(rel string) error {"},
+			bAn:  parityAnchor{"core/cmd/zerg/zerg_egg.go", 451, "func zegRefusePath(rel string) error {"},
 			note: "★ 与 F21 差：F21 读得当年 B「不校验 path」；现读 B 已接卵1② 路径规则表 ⇒ 方向反转（现 B 更严）"},
 		{no: 3, field: "段 off 对齐（读端期）",
 			a:   "读端拒：off%align != 0 ⇒ 拒",
 			b:   "读端不判：仅 zegVerify 的 problems 面报",
 			aAn: parityAnchor{"agent/internal/eggpkg/eggpkg.go", 134, "e.Off%ix.Align != 0"},
-			bAn: parityAnchor{"core/cmd/zerg/zerg_egg.go", 1793, "e.Off%align != 0"}},
+			bAn: parityAnchor{"core/cmd/zerg/zerg_egg.go", 1821, "e.Off%align != 0"}},
 		{no: 4, field: "段 size 越界（读端期）",
 			a:   "读端拒：off+size > 文件长 ⇒ 拒",
 			b:   "读端不判：仅 zegVerify 的 problems 面报",
 			aAn: parityAnchor{"agent/internal/eggpkg/eggpkg.go", 137, "e.Off+e.Size > fileSize"},
-			bAn: parityAnchor{"core/cmd/zerg/zerg_egg.go", 1796, "e.Off+e.Size > sizeFile"}},
+			bAn: parityAnchor{"core/cmd/zerg/zerg_egg.go", 1824, "e.Off+e.Size > sizeFile"}},
 		{no: 5, field: "段 sha256 长度 = 64（读端期）",
 			a:   "读端拒：len(sha256) != 64 ⇒ 拒",
 			b:   "读端不判长度：verify 比内容，长度不符落 problems 面 sha 不符",
 			aAn: parityAnchor{"agent/internal/eggpkg/eggpkg.go", 140, "len(e.SHA256) != 64"},
-			bAn: parityAnchor{"core/cmd/zerg/zerg_egg.go", 1821, "h.Sum(nil)) != e.SHA256"}},
+			bAn: parityAnchor{"core/cmd/zerg/zerg_egg.go", 1849, "h.Sum(nil)) != e.SHA256"}},
 		{no: 6, field: "段 sha256 内容比对",
 			a:   "不比对内容：只校长度 64",
 			b:   "比对内容：zegVerify 逐段现算 sha 与索引比",
 			aAn: parityAnchor{"agent/internal/eggpkg/eggpkg.go", 140, "len(e.SHA256) != 64"},
-			bAn: parityAnchor{"core/cmd/zerg/zerg_egg.go", 1821, "h.Sum(nil)) != e.SHA256"}},
+			bAn: parityAnchor{"core/cmd/zerg/zerg_egg.go", 1849, "h.Sum(nil)) != e.SHA256"}},
 		{no: 7, field: "段 mode 值域（安全子集）",
 			a:    "不判值：mode 原样收（无值域判据）",
 			b:    "拒：mode 须 ∈ {0644,0755,0700} 安全子集，禁 setuid/setgid/sticky",
 			aAn:  parityAnchor{"agent/internal/eggpkg/eggpkg.go", 38, "Mode   uint32"},
-			bAn:  parityAnchor{"core/cmd/zerg/zerg_egg.go", 687, "if !zegModeSafeSet[e.Mode] {"},
+			bAn:  parityAnchor{"core/cmd/zerg/zerg_egg.go", 692, "if !zegModeSafeSet[e.Mode] {"},
 			note: "★ 与 F21 差：F21 读得当年「两份都未实现」（⚠A⚠B 两格）；现读 B 已接安全子集 ⇒ 收敛成 A 侧一格"},
 		{no: 8, field: "entries 非空",
 			a:   "读端拒：len(entries) == 0 ⇒ 拒",
 			b:   "读端不拒：空表审计 0 迭代 ⇒ 收",
 			aAn: parityAnchor{"agent/internal/eggpkg/eggpkg.go", 116, "if len(ix.Entries) == 0 {"},
-			bAn: parityAnchor{"core/cmd/zerg/zerg_egg.go", 677, "for _, e := range idx.Entries {"}},
+			bAn: parityAnchor{"core/cmd/zerg/zerg_egg.go", 682, "for _, e := range idx.Entries {"}},
 		{no: 9, field: "不可变面必需键缺项",
 			a:   "只对 entries 缺项泛化拒（\"索引里没有段\"）；缺 magic/version/align 不判",
 			b:   "具名 D5 逐键拒：zegAuditIndexSurface 点出缺哪个不可变面键",
@@ -117,12 +121,12 @@ func eggParityEntries() []parityEntry {
 			a:   "单句泛化：ver != 1 ⇒ 「格式版本不支持：%d」（无前向/过旧之分）",
 			b:   "具名 D2 前向 / D3 过旧：zegCompatGateMainVersion（读端两处挂点）",
 			aAn: parityAnchor{"agent/internal/eggpkg/eggpkg.go", 87, `fmt.Errorf("格式版本不支持：%d", ver)`},
-			bAn: parityAnchor{"core/cmd/zerg/zerg_egg.go", 1639, "zegCompatGateMainVersion(ver, zegVersionSitePrefix)"}},
+			bAn: parityAnchor{"core/cmd/zerg/zerg_egg.go", 1667, "zegCompatGateMainVersion(ver, zegVersionSitePrefix)"}},
 		{no: 14, field: "索引体 magic 取值 / 存在",
 			a:    "解出但不校验：ReadIndex 无 idx.Magic 判据 ⇒ 索引 magic=XXXX 也收",
 			b:    "校验：raw.Magic != zegMagic ⇒ 拒（且面审计先判「缺 magic 键 ⇒ D5」）",
 			aAn:  parityAnchor{"agent/internal/eggpkg/eggpkg.go", 112, "return idx, nil"},
-			bAn:  parityAnchor{"core/cmd/zerg/zerg_egg.go", 1676, "if raw.Magic != zegMagic {"},
+			bAn:  parityAnchor{"core/cmd/zerg/zerg_egg.go", 1704, "if raw.Magic != zegMagic {"},
 			note: "★ 与 F21 差：F21 未列此格（其 14 格含「行 17」两格）；本单现读把「索引 magic 不校」补入、把行 17 收敛成一格 ⇒ 净仍 14 格"},
 	}
 }
