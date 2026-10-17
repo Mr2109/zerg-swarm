@@ -46,6 +46,9 @@ const (
 	// zegEngineSegRoot —— 引擎目录在蛋内的统一落点前缀：`engine/<目录基名>/…`。
 	// ★ 段分类靠 `zegSegOfPath` 的 `/engine/` 那一档 ⇒ 这些段恒落「引擎段」（v2 段序里一律最后）。
 	zegEngineSegRoot = "engine"
+	// zegLibsSegRoot —— 库目录在蛋内的统一落点前缀：`libs/<目录基名>/…`（backend 从蛋孵化时
+	// 整棵只读落到空间 `/libs`；段分类按扩展名走，`.so` 一族仍归「引擎段」）。
+	zegLibsSegRoot = "libs"
 	// zegClosureLibc / zegClosureLibm —— 恒必带的两件（loader 另按前缀判）。
 	zegClosureLibc = "libc.so.6"
 	zegClosureLibm = "libm.so.6"
@@ -73,22 +76,38 @@ const (
 // 其余规则与主线**同源**：路径串规则表（`zegRefusePath`）· 符号链接四道（`zegRefuseSymlinkSet`）
 // · 段类型同表（`zegMediaTypeOfPath`）。`taken` 是「蛋内路径 → 已占用它的来源」的账（撞名即拒）。
 func zegEngineDirEntries(root string, taken map[string]string) ([]*zegEntry, error) {
+	return zegTreeDirEntries(root, zegEngineSegRoot, "--engine-dir", taken)
+}
+
+// zegLibsDirEntries —— 把 `--libs-dir <root>` 整棵树收成**蛋内段**（前缀 `libs/<基名>/`）。
+//
+// ★ 与 `zegEngineDirEntries` **同一套规则**（同一个 `zegTreeDirEntries` 实现 ⇒ 不可能漂）：
+// 只收目录 · 撞名即拒 · mode 按安装语义归一（0755 / 0644，✗ 不给安全子集加值）· 特殊件具名拒。
+// 为什么要它（卵沙箱第 6 步）：从蛋孵化时 backend 把 `<蛋>/libs` 整棵只读落到空间 `/libs`，
+// 而库里那些件此前**没有任何入口进蛋**（`--engine-dir` 只落 `engine/`）⇒ 真蛋被具名拒孵。
+func zegLibsDirEntries(root string, taken map[string]string) ([]*zegEntry, error) {
+	return zegTreeDirEntries(root, zegLibsSegRoot, "--libs-dir", taken)
+}
+
+// zegTreeDirEntries —— 收一棵目录树成蛋内段（`<prefixRoot>/<目录基名>/…`）的**唯一实现**。
+// `opt` 只用于报话（点名是哪个旗标给的目录）；`prefixRoot` 决定蛋内落点与段分类。
+func zegTreeDirEntries(root, prefixRoot, opt string, taken map[string]string) ([]*zegEntry, error) {
 	abs, aerr := filepath.Abs(root)
 	if aerr != nil {
 		return nil, aerr
 	}
 	fi, serr := os.Stat(abs)
 	if serr != nil {
-		return nil, fmt.Errorf("`--engine-dir` 取不到目录 %q：%v", root, serr)
+		return nil, fmt.Errorf("%s 取不到目录 %q：%v", opt, root, serr)
 	}
 	if !fi.IsDir() {
-		return nil, fmt.Errorf("`--engine-dir` 不是目录 %q（✗ 只收目录：要收单件请把它放进目录再给）", root)
+		return nil, fmt.Errorf("%s 不是目录 %q（✗ 只收目录：要收单件请把它放进目录再给）", opt, root)
 	}
 	base := filepath.Base(abs)
 	if base == "" || base == "." || base == string(filepath.Separator) {
-		return nil, fmt.Errorf("`--engine-dir` 的目录基名取不出（%q）⇒ 蛋内落点无处安放，拒", root)
+		return nil, fmt.Errorf("%s 的目录基名取不出（%q）⇒ 蛋内落点无处安放，拒", opt, root)
 	}
-	prefix := zegEngineSegRoot + "/" + base
+	prefix := prefixRoot + "/" + base
 	if err := zegRefusePath(prefix); err != nil {
 		return nil, err
 	}
@@ -171,14 +190,14 @@ func zegEngineDirEntries(root string, taken map[string]string) ([]*zegEntry, err
 		return nil, err
 	}
 	if len(out) == 0 {
-		return nil, fmt.Errorf("`--engine-dir` 目录里没有任何件 %q（✗ 空目录不算闭包）", root)
+		return nil, fmt.Errorf("%s 目录里没有任何件 %q（✗ 空目录不算闭包）", opt, root)
 	}
 	for _, e := range out {
 		if prev, dup := taken[e.Path]; dup {
-			return nil, fmt.Errorf("引擎目录 %q 的段与 %s 撞同一蛋内路径 %q ⇒ 拒（✗ 不说谁盖谁：两条来路必须自己先并好）",
+			return nil, fmt.Errorf("目录 %q 的段与 %s 撞同一蛋内路径 %q ⇒ 拒（✗ 不说谁盖谁：两条来路必须自己先并好）",
 				root, prev, e.Path)
 		}
-		taken[e.Path] = "`--engine-dir " + root + "`"
+		taken[e.Path] = opt + " " + root
 	}
 	return out, nil
 }

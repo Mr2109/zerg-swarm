@@ -30,6 +30,12 @@
 // 可在 macOS 上直接单测；真正的孵化在 hatch 包（非 Linux 明确拒绝）——本包只负责「把声明
 // 翻译成孵化器的输入」。
 //
+// ★ **唯一一处例外**（卵沙箱第 6 步）：声明里给了 `egg`（.egg 件的宿主路径）时，本文件会在
+// 翻译之前**先把那枚蛋展开**到落点目录（`eggpkg.ExpandEgg` · 幂等、靠 `.complete` 跳过）。
+// 为什么放在这里而不是另起一层：`egg_dir` 从前是**手写 yaml 键**（部署事实），现在要变成
+// 「由蛋推出来」的事实，而 `egg_dir` 的唯一消费点就是本函数 —— 在这一处展开，就能保证
+// 「挂的目录」与「展开的目录」永远是同一个，不会出现两套路径规则。
+//
 // ⚠ 已知待拍板 / 未接线（如实标出，不擅自改 hatch 包的 node-a 实测配方）：
 //   - 卵声明里的 env_req.**weights** 与 entry.file 的一致性校验尚未接线：两边不一致时以谁为准
 //     （还是干脆拒孵）要先拍板；本批不猜。
@@ -50,6 +56,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Mr2109/zerg-swarm/agent/internal/eggpkg"
 	"github.com/Mr2109/zerg-swarm/agent/internal/hatch"
 	"github.com/Mr2109/zerg-swarm/agent/internal/modeladapter"
 	"github.com/Mr2109/zerg-swarm/agent/internal/monitor"
@@ -475,6 +482,10 @@ type eggWiring struct {
 
 // 蛋孵化用到的声明键与约定落点。
 const (
+	// eggKeyEggFile —— 声明里的**蛋件路径**（宿主绝对路径）。给了它 ⇒ 本文件负责展开，
+	// `egg_dir` 退化成「展开到哪」的**可选**覆盖（缺省 `~/.zerg/eggs/<卵名>`）—— 这就是
+	// 「`egg_dir` 不再是手写 yaml」的落点：手写的是**蛋**，目录由它推。
+	eggKeyEggFile    = "egg"
 	eggKeyEggDir     = "egg_dir"
 	eggKeyLoaderDir  = "egg_loader_dir"
 	eggKeyRocblasDir = "egg_rocblas_dir"
@@ -495,9 +506,18 @@ func eggWiringFor(eggID string, entry *registry.ModelEntry, engineImpl string) (
 	if entry == nil {
 		return nil, nil
 	}
+	// ⓪ 先展开蛋（若声明了 `egg`）：`egg_dir` 从此是**推导结果**而不是手写事实。
+	eggFile := strings.TrimSpace(eggCustomString(entry, eggKeyEggFile))
 	root := strings.TrimSpace(eggCustomString(entry, eggKeyEggDir))
-	if root == "" {
+	if eggFile == "" && root == "" {
 		return nil, nil
+	}
+	if eggFile != "" {
+		res, err := ensureEggExpanded(eggID, entry)
+		if err != nil {
+			return nil, err
+		}
+		root = res.Dst // ★ 挂载源 = **这次展开的落点**（同一个值 ⇒ 两处不可能漂）
 	}
 	root = filepath.Clean(expandTilde(root))
 	if !filepath.IsAbs(root) {
@@ -1132,6 +1152,76 @@ func hatchEnv(entry *registry.ModelEntry, cardIdx int, cardKnown bool, libRWs []
 		env["HIP_VISIBLE_DEVICES"] = strconv.Itoa(cardIdx)
 	}
 	return env
+}
+
+// ── 蛋展开（卵沙箱第 6 步）────────────────────────────────────────────────────
+//
+// 声明面（`entry.Custom[...]`，读法与 `vision` / `ssd` 同源）：
+//
+//	egg      —— 蛋件（`*.egg`）的宿主绝对路径。★ 给了它 ⇒ **本文件负责展开**（幂等）；
+//	egg_dir  —— **可选**的展开落点覆盖（宿主绝对路径）；缺省 `$ZERG_EGG_ROOT/<卵名>`，
+//	            而 `$ZERG_EGG_ROOT` 缺省 `~/.zerg/eggs`。
+//
+// 为什么这样分工：`egg_dir` 从前是**手写 yaml 键**（部署事实，写错了只在孵化时才炸）；
+// 现在「手写的是**蛋**」，目录由蛋推出 ⇒ 部署面少一个可漂的自由度，而「挂的目录」与
+// 「展开的目录」在构造上就是同一个（同一次调用产出）。
+//
+// ★ 幂等：`eggpkg.ExpandEgg` 见到同一代的 `.complete` 就**一个字节都不写**并返回
+// `Skipped=true` —— 每次装载都会走这条（`hatchSpecFor` 每次都调），所以它必须便宜：
+// 实际只读 8 KiB 头 ＋ 段表 ＋ 一枚凭据，✗ 不重算整件 sha。
+
+// EnvEggRoot —— 蛋展开根的环境变量名（缺省 `~/.zerg/eggs`）。
+const EnvEggRoot = "ZERG_EGG_ROOT"
+
+// eggRootDir 蛋展开根的**唯一取法**（取不到 ⇒ 报错，✗ 静默回落到某个相对目录）。
+func eggRootDir() (string, error) {
+	if v := strings.TrimSpace(os.Getenv(EnvEggRoot)); v != "" {
+		return expandTilde(v), nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return "", fmt.Errorf("蛋展开根算不出来（拿不到 HOME 且 %s 未配置）—— 拒孵", EnvEggRoot)
+	}
+	return filepath.Join(home, ".zerg", "eggs"), nil
+}
+
+// ensureEggExpanded 把声明里的 `egg` 展开到落点（幂等），返回这次展开的读数。
+//
+// fail-closed：蛋件读不到 / 落点算不出 / 落点已存在且有内容 / 落点属于**另一代** / 段表
+// 任何一条穿越 —— 一律**具名**报错（✗ 不退回宿主挂载：静默换源是这类改动最坏的失败形态）。
+func ensureEggExpanded(eggID string, entry *registry.ModelEntry) (*eggpkg.ExpandResult, error) {
+	raw := strings.TrimSpace(eggCustomString(entry, eggKeyEggFile))
+	if raw == "" {
+		return nil, fmt.Errorf("卵 %s：蛋件路径为空 —— 拒孵（调到这里就说明上面判过它非空）", eggID)
+	}
+	eggFile := filepath.Clean(expandTilde(raw))
+	if !filepath.IsAbs(eggFile) {
+		return nil, fmt.Errorf("卵 %s：蛋件路径 %q 不是宿主绝对路径——拒孵（相对路径会随 cwd 漂，蛋会“时有时无”）", eggID, raw)
+	}
+	if st, err := os.Stat(eggFile); err != nil {
+		return nil, fmt.Errorf("卵 %s：蛋件 %s 读不到（%v）——拒孵（声明了蛋却拿不到，不退回宿主挂载）", eggID, eggFile, err)
+	} else if !st.Mode().IsRegular() {
+		return nil, fmt.Errorf("卵 %s：蛋件 %s 不是普通文件——拒孵", eggID, eggFile)
+	}
+
+	dst := strings.TrimSpace(eggCustomString(entry, eggKeyEggDir))
+	if dst == "" {
+		rootDir, err := eggRootDir()
+		if err != nil {
+			return nil, fmt.Errorf("卵 %s：%w", eggID, err)
+		}
+		dst = filepath.Join(rootDir, safeEggDirName(eggID))
+	} else {
+		dst = expandTilde(dst)
+		if !filepath.IsAbs(dst) {
+			return nil, fmt.Errorf("卵 %s：蛋展开落点 %q 不是宿主绝对路径——拒孵（蛋展开目录必须能直接 stat）", eggID, dst)
+		}
+	}
+	res, err := eggpkg.ExpandEgg(eggFile, dst)
+	if err != nil {
+		return nil, fmt.Errorf("卵 %s：蛋展开失败（%s → %s）——拒孵：%w", eggID, eggFile, dst, err)
+	}
+	return res, nil
 }
 
 // ── 一次性工作目录（⑥，§6.6）────────────────────────────────────────────────

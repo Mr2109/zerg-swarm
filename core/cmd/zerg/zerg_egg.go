@@ -85,10 +85,10 @@ const (
 	zegProg = "zerg-egg.py"
 )
 
-// zegHelpText —— `-h` / 无参数时打的帮助正文（**逐字节**取自 py 3.9 系现跑 · 506 字节 · COLUMNS=80）。
+// zegHelpText —— `-h` / 无参数时打的帮助正文（**形状**逐字取自 py 3.9 argparse · COLUMNS=80；★ 本版多一条 `--libs-dir` ⇒ 字节数已不是当年那 506 · 现值见 `zerg cocoon pack -h` 现跑）。
 const zegHelpText = "usage: zerg-egg.py [-h] [--align ALIGN] [--engine-dir ENGINE_DIR]\n" +
-	"                   [--rebuild-into REBUILD_INTO] [--self-test]\n" +
-	"                   [--chunk-size CHUNK_SIZE]\n" +
+	"                   [--libs-dir LIBS_DIR] [--rebuild-into REBUILD_INTO]\n" +
+	"                   [--self-test] [--chunk-size CHUNK_SIZE]\n" +
 	"                   [{pack,info,verify,xfer}] [a] [b]\n" +
 	"\n" +
 	"卵的单文件封装工具（*.egg）\n" +
@@ -104,6 +104,9 @@ const zegHelpText = "usage: zerg-egg.py [-h] [--align ALIGN] [--engine-dir ENGIN
 	"  --engine-dir ENGINE_DIR\n" +
 	"                        打蛋时**一起收进蛋**的引擎目录（可给多次 ⇒ 蛋内 engine/<目录基名>/…；\n" +
 	"                        闭包缺件会打蛋失败并逐条点名 —— 只收目录，收谁由构建脚本决定）\n" +
+	"  --libs-dir LIBS_DIR\n" +
+	"                        打蛋时**一起收进蛋**的库目录（可给多次 ⇒ 蛋内 libs/<目录基名>/…；\n" +
+	"                        与 --engine-dir 同源：只收目录，闭包缺件会打蛋失败并逐条点名）\n" +
 	"  --rebuild-into REBUILD_INTO\n" +
 	"  --self-test\n" +
 	"  --chunk-size CHUNK_SIZE\n" +
@@ -111,8 +114,8 @@ const zegHelpText = "usage: zerg-egg.py [-h] [--align ALIGN] [--engine-dir ENGIN
 
 // zegUsageText —— 错误档先打的 `usage:` 三行（与 help 正文同源片段）。
 const zegUsageText = "usage: zerg-egg.py [-h] [--align ALIGN] [--engine-dir ENGINE_DIR]\n" +
-	"                   [--rebuild-into REBUILD_INTO] [--self-test]\n" +
-	"                   [--chunk-size CHUNK_SIZE]\n" +
+	"                   [--libs-dir LIBS_DIR] [--rebuild-into REBUILD_INTO]\n" +
+	"                   [--self-test] [--chunk-size CHUNK_SIZE]\n" +
 	"                   [{pack,info,verify,xfer}] [a] [b]\n"
 
 // ---- 索引结构（字段序 == py 的 json 插入序，✗ 别改序）----------------------------------------
@@ -320,7 +323,11 @@ func zegSegOfPath(rel string) string {
 	case ".so", ".dylib", ".dll":
 		return "引擎段"
 	}
+	// ★ 卵沙箱第 6 步补一条：`libs/**` 与 `engine/**` **同类**（它们是同一批引擎侧 .so，只是打包时
+	// 由 `--libs-dir` 收进来的）。不加这条时 `libggml.so.0`（扩展名是 `.0` 而非 `.so`）会落到
+	// 「配方段」—— 位置对了、**声明错了**（mediaType 写着 config，而它是共享库）。
 	if strings.HasPrefix(lower, "engine/") || strings.Contains(lower, "/engine/") ||
+		strings.HasPrefix(lower, "libs/") || strings.Contains(lower, "/libs/") ||
 		base == "zerg-engine" || base == "llama-server" || base == "ds4-server" {
 		return "引擎段"
 	}
@@ -1179,6 +1186,16 @@ func zegV2ParseIndex(f *os.File) (*zegIndex, error) {
 // loader / 缺 libc / 缺 libm ⇒ **当场失败并逐条点名**，且**在写第一个字节之前**就失败（✗ 不产半截蛋）。
 // 不给 `engineDirs` 时行为与旧档**逐字不变**（只多跑一遍只读自检：无动态件 ⇒ 不要求三件）。
 func zegPackV2(src, egg string, align int, now string, engineDirs ...string) ([]*zegEntry, *zegV2Slot, error) {
+	return zegPackV2Tree(src, egg, align, now, engineDirs, nil)
+}
+
+// zegPackV2Tree —— `zegPackV2` 的**双目录面**版本（引擎目录 ＋ 库目录）。
+//
+// ★ 为什么另开一个入口而不是把 `zegPackV2` 改成两枚切片参数：`zegPackV2` 的**变参形态**已被
+// 多处调用点与用例钉住（`zegPackV2(src, egg, align, now, dirs...)`）—— 改签名会造一堆无谓随动；
+// 而 `--libs-dir` 是**新增面**，让它走新入口最省。「不给 libDirs 时行为与旧档逐字不变」这条
+// 由 `zegPackV2` 直接转调保证（`nil` 切片 ⇒ 下面那段整块跳过）。
+func zegPackV2Tree(src, egg string, align int, now string, engineDirs, libDirs []string) ([]*zegEntry, *zegV2Slot, error) {
 	if align == 0 {
 		align = zegAlignOf()
 	}
@@ -1189,7 +1206,7 @@ func zegPackV2(src, egg string, align int, now string, engineDirs ...string) ([]
 	if err != nil {
 		return nil, nil, err
 	}
-	if len(entries) == 0 && len(engineDirs) == 0 {
+	if len(entries) == 0 && len(engineDirs) == 0 && len(libDirs) == 0 {
 		return nil, nil, fmt.Errorf("源目录里没有文件：%s", src)
 	}
 	// ★ 引擎目录（sysroot）：段路径 `engine/<基名>/…` ⇒ 段分类恒「引擎段」；撞名即拒。
@@ -1200,6 +1217,21 @@ func zegPackV2(src, egg string, align int, now string, engineDirs ...string) ([]
 		}
 		for _, d := range engineDirs {
 			ee, derr := zegEngineDirEntries(d, taken)
+			if derr != nil {
+				return nil, nil, derr
+			}
+			entries = append(entries, ee...)
+		}
+	}
+	// ★ 库目录（卵沙箱第 6 步）：段路径 `libs/<基名>/…` ⇒ backend 从蛋孵化时整棵落到空间 /libs。
+	// 与引擎目录**同一套规则**（只收目录 / 撞名即拒 / mode 安装语义归一 / 闭包缺件即失败）。
+	if len(libDirs) > 0 {
+		taken := make(map[string]string, len(entries))
+		for _, e := range entries {
+			taken[e.Path] = "源目录 / 引擎目录"
+		}
+		for _, d := range libDirs {
+			ee, derr := zegLibsDirEntries(d, taken)
 			if derr != nil {
 				return nil, nil, derr
 			}
@@ -2828,9 +2860,14 @@ type zegArgs struct {
 	// engineDirs —— ★ 卵沙箱第 3 步：打蛋时**一起收进蛋**的引擎目录（可给多次 ⇒ 蛋内 `engine/<基名>/…`）。
 	// 只对 `pack` 有效；收谁由调用方（构建脚本）决定，打蛋端只做**只读闭包自检**（见 zerg_egg_closure.go）。
 	engineDirs []string
+	// libDirs —— ★ 卵沙箱第 6 步：打蛋时**一起收进蛋**的库目录（可给多次 ⇒ 蛋内 `libs/<基名>/…`）。
+	// ★ 为什么需要它：从蛋孵化时 backend 把 `<蛋>/libs` 整棵只读落到空间 `/libs`，而**库里那些
+	// 件此前没有任何入口进蛋**（`--engine-dir` 只落 `engine/`）⇒ 真蛋被「具名拒孵」。语义与
+	// `--engine-dir` **逐条同源**（只收目录 · 撞名即拒 · 闭包缺件即失败 · mode 按安装语义归一）。
+	libDirs []string
 }
 
-var zegOpts = []string{"--align", "--engine-dir", "--rebuild-into", "--self-test", "--chunk-size", "--help", "--now", "--workers", "--update"}
+var zegOpts = []string{"--align", "--engine-dir", "--libs-dir", "--rebuild-into", "--self-test", "--chunk-size", "--help", "--now", "--workers", "--update"}
 
 // zegResolveOpt —— 精确命中优先；否则唯一前缀；多命中 ⇒ 歧义串；零命中 ⇒ ""。
 func zegResolveOpt(name string) (string, string) {
@@ -2928,6 +2965,12 @@ func zegParseArgv(argv []string) (*zegArgs, string) {
 					return nil, fmt.Sprintf("argument %s: expected one argument", name)
 				}
 				a.engineDirs = append(a.engineDirs, v)
+			case "--libs-dir":
+				v, ok := take()
+				if !ok {
+					return nil, fmt.Sprintf("argument %s: expected one argument", name)
+				}
+				a.libDirs = append(a.libDirs, v)
 			case "--rebuild-into":
 				v, ok := take()
 				if !ok {
@@ -3020,6 +3063,10 @@ func zergEggGateMain(stdout, stderr io.Writer, argv []string) int {
 		fmt.Fprintf(stderr, "%s: `--engine-dir` 只对 `pack` 有效（收到子命令 %q ⇒ ✗ 静默忽略）\n", zegProg, a.cmd)
 		return exitUsage
 	}
+	if len(a.libDirs) > 0 && a.cmd != "pack" {
+		fmt.Fprintf(stderr, "%s: `--libs-dir` 只对 `pack` 有效（收到子命令 %q ⇒ ✗ 静默忽略）\n", zegProg, a.cmd)
+		return exitUsage
+	}
 	switch a.cmd {
 	case "pack":
 		if a.a == "" || a.b == "" {
@@ -3032,6 +3079,10 @@ func zergEggGateMain(stdout, stderr io.Writer, argv []string) int {
 		}
 		if a.update && len(a.engineDirs) > 0 {
 			fmt.Fprintf(stderr, "%s: `--engine-dir` 与 `--update` 互斥（升引擎只**追加引擎段**、不收目录；要换闭包请重打一枚蛋）\n", zegProg)
+			return zegExitToolUsage
+		}
+		if a.update && len(a.libDirs) > 0 {
+			fmt.Fprintf(stderr, "%s: `--libs-dir` 与 `--update` 互斥（升引擎只**追加引擎段**、不收目录；要换闭包请重打一枚蛋）\n", zegProg)
 			return zegExitToolUsage
 		}
 		if a.update {
@@ -3060,7 +3111,7 @@ func zergEggGateMain(stdout, stderr io.Writer, argv []string) int {
 				rep.TableOffOld, rep.TableOffNew, rep.FileLenOld, rep.FileLenNew, rep.UUID)
 			return exitOK
 		}
-		entries, slot, err := zegPackV2(a.a, a.b, a.align, a.nowVal, a.engineDirs...)
+		entries, slot, err := zegPackV2Tree(a.a, a.b, a.align, a.nowVal, a.engineDirs, a.libDirs)
 		if err != nil {
 			fmt.Fprintf(stderr, "%s: %v\n", zegProg, err)
 			return exitFail
@@ -3092,6 +3143,11 @@ func zergEggGateMain(stdout, stderr io.Writer, argv []string) int {
 			}
 			fmt.Fprintf(stdout, "  引擎目录 %d 个已收进蛋（落点 engine/<基名>/… · 段分类恒「引擎段」）· mode 归一 %d 件（安装语义 0755/0644 · 安全子集不变）\n",
 				len(a.engineDirs), norm)
+		}
+		if len(a.libDirs) > 0 {
+			// ★ 库目录：落点 `libs/<基名>/…`（backend 从蛋孵化时整棵只读落到空间 /libs）。
+			fmt.Fprintf(stdout, "  库目录 %d 个已收进蛋（落点 libs/<基名>/… · 从蛋孵化时整棵落到空间 /libs）\n",
+				len(a.libDirs))
 		}
 		return exitOK
 	case "info":

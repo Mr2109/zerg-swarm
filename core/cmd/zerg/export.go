@@ -295,6 +295,19 @@ func mdCell(s string) string {
 func renderHelpMarkdown(landing ...string) string {
 	var b strings.Builder
 	open, danger := countCommands()
+	// ★ 文档元数据门（check-doc-meta M1/M2）要求项目文档带 frontmatter 六件套；
+	//   导出件声明「勿手改」⇒ 只能由生成器产，故在标题前写出（GAP-20261018-10）。
+	//   只在给了落点目录时写：对拍测试走无参档，判的是两张表的行数，不受影响。
+	if len(landing) > 0 && landing[0] != "" {
+		fmt.Fprintf(&b, "---\n")
+		fmt.Fprintf(&b, "title: 导出：命令面帮助（自动生成 · 勿手改）\n")
+		fmt.Fprintf(&b, "type: reference\n")
+		fmt.Fprintf(&b, "status: historical\n")
+		fmt.Fprintf(&b, "source_of_truth: core/cmd/zerg/ 命令树（zerg help export 现算）\n")
+		fmt.Fprintf(&b, "owner: Mr2109\n")
+		fmt.Fprintf(&b, "updated_at: %s\n", time.Now().Format("2006-01-02"))
+		fmt.Fprintf(&b, "---\n\n")
+	}
 	fmt.Fprintf(&b, "# 导出：命令面帮助（自动生成 · 勿手改）\n\n")
 	fmt.Fprintf(&b, "> 生成命令：`zerg help export`（`core/cmd/zerg/` 的命令树**逐字**渲染，一个名字都不是手写的）\n")
 	fmt.Fprintf(&b, "> 命令面身份：`%s`\n", version.Line(progName))

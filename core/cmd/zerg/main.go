@@ -2334,7 +2334,7 @@ func init() {
 		{
 			path:        []string{"cocoon", "pack"},
 			summary:     "把一棵源目录打成单文件卵包（`*.egg` · 底层 = `zerg_egg.go` 真搬体 · 命令面只转发不翻译）",
-			usage:       "zerg cocoon pack <源目录> <输出.egg> [--align <n>] [--chunk-size <n>] [--engine-dir <目录>] [--self-test]",
+			usage:       "zerg cocoon pack <源目录> <输出.egg> [--align <n>] [--chunk-size <n>] [--engine-dir <目录>] [--libs-dir <目录>] [--self-test]",
 			arity:       "any",
 			args:        []string{"源目录", "输出 .egg 件（旗标逐字来自 scripts/x" + "3/zerg-egg.py 的真搬体 · 原样透传）"},
 			endpoint:    "",
