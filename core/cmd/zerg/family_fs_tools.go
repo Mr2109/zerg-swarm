@@ -1,0 +1,825 @@
+// family_fs_tools.go —— `zerg fs` 族三条**正门**：`fs read` / `fs write` / `fs run`（缺口 `GAP-20261017-10` · P0）。
+//
+// 动因（缺口正文逐字）：对话面要撤掉 `bash`/`read`/`write`/`edit`，但虫族 CLI 当时**没有对应正门** ——
+// `zerg run` / `exec` / `shell` / `sh` 四条全是未知命令（rc=2），`fs` 族只有 `unprotected` 一个动作
+// （`fs read` / `fs write` 报「是族名/中间节点」）⇒ **先造三条正门，才撤得动对话面**。
+//
+// 三条规格（逐字落在这里 = 本件的判据面）：
+//
+//	`fs read`   只读 · 人面出带行号文本（同 `code show` 的渲染面）· `--json` 字段闭集
+//	            `path`/`content`/`total_lines`/`offset`/`limit` · 件不存在 ⇒ rc=2（不给结论）· 危险档 0
+//	`fs write`  D2（照 `script inventory sync` 那一套：`--dry-run` 零副作用 · 缺 `--yes` ⇒ 2 ·
+//	            写面进审计 `edit_audit.jsonl`）· 禁绝对路径出仓 · 禁符号链接 · 父目录不存在 ⇒ 2（✗ 不自建）
+//	`fs run`    D3（最高 · **fail-closed**）：首词硬白名单只许 `zerg`/`go`/`git`/`make`/`npm`/`cargo` 六枚
+//	            ⇒ 其余一律 rc=2 拒执 · ✗ **不经 shell 解释一个字**（argv 直投）· `--cwd` 必须在仓内 ·
+//	            超时缺省 **120s** · 输出超 **64KB** 截断并标截断
+//
+// ★ 三条都**不另立第二套口径**：仓根走 `repoRoot()`（唯一真源）· 出仓判据走 `pathWithinDir()`（路径段口径，
+// 与 `code find --path` 同源）· 两道确认档自相矛盾走 `dryRunYesConflict()`（已签共享判定）·
+// 审计落点走 `editAuditPath()`（`dev edit` 同一件 · 三级优先）—— 一条都不重抄式子。
+//
+// ★ 审计事件名**自己的**（`fs_file_written`）：`edit_audit.jsonl` 里既有那几格讲的是「改件」
+// （`before_sha256`/`after_sha256`）与 `gap_ledger_written`（`gap_*` 九格）⇒ 本件按同一条先例
+// **只增自己的字段名**，既有的读面（`event == "edit"` / `event == "approve_signed"` 各自过滤）一位不受影响。
+
+package main
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+	"unicode/utf8"
+)
+
+// ── `--json` 字段表（**闭集**：表外的键一律由 `emitSelected` 逐字拒收，退码 2）───────────────
+//
+// ★ 三张表是**唯一真源**：命令树 `fields:` 引用它们（帮助面 / `requireFields` 的「可选字段」行 /
+// 收受端白名单三处同读这一份）⇒ ✗ 不在第二处再抄一遍字段名。
+var (
+	fsReadFields  = []string{"path", "content", "total_lines", "offset", "limit"}
+	fsWriteFields = []string{"path", "result", "bytes", "before_sha256", "after_sha256", "append", "audit_path"}
+	fsRunFields   = []string{"cmd", "cwd", "timeout_s", "rc", "bytes", "truncated", "output"}
+)
+
+const (
+	// fsRunDefaultTimeoutS —— `fs run` 的墙钟上界缺省（规格逐字：**120 秒**）。
+	fsRunDefaultTimeoutS = 120
+	// fsRunOutputCap —— 输出截断上界（规格逐字：**64KB** · 超即截断并标截断）。
+	fsRunOutputCap = 64 << 10
+	// fsReadOffsetDefault —— `--offset` 缺省 = 第 1 行（1 起）。
+	fsReadOffsetDefault = 1
+)
+
+// fsRunHeadAllow —— `fs run` 的**首词硬白名单**（规格逐字六枚 · fail-closed：不在表里一律 rc=2）。
+// ★ 这是一张**闭集**：新增一枚 = 改规格，✗ 不许「顺手放行」。
+var fsRunHeadAllow = []string{"zerg", "go", "git", "make", "npm", "cargo"}
+
+// fsRunSubAllow —— 首词的**子命令闭集**（第二层 fail-closed）。
+//
+// 规格逐字：`go run` / `git push` / `git reset --hard` 这类**单独禁** ⇒ 先只开
+// `go build|test|vet|fmt` 与 `git status|log|diff|show|cat-file|ls-files`。
+// 其余四枚同一种形态给闭集（✗ 不许「首词对了就全放」）：
+//
+//	`zerg`  —— 只开两条**只读自证面**（`version` / `help`）：本命令的用途就是「跑仓内正门」，
+//	          但把整个 `zerg` 命令树当可跑面会把 `repo commit`/`dev edit` 这类写面绕成一条 argv
+//	          ⇒ 首版只开这两条，放开是下一版的规格变更（先拍后开）。
+//	`make`  —— 只开构建/判据类靶子（`-n`/`--dry-run` 是干跑靶）。
+//	`npm`   —— 只开 `ls`/`test`（`npm install`/`publish` 一律拒）。
+//	`cargo` —— 只开 `--version`/`version`/`check`/`build`/`test`/`fmt`/`tree`（`publish`/`install` 拒）。
+var fsRunSubAllow = map[string][]string{
+	"zerg":  {"version", "help"},
+	"go":    {"build", "test", "vet", "fmt"},
+	"git":   {"status", "log", "diff", "show", "cat-file", "ls-files"},
+	"make":  {"-n", "--dry-run", "-C", "build", "test", "check", "vet", "fmt", "help", "--version"},
+	"npm":   {"ls", "test", "--version"},
+	"cargo": {"--version", "version", "check", "build", "test", "fmt", "tree"},
+}
+
+// fsToolRoot —— 三条正门共用的仓根解析（`repoRoot()` = 唯一真源）。
+// 取不到 ⇒ rc=8（不给结论：判不了「件在不在仓内」就一个字节都不动）。
+func fsToolRoot(inv *invocation, stderr io.Writer) (string, int) {
+	root := repoRoot()
+	if strings.TrimSpace(root) == "" {
+		inv.setErr("blocked", "repo_root_absent", "解析不到仓根")
+		fmt.Fprintf(stderr, "%s: 解析不到仓根 ⇒ 判不了仓内/仓外（**不给结论** · 退码 8）\n", progName)
+		fmt.Fprintf(stderr, "在仓内跑，或设 ZERG_REPO=<仓根>\n")
+		return "", exitBlocked
+	}
+	return root, exitOK
+}
+
+// fsToolResolvePath —— 把用户给的件路径解析成 (绝对路径, 仓内相对路径)。
+//
+// 出仓判据**按路径段**判（`pathWithinDir` · 与 `code find --path` 同一条口径）：
+// 字符串前缀会把 `…/模型类/Zerg-内部文档` 当成 `…/模型类/Zerg` 的「仓内」—— 那正是 `W-03` 的病根。
+// ★ 绝对路径**不出仓**才收（`fs write` 的规格逐字：「禁绝对路径出仓」）；相对路径 `..` 逃逸同样 2。
+func fsToolResolvePath(inv *invocation, stderr io.Writer, root, raw string) (string, string, int) {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		inv.setErr("usage", "path_required", "缺件路径")
+		fmt.Fprintf(stderr, "%s: 要给一个件路径（仓根相对；✗ 空串）⇒ 退码 2\n", progName)
+		return "", "", exitUsage
+	}
+	clean := filepath.Clean(filepath.FromSlash(s))
+	abs := clean
+	if !filepath.IsAbs(clean) {
+		abs = filepath.Clean(filepath.Join(root, clean))
+	}
+	if !pathWithinDir(root, abs) {
+		inv.setErr("usage", "path_outside_repo", "件出仓")
+		fmt.Fprintf(stderr, "%s: 件出仓了（%s 不在 %s 下）⇒ 退码 2（✗ 只碰本仓工作树）\n", progName, s, root)
+		return "", "", exitUsage
+	}
+	rel, rerr := filepath.Rel(root, abs)
+	if rerr != nil {
+		inv.setErr("usage", "path_outside_repo", "件出仓")
+		fmt.Fprintf(stderr, "%s: 件路径解析不出来（%s）：%v ⇒ 退码 2\n", progName, s, rerr)
+		return "", "", exitUsage
+	}
+	return abs, filepath.ToSlash(rel), exitOK
+}
+
+// fsToolSHA256 —— 整件 sha256（十六进制全长 · 审计与 `--json` 共用一处算法）。
+func fsToolSHA256(b []byte) string {
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
+}
+
+// fsToolSHA16 —— 人面读法（前 16 位 · 与仓内 `sha16` 体例一致）。
+func fsToolSHA16(hexFull string) string {
+	if len(hexFull) <= 16 {
+		return hexFull
+	}
+	return hexFull[:16]
+}
+
+// fsToolIsText —— 文本判据（非 UTF-8 ⇒ 不猜行号 · 与 `code show` 同一条口径）。
+func fsToolIsText(b []byte) bool { return utf8.Valid(b) }
+
+// fsToolSplitLines —— 分行（行尾换行不算一个新行 · 与 `code show` 整件读同一条口径）。
+func fsToolSplitLines(body string) []string {
+	lines := strings.Split(body, "\n")
+	if len(lines) > 1 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	if len(lines) == 1 && lines[0] == "" {
+		return nil
+	}
+	return lines
+}
+
+// ── `fs read` ────────────────────────────────────────────────────────────────
+
+// cmdFSRead —— `zerg fs read <件> [--offset N] [--limit N] [--json <字段>]`：**只读**。
+//
+// 退码三态（判据面）：
+//
+//	0 —— 读出来了（人面带行号 / 机器面闭集五格）
+//	2 —— **不给结论**：用法错 / 件不存在 / 件出仓 / 点是目录 / 窗口越界（✗ 不假绿 · 不冒充「空件」）
+//	8 —— 判不了：仓根解析不到 / 件读不动 / 件不是文本
+//
+// ★ 只读 ⇒ 危险档 0（命令树里 `danger` 为空）· 零写盘 · 不落审计。
+func cmdFSRead(inv *invocation, stdout, stderr io.Writer) int {
+	if len(inv.args) != 1 {
+		inv.setErr("usage", "bad_arity", "`fs read` 只收一个件路径")
+		fmt.Fprintf(stderr, "%s: `fs read` 只收**一个**件路径（收到 %d 枚）⇒ 退码 2\n", progName, len(inv.args))
+		fmt.Fprintf(stderr, "用法：%s fs read <件> [--offset N] [--limit N] [--json <字段>]\n", progName)
+		return exitUsage
+	}
+	root, rc := fsToolRoot(inv, stderr)
+	if rc != exitOK {
+		return rc
+	}
+	abs, rel, rc := fsToolResolvePath(inv, stderr, root, inv.args[0])
+	if rc != exitOK {
+		return rc
+	}
+	st, serr := os.Stat(abs)
+	if serr != nil {
+		// 规格逐字：件不存在 ⇒ rc=2 **不给结论**（✗ 不当成「空件 read 成功」）。
+		inv.setErr("usage", "file_absent", "件不存在")
+		fmt.Fprintf(stderr, "%s: 件不存在：%s ⇒ **不给结论**（退码 2 · ✗ 不把「没有」读成「空件」）\n", progName, rel)
+		return exitUsage
+	}
+	if st.IsDir() {
+		inv.setErr("usage", "target_is_dir", "点的是目录")
+		fmt.Fprintf(stderr, "%s: 点的是目录、不是件：%s ⇒ 退码 2\n", progName, rel)
+		return exitUsage
+	}
+	body, rerr := os.ReadFile(abs)
+	if rerr != nil {
+		inv.setErr("blocked", "file_unreadable", "件读不动")
+		fmt.Fprintf(stderr, "%s: 件读不动（%v）⇒ 不给结论（退码 8）\n", progName, rerr)
+		return exitBlocked
+	}
+	if !fsToolIsText(body) {
+		inv.setErr("blocked", "not_text", "件不是文本")
+		fmt.Fprintf(stderr, "%s: 件不是文本（非 UTF-8 ⇒ 不猜它的行号）⇒ 不给结论（退码 8）\n", progName)
+		return exitBlocked
+	}
+	lines := fsToolSplitLines(string(body))
+	total := len(lines)
+	offset := fsReadOffsetDefault
+	if inv.hasFlag("--offset") {
+		n, perr := strconv.Atoi(strings.TrimSpace(inv.flagVal("--offset")))
+		if perr != nil || n < 1 {
+			inv.setErr("usage", "bad_offset", "--offset 要是正整数（1 起）")
+			fmt.Fprintf(stderr, "%s: `--offset` 要是**正整数**（行号 1 起）：%q ⇒ 退码 2\n", progName, inv.flagVal("--offset"))
+			return exitUsage
+		}
+		offset = n
+	}
+	limit := 0 // 0 = 到件尾
+	if inv.hasFlag("--limit") {
+		n, perr := strconv.Atoi(strings.TrimSpace(inv.flagVal("--limit")))
+		if perr != nil || n < 1 {
+			inv.setErr("usage", "bad_limit", "--limit 要是正整数")
+			fmt.Fprintf(stderr, "%s: `--limit` 要是**正整数**：%q ⇒ 退码 2\n", progName, inv.flagVal("--limit"))
+			return exitUsage
+		}
+		limit = n
+	}
+	if offset > total && total > 0 {
+		inv.setErr("usage", "window_out_of_range", "窗口越界")
+		fmt.Fprintf(stderr, "%s: `--offset %d` 越过件尾（共 %d 行）⇒ **不给结论**（退码 2 · ✗ 不冒充空页）\n",
+			progName, offset, total)
+		return exitUsage
+	}
+	start := offset - 1
+	if start < 0 {
+		start = 0
+	}
+	end := total
+	if limit > 0 && start+limit < end {
+		end = start + limit
+	}
+	window := lines[start:end]
+	if inv.jsonGiven {
+		if rc := requireFields(inv, stderr); rc != exitOK {
+			return rc
+		}
+		row := map[string]string{
+			"path":        rel,
+			"content":     strings.Join(window, "\n"),
+			"total_lines": strconv.Itoa(total),
+			"offset":      strconv.Itoa(offset),
+			"limit":       strconv.Itoa(limit),
+		}
+		return selectJSONList(stdout, stderr, inv, inv.path, inv.fields, []map[string]string{row})
+	}
+	// 人面：**带行号文本**（与 `code show` 同一个渲染器 / 同一对列名 ⇒ 两个面不会长歪）。
+	fmt.Fprintf(stderr, "%s: %s 第 %d 行起 %d 行（共 %d 行）\n", progName, rel, offset, len(window), total)
+	table := make([][]string, 0, len(window))
+	for i, ln := range window {
+		table = append(table, []string{strconv.Itoa(start + i + 1), ln})
+	}
+	renderRows(stdout, stderr, inv.tty && !inv.plain, []string{"line", "text"}, table)
+	return exitOK
+}
+
+// ── `fs write` ───────────────────────────────────────────────────────────────
+
+// fsWriteAuditLine —— `event=fs_file_written` 的一行（**自己的**字段名 · 缺必需格 ⇒ 这一行不许写）。
+type fsWriteAuditLine struct {
+	At         string `json:"at"`
+	Event      string `json:"event"`
+	FsCmd      string `json:"fs_cmd"`
+	FsPath     string `json:"fs_path"`
+	FsBefore   string `json:"fs_before_sha256"`
+	FsAfter    string `json:"fs_after_sha256"`
+	FsBytes    int    `json:"fs_bytes"`
+	FsAppend   bool   `json:"fs_append"`
+	FsExisted  bool   `json:"fs_existed"`
+	By         string `json:"by"`
+	Confirm    string `json:"confirm"`
+	RollbackTo string `json:"rollback_hint"`
+}
+
+// fsWriteAppendAudit —— 追加一行（`O_APPEND` · 历史行逐字节不变 · **失败即拒**）。
+func fsWriteAppendAudit(path string, l fsWriteAuditLine) error {
+	if strings.TrimSpace(l.At) == "" || strings.TrimSpace(l.Event) == "" ||
+		strings.TrimSpace(l.FsPath) == "" || strings.TrimSpace(l.FsAfter) == "" {
+		return fmt.Errorf("审计行缺必需格（at/event/fs_path/fs_after_sha256）⇒ 这一行不许写")
+	}
+	if strings.TrimSpace(path) == "" {
+		return fmt.Errorf("审计落点解析不出来（HOME / ZERG_STATE_DIR 都取不到）")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	body, err := json.Marshal(l)
+	if err != nil {
+		return err
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if _, err := f.Write(append(body, '\n')); err != nil {
+		return err
+	}
+	return f.Sync()
+}
+
+// cmdFSWrite —— `zerg fs write <件> [--content <文本> | --content-stdin] [--append] [--by <谁>]
+// [--json <字段>] [--dry-run | --yes]`：**D2 写面**（照 `script inventory sync` 那一套）。
+//
+// 三段式（与 `script inventory sync` 逐条同形）：
+//
+//	`--dry-run`  ⇒ 只出计划件 · **零副作用**（不写件 / 不落审计）· 退 0
+//	缺 `--yes`   ⇒ 计划件 + **不执行** · 退 2（fail-closed · 从不提问）
+//	`--yes`      ⇒ 审计先落盘 → 同目录临时件 + rename 原子写 → 写后读回对拍 → 不等即逐字节写回
+//
+// 三条硬禁（规格逐字 · 全在**唯一写盘点之前**判掉）：
+//
+//	① 绝对路径出仓 / `..` 逃逸 ⇒ 2（`fsToolResolvePath`）
+//	② 目标是符号链接（含父目录经符号链接出仓）⇒ 2
+//	③ 父目录不存在 ⇒ 2（**✗ 不自建** —— 自建目录是第二个写面）
+func cmdFSWrite(inv *invocation, stdout, stderr io.Writer) int {
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
+	if len(inv.args) != 1 {
+		inv.setErr("usage", "bad_arity", "`fs write` 只收一个件路径")
+		fmt.Fprintf(stderr, "%s: `fs write` 只收**一个**件路径（收到 %d 枚）⇒ 退码 2\n", progName, len(inv.args))
+		fmt.Fprintf(stderr, "用法：%s fs write <件> [--content <文本> | --content-stdin] [--append] [--by <谁>] [--dry-run | --yes]\n", progName)
+		return exitUsage
+	}
+	contentGiven := inv.hasFlag("--content")
+	stdinGiven := inv.hasFlag("--content-stdin")
+	if contentGiven == stdinGiven {
+		inv.setErr("usage", "content_source", "内容来源要二选一（--content / --content-stdin）")
+		fmt.Fprintf(stderr, "%s: 内容来源**二选一**：`--content <文本>` 或 `--content-stdin`（收到 %d 个）⇒ 退码 2\n",
+			progName, boolCount(contentGiven, stdinGiven))
+		if inv.jsonGiven && len(inv.fields) == 0 {
+			_ = requireFields(inv, stderr)
+		}
+		return exitUsage
+	}
+	root, rc := fsToolRoot(inv, stderr)
+	if rc != exitOK {
+		return rc
+	}
+	abs, rel, rc := fsToolResolvePath(inv, stderr, root, inv.args[0])
+	if rc != exitOK {
+		return rc
+	}
+	// ② 符号链接：终段 lstat 直接判；父目录按**解析后的真实路径**判「没出仓」。
+	if st, lerr := os.Lstat(abs); lerr == nil && st.Mode()&os.ModeSymlink != 0 {
+		inv.setErr("usage", "target_is_symlink", "目标件是符号链接")
+		fmt.Fprintf(stderr, "%s: 目标件是**符号链接**：%s ⇒ 退码 2（写面只写真件 · ✗ 不跟链接出仓）\n", progName, rel)
+		return exitUsage
+	}
+	parent := filepath.Dir(abs)
+	pst, perr := os.Stat(parent)
+	if perr != nil || !pst.IsDir() {
+		// ③ 父目录不存在 ⇒ 2 **不自建**（自建目录 = 第二个写面 · 规格逐字禁）。
+		inv.setErr("usage", "parent_absent", "父目录不存在")
+		fmt.Fprintf(stderr, "%s: 父目录不存在：%s ⇒ 退码 2（**✗ 不自建目录** —— 先由人/正门把目录建好）\n",
+			progName, filepath.Dir(rel))
+		return exitUsage
+	}
+	if realParent, eerr := filepath.EvalSymlinks(parent); eerr == nil && !pathWithinDir(root, realParent) {
+		inv.setErr("usage", "path_outside_repo", "父目录经符号链接出仓")
+		fmt.Fprintf(stderr, "%s: 父目录经符号链接指向仓外（%s）⇒ 退码 2（✗ 不跟链接出仓）\n", progName, realParent)
+		return exitUsage
+	}
+	appendMode := inv.hasFlag("--append")
+	var before []byte
+	existed := false
+	if st, serr := os.Lstat(abs); serr == nil {
+		if st.IsDir() {
+			inv.setErr("usage", "target_is_dir", "点的是目录")
+			fmt.Fprintf(stderr, "%s: 点的是目录、不是件：%s ⇒ 退码 2\n", progName, rel)
+			return exitUsage
+		}
+		b, rerr := os.ReadFile(abs)
+		if rerr != nil {
+			inv.setErr("blocked", "file_unreadable", "既有件读不动")
+			fmt.Fprintf(stderr, "%s: 既有件读不动（%v）⇒ 不给结论（退码 8 · 盲写会毁掉它）\n", progName, rerr)
+			return exitBlocked
+		}
+		before, existed = b, true
+	}
+	var payload []byte
+	if stdinGiven {
+		b, rerr := io.ReadAll(os.Stdin)
+		if rerr != nil {
+			inv.setErr("blocked", "stdin_unreadable", "stdin 读不动")
+			fmt.Fprintf(stderr, "%s: `--content-stdin` 读 stdin 失败（%v）⇒ 不给结论（退码 8）\n", progName, rerr)
+			return exitBlocked
+		}
+		payload = b
+	} else {
+		payload = []byte(inv.flagVal("--content"))
+	}
+	after := payload
+	if appendMode {
+		after = append(append([]byte{}, before...), payload...)
+	}
+	beforeSHA := ""
+	if existed {
+		beforeSHA = fsToolSHA256(before)
+	}
+	afterSHA := fsToolSHA256(after)
+	auditPath := editAuditPath()
+	by := strings.TrimSpace(inv.flagVal("--by"))
+	if by == "" {
+		by = "（未声明）"
+	}
+
+	// 计划件（干跑与「缺 --yes」两档打印同一份 · 逐条点名；真写档**不**打计划件 ——
+	// 与 `script inventory sync` 同一条口径：计划面只在「不执行」的那两档出现）。
+	planOut := stdout
+	if inv.jsonGiven {
+		planOut = stderr // 机器面分家：stdout 只留包封
+	}
+
+	if inv.dryRun {
+		inv.changed = boolPtr(false) // 干跑零副作用 ⇒ 幂等面说真话
+		fsWritePrintPlan(planOut, stderr, rel, existed, appendMode, len(payload), len(after), beforeSHA, afterSHA, auditPath, true)
+		if inv.jsonGiven {
+			if rc := requireFields(inv, stderr); rc != exitOK {
+				return rc
+			}
+			return selectJSONList(stdout, stderr, inv, inv.path, inv.fields, []map[string]string{fsWriteRow(rel, "dry_run", len(after), beforeSHA, afterSHA, appendMode, auditPath)})
+		}
+		return exitOK
+	}
+	if !inv.yes {
+		inv.changed = boolPtr(false) // 未执行 ⇒ 零变化
+		fsWritePrintPlan(planOut, stderr, rel, existed, appendMode, len(payload), len(after), beforeSHA, afterSHA, auditPath, false)
+		if inv.jsonGiven {
+			if rc := requireFields(inv, stderr); rc != exitOK {
+				return rc
+			}
+			if rc := selectJSONList(stdout, stderr, inv, inv.path, inv.fields, []map[string]string{fsWriteRow(rel, "need_yes", len(after), beforeSHA, afterSHA, appendMode, auditPath)}); rc != exitOK {
+				return rc
+			}
+		}
+		inv.setErr("usage", "yes_required", "D2 档缺 --yes ⇒ 不执行")
+		guardMarkDecision(inv, guardDecisionApproval)
+		fmt.Fprintf(stderr, "%s: `fs write` 是 D2 档 —— **缺 --yes ⇒ 不执行**（照 `repo commit` 的 fail-closed · 从不提问）\n", progName)
+		fmt.Fprintf(stderr, "先看计划件：%s fs write <件> --dry-run\n", progName)
+		return exitUsage
+	}
+
+	// ---- 真写：审计先落盘 → 临时件 + rename 原子写 → 写后读回对拍 → 不等即写回 ----
+	audit := fsWriteAuditLine{
+		At: time.Now().Format(time.RFC3339), Event: "fs_file_written", FsCmd: "fs write",
+		FsPath: rel, FsBefore: beforeSHA, FsAfter: afterSHA, FsBytes: len(after),
+		FsAppend: appendMode, FsExisted: existed, By: by, Confirm: "--yes",
+		RollbackTo: "把该件恢复成审计行里的 fs_before_sha256（不存在 ⇒ 删件）",
+	}
+	if err := fsWriteAppendAudit(auditPath, audit); err != nil {
+		inv.setErr("blocked", "audit_unwritable", "审计写不进 ⇒ 不写件")
+		fmt.Fprintf(stderr, "%s: 审计写不进（%s）：%v ⇒ **不写件**（没有审计的写 = 之后判不了「谁改的」）\n",
+			progName, auditPath, err)
+		return exitBlocked
+	}
+	mode := os.FileMode(0o644)
+	if st, serr := os.Lstat(abs); serr == nil {
+		mode = st.Mode().Perm()
+	}
+	tmp := abs + fmt.Sprintf(".zergfs-tmp-%d", os.Getpid())
+	if err := os.WriteFile(tmp, after, mode); err != nil {
+		inv.setErr("failed", "write_failed", "临时件写不进")
+		fmt.Fprintf(stderr, "%s: 临时件写不进（%s）：%v ⇒ 一个字节都没落\n", progName, tmp, err)
+		return exitFail
+	}
+	if err := os.Rename(tmp, abs); err != nil {
+		_ = os.Remove(tmp)
+		inv.setErr("failed", "write_failed", "rename 落件失败")
+		fmt.Fprintf(stderr, "%s: rename 落件失败（%s）：%v ⇒ 临时件已删、目标件未动\n", progName, abs, err)
+		return exitFail
+	}
+	back, rerr := os.ReadFile(abs)
+	if rerr != nil || fsToolSHA256(back) != afterSHA {
+		// 写后读回对拍不等 ⇒ 逐字节写回前态（可证回滚）。
+		if existed {
+			_ = os.WriteFile(abs, before, mode)
+		} else {
+			_ = os.Remove(abs)
+		}
+		inv.setErr("failed", "readback_mismatch", "写后读回对拍不等 ⇒ 已回滚")
+		fmt.Fprintf(stderr, "%s: 写后读回对拍不等（现读 %s ≠ 期望 %s）⇒ 已按前态写回\n",
+			progName, fsToolSHA16(fsToolSHA256(back)), fsToolSHA16(afterSHA))
+		return exitFail
+	}
+	inv.changed = boolPtr(true)
+	fmt.Fprintf(stdout, "已写 %s · %d 字节 · sha %s → %s%s\n", rel, len(after),
+		fsToolSHA16(beforeSHA), fsToolSHA16(afterSHA), map[bool]string{true: "（追加）", false: ""}[appendMode])
+	fmt.Fprintf(stdout, "审计落点 %s（事件 fs_file_written · 追加只写）\n", auditPath)
+	if inv.jsonGiven {
+		return selectJSONList(stdout, stderr, inv, inv.path, inv.fields, []map[string]string{fsWriteRow(rel, "written", len(after), beforeSHA, afterSHA, appendMode, auditPath)})
+	}
+	return exitOK
+}
+
+// fsWriteRow —— `fs write` 的机器面一行（人面与机器面**同源**：同一份读数两处渲染）。
+func fsWriteRow(rel, result string, n int, beforeSHA, afterSHA string, appendMode bool, auditPath string) map[string]string {
+	return map[string]string{
+		"path":          rel,
+		"result":        result,
+		"bytes":         strconv.Itoa(n),
+		"before_sha256": beforeSHA,
+		"after_sha256":  afterSHA,
+		"append":        map[bool]string{true: "true", false: "false"}[appendMode],
+		"audit_path":    auditPath,
+	}
+}
+
+// fsWritePrintPlan —— 计划件（干跑与「缺 --yes」两档**打印同一份** · 零副作用）。
+func fsWritePrintPlan(out, stderr io.Writer, rel string, existed, appendMode bool, payloadN, afterN int, beforeSHA, afterSHA, auditPath string, dryRun bool) {
+	head := "--yes 前的一次预览"
+	if dryRun {
+		head = "--dry-run"
+	}
+	fmt.Fprintln(out, "计划件（"+head+" · 零副作用 —— 未写件、未写审计）")
+	fmt.Fprintf(out, "  落点     : %s\n", rel)
+	fmt.Fprintf(out, "  既有件   : %s\n", map[bool]string{true: "在（append 时以它为基础）", false: "不在（新建）"}[existed])
+	fmt.Fprintf(out, "  模式     : %s\n", map[bool]string{true: "追加（--append）", false: "整件覆盖"}[appendMode])
+	fmt.Fprintf(out, "  本次内容 : %d 字节\n", payloadN)
+	fmt.Fprintf(out, "  写后大小 : %d 字节\n", afterN)
+	if beforeSHA == "" {
+		fmt.Fprintf(out, "  写前 sha : （件不在）\n")
+	} else {
+		fmt.Fprintf(out, "  写前 sha : %s\n", fsToolSHA16(beforeSHA))
+	}
+	fmt.Fprintf(out, "  写后 sha : %s（按**将要写的内容**现算）\n", fsToolSHA16(afterSHA))
+	fmt.Fprintf(out, "  审计落点 : %s\n", auditPath)
+	fmt.Fprintln(stderr, "（"+head+"：只出计划件 · 零副作用）")
+}
+
+// ── `fs run` ─────────────────────────────────────────────────────────────────
+
+// fsRunSubAllowed —— 首词在闭集里、且子命令在**该首词**的闭集里才算放行。
+// 返回 (是否放行, 拒执理由)。
+func fsRunSubAllowed(head string, rest []string) (bool, string) {
+	okHead := false
+	for _, h := range fsRunHeadAllow {
+		if h == head {
+			okHead = true
+			break
+		}
+	}
+	if !okHead {
+		return false, fmt.Sprintf("首词 %q 不在硬白名单 %s 里", head, strings.Join(fsRunHeadAllow, "/"))
+	}
+	allow, has := fsRunSubAllow[head]
+	if !has || len(allow) == 0 {
+		return false, fmt.Sprintf("首词 %q 没有子命令闭集（fail-closed ⇒ 拒执）", head)
+	}
+	sub := ""
+	if len(rest) > 0 {
+		sub = rest[0]
+	}
+	if sub == "" {
+		// 裸首词（如 `zerg`）：只许它在闭集里出现过的「无子命令」形态 —— 一律拒（fail-closed），
+		// 免得 `zerg` 裸跑落进全局帮助之外的分支。
+		return false, fmt.Sprintf("%q 后面必须跟闭集里的子命令（%s）", head, strings.Join(allow, "|"))
+	}
+	for _, s := range allow {
+		if s == sub {
+			return true, ""
+		}
+	}
+	return false, fmt.Sprintf("%q 的子命令 %q 不在闭集（%s）里", head, sub, strings.Join(allow, "|"))
+}
+
+// fsRunPlanLine —— `fs run` 的 argv 回显（人面与计划件**同源**）。
+func fsRunPlanLine(argv []string) string { return strings.Join(argv, " ") }
+
+// fsRunBinary —— 首词 ⇒ 真执行体的**绝对路径**。
+//
+// ★ `zerg` 走**自己**（`os.Executable()`）：`fs run zerg version` 要跑的就是本制品，
+// ✗ 不靠 PATH 猜（PATH 上那份可能不是仓内这一份 ⇒ 读数不是本仓的读数）。
+func fsRunBinary(head string) (string, error) {
+	if head != "zerg" {
+		return head, nil
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	return exe, nil
+}
+
+// cmdFSRun —— `zerg fs run <命令…> [--cwd <目录>] [--timeout <秒>] [--json <字段>] [--dry-run | --yes]`：**D3**。
+//
+// fail-closed 三道（全在**真跑之前**判掉 · ✗ 不得静默降级 · ✗ 不得 shell 解释）：
+//
+//	① 首词闭集六枚（`fsRunHeadAllow`）—— 其余一律 rc=2；
+//	② 子命令闭集（`fsRunSubAllow`）—— `go run` / `git push` / `git reset --hard` 这一族一律 2；
+//	③ `--cwd` 必须在仓内、且是真目录（经符号链接出仓同样 2）。
+//
+// argv **直投** `exec.CommandContext`：一个 shell 都不起 ⇒ `|` `>` `;` `$()` 全是**字面实参**，
+// 既不会被解释，也就不存在「注入」这条面。
+//
+// 退码：子进程退码**原样转出**（0 干净 / 非 0 即它的读数）；超时 ⇒ 11（等不起 ≠ 等到坏结果）；
+// 起不来 ⇒ 8（不给结论）。
+func cmdFSRun(inv *invocation, stdout, stderr io.Writer) int {
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
+	if len(inv.args) == 0 {
+		inv.setErr("usage", "bad_arity", "`fs run` 缺命令")
+		fmt.Fprintf(stderr, "%s: `fs run` 要给一条命令（首词只许 %s）⇒ 退码 2\n", progName, strings.Join(fsRunHeadAllow, "/"))
+		fmt.Fprintf(stderr, "用法：%s fs run <命令…> [--cwd <目录>] [--timeout <秒>] [--dry-run | --yes]\n", progName)
+		return exitUsage
+	}
+	argv := append([]string{}, inv.args...)
+	head := argv[0]
+	if ok, why := fsRunSubAllowed(head, argv[1:]); !ok {
+		inv.setErr("usage", "command_not_allowed", "命令不在硬白名单闭集")
+		fmt.Fprintf(stderr, "%s: `fs run` **拒执**：%s ⇒ 退码 2（硬白名单 fail-closed · ✗ 不静默降级 · ✗ 不经 shell）\n", progName, why)
+		if head == "git" {
+			fmt.Fprintf(stderr, "（`git push` / `git reset --hard` / `git checkout` 一类写远端/毁工作树的子命令**单独禁** —— 首版只开只读面）\n")
+		}
+		fmt.Fprintf(stderr, "闭集逐条：%s\n", fsRunClosureLine())
+		return exitUsage
+	}
+	root, rc := fsToolRoot(inv, stderr)
+	if rc != exitOK {
+		return rc
+	}
+	workDir := root
+	if inv.hasFlag("--cwd") {
+		raw := strings.TrimSpace(inv.flagVal("--cwd"))
+		if raw == "" {
+			inv.setErr("usage", "bad_cwd", "--cwd 给了空值")
+			fmt.Fprintf(stderr, "%s: `--cwd` 给了空值 ⇒ 退码 2\n", progName)
+			return exitUsage
+		}
+		cand := filepath.Clean(filepath.FromSlash(raw))
+		if !filepath.IsAbs(cand) {
+			cand = filepath.Clean(filepath.Join(root, cand))
+		}
+		if !pathWithinDir(root, cand) {
+			inv.setErr("usage", "cwd_outside_repo", "--cwd 出仓")
+			fmt.Fprintf(stderr, "%s: `--cwd` 出仓了（%s 不在 %s 下）⇒ 退码 2\n", progName, raw, root)
+			return exitUsage
+		}
+		st, serr := os.Stat(cand)
+		if serr != nil || !st.IsDir() {
+			inv.setErr("usage", "cwd_absent", "--cwd 不是目录")
+			fmt.Fprintf(stderr, "%s: `--cwd` 指的不是目录：%s ⇒ 退码 2\n", progName, raw)
+			return exitUsage
+		}
+		if real, eerr := filepath.EvalSymlinks(cand); eerr == nil && !pathWithinDir(root, real) {
+			inv.setErr("usage", "cwd_outside_repo", "--cwd 经符号链接出仓")
+			fmt.Fprintf(stderr, "%s: `--cwd` 经符号链接指向仓外（%s）⇒ 退码 2\n", progName, real)
+			return exitUsage
+		}
+		workDir = cand
+	}
+	timeoutS := fsRunDefaultTimeoutS
+	if inv.hasFlag("--timeout") {
+		d, werr := parseWallclock(inv.flagVal("--timeout"))
+		if werr != nil {
+			inv.setErr("usage", "bad_wallclock", "--timeout 时长读不出来")
+			fmt.Fprintf(stderr, "%s: %v ⇒ 退码 2\n", progName, werr)
+			return exitUsage
+		}
+		timeoutS = int(d / time.Second)
+		if timeoutS < 1 {
+			timeoutS = 1
+		}
+	}
+	relCWD, _ := filepath.Rel(root, workDir)
+
+	planOut := stdout
+	if inv.jsonGiven {
+		planOut = stderr
+	}
+	if inv.dryRun {
+		inv.changed = boolPtr(false) // 干跑零副作用
+		fsRunPrintPlan(planOut, stderr, argv, relCWD, timeoutS, true)
+		if inv.jsonGiven {
+			if rc := requireFields(inv, stderr); rc != exitOK {
+				return rc
+			}
+			row := map[string]string{
+				"cmd": fsRunPlanLine(argv), "cwd": filepath.ToSlash(relCWD),
+				"timeout_s": strconv.Itoa(timeoutS), "rc": "", "bytes": "0",
+				"truncated": "false", "output": "",
+			}
+			return selectJSONList(stdout, stderr, inv, inv.path, inv.fields, []map[string]string{row})
+		}
+		return exitOK
+	}
+	if !inv.yes {
+		inv.changed = boolPtr(false) // 未执行 ⇒ 零变化
+		fsRunPrintPlan(planOut, stderr, argv, relCWD, timeoutS, false)
+		if inv.jsonGiven {
+			if rc := requireFields(inv, stderr); rc != exitOK {
+				return rc
+			}
+			row := map[string]string{
+				"cmd": fsRunPlanLine(argv), "cwd": filepath.ToSlash(relCWD),
+				"timeout_s": strconv.Itoa(timeoutS), "rc": "", "bytes": "0",
+				"truncated": "false", "output": "",
+			}
+			if rc := selectJSONList(stdout, stderr, inv, inv.path, inv.fields, []map[string]string{row}); rc != exitOK {
+				return rc
+			}
+		}
+		inv.setErr("usage", "yes_required", "D3 档缺 --yes ⇒ 不执行")
+		guardMarkDecision(inv, guardDecisionApproval)
+		fmt.Fprintf(stderr, "%s: `fs run` 是 D3 档（最高）—— **缺 --yes ⇒ 不执行**（fail-closed · 从不提问）\n", progName)
+		fmt.Fprintf(stderr, "先看计划件：%s fs run %s --dry-run\n", progName, fsRunPlanLine(argv))
+		return exitUsage
+	}
+
+	bin, berr := fsRunBinary(head)
+	if berr != nil {
+		inv.setErr("blocked", "binary_unresolved", "执行体解析不到")
+		fmt.Fprintf(stderr, "%s: 执行体解析不到（%s）：%v ⇒ 不给结论（退码 8）\n", progName, head, berr)
+		return exitBlocked
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutS)*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, argv[1:]...)
+	cmd.Dir = workDir
+	var buf bytes.Buffer
+	cmd.Stdout = &buf
+	cmd.Stderr = &buf // 两条流合一份：命令行跑出来的「读数」不分家
+	runErr := cmd.Run()
+	outBytes := buf.Bytes()
+	full := len(outBytes)
+	cut := false
+	if full > fsRunOutputCap {
+		outBytes = outBytes[:fsRunOutputCap]
+		for len(outBytes) > 0 && !utf8.Valid(outBytes) {
+			outBytes = outBytes[:len(outBytes)-1] // 截断落在多字节字符中间 ⇒ 退到合法边界
+		}
+		cut = true
+	}
+	childRC := 0
+	switch {
+	case ctx.Err() == context.DeadlineExceeded:
+		childRC = exitTimeout
+		inv.setErr("timeout", "run_timeout", "命令超时")
+		fmt.Fprintf(stderr, "%s: 命令超时（>%ds）⇒ **已中止**（退码 %d = 等不起，不是「等到了坏结果」）\n",
+			progName, timeoutS, exitTimeout)
+	case runErr != nil:
+		if ee, ok := runErr.(*exec.ExitError); ok {
+			childRC = ee.ExitCode()
+			if childRC < 0 {
+				childRC = exitFail
+			}
+		} else {
+			inv.setErr("blocked", "exec_failed", "子进程起不来")
+			fmt.Fprintf(stderr, "%s: 子进程起不来（%s）：%v ⇒ 不给结论（退码 8）\n", progName, bin, runErr)
+			return exitBlocked
+		}
+	}
+	if cut {
+		inv.markTruncated()
+		inv.warnf("输出已截断：只显示前 %d 字节（共 %d 字节）", fsRunOutputCap, full)
+		fmt.Fprintf(stderr, "【截断】输出共 %d 字节，本页只显示前 %d 字节（`--json output` 同此截断 · 数字不省略）\n",
+			full, fsRunOutputCap)
+	}
+	// 原样输出：人面走 stdout；`--json` 档**改投 stderr**（stdout 只留六键包封 —— 混进子进程原文
+	// 会让消费侧解析不到包封，与 `script inventory sync` 的「机器面分家」同一条口径）。
+	rawOut := stdout
+	if inv.jsonGiven {
+		rawOut = stderr
+	}
+	if len(outBytes) > 0 {
+		_, _ = rawOut.Write(outBytes)
+		if outBytes[len(outBytes)-1] != '\n' {
+			fmt.Fprintln(rawOut)
+		}
+	}
+	if inv.jsonGiven {
+		row := map[string]string{
+			"cmd": fsRunPlanLine(argv), "cwd": filepath.ToSlash(relCWD),
+			"timeout_s": strconv.Itoa(timeoutS), "rc": strconv.Itoa(childRC),
+			"bytes": strconv.Itoa(full), "truncated": map[bool]string{true: "true", false: "false"}[cut],
+			"output": string(outBytes),
+		}
+		if rc := selectJSONList(stdout, stderr, inv, inv.path, inv.fields, []map[string]string{row}); rc != exitOK {
+			return rc
+		}
+	}
+	return childRC
+}
+
+// fsRunPrintPlan —— `fs run` 的计划件（干跑与「缺 --yes」两档打印同一份 · 零副作用）。
+func fsRunPrintPlan(out, stderr io.Writer, argv []string, relCWD string, timeoutS int, dryRun bool) {
+	head := "--yes 前的一次预览"
+	if dryRun {
+		head = "--dry-run"
+	}
+	fmt.Fprintln(out, "计划件（"+head+" · 零副作用 —— 未起任何子进程）")
+	fmt.Fprintf(out, "  命令     : %s\n", fsRunPlanLine(argv))
+	fmt.Fprintf(out, "  工作目录 : %s\n", filepath.ToSlash(relCWD))
+	fmt.Fprintf(out, "  超时     : %ds\n", timeoutS)
+	fmt.Fprintf(out, "  执行形态 : argv 直投（**不经 shell** —— `|` `>` `;` `$()` 一律是字面实参）\n")
+	fmt.Fprintf(out, "  白名单   : 首词 ∈ %s · 子命令闭集见 `zerg help fs`\n", strings.Join(fsRunHeadAllow, "/"))
+	fmt.Fprintln(stderr, "（"+head+"：只出计划件 · 零副作用）")
+}
+
+// fsRunClosureLine —— 拒执时**逐条**回显闭集（可照抄的下一步，而不是只说「不行」）。
+func fsRunClosureLine() string {
+	// 稳定序：按白名单次序出（✗ 不用 map 序 —— 两次跑输出会长歪）。
+	out := make([]string, 0, len(fsRunHeadAllow))
+	for _, h := range fsRunHeadAllow {
+		if allow, ok := fsRunSubAllow[h]; ok {
+			out = append(out, h+" ⇒ "+strings.Join(allow, "|"))
+		}
+	}
+	return strings.Join(out, " · ")
+}

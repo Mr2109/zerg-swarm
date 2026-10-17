@@ -1351,6 +1351,13 @@
    "语义": "dryrun.v1",
    "零副作用判据": "`zerg chat rm <id> --dry-run` ⇒ 退码 0 · 计划件走 **stdout**（不带 `--json` 那一档；给了 `--json` ⇒ 计划件走 stderr、stdout 只留六键包封）（动作 / 危险档 / 目标 / 请求 / 它会动 / 执行要 / 来源 逐格）＋ stderr 一行同义判词 · **零 HTTP**（✗ 不碰主控、✗ 不删会话、✗ 不改任何状态；实测两次读数逐字同）；**`J-5` 已实现（2026-10-17）**：`--dry-run --json` 档 ⇒ 六键包封走 stdout、人面计划件走 stderr（干跑支 `planOut := stdout; if inv.jsonGiven { planOut = stderr }` · 与真写档同走 `selectJSON` 一处出口）；`--dry-run` 与 `--yes` 同给 ⇒ 用法错（共享判定 `guard.go` 的 `dryRunYesConflict` · ✗ 不执行）",
    "备注": "登记依据 = 门⑩ `R1 未登记件`（门78 面① 现读点名「`core/cmd/zerg/family_chat.go` 含 dry-run 语义但未登记」⇒ 缺）：本件现读**真读** `inv.dryRun` 并据此分行（`cmdChatRm`）。同族先例 = `family_egg.go` / `family_core_db.go`（命令面三态 · 真读 `inv.dryRun` ⇒ 按真站点登记）。★ ✗ 不造 `dryrun.v2`（并入既有 `id=dryrun.v1`）。★ 2026-10-17（T4 · 门面随动 · DEV-3019）。"
+  },
+  {
+   "file": "core/cmd/zerg/family_fs_tools.go",
+   "类": "命令面写面 ＋ 命令跑面：`--dry-run` 出计划件（`fs write` = D2 · `fs run` = D3）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "`fs write --dry-run`：只打计划件（落点 / 既有件 / 模式 / 本次与写后字节数 / 写前后 sha / 审计落点），**不写件、不落审计、不建父目录** ⇒ 目标件 sha256 与 `<状态目录>/edit_audit.jsonl` 行数两处都不变（现跑：探针件不存在时 dry-run 后盘上仍无该件、审计行数不变）；`fs run --dry-run`：只打计划件（argv / 工作目录 / 超时 / 白名单），**一个子进程都不起**（现跑：rc=0 且 stdout 只有计划面）",
+   "备注": "缺口 `GAP-20261017-10`（P0 · 提案 DEV-3024 · 提案 DEV-3025 登记）：照 `script inventory sync` 那一套三态（`--dry-run` 零副作用 · 缺 `--yes` ⇒ 2 · 写面先落审计 `edit_audit.jsonl`）"
   }
  ]
 

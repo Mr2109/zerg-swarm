@@ -468,6 +468,17 @@ func run(args []string, stdout, stderr io.Writer) int {
 			inv.unknown = append(inv.unknown, f)
 		}
 	}
+	// ★ 本单（缺口 `GAP-20261017-10` · `fs` 族三条正门）：五枚旗标在解析面刚上户口（三枚取值进
+	//   `valueFlagName` · 两枚布尔各一条专用 `case`）⇒ **全族共用**；若不在此收口，别族（usage
+	//   未列它们的命令）真给它们会从「未知旗标 2」退化成**静默吞**（硬约束⑤：既有命令的退码
+	//   与输出**一字不动**）。形状逐字照拄上面 `--roster` 那条：把不归本命令的那一枚**补回
+	//   `inv.unknown`** ⇒ 由下面**同一条**判词 + 同一个退码 2 收口（不另写判词 · 不另取码）。
+	//   `fs read` / `fs write` / `fs run` 三条的 usage 已按需列出它们 ⇒ 归它们。
+	for _, f := range []string{"--offset", "--content", "--content-stdin", "--append", "--cwd"} {
+		if inv.hasFlag(f) && !usageDeclaresFlag(cmd, f) {
+			inv.unknown = append(inv.unknown, f)
+		}
+	}
 	if len(inv.unknown) > 0 && !cmd.passthrough {
 		fmt.Fprintf(stderr, "%s: 未知旗标 %q\n", progName, inv.unknown[0])
 		fmt.Fprintf(stderr, "See '%s --help'。\n", progName)
@@ -3091,7 +3102,7 @@ func init() {
 		{
 			path:     []string{"chat", "abort"},
 			kind:     "ChatAbort",
-			summary:  "中断运行中的轮次（`POST /{id}/abort`；已流出内容由服务端落库附「（已中断）」· §7.4）",
+			summary:  "中断运行中的轮次（`POST /{id}/abort`；已流出内容由服务端落库附「已中断」· §7.4）",
 			usage:    "zerg chat abort <id> [--json <字段>]",
 			arity:    "any",
 			args:     []string{"会话 id（完整 id）"},
@@ -4333,6 +4344,49 @@ func init() {
 			fields:  []string{"path", "bytes", "kind"},
 			run:     cmdFSUnprotected,
 		},
+		// ---- GAP-20261017-10（P0 · 2026-10-17）：`fs` 族三条**正门** `read`/`write`/`run` -----------
+		// 动因（缺口正文逐字）：对话面要撤 `bash`/`read`/`write`/`edit`，而虫族 CLI **没有对应正门** ——
+		// `zerg run|exec|shell|sh` 四条全是未知命令（rc=2），`fs` 族只有 `unprotected` 一个动作
+		// （`fs read` / `fs write` 报「是族名/中间节点」）⇒ 先造三条正门，才撤得动对话面。
+		// ★ 判据/实现**全部**落在 `core/cmd/zerg/family_fs_tools.go`（✗ 一个字都不落 `family_fs.go` ——
+		//   那件是 `fs unprotected` 的判据核心，本笔不改它的语义）。本处只做命令树登记（八格 + 危险档）。
+		// ★ 三档：`fs read` **危险档 0**（只读）· `fs write` **D2**（照 `script inventory sync` 那一套）·
+		//   `fs run` **D3**（最高 · 首词硬白名单 fail-closed · argv 直投不经 shell）。
+		{
+			path:    []string{"fs", "read"},
+			kind:    "FsRead",
+			summary: "只读一件（仓根相对 · 人面出**带行号文本**）· `--json` 闭集五格（path/content/total_lines/offset/limit）· 零写盘 · 件不存在 ⇒ 2（不给结论 · ✗ 不冒充空件）",
+			usage:   "zerg fs read <件> [--offset N] [--limit N] [--json <字段>]",
+			arity:   "any",
+			args:    []string{"件（仓根相对路径；绝对路径只收**仓内**的 —— 出仓 ⇒ 2）", "窗口：`--offset N` 起始行（1 起 · 缺省 1）· `--limit N` 取几行（缺省 0 = 到件尾）"},
+			fields:  fsReadFields,
+			run:     cmdFSRead,
+		},
+		{
+			path:    []string{"fs", "write"},
+			kind:    "FsWrite",
+			summary: "写/追加本仓一件（**D2**：`--dry-run` 零副作用 · 缺 `--yes` ⇒ 2 · 写面先落审计 `edit_audit.jsonl`）· 禁绝对路径出仓 · 禁符号链接 · 父目录不存在 ⇒ 2（✗ 不自建）",
+			usage:   "zerg fs write <件> [--content <文本> | --content-stdin] [--append] [--by <谁>] [--json <字段>] [--dry-run | --yes]",
+			arity:   "any",
+			args:    []string{"件（仓根相对路径 · 父目录必须**已存在**）", "内容来源：`--content <文本>` 或 `--content-stdin`（**二选一**）"},
+			fields:  fsWriteFields,
+			danger:  &dangerSpec{dangerD2, "件路径（仓根相对）", "写/追加**本仓工作树内**的一件（同目录临时件 + rename 原子写 · 写后读回对拍 · 不等即按前态写回）；审计先落 `<状态目录>/edit_audit.jsonl`（事件 `fs_file_written`）—— 可逆：按该审计行的 `fs_before_sha256` 恢复（件原本不在 ⇒ 删件）", "缺口 `GAP-20261017-10`（P0）· 同族 D2 写面先例 `script inventory sync`（--dry-run 零副作用 · 缺 --yes fail-closed · 写面进审计）", false, dangerScopeRepo},
+			opened:  true,
+			run:     cmdFSWrite,
+		},
+		{
+			path:    []string{"fs", "run"},
+			kind:    "FsRun",
+			layer:   "host",
+			summary: "跑一条命令（**D3**：首词硬白名单 `zerg|go|git|make|npm|cargo` · 其余 **rc=2 拒执** · **argv 直投 ✗ 不经 shell** · `--cwd` 必须在仓内 · 超时缺省 120s · 输出超 64KB 截断并标截断）",
+			usage:   "zerg fs run <命令…> [--cwd <目录>] [--timeout <秒>] [--json <字段>] [--dry-run | --yes]",
+			arity:   "any",
+			args:    []string{"命令与实参（首词只许 zerg/go/git/make/npm/cargo；子命令另有闭集：go `build|test|vet|fmt` · git `status|log|diff|show|cat-file|ls-files`）", "子命令自己的旗标写在 `--` 之后（例：`zerg fs run git log -- --oneline -3 --yes`）—— CLI 解析器把 `-` 开头的词当本命令旗标，`--` 之后一律原样转给子命令"},
+			fields:  fsRunFields,
+			danger:  &dangerSpec{dangerD3, "整条 argv（命令串）", "以本仓为工作目录**真起子进程**（argv 直投 · 不起 shell · 输出合流回显）；子命令闭集当场拒掉 `go run` / `git push` / `git reset --hard` 一类 —— 本命令**自己不写仓件、不落审计**（写不写由被跑的那条命令自己的危险档负责）", "缺口 `GAP-20261017-10`（P0）· 危险档最高档（D3）· fail-closed 硬白名单", false, dangerScopeUnknown},
+			opened:  true,
+			run:     cmdFSRun,
+		},
 	}
 	// 群级只读（§十二 `P-066`）：这些命令「无目标 = 读全群」是**定义**，不是遗漏。
 	for _, c := range commands {
@@ -5117,6 +5171,17 @@ func parseInvocation(args []string) (*invocation, error) {
 		//   「形态」判红。必须在下面「未知旗标」兜底**之前**上户口，否则 `gate find --uncertain` 一律退 2。
 		case a == "--uncertain":
 			inv.kvSet(a, "true")
+		// ★ 本单（缺口 `GAP-20261017-10` · `fs` 族三条正门）：两枚**布尔**旗标 ——
+		//   `--content-stdin`（`fs write` 从 stdin 读内容 · 与 `--content` 二选一）与
+		//   `--append`（`fs write` 追加而非覆盖）。
+		//   与 `--uncertain`/`--dist` 同一种形态：写进 `inv.kv`（`kvSet`）⇒ dispatch 的数据驱动收口看得见
+		//   （usage 未列它的命令 ⇒ 真给即退 2「未知旗标」）。
+		//   ★ 两枚**各写一条** case（门73 取数面按 `case a == "--x"` 逐条现读 —— 写成两枚合并只读得到前者）。
+		//   ★ **✗ 不进 `valueFlagName`**：那张表是**取值**旗标名表，布尔名登进去会让门73 判据丙「形态」判红。
+		case a == "--content-stdin":
+			inv.kvSet(a, "true")
+		case a == "--append":
+			inv.kvSet(a, "true")
 		case strings.HasPrefix(a, "-") && a != "-":
 			// 未知旗标：**先记下**（透传型命令要把它逐字交给脚本）；非透传命令在 dispatch 里硬判。
 			inv.unknown = append(inv.unknown, a)
@@ -5274,6 +5339,16 @@ func valueFlagName(a string) string {
 	// ★ 本排是名字表「唯一真源」⇒ 不登记就一律退 2「未知旗标」= 新旗标等于不可用。
 	switch a {
 	case "--interval", "--silent-threshold", "--limit":
+		return a
+	}
+	// ★ 本单（缺口 `GAP-20261017-10` · `fs` 族三条正门）：三枚**取值**旗标 ——
+	//   `--offset N`（`fs read` 的起始行 · 1 起）/ `--content <文本>`（`fs write` 的内联内容）/
+	//   `--cwd <目录>`（`fs run` 的工作目录 · 必须在仓内）。
+	// ★ 本排是名字表「唯一真源」⇒ 不登记就一律退 2「未知旗标」= 新旗标等于不可用；
+	//   用法串与本表**必须同改**（门73 判据乙/丙）。`--limit`/`--timeout`/`--by`/`--json` 已在既有各排
+	//   （本排**不重开同名旗标** —— 一族共用一张名字表）。
+	switch a {
+	case "--offset", "--content", "--cwd":
 		return a
 	}
 	// 公开面 CI 归绿面旗标（`W-51` · 任务单序133 · 2026-09-24 波18）：`--run <记录件>`（check-run

@@ -461,7 +461,7 @@ func cmdChatNew(inv *invocation, stdout, stderr io.Writer) int {
 		return requireFields(inv, stderr) // K2 甲档：给了 --json 不给字段 ⇒ 取自退码表（usage 2）
 	}
 	body := map[string]any{"source": chatSourceCLI}
-	if v := strings.TrimSpace(inv.flagVal("--model")); v != "" {
+	if v := strings.TrimSpace(inv.modelWant); v != "" {
 		body["model"] = v
 	}
 	if v := strings.TrimSpace(inv.flagVal("--title")); v != "" {
@@ -1170,7 +1170,7 @@ func cmdChatRm(inv *invocation, stdout, stderr io.Writer) int {
 // chatCreateSession —— 建会话（`chat send --new` 用；`chat new` 走 `cmdChatNew` —— **同一处**请求体）。
 func chatCreateSession(inv *invocation, stderr io.Writer) (string, int) {
 	body := map[string]any{"source": chatSourceCLI}
-	if v := strings.TrimSpace(inv.flagVal("--model")); v != "" {
+	if v := strings.TrimSpace(inv.modelWant); v != "" {
 		body["model"] = v
 	}
 	b, _ := json.Marshal(body)
