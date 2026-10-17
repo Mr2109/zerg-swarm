@@ -68,6 +68,26 @@ type Spec struct {
 	EngineArgs        []string // 引擎参数（由适配器产出，已展开占位符）
 	EngineRoots       []string // 引擎自己的库/构建目录（主机侧）——只读挂进 /engine
 
+	// EggRoot 蛋**展开后**的宿主目录（空 = 不是从蛋孵化 ⇒ 挂载与 argv 逐字不变）。
+	//
+	// 非空时「引擎从哪来」整个换源：`<EggRoot>/engine` 只读落到 `/engine`（蛋内布局 =
+	// `engine/<目录基名>/…`，与 `cocoon pack --engine-dir` 的落点同源）⇒ 空间里的引擎是
+	// **蛋里那份**，不是宿主构建树那份。此时 `EngineRoots` 必须为空（Validate 拒「两套挂载源」）。
+	// 库目录（`<EggRoot>/libs`）与 rocBLAS 数据目录的绑定由映射侧（backend hatch_spec.go）
+	// 经 `ExtraROBinds` 给出 —— 那两个落点不在本函数里算，避免两处各有一套落点规则。
+	EggRoot string
+	// EggLoaderDir 蛋内 loader 所在目录（宿主侧；如 `<EggRoot>/engine/lib`）。
+	//
+	// 非空 ⇒ 该目录**只读**落到空间的 `/lib64` 与 `/lib`，替掉配方 ① 里那两条 usrmerge 符号链接。
+	// 为什么是这两处（不是 `/usr/lib`）：蛋内引擎的 `PT_INTERP` 写死 `/lib64/ld-linux-x86-64.so.2`
+	// —— 内核 exec 只按这个绝对路径找 loader，缺它连 127 都到不了。**不改二进制**（方案 A）就得让
+	// 这个落点由蛋提供；loader 默认搜索序里的 `/lib` 一并给上，`libc.so.6` 之类不必再靠
+	// `LD_LIBRARY_PATH` 兜底。
+	// 与之配套的另一半：蛋内引擎的 `DT_RUNPATH` 仍指宿主构建目录（`/home/<user>/…/bin`），空间里
+	// 不存在；glibc 的序是 DT_RPATH → **LD_LIBRARY_PATH** → DT_RUNPATH ⇒ 映射侧生成的
+	// `LD_LIBRARY_PATH`（含 `/engine/<目录基名>`）在 RUNPATH 之前生效，**不必改写 RUNPATH**。
+	EggLoaderDir string
+
 	// WeightPath 该卵权重所在的**宿主侧**路径（原来语义「文件或目录」，现在只剩出证/日志用途）。
 	//
 	// **不再参与挂载**（2026-09-15 收口，缺陷 12）：它曾经被整目录 `--ro-bind` 到 `/models`，而那种
@@ -140,6 +160,26 @@ func (s Spec) Validate() error {
 	if !strings.HasPrefix(s.EnginePathInSpace, "/") {
 		return fmt.Errorf("引擎路径必须是空间内的绝对路径（如 /engine/bin/llama-server），实得 %q", s.EnginePathInSpace)
 	}
+	// 蛋孵化（卵沙箱第 5 步）：两个字段**同进同出**，且与宿主挂载源互斥。
+	//
+	// 为什么成对：`EggRoot` 决定引擎/库从蛋来，`EggLoaderDir` 决定 `/lib64` `/lib` 由蛋提供；
+	// 只给前者 = 蛋里来的引擎在空间里找不到 loader（exec 直接 ENOENT）；只给后者 = loader 有了、
+	// 引擎还在宿主 ⇒ 半蛋半宿主，出事时说不清跑的是哪一份。
+	if (s.EggRoot == "") != (s.EggLoaderDir == "") {
+		return fmt.Errorf("蛋孵化声明不完整：egg_root=%q / egg_loader_dir=%q —— 两个要么都给（蛋内挂载 ＋ loader 落点），要么都不给（宿主挂载）",
+			s.EggRoot, s.EggLoaderDir)
+	}
+	if s.EggRoot != "" {
+		if !strings.HasPrefix(s.EggRoot, "/") {
+			return fmt.Errorf("蛋展开目录必须是宿主侧绝对路径，实得 %q", s.EggRoot)
+		}
+		if !strings.HasPrefix(s.EggLoaderDir, "/") {
+			return fmt.Errorf("蛋内 loader 目录必须是宿主侧绝对路径，实得 %q", s.EggLoaderDir)
+		}
+		if len(s.EngineRoots) > 0 {
+			return fmt.Errorf("蛋孵化声明同时给了 EngineRoots=%v —— 拒：两套引擎挂载源（宿主目录与蛋），不说谁盖谁", s.EngineRoots)
+		}
+	}
 	// 权重：**两个字段都空**才算「没声明权重」⇒ 拒孵（fail-closed 不放宽：一条声明路都不给就走人，
 	// 绝不孵一个空手进来的空间）。
 	//
@@ -202,6 +242,10 @@ func validateBinds(kind string, binds []string) error {
 // 与 backend/hatch_spec.go 的 `spaceWeightsDir` **同值**（跨包契约：两个包不互相依赖，故各留一份
 // 常量；改这里必须同步改那边，反之亦然）。
 const spaceModelsDir = "/models"
+
+// eggEngineSubdir 蛋展开目录下「引擎树」的约定子目录名（与 `cocoon pack --engine-dir` 的落点
+// `engine/<目录基名>/…` 同源；本包只认这一层，蛋内更深的结构由打包端决定）。
+const eggEngineSubdir = "engine"
 
 // spaceWeightLanding 声明文件在空间内的落点（`/models/<基名>`）。
 //
@@ -387,8 +431,18 @@ func BuildBwrapArgv(s Spec) ([]string, error) {
 		"--ro-bind", "/usr", "/usr",
 		"--symlink", "usr/bin", "/bin",
 		"--symlink", "usr/sbin", "/sbin",
-		"--symlink", "usr/lib", "/lib",
-		"--symlink", "usr/lib64", "/lib64",
+	}
+	// ①b `/lib` 与 `/lib64` 的落点
+	//
+	// **不是从蛋孵化**：沿用 usrmerge 符号链接（`/lib` `/lib64` 都指回宿主 `/usr`，逐字不变）。
+	// **从蛋孵化**：改成蛋内 loader 目录的只读绑定 —— `PT_INTERP` 的绝对落点由蛋提供，宿主 `/usr`
+	// 在空间里有没有都不影响 exec（这是「空根也能起」的那一半）。
+	if s.EggLoaderDir != "" {
+		argv = append(argv, "--ro-bind", s.EggLoaderDir, "/lib64", "--ro-bind", s.EggLoaderDir, "/lib")
+	} else {
+		argv = append(argv, "--symlink", "usr/lib", "/lib", "--symlink", "usr/lib64", "/lib64")
+	}
+	argv = append(argv,
 		// ② 基础伪文件系统
 		"--proc", "/proc",
 		"--dev", "/dev",
@@ -417,10 +471,18 @@ func BuildBwrapArgv(s Spec) ([]string, error) {
 		// `/models/<基名>` 绑定**之前** —— 真机上的失败（`Can't mkdir parents for …: Read-only file
 		// system`）来源正是「/models 先成了只读挂载」，而这一条保证 /models 是**空目录**、不是挂载。
 		"--dir", spaceModelsDir,
-	}
-	// ④ 引擎自己的库/构建目录（主机侧）→ /engine
-	for _, root := range s.EngineRoots {
-		argv = append(argv, "--ro-bind", root, "/engine")
+	)
+	// ④ 引擎的挂载源
+	//
+	// **从蛋孵化** ⇒ 整棵树来自蛋：`<EggRoot>/engine` → `/engine`（蛋内布局 `engine/<基名>/…`，
+	// 引擎可执行因此在 `/engine/<基名>/<可执行名>`）。宿主构建树**完全不进空间**。
+	// **不是从蛋孵化** ⇒ 沿用宿主目录（`EngineRoots`，逐字不变）。
+	if s.EggRoot != "" {
+		argv = append(argv, "--ro-bind", filepath.Join(s.EggRoot, eggEngineSubdir), "/engine")
+	} else {
+		for _, root := range s.EngineRoots {
+			argv = append(argv, "--ro-bind", root, "/engine")
+		}
 	}
 	// ⑤ 额外只读绑定（host:space）
 	for _, b := range s.ExtraROBinds {

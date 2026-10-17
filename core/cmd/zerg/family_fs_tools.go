@@ -10,6 +10,8 @@
 //	            `path`/`content`/`total_lines`/`offset`/`limit` · 件不存在 ⇒ rc=2（不给结论）· 危险档 0
 //	`fs write`  D2（照 `script inventory sync` 那一套：`--dry-run` 零副作用 · 缺 `--yes` ⇒ 2 ·
 //	            写面进审计 `edit_audit.jsonl`）· 禁绝对路径出仓 · 禁符号链接 · 父目录不存在 ⇒ 2（✗ 不自建）
+//	            · `--replace <补丁件>`（`GAP-20261018-09`）：**定点替换**，每格 `old` 恰好命中 1 次才改
+//	            （0 次 / 多次 ⇒ rc=2 具名）—— 走这条路**不必先把全文读进上下文**（拼全文改一行正是死锁点）
 //	`fs run`    D3（最高 · **fail-closed**）：首词硬白名单只许 `zerg`/`go`/`git`/`make`/`npm`/`cargo` 六枚
 //	            ⇒ 其余一律 rc=2 拒执 · ✗ **不经 shell 解释一个字**（argv 直投）· `--cwd` 必须在仓内 ·
 //	            超时缺省 **120s** · 输出超 **64KB** 截断并标截断
@@ -456,14 +458,22 @@ func fsWriteAppendAudit(path string, l fsWriteAuditLine) error {
 	return f.Sync()
 }
 
-// cmdFSWrite —— `zerg fs write <件> [--content <文本> | --content-stdin] [--append] [--by <谁>]
-// [--json <字段>] [--dry-run | --yes]`：**D2 写面**（照 `script inventory sync` 那一套）。
+// cmdFSWrite —— `zerg fs write <件> [--content <文本> | --content-stdin | --replace <补丁件>] [--append]
+// [--by <谁>] [--json <字段>] [--dry-run | --yes]`：**D2 写面**（照 `script inventory sync` 那一套）。
 //
 // 三段式（与 `script inventory sync` 逐条同形）：
 //
 //	`--dry-run`  ⇒ 只出计划件 · **零副作用**（不写件 / 不落审计）· 退 0
 //	缺 `--yes`   ⇒ 计划件 + **不执行** · 退 2（fail-closed · 从不提问）
 //	`--yes`      ⇒ 审计先落盘 → 同目录临时件 + rename 原子写 → 写后读回对拍 → 不等即逐字节写回
+//
+// 内容来源三选一（✗ 不许同给）：
+//
+//	`--content <文本>` / `--content-stdin` —— **整件写**（覆盖 / `--append` 追加）
+//	`--replace <补丁件>` —— **定点替换**（`GAP-20261018-09`）：补丁件 = `[{"old":…,"new":…}]`
+//	  （与 `dev edit --replace` **同一形态、同一把尺**：每格 `old` 必须恰好命中 1 次，
+//	  0 次 / 多次 ⇒ rc=2 具名拒）。★ 这条路**不必先把全文读进上下文** —— 死锁点就在这里：
+//	  整件覆盖要求「完整原文 + 只改一行」，而读面有两层截断（2000 行 / 8000 字符）。
 //
 // 三条硬禁（规格逐字 · 全在**唯一写盘点之前**判掉）：
 //
@@ -477,12 +487,36 @@ func cmdFSWrite(inv *invocation, stdout, stderr io.Writer) int {
 	if len(inv.args) != 1 {
 		inv.setErr("usage", "bad_arity", "`fs write` 只收一个件路径")
 		fmt.Fprintf(stderr, "%s: `fs write` 只收**一个**件路径（收到 %d 枚）⇒ 退码 2\n", progName, len(inv.args))
-		fmt.Fprintf(stderr, "用法：%s fs write <件> [--content <文本> | --content-stdin] [--append] [--by <谁>] [--allow-sibling-repo <名>] [--dry-run | --yes]\n", progName)
+		fmt.Fprintf(stderr, "用法：%s fs write <件> [--content <文本> | --content-stdin | --replace <补丁件>] [--append] [--by <谁>] [--allow-sibling-repo <名>] [--dry-run | --yes]\n", progName)
 		return exitUsage
 	}
 	contentGiven := inv.hasFlag("--content")
 	stdinGiven := inv.hasFlag("--content-stdin")
-	if contentGiven == stdinGiven {
+	replaceGiven := inv.hasFlag("--replace")
+	// ★ GAP-20261018-09（2026-10-18）：`--replace <补丁件>` = **第三种内容来源**（定点替换）。
+	//
+	// 病灶（对话里真撞 · 已亲核）：`fs write` 是**整件覆盖** ⇒ 改一行必须先拿到全文；而读面有两层截断
+	// （`fs read` 缺省 2000 行 ＋ 对话面 `zergCmdOutLimit` 8000 字符）⇒ 19265 字节的真件只能取到约 8KB，
+	// 模型判定对、`--dry-run` 也说可写，**却拼不出「完整原文 + 只改一行」** ⇒ 停手不写。
+	// 解法 = 照 `dev edit --replace` **同一把尺**（`applyReplacements` · 逐格 `old` 恰好命中 1 次）：
+	// 只把「要改的那一小段」喂进来，全文由**进程内**读盘 ⇒ 不必先把整件读进上下文。
+	//
+	// 互斥三态（全在**唯一写盘点之前**判掉）：`--replace` 与 `--content` / `--content-stdin` /
+	// `--append` 两两不许同给（同给即两种内容来源 ⇒ 退码 2 · 具名）。
+	if replaceGiven {
+		if contentGiven || stdinGiven {
+			inv.setErr("usage", "replace_conflict", "`--replace` 与整件写互斥")
+			fmt.Fprintf(stderr, "%s: ★ **拒执** —— `--replace <补丁件>`（定点替换）与整件写**互斥**：\n", progName)
+			fmt.Fprintf(stderr, "  收到 --replace（%v）＋ --content（%v）／--content-stdin（%v）⇒ 只许给**一种**内容来源（退码 2 · GAP-20261018-09）\n",
+				replaceGiven, contentGiven, stdinGiven)
+			return exitUsage
+		}
+		if inv.hasFlag("--append") {
+			inv.setErr("usage", "replace_conflict", "`--replace` 与 --append 互斥")
+			fmt.Fprintf(stderr, "%s: ★ **拒执** —— `--replace <补丁件>`（在**既有件**上定点替换）与 `--append`（追加）**互斥** ⇒ 退码 2（GAP-20261018-09）\n", progName)
+			return exitUsage
+		}
+	} else if contentGiven == stdinGiven {
 		inv.setErr("usage", "content_source", "内容来源要二选一（--content / --content-stdin）")
 		fmt.Fprintf(stderr, "%s: 内容来源**二选一**：`--content <文本>` 或 `--content-stdin`（收到 %d 个）⇒ 退码 2\n",
 			progName, boolCount(contentGiven, stdinGiven))
@@ -557,21 +591,54 @@ func cmdFSWrite(inv *invocation, stdout, stderr io.Writer) int {
 		}
 		before, existed = b, true
 	}
-	var payload []byte
-	if stdinGiven {
-		b, rerr := io.ReadAll(os.Stdin)
-		if rerr != nil {
-			inv.setErr("blocked", "stdin_unreadable", "stdin 读不动")
-			fmt.Fprintf(stderr, "%s: `--content-stdin` 读 stdin 失败（%v）⇒ 不给结论（退码 8）\n", progName, rerr)
-			return exitBlocked
+	// ★ GAP-20261018-09：`--replace` 走**定点替换**支 —— 内容由「盘上原文 ＋ 补丁件」在**进程内**算出
+	//   （✗ 不读 stdin · ✗ 不需要调用方先把全文读进上下文）。
+	var after []byte
+	replaceNote := ""
+	payloadN := 0
+	if replaceGiven {
+		if !existed {
+			inv.setErr("usage", "file_absent", "定点替换的靶件不存在")
+			fmt.Fprintf(stderr, "%s: `--replace` 的**靶件不存在**：%s ⇒ 退码 2（定点替换只在**既有件**上做 —— 新建走 `--content`/`--content-stdin`）\n",
+				progName, label)
+			return exitUsage
 		}
-		payload = b
+		replSpec := strings.TrimSpace(inv.flagVal("--replace"))
+		if replSpec == "" {
+			inv.setErr("usage", "replace_failed", "`--replace` 缺补丁件路径")
+			fmt.Fprintf(stderr, "%s: `--replace` 给了**空值** ⇒ 退码 2（要一枚补丁件路径：`[{\"old\":…,\"new\":…}]` · GAP-20261018-09）\n", progName)
+			return exitUsage
+		}
+		// 补丁件路径口径 = `dev edit --replace` 那一套（**仓内相对按仓根** · 绝对路径按原样）；
+		// 兄弟仓模式下按**兄弟仓根**解析（写哪棵树就在哪棵树里找补丁件）。
+		replPath := devPathResolveFrom(base, replSpec)
+		replaced, rerr := applyReplacements(before, replPath)
+		if rerr != nil {
+			inv.setErr("usage", "replace_failed", rerr.Error())
+			fmt.Fprintf(stderr, "%s: 定点替换**拒执**：%v\n", progName, rerr)
+			fmt.Fprintf(stderr, "（判据 = 每格 `old` 在目标件里**恰好命中 1 次**；0 次 / 多次都到此退码 2 · 一个字节都没写 · GAP-20261018-09）\n")
+			return exitUsage
+		}
+		after = replaced
+		replaceNote = replSpec
 	} else {
-		payload = []byte(inv.flagVal("--content"))
-	}
-	after := payload
-	if appendMode {
-		after = append(append([]byte{}, before...), payload...)
+		var payload []byte
+		if stdinGiven {
+			b, rerr := io.ReadAll(os.Stdin)
+			if rerr != nil {
+				inv.setErr("blocked", "stdin_unreadable", "stdin 读不动")
+				fmt.Fprintf(stderr, "%s: `--content-stdin` 读 stdin 失败（%v）⇒ 不给结论（退码 8）\n", progName, rerr)
+				return exitBlocked
+			}
+			payload = b
+		} else {
+			payload = []byte(inv.flagVal("--content"))
+		}
+		payloadN = len(payload)
+		after = payload
+		if appendMode {
+			after = append(append([]byte{}, before...), payload...)
+		}
 	}
 	beforeSHA := ""
 	if existed {
@@ -593,7 +660,7 @@ func cmdFSWrite(inv *invocation, stdout, stderr io.Writer) int {
 
 	if inv.dryRun {
 		inv.changed = boolPtr(false) // 干跑零副作用 ⇒ 幂等面说真话
-		fsWritePrintPlan(planOut, stderr, label, sibName, sibRoot, existed, appendMode, len(payload), len(after), beforeSHA, afterSHA, auditPath, true)
+		fsWritePrintPlan(planOut, stderr, label, sibName, sibRoot, existed, appendMode, payloadN, len(after), beforeSHA, afterSHA, auditPath, true, replaceNote)
 		if inv.jsonGiven {
 			if rc := requireFields(inv, stderr); rc != exitOK {
 				return rc
@@ -604,7 +671,7 @@ func cmdFSWrite(inv *invocation, stdout, stderr io.Writer) int {
 	}
 	if !inv.yes {
 		inv.changed = boolPtr(false) // 未执行 ⇒ 零变化
-		fsWritePrintPlan(planOut, stderr, label, sibName, sibRoot, existed, appendMode, len(payload), len(after), beforeSHA, afterSHA, auditPath, false)
+		fsWritePrintPlan(planOut, stderr, label, sibName, sibRoot, existed, appendMode, payloadN, len(after), beforeSHA, afterSHA, auditPath, false, replaceNote)
 		if inv.jsonGiven {
 			if rc := requireFields(inv, stderr); rc != exitOK {
 				return rc
@@ -664,8 +731,15 @@ func cmdFSWrite(inv *invocation, stdout, stderr io.Writer) int {
 		return exitFail
 	}
 	inv.changed = boolPtr(true)
+	modeSuffix := ""
+	switch {
+	case replaceGiven:
+		modeSuffix = "（定点替换）"
+	case appendMode:
+		modeSuffix = "（追加）"
+	}
 	fmt.Fprintf(stdout, "已写 %s · %d 字节 · sha %s → %s%s\n", label, len(after),
-		fsToolSHA16(beforeSHA), fsToolSHA16(afterSHA), map[bool]string{true: "（追加）", false: ""}[appendMode])
+		fsToolSHA16(beforeSHA), fsToolSHA16(afterSHA), modeSuffix)
 	// ★ GAP-20261018-07：写**兄弟仓**必须在 stderr 留一行痕（谁都能在管道输出里看见「这一笔出仓了」），
 	// 并与审计行的 `sibling_repo`/`sibling_root` 两格同源（人面与机器面不会各说一套）。
 	if sibName != "" {
@@ -693,7 +767,11 @@ func fsWriteRow(rel, result string, n int, beforeSHA, afterSHA string, appendMod
 }
 
 // fsWritePrintPlan —— 计划件（干跑与「缺 --yes」两档**打印同一份** · 零副作用）。
-func fsWritePrintPlan(out, stderr io.Writer, label, sibName, sibRoot string, existed, appendMode bool, payloadN, afterN int, beforeSHA, afterSHA, auditPath string, dryRun bool) {
+//
+// ★ GAP-20261018-09：`replaceNote` 非空 ⇒ 本次是**定点替换**（`--replace <补丁件>`）：
+// 计划件里明写补丁件与「每格 old 恰好命中 1 次」这把尺，并把「本次内容」那一行换掉
+// （替换模式没有「要写进去的新内容」，只有「在哪一版原文上改哪几处」）。
+func fsWritePrintPlan(out, stderr io.Writer, label, sibName, sibRoot string, existed, appendMode bool, payloadN, afterN int, beforeSHA, afterSHA, auditPath string, dryRun bool, replaceNote string) {
 	head := "--yes 前的一次预览"
 	if dryRun {
 		head = "--dry-run"
@@ -704,8 +782,13 @@ func fsWritePrintPlan(out, stderr io.Writer, label, sibName, sibRoot string, exi
 		fmt.Fprintf(out, "  兄弟仓   : %s（根 %s · 显式开闸 `--allow-sibling-repo` · 写面留痕进审计 `sibling_repo`/`sibling_root`）\n", sibName, sibRoot)
 	}
 	fmt.Fprintf(out, "  既有件   : %s\n", map[bool]string{true: "在（append 时以它为基础）", false: "不在（新建）"}[existed])
-	fmt.Fprintf(out, "  模式     : %s\n", map[bool]string{true: "追加（--append）", false: "整件覆盖"}[appendMode])
-	fmt.Fprintf(out, "  本次内容 : %d 字节\n", payloadN)
+	if replaceNote != "" {
+		fmt.Fprintf(out, "  模式     : 定点替换（`--replace`）—— 在**盘上原文**上逐格替换，✗ 不需要先把全文读进上下文\n")
+		fmt.Fprintf(out, "  补丁件   : %s（每格 `old` 必须在目标件里**恰好命中 1 次**；0 次 / 多次 ⇒ 退码 2）\n", replaceNote)
+	} else {
+		fmt.Fprintf(out, "  模式     : %s\n", map[bool]string{true: "追加（--append）", false: "整件覆盖"}[appendMode])
+		fmt.Fprintf(out, "  本次内容 : %d 字节\n", payloadN)
+	}
 	fmt.Fprintf(out, "  写后大小 : %d 字节\n", afterN)
 	if beforeSHA == "" {
 		fmt.Fprintf(out, "  写前 sha : （件不在）\n")

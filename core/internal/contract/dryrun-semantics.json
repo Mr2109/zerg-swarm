@@ -141,6 +141,13 @@
    "零副作用判据": "`ZERG_CHAT_CLEANUP_DRY_RUN=1` ⇒ 只统计并打日志，**不删任何会话**（目录树前后逐条同）",
    "备注": "环境变量形态（同 sampling 的形态）"
   },
+ {
+  "file": "core/internal/chat/chat_tool_zergcmd.go",
+  "类": "对话面 CLI 工具实现件（`zerg` 唯一工具：argv 直投 ＋ 输出按字符截断）：**字样引用**（全件唯一命中 = 截断提示里那句「改件不必读全文，用 `fs write --replace`」中的 `--dry-run` 字样；本件不解析任何旗标、没有干跑档）",
+  "语义": "dryrun.v1",
+  "零副作用判据": "本件不实现干跑语义：它只把模型给的一条 `zerg …` 命令**原样 argv 直投**（✗ 不经 shell · 禁元字符序列）并截断回执；自己不写件 / 不建目录 / 不删 / 不推 / 不改 git 状态 —— 写不写由被起的那条命令自己的危险档负责。",
+  "备注": "登记依据 = 门⑩ `R1 未登记件`（`GAP-20261018-09` 在截断提示里点名 `fs write --replace` 与「`--dry-run` 也说可写」这句病灶描述 ⇒ 带 `--dry-run` 字面进扫描面）；命中是**引文**，不是第五套语义。"
+ },
   {
    "file": "core/internal/obs/sampling/ledger.go",
    "类": "采样判词与执行分离",
@@ -1357,8 +1364,15 @@
    "类": "命令面写面 ＋ 命令跑面：`--dry-run` 出计划件（`fs write` = D2 · `fs run` = D3）",
    "语义": "dryrun.v1",
    "零副作用判据": "`fs write --dry-run`：只打计划件（落点 / 既有件 / 模式 / 本次与写后字节数 / 写前后 sha / 审计落点），**不写件、不落审计、不建父目录** ⇒ 目标件 sha256 与 `<状态目录>/edit_audit.jsonl` 行数两处都不变（现跑：探针件不存在时 dry-run 后盘上仍无该件、审计行数不变）；`fs run --dry-run`：只打计划件（argv / 工作目录 / 超时 / 白名单），**一个子进程都不起**（现跑：rc=0 且 stdout 只有计划面）",
-   "备注": "缺口 `GAP-20261017-10`（P0 · 提案 DEV-3024 · 提案 DEV-3025 登记）：照 `script inventory sync` 那一套三态（`--dry-run` 零副作用 · 缺 `--yes` ⇒ 2 · 写面先落审计 `edit_audit.jsonl`）"
+   "备注": "缺口 `GAP-20261017-10`（P0 · 提案 DEV-3024 · 提案 DEV-3025 登记）：照 `script inventory sync` 那一套三态（`--dry-run` 零副作用 · 缺 `--yes` ⇒ 2 · 写面先落审计 `edit_audit.jsonl`）。★ `GAP-20261018-09` 同批加 `--replace <补丁件>`（定点替换）：干跑同样零副作用（只打计划件 · 补丁件只读 · 靶件字节不变）"
   },
+ {
+  "file": "core/cmd/zerg/family_fs_tools_test.go",
+  "类": "测试件（`fs write --replace` 的**正控与成对负控** ＋ `fs read` 读量收口的窗口判据）：**字样引用**（`--dry-run` 只作被测 argv 的旗标名出现，本件自身没有干跑档）",
+  "语义": "dryrun.v1",
+  "零副作用判据": "测试件本身不驱动仓内写入：全部判据跑在 `t.TempDir()` 的**合成仓根 ＋ 合成状态目录**里（`ZERG_REPO` / `ZERG_STATE_DIR` 都指临时树 ⇒ 一个字节不落真仓）；干跑那一格断言的正是「件逐字节不变 ＋ 审计行数不变」；不删 / 不推 / 不改 git 状态。",
+  "备注": "登记依据 = 门⑩ `R1 未登记件`（本单 `GAP-20261018-09` 给 `fs write` 加 `--replace` 后，新测试件的 argv 里带 `--dry-run` 字样 ⇒ 进扫描面；它是**同一套语义的断言侧**，不另立语义 —— 同 `check_help_shape_test.go` / `kb_docs_sync_test.go` 先例）。"
+ },
   {
    "file": "core/cmd/zerg/family_skill.go",
    "类": "技能库写面（`skill new|edit|rm` 的 D2 三态）",

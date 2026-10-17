@@ -17,6 +17,7 @@ package agent
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"strconv"
 	"strings"
@@ -25,6 +26,26 @@ import (
 
 // summaryPrefix — 摘要区标记（history 开头——模型可参考早期上下文）
 const summaryPrefix = "【历史摘要】"
+
+// GAP-20261018-03（2026-10-18）：阈值扣掉**实际固定开销**（✗ 不硬编码 16K）
+//
+// 残留实测（上一笔 GAP-20261018-02 之后）：估算只数 history，**不含 system prompt 与工具定义**
+// （真机固定开销约 16K）⇒ 阈值按整个 ctx 算 ⇒ 触发偏晚（一条条 3K 回执先把 prompt 顶到 ctx 边上）。
+// 本笔把阈值改成「先扣固定开销，再乘比例」：
+//
+//	固定开销 = estimateTextTokens(sysPrompt) + estimateTextTokens(toolsJSON)
+//	有效预算 = ctx − 固定开销（非负；触底回落 compactFixedOverheadFloor 并记 warning）
+//	阈值     = 有效预算 × ratio
+//
+// 两个来源一律由**调用方**给：agent 层只能从 history 首条 system 拿 sysPrompt（工具定义在
+// loopState 里，Agent 拿不到 ⇒ 只扣 sysPrompt）；chat 层由 chat_handlers 传 sysPrompt + 工具定义 JSON。
+// 两个参数都为空 ⇒ 逐字回落旧口径（零回归）。
+const (
+	// compactFixedOverheadFloor — 有效预算下限（扣完固定开销若不足此值 ⇒ 回落到此值并记 warning）。
+	// 为什么是 2048：再小的话「压到只剩最近几轮」也压不回阈值以下（一轮工具回执就 1–2K），
+	// 那样判据会退化成「每轮都压、压了也没用」——留一个能装下最近一轮的底。
+	compactFixedOverheadFloor = 2048
+)
 
 // 压缩触发参数（GAP-20261018-02）
 const (
@@ -64,9 +85,63 @@ func compactTriggerRatio() float64 {
 	return defaultCompactTriggerRatio
 }
 
-// compactTokenThreshold — 本轮压缩的 token 触发线（= 预算 × 比例）。
+// compactTokenThreshold — 本轮压缩的 token 触发线（= 预算 × 比例；✗ 不扣固定开销的老口径）。
 func compactTokenThreshold() int {
 	return int(float64(compactCtxBudgetTokens()) * compactTriggerRatio())
+}
+
+// compactBudget — 一次预算计算的四个读数（观测面用——ctx / 固定开销 / 有效预算 / 是否触底）。
+type compactBudget struct {
+	Ctx     int  // 上下文预算（token）
+	Fixed   int  // 固定开销 = sysPrompt + 工具定义（token 估算）
+	Budget  int  // 有效预算 = ctx − Fixed（非负；触底回落到 compactFixedOverheadFloor）
+	Floored bool // 是否触底（Budget 被抬到下限）
+}
+
+// compactBudgetWithOverhead — **纯函数**：按固定开销扣减上下文预算。
+//
+//	Fixed  = estimateTextTokens(sysPrompt) + estimateTextTokens(toolsJSON)
+//	Budget = max(ctx − Fixed, compactFixedOverheadFloor)   ← ✗ 永不为负
+//
+// 纯函数（只依赖入参）⇒ 单测直接钉公式，不受环境与模型影响；warning 由调用方记（见下方包装）。
+func compactBudgetWithOverhead(ctx int, sysPrompt, toolsJSON string) compactBudget {
+	b := compactBudget{Ctx: ctx}
+	b.Fixed = estimateTextTokens(sysPrompt) + estimateTextTokens(toolsJSON)
+	b.Budget = ctx - b.Fixed
+	if b.Budget < compactFixedOverheadFloor {
+		b.Budget = compactFixedOverheadFloor
+		b.Floored = true
+	}
+	return b
+}
+
+// effectiveCompactBudget — **纯函数**：扣掉固定开销后的有效上下文预算（非负；触底回落下限）。
+//
+// 验收读法（ctx=32768 / ratio=0.5）：
+//
+//	固定开销 0      ⇒ 有效预算 32768 ⇒ 阈值 16384（与不扣开销的老口径逐字同值）
+//	固定开销 16000  ⇒ 有效预算 16768 ⇒ 阈值 8384
+//	固定开销 32000  ⇒ 有效预算 768 被抬到 2048（Floored=true，调用方记 warning）
+func effectiveCompactBudget(ctx int, sysPrompt string, toolsJSON string) int {
+	return compactBudgetWithOverhead(ctx, sysPrompt, toolsJSON).Budget
+}
+
+// compactTokenThresholdWithOverhead — 扣固定开销后的 token 触发线（= 有效预算 × 比例）。
+//
+// 兼容口径：两个参数**都为空** ⇒ 直接回落 compactTokenThreshold()，
+// 即「调用方没给固定开销」时与旧口径**逐字一致**（零回归）。
+// 触底（固定开销 ≥ ctx）⇒ 记一笔 warning：这时判据仍在工作（阈值 = 下限 × 比例），
+// ✗ 不会算出负数/零（那样会变成「每轮都压、压不动」的永真判据）。
+func compactTokenThresholdWithOverhead(sysPrompt, toolsJSON string) int {
+	if sysPrompt == "" && toolsJSON == "" {
+		return compactTokenThreshold()
+	}
+	b := compactBudgetWithOverhead(compactCtxBudgetTokens(), sysPrompt, toolsJSON)
+	if b.Floored {
+		log.Printf("⚠️ zerg agent ctx: fixed overhead %d ≥ ctx %d — effective compact budget floored to %d (compaction will be frequent)",
+			b.Fixed, b.Ctx, b.Budget)
+	}
+	return int(float64(b.Budget) * compactTriggerRatio())
 }
 
 // estimateTextTokens — 纯函数：按**内容字节数**估算 token（bytes/3）。
@@ -134,22 +209,67 @@ func countRounds(msgs []Message) int {
 	return rounds
 }
 
-// compactionTokens — 本次判据看的 token 量：history + 已累积摘要区。
+// compactSysPromptIndex — history 里那条「固定 system prompt」的下标（-1 = 没有）。
+//
+// 为什么要单独认它：这条是**不可压的固定开销**（系统提示压不掉，每轮都得发），
+// 本笔已从 ctx 里扣掉它 ⇒ 计数时必须把它排除，否则**两头都算**（预算扣一次、用量再算一次），
+// 阈值会偏早约 fixed/2，把「还没满就压」变成常态。
+//
+// 认法：第一条 role=system 且不是摘要区（摘要区是【历史摘要】开头——它属于 history 侧、要计数）。
+func (a *Agent) compactSysPromptIndex() int {
+	for i, m := range a.history {
+		if m.Role != "system" {
+			continue
+		}
+		if strings.HasPrefix(m.Content, summaryPrefix) {
+			continue // 摘要区不是固定开销（它随 history 一起被压/被算）
+		}
+		return i
+	}
+	return -1
+}
+
+// compactSysPrompt — 本 Agent 可见的 system prompt（拿不到 ⇒ 空串 ⇒ 阈值回落旧口径）。
+//
+// agent 层的唯一来源就是 history（Loop 的 systemPrompt() 每轮现算、不入 history；
+// 子代理把提示塞进 history[0]——见 subagent.go）。
+// ✗ 工具定义在 agent 这侧拿不到（在 loopState.tools 里）⇒ agent 层只扣 sysPrompt，chat 层两样都扣。
+func (a *Agent) compactSysPrompt() string {
+	if i := a.compactSysPromptIndex(); i >= 0 {
+		return a.history[i].Content
+	}
+	return ""
+}
+
+// compactionTokens — 本次判据看的 token 量：history + 已累积摘要区（跳过固定 system prompt）。
 //
 // 摘要区算进来：它每轮都会随 prompt 一起发出去（buildSummaryBlock），
 // 不计数会让「压了半天总量没降」这种情况在读数里看不见。
+// 固定 system prompt 排除在外：它是扣过一次的固定开销（见 compactSysPromptIndex），不参与「可压量」。
 func (a *Agent) compactionTokens() int {
-	n := estimateHistoryTokens(a.history)
+	skip := a.compactSysPromptIndex()
+	n := estimateHistoryTokens(a.history) // 无 system prompt ⇒ 整段照旧（与旧口径逐字一致）
+	if skip >= 0 {
+		n -= estimateMessageTokens(a.history[skip]) // 固定开销已从预算里扣过 ⇒ 用量侧不再算它
+	}
 	if a.rollingSummary.text != "" {
 		n += estimateTextTokens(summaryPrefix) + estimateTextTokens(a.rollingSummary.text)
 	}
 	return n
 }
 
+// compactThresholdTokens — 本 Agent 现用的 token 触发线（扣掉可见的固定开销）。
+//
+// 有 system prompt（子代理形态）⇒ 阈值 = (ctx − sysPrompt) × ratio；
+// 没有 ⇒ 与旧口径 compactTokenThreshold() 逐字一致。
+func (a *Agent) compactThresholdTokens() int {
+	return compactTokenThresholdWithOverhead(a.compactSysPrompt(), "")
+}
+
 // needCompress — 双条件判据（每压一轮前重判一次——压完 token 可能已回落）。
 //
 //	轮数 > ContextWindow          —— 旧条件（保留；几十条短消息堆满窗口是另一种形态）
-//	估算 token > 预算 × 阈值      —— 新条件（GAP-20261018-02：轮数没到窗口也可能是满的）
+//	估算 token > 有效预算 × 阈值  —— 新条件（GAP-20261018-02 起；GAP-20261018-03 起扣固定开销）
 //
 // 下限：至少留 1 轮（全压成摘要 = 对话没有最近上下文了，模型接不上话）。
 func (a *Agent) needCompress() bool {
@@ -160,7 +280,7 @@ func (a *Agent) needCompress() bool {
 	if a.cfg.ContextWindow > 0 && rounds > a.cfg.ContextWindow {
 		return true
 	}
-	return a.compactionTokens() > compactTokenThreshold()
+	return a.compactionTokens() > a.compactThresholdTokens()
 }
 
 // compressOldest — 滚动窗口压缩：满足双条件即压最早一轮，直到条件不再成立。
@@ -272,12 +392,15 @@ func (a *Agent) maybeCompact() {
 	start := time.Now()
 	if a.compressOldest() {
 		// 压缩了——日志（把两个判据的现读读数一起打出来：轮数与估算 token）
+		// GAP-20261018-03：只加不删——补「ctx / 固定开销 / 有效预算 / 阈值」四个数（阈值下降要有证据）
 		if a.logger != nil {
+			b := compactBudgetWithOverhead(compactCtxBudgetTokens(), a.compactSysPrompt(), "")
 			a.logger.LogEvent("context", "warn", "rolling_compress",
-				"", fmt.Sprintf("滚动压缩: 窗口=%d, 轮数=%d, 估算 token=%d/%d（阈值）, 已压=%d 轮, 耗时=%s",
+				"", fmt.Sprintf("滚动压缩: 窗口=%d, 轮数=%d, 估算 token=%d/%d（阈值）, 已压=%d 轮, 耗时=%s, ctx=%d, 固定开销=%d, 有效预算=%d, 阈值=%d（未扣开销=%d）",
 					a.cfg.ContextWindow, countRounds(a.history), a.compactionTokens(),
 					compactTokenThreshold(), a.rollingSummary.compacted,
-					time.Since(start).Round(time.Millisecond)),
+					time.Since(start).Round(time.Millisecond),
+					b.Ctx, b.Fixed, b.Budget, int(float64(b.Budget)*compactTriggerRatio()), compactTokenThreshold()),
 				nil, "", "", "")
 		}
 	}

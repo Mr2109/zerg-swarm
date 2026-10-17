@@ -158,12 +158,24 @@ func hatchSpecFor(entry *registry.ModelEntry, engineImpl string, port int, profi
 	spec.WeightPath = filepath.Dir(hostWeightFile)
 
 	// ③ 引擎：宿主路径 → 宿主目录（只读挂进 /engine）+ 空间内路径（/engine/<可执行名>）
-	hostEngine, err := engineHostPath(entry, engineImpl)
+	// ③ 引擎：**从蛋孵化**时挂载源整体换成蛋展开目录（`<egg_dir>/engine` → `/engine`）；
+	//    不是从蛋孵化时照旧取宿主目录（逐字不变 —— 蛋相关分支一行都不走）。
+	egg, err := eggWiringFor(eggID, entry, engineImpl)
 	if err != nil {
-		return spec, fmt.Errorf("卵 %s：%w", eggID, err)
+		return spec, err
 	}
-	spec.EngineRoots = []string{filepath.Dir(hostEngine)}
-	spec.EnginePathInSpace = spaceEngineDir + "/" + filepath.Base(hostEngine)
+	if egg != nil {
+		spec.EggRoot = egg.Root
+		spec.EggLoaderDir = egg.LoaderDir
+		spec.EnginePathInSpace = egg.EnginePath
+	} else {
+		hostEngine, herr := engineHostPath(entry, engineImpl)
+		if herr != nil {
+			return spec, fmt.Errorf("卵 %s：%w", eggID, herr)
+		}
+		spec.EngineRoots = []string{filepath.Dir(hostEngine)}
+		spec.EnginePathInSpace = spaceEngineDir + "/" + filepath.Base(hostEngine)
+	}
 
 	// ④ 参数：与裸 exec 路径**同一份构造**（buildEngineArgv），再把宿主侧输入改写成空间内路径
 	rewrites, roBinds, err := spaceInputMappings(eggID, entry, hostWeightFile)
@@ -175,11 +187,23 @@ func hatchSpecFor(entry *registry.ModelEntry, engineImpl string, port int, profi
 	// ④a 库目录（§6.7 第 3 类 / env_req.lib_paths）：每个宿主库目录**只读**落到
 	//     /libs/<目录名>（独立只读挂载点，缺陷 5），并把 **env 值**里出现的库宿主路径改写成
 	//     对应空间内路径。同名 / 不存在 / 非绝对一律拒孵（见 engineLibMappings）。
-	libRewrites, libROBinds, libSpaces, err := engineLibMappings(eggID, entry)
-	if err != nil {
-		return spec, err
+	// ④a 库目录：两条路**互斥** ——
+	//     蛋孵化：声明的每个库目录取**蛋内副本** `<egg_dir>/libs/<目录名>`，整棵 libs 一次落到
+	//     `/libs`（不 stat 宿主路径：蛋孵化时宿主上有没有那些目录不再是条件，蛋里有才是条件）；
+	//     宿主孵化：照旧（每目录一条 `/libs/<目录名>`，宿主上不存在即拒孵）。
+	var libRewrites []pathRewrite
+	var libSpaces []string
+	if egg != nil {
+		libRewrites, libSpaces = egg.LibRewrites, egg.LibSpaces
+		roBinds = append(roBinds, egg.Binds...)
+	} else {
+		var libROBinds []string
+		libRewrites, libROBinds, libSpaces, err = engineLibMappings(eggID, entry)
+		if err != nil {
+			return spec, err
+		}
+		roBinds = append(roBinds, libROBinds...)
 	}
-	roBinds = append(roBinds, libROBinds...)
 
 	// ④b KV 盘（§6.6「跨孵化保留」侧 / §9.7④）：宿主 KV 目录可写绑到 /kvdisk，并把引擎参数里
 	//     精确等于它的那个值改写成 /kvdisk。判据用**引擎真正会收到的参数**，不再按卵名算一遍
@@ -219,7 +243,22 @@ func hatchSpecFor(entry *registry.ModelEntry, engineImpl string, port int, profi
 	//     并据 lib_paths **生成**空间内 LD_LIBRARY_PATH（缺陷 6；卵自己显式写了就以它为准）；
 	//     声明了卡号才决定可见的渲染节点
 	cardIdx, cardKnown := declaredCardIndex(entry)
-	spec.Env = hatchEnv(entry, cardIdx, cardKnown, libRewrites, libSpaces)
+	var engineLibDirs []string
+	if egg != nil {
+		engineLibDirs = egg.EngineLibDirs
+	}
+	spec.Env = hatchEnv(entry, cardIdx, cardKnown, libRewrites, libSpaces, engineLibDirs)
+	// ⑤b rocBLAS 的 dlopen 数据目录（DT_NEEDED 里看不见的那 556 MB）：
+	//     蛋孵化且蛋里带了 rocblas/<版本>/library ⇒ 显式下发 ROCBLAS_TENSILE_LIBPATH
+	//     （卵自己声明了就以它为准 —— 声明面永远优先，不两头都写）。
+	if egg != nil && egg.RocblasLibPath != "" {
+		if spec.Env == nil {
+			spec.Env = map[string]string{}
+		}
+		if _, declared := spec.Env["ROCBLAS_TENSILE_LIBPATH"]; !declared {
+			spec.Env["ROCBLAS_TENSILE_LIBPATH"] = egg.RocblasLibPath
+		}
+	}
 	spec.Devices = hatchDevices(entry, cardIdx, cardKnown)
 
 	// ⑥ 一次性工作目录（每卵一份；不存在就建）——**空间内**路径 + 宿主目录可写绑过去。
@@ -386,6 +425,331 @@ func engineLibMappings(eggID string, entry *registry.ModelEntry) ([]pathRewrite,
 		rws = append(rws, pathRewrite{host: clean, raw: decl, space: space})
 	}
 	return rws, binds, spaces, nil
+}
+
+// ── 蛋孵化（卵沙箱第 5 步）：挂载源换成「蛋展开后的目录」 ──────────────────────
+//
+// 声明面（卵声明的 inline 扩展键；读法与 `vision` / `ssd` 同源 = `entry.Custom[...]`。
+// ★ 本单**不给 registry 加字段**：蛋的展开目录是**部署事实**、不是模型属性，放声明里即可）：
+//
+//	egg_dir          蛋**展开后**的宿主目录（空 = 不是从蛋孵化 ⇒ 本文件所有蛋分支都不走）
+//	egg_loader_dir   蛋内 loader 目录（可选；缺省 `<egg_dir>/engine/lib`）
+//	egg_rocblas_dir  蛋内 rocBLAS 数据目录的**父目录**（可选；缺省 `<egg_dir>/engine/rocblas`）
+//
+// 蛋内布局（**约定**，与 `cocoon pack --engine-dir` 的落点同源 —— 打包端把每个
+// `--engine-dir <目录>` 整棵树收进 `engine/<目录基名>/…`）：
+//
+//	<egg_dir>/engine/<目录基名>/<可执行件>            ← 引擎（基名原样保留）
+//	<egg_dir>/engine/lib/ld-linux-x86-64.so.2         ← loader（缺省 loader 目录）
+//	<egg_dir>/libs/<目录名>/…                          ← 声明库目录的蛋内副本
+//	<egg_dir>/engine/rocblas/<版本>/library/*.hsaco    ← rocBLAS 的 dlopen 数据（第三个 --engine-dir）
+//
+// 空间内落点（**与宿主上跑的时候逐字相同** —— 二进制里的绝对路径才继续成立）：
+//
+//	<egg_dir>/engine         → /engine        （hatch.BuildBwrapArgv ④）
+//	<egg_dir>/engine/lib     → /lib64 与 /lib  （hatch.BuildBwrapArgv ①b，PT_INTERP 的落点）
+//	<egg_dir>/libs           → /libs          （本文件产的 ExtraROBinds）
+//	<egg_dir>/engine/rocblas → /opt/rocm/lib/rocblas
+//	                           ＋ ROCBLAS_TENSILE_LIBPATH=/opt/rocm/lib/rocblas/<版本>/library
+//
+// ★ rocBLAS 那两条为什么都要（一手依据见 `~/.zerg/state/zerg-蛋内起沙箱接通-20261018.md`）：
+//
+//	① **固定落点**：目标机上 `librocblas.so.5.1` 的字节里就有默认绝对路径
+//	   `/rocblas/5.1.0/library`（`strings` 现读命中），而实测机上**没有任何**全局
+//	   `ROCBLAS_TENSILE_LIBPATH` 而引擎照常跑 ⇒ 它走的就是那条编译期绝对路径；
+//	② **环境变量**：AMD 官方 rocBLAS 安装指南（Linux_Install_Guide · Static library 节）逐字
+//	   「This runtime folder can be moved elsewhere, but the environment variable
+//	   `ROCBLAS_TENSILE_LIBPATH` must be set to the new location.」 ⇒ 目录一搬就必须给变量。
+//	两条同时给：变量优先（换版本/换落点都稳），绝对路径兜底（变量被别处抹掉也不炸）。
+//	★ 版本号**不写死**：蛋内 `<rocblas>/` 下必须**恰好一个**版本层，否则拒孵（见 eggRocblas）。
+type eggWiring struct {
+	Root           string        // 蛋展开目录（宿主）
+	LoaderDir      string        // 蛋内 loader 目录（宿主；落到空间 /lib64 与 /lib）
+	EnginePath     string        // 引擎在空间内的路径（/engine/<目录基名>/<可执行名>）
+	EngineLibDirs  []string      // 喂 LD_LIBRARY_PATH 的引擎侧目录（空间内；顺序即搜索顺序）
+	LibRewrites    []pathRewrite // 声明库目录的宿主 → 空间改写表（供 env 值改写）
+	LibSpaces      []string      // 声明库目录的空间落点（/libs/<目录名>）
+	Binds          []string      // 本层新增的只读绑定（`<host>:<space>`，进 ExtraROBinds）
+	RocblasLibPath string        // ROCBLAS_TENSILE_LIBPATH 的值（空间内 .hsaco 目录；无则空）
+}
+
+// 蛋孵化用到的声明键与约定落点。
+const (
+	eggKeyEggDir     = "egg_dir"
+	eggKeyLoaderDir  = "egg_loader_dir"
+	eggKeyRocblasDir = "egg_rocblas_dir"
+	// eggEngineSubdir / eggLibsSubdir —— 蛋展开目录下的两个约定子目录。
+	eggEngineSubdir = "engine"
+	eggLibsSubdir   = "libs"
+	// eggRocblasSpaceDir rocBLAS 数据目录在空间内的落点 = **宿主上的默认绝对路径**
+	// （它的由来见上面文件头 ①；版本层再往下拼）。
+	eggRocblasSpaceDir = "/opt/rocm/lib/rocblas"
+)
+
+// eggWiringFor 把「卵声明 ＋ 蛋展开目录」翻成孵化侧的蛋挂载事实（**fail-closed**）。
+//
+// 返回 (nil, nil) = 不是从蛋孵化（`egg_dir` 没声明）⇒ 调用方走原路，行为逐字不变。
+// 其余任何「声明了却对不上」的形态都返回错误并**具名点名**（缺哪个目录 / 哪个可执行件 /
+// 哪个版本层），绝不退回宿主挂载 —— 静默换源是这类改动最坏的失败形态。
+func eggWiringFor(eggID string, entry *registry.ModelEntry, engineImpl string) (*eggWiring, error) {
+	if entry == nil {
+		return nil, nil
+	}
+	root := strings.TrimSpace(eggCustomString(entry, eggKeyEggDir))
+	if root == "" {
+		return nil, nil
+	}
+	root = filepath.Clean(expandTilde(root))
+	if !filepath.IsAbs(root) {
+		return nil, fmt.Errorf("卵 %s：%s=%q 不是宿主侧绝对路径——拒孵（蛋展开目录必须能直接 stat）",
+			eggID, eggKeyEggDir, root)
+	}
+	if st, err := os.Stat(root); err != nil {
+		return nil, fmt.Errorf("卵 %s：蛋展开目录 %s 读不到（%v）——拒孵（声明了蛋却拿不到，不退回宿主挂载）",
+			eggID, root, err)
+	} else if !st.IsDir() {
+		return nil, fmt.Errorf("卵 %s：蛋展开目录 %s 不是目录——拒孵", eggID, root)
+	}
+	w := &eggWiring{Root: root}
+
+	// ① loader 目录（默认 <root>/engine/lib）：必须是目录，且**真的含 loader**
+	loader := strings.TrimSpace(eggCustomString(entry, eggKeyLoaderDir))
+	if loader == "" {
+		loader = filepath.Join(root, eggEngineSubdir, "lib")
+	} else {
+		loader = expandTilde(loader)
+		if !filepath.IsAbs(loader) {
+			loader = filepath.Join(root, loader)
+		}
+	}
+	loader = filepath.Clean(loader)
+	if st, err := os.Stat(loader); err != nil {
+		return nil, fmt.Errorf("卵 %s：蛋内 loader 目录 %s 读不到（%v）——拒孵（PT_INTERP 写死 /lib64/ld-linux-*.so.2，"+
+			"这个目录要落到 /lib64；没有它 exec 直接 ENOENT）", eggID, loader, err)
+	} else if !st.IsDir() {
+		return nil, fmt.Errorf("卵 %s：蛋内 loader 目录 %s 不是目录——拒孵", eggID, loader)
+	}
+	hasLoader, err := dirHasLoader(loader)
+	if err != nil {
+		return nil, fmt.Errorf("卵 %s：读不了蛋内 loader 目录 %s：%w", eggID, loader, err)
+	}
+	if !hasLoader {
+		return nil, fmt.Errorf("卵 %s：蛋内 loader 目录 %s 里没有 ld-linux*/ld-musl*——拒孵"+
+			"（PT_INTERP 的落点无处安放：这条绑定会把一个空目录挂到 /lib64）", eggID, loader)
+	}
+	w.LoaderDir = loader
+
+	// ② 引擎可执行：在蛋里按**基名**找，必须唯一
+	exeBase, err := eggExeBase(entry, engineImpl)
+	if err != nil {
+		return nil, fmt.Errorf("卵 %s：%w", eggID, err)
+	}
+	relExe, err := eggFindExecutable(root, exeBase)
+	if err != nil {
+		return nil, fmt.Errorf("卵 %s：%w", eggID, err)
+	}
+	w.EnginePath = "/" + filepath.ToSlash(relExe)
+	w.EngineLibDirs = append(w.EngineLibDirs, "/"+filepath.ToSlash(filepath.Dir(relExe)))
+	// loader 目录也是引擎侧的库目录（loader 之外还有 libc/libm/…）：空间路径由它在蛋内的相对位置算，
+	// 不在蛋内（配置把 loader 指到蛋外）时给不出空间路径 ⇒ 只靠 ①b 的 /lib64 /lib 覆盖，这里不编。
+	if rel, rerr := filepath.Rel(root, loader); rerr == nil && !strings.HasPrefix(rel, "..") {
+		if sp := "/" + filepath.ToSlash(rel); sp != w.EngineLibDirs[0] {
+			w.EngineLibDirs = append(w.EngineLibDirs, sp)
+		}
+	}
+
+	// ③ 库目录：整棵 <root>/libs → /libs；声明的每个目录名在蛋里必须真有
+	libsDir := filepath.Join(root, eggLibsSubdir)
+	libsOK := false
+	if st, serr := os.Stat(libsDir); serr == nil && st.IsDir() {
+		bind, berr := roBind(libsDir, spaceLibRoot)
+		if berr != nil {
+			return nil, fmt.Errorf("卵 %s：%w", eggID, berr)
+		}
+		w.Binds = append(w.Binds, bind)
+		libsOK = true
+	}
+	if entry.EnvReq != nil {
+		seen := map[string]string{}
+		for _, raw := range entry.EnvReq.LibPaths {
+			decl := strings.TrimSpace(raw)
+			if decl == "" {
+				return nil, fmt.Errorf("卵 %s：env_req.lib_paths 里有一项是空串——拒孵（库目录拿不到，不猜）", eggID)
+			}
+			host := filepath.Clean(expandTilde(decl))
+			name := filepath.Base(host)
+			if name == "" || name == "." || name == ".." || name == string(filepath.Separator) {
+				return nil, fmt.Errorf("卵 %s：库目录 %q 推不出目录名——拒孵（蛋内落点 %s/<目录名> 定不下来）",
+					eggID, decl, eggLibsSubdir)
+			}
+			if prev, dup := seen[name]; dup {
+				return nil, fmt.Errorf("卵 %s：库目录 %q 与 %q 的目录名都是 %q——拒孵：两个库目录同名会互相遮挡",
+					eggID, prev, decl, name)
+			}
+			seen[name] = decl
+			eggLib := filepath.Join(libsDir, name)
+			if st, serr := os.Stat(eggLib); serr != nil || !st.IsDir() {
+				return nil, fmt.Errorf("卵 %s：蛋里没有 %s/%s（声明的库目录 %q 的蛋内副本）——拒孵："+
+					"打包时要把该目录收进蛋（`libs/` 这一层由构建脚本给），否则空间里 /libs/%s 是空的",
+					eggID, eggLibsSubdir, name, decl, name)
+			}
+			space := spaceLibRoot + "/" + name
+			w.LibSpaces = append(w.LibSpaces, space)
+			w.LibRewrites = append(w.LibRewrites, pathRewrite{host: host, raw: decl, space: space})
+		}
+		if len(entry.EnvReq.LibPaths) > 0 && !libsOK {
+			return nil, fmt.Errorf("卵 %s：声明了 %d 个库目录，但蛋里没有 %s/ 这一层——拒孵"+
+				"（空间内 /libs 会是空的，引擎照旧 127）", eggID, len(entry.EnvReq.LibPaths), eggLibsSubdir)
+		}
+	}
+
+	// ④ rocBLAS 数据目录（可选；显式声明了就必须在）
+	rocRaw := strings.TrimSpace(eggCustomString(entry, eggKeyRocblasDir))
+	rocDeclared := rocRaw != ""
+	roc := rocRaw
+	if roc == "" {
+		roc = filepath.Join(root, eggEngineSubdir, "rocblas")
+	} else {
+		roc = expandTilde(roc)
+		if !filepath.IsAbs(roc) {
+			roc = filepath.Join(root, roc)
+		}
+	}
+	roc = filepath.Clean(roc)
+	if st, serr := os.Stat(roc); serr == nil && st.IsDir() {
+		libPath, verr := eggRocblasLibPath(eggID, roc)
+		if verr != nil {
+			return nil, verr
+		}
+		bind, berr := roBind(roc, eggRocblasSpaceDir)
+		if berr != nil {
+			return nil, fmt.Errorf("卵 %s：%w", eggID, berr)
+		}
+		w.Binds = append(w.Binds, bind)
+		w.RocblasLibPath = libPath
+	} else if rocDeclared {
+		return nil, fmt.Errorf("卵 %s：%s=%q 在蛋里读不到（%v）——拒孵（声明了 rocBLAS 数据目录就必须在蛋里）",
+			eggID, eggKeyRocblasDir, roc, serr)
+	}
+	return w, nil
+}
+
+// eggCustomString 读卵声明的 inline 扩展键（非字符串 / 不存在都当空 —— 与 `vision` 同读法）。
+func eggCustomString(entry *registry.ModelEntry, key string) string {
+	if entry == nil || entry.Custom == nil {
+		return ""
+	}
+	v, _ := entry.Custom[key].(string)
+	return v
+}
+
+// eggExeBase 引擎可执行件的**基名**（蛋内按基名找；不按宿主路径找 —— 蛋孵化时宿主上可能根本没有它）。
+//
+// 序与 engineHostPath 同源：cmd 首词 → engine_impl 末段 → 主线探测结果的基名。
+func eggExeBase(entry *registry.ModelEntry, engineImpl string) (string, error) {
+	if cmd := strings.TrimSpace(string(entry.Cmd)); cmd != "" {
+		fields := strings.Fields(cmd)
+		if len(fields) == 0 {
+			return "", fmt.Errorf("cmd: 声明为空——拒孵（引擎可执行件名拿不到，不猜）")
+		}
+		return filepath.Base(fields[0]), nil
+	}
+	if impl := strings.TrimSpace(engineImpl); impl != "" {
+		return filepath.Base(impl), nil
+	}
+	p := strings.TrimSpace(mainlineEngineProbe())
+	if p == "" {
+		return "", fmt.Errorf("引擎可执行件名拿不到（cmd / engine_impl 都空，主线探测也没结果）——拒孵")
+	}
+	return filepath.Base(p), nil
+}
+
+// eggFindExecutable 在蛋内按基名找引擎，返回**相对蛋根的路径**（`engine/<基名>/<件>`）。
+//
+// 只认两处：`engine/<件>` 与 `engine/<基名>/<件>`（打包端 `--engine-dir` 的两种形态）。
+// 命中 **必须恰好一处** —— 0 处（没打进蛋）与多处（两个 --engine-dir 都带同名件）都拒孵：
+// 挑一个就是在猜「跑的是哪一份引擎」。
+func eggFindExecutable(root, base string) (string, error) {
+	if base == "" || base == "." || base == ".." || base == string(filepath.Separator) {
+		return "", fmt.Errorf("引擎可执行件名 %q 不合法——拒孵", base)
+	}
+	engineRoot := filepath.Join(root, eggEngineSubdir)
+	ents, err := os.ReadDir(engineRoot)
+	if err != nil {
+		return "", fmt.Errorf("蛋里没有 %s/ 这一层（%v）——拒孵：`cocoon pack --engine-dir` 的落点就是它",
+			eggEngineSubdir, err)
+	}
+	var hits []string
+	add := func(p string) {
+		if st, serr := os.Stat(p); serr == nil && !st.IsDir() {
+			hits = append(hits, p)
+		}
+	}
+	add(filepath.Join(engineRoot, base))
+	for _, e := range ents {
+		if e.IsDir() {
+			add(filepath.Join(engineRoot, e.Name(), base))
+		}
+	}
+	switch len(hits) {
+	case 0:
+		return "", fmt.Errorf("蛋内找不到引擎可执行件 %q（找过 %s/ 与 %s/*/）——拒孵：打包时 `--engine-dir` 没把引擎目录收进来",
+			base, eggEngineSubdir, eggEngineSubdir)
+	case 1:
+		rel, rerr := filepath.Rel(root, hits[0])
+		if rerr != nil {
+			return "", rerr
+		}
+		return rel, nil
+	default:
+		return "", fmt.Errorf("蛋内有 %d 份同名引擎可执行件（%s）——拒孵：说不清该跑哪一份（两个 --engine-dir 撞了基名/件名）",
+			len(hits), strings.Join(hits, " · "))
+	}
+}
+
+// eggRocblasLibPath 蛋内 rocBLAS 数据目录 → 空间内 .hsaco 目录（`ROCBLAS_TENSILE_LIBPATH` 的值）。
+//
+// 形如 `<roc>/<版本>/library`；版本层**必须恰好一个**（不写死 5.1.0：换 ROCm 版本不该改代码，
+// 但两个版本并存时必须有人拍板用哪个 ⇒ 拒孵，不猜）。
+func eggRocblasLibPath(eggID, roc string) (string, error) {
+	ents, err := os.ReadDir(roc)
+	if err != nil {
+		return "", fmt.Errorf("卵 %s：读不了蛋内 rocBLAS 目录 %s：%w", eggID, roc, err)
+	}
+	var vers []string
+	for _, e := range ents {
+		if e.IsDir() {
+			vers = append(vers, e.Name())
+		}
+	}
+	if len(vers) != 1 {
+		return "", fmt.Errorf("卵 %s：蛋内 rocBLAS 目录 %s 下有 %d 个版本层（%v）——拒孵：要恰好一个"+
+			"（多个版本并存时说不清该用哪一份 kernel）", eggID, roc, len(vers), vers)
+	}
+	libDir := filepath.Join(roc, vers[0], "library")
+	if st, serr := os.Stat(libDir); serr != nil || !st.IsDir() {
+		return "", fmt.Errorf("卵 %s：蛋内 rocBLAS 版本层 %s 里没有 library/（%v）——拒孵："+
+			"ROCBLAS_TENSILE_LIBPATH 要指的就是这一层（里面是 .hsaco/.dat）", eggID, vers[0], serr)
+	}
+	return eggRocblasSpaceDir + "/" + vers[0] + "/library", nil
+}
+
+// dirHasLoader 该目录里有没有 loader 本体（`ld-linux*` 或 musl 档 `ld-musl*`）。
+func dirHasLoader(dir string) (bool, error) {
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return false, err
+	}
+	for _, e := range ents {
+		if e.IsDir() {
+			continue
+		}
+		n := e.Name()
+		if strings.HasPrefix(n, "ld-linux") || strings.HasPrefix(n, "ld-musl") {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // roBind 组装一条只读绑定（ExtraROBinds 的 `<host>:<space>` 形式）。
@@ -717,14 +1081,16 @@ func renderNode(idx int) string { return fmt.Sprintf("/dev/dri/renderD%d", rende
 //
 // 生成口径（三条，都有意为之）：
 //
-//	① **只在卵声明了 lib_paths 时生成**（没声明就一个变量都不发明 —— 不猜）；
+//	① **只在「有可垫的库落点」时生成**：宿主孵化 = 声明了 lib_paths 才有（没声明就一个变量都不发明 ——
+//	   不猜）；蛋孵化 = 蛋里的引擎侧目录（`/engine/<目录基名>` 与 `/engine/lib`）本身就是必垫项
+//	   ⇒ 即使没声明 lib_paths 也生成（否则蛋里的 RUNPATH 是死的，见 ②）；
 //	② **卵自己显式写了 LD_LIBRARY_PATH 就以它为准**（连空串「清空」语义也照旧），生成逻辑
 //	   完全不插手 ⇒ 不会出现「声明与生成两头都写」的形态（谁赢说不清的那种）；
 //	③ 生成值 = **声明的库落点在前、`/engine` 在最后**：
 //	   - 声明的在前 ⇒ 卵点名的库版本优先命中（lib_paths 存在的理由就是「库版本按卵给，不许全机一套」）；
 //	   - `/engine` 垫尾 ⇒ 引擎自己目录里的 impl/依赖库（宿主上正是 RUNPATH 指的那个目录）仍然找得到，
 //	     新引擎不必再手工声明一次（这正是缺陷 6 的诉求：RUNPATH 写死宿主路径，空间内得有人补上）。
-func hatchEnv(entry *registry.ModelEntry, cardIdx int, cardKnown bool, libRWs []pathRewrite, libSpaces []string) map[string]string {
+func hatchEnv(entry *registry.ModelEntry, cardIdx int, cardKnown bool, libRWs []pathRewrite, libSpaces []string, engineTail []string) map[string]string {
 	var env map[string]string
 	if entry != nil && entry.EnvReq != nil && len(entry.EnvReq.Env) > 0 {
 		env = make(map[string]string, len(entry.EnvReq.Env)+2)
@@ -737,13 +1103,23 @@ func hatchEnv(entry *registry.ModelEntry, cardIdx int, cardKnown bool, libRWs []
 	if entry != nil && entry.EnvReq != nil {
 		_, declaredLibPath = entry.EnvReq.Env["LD_LIBRARY_PATH"]
 	}
-	if len(libSpaces) > 0 && !declaredLibPath {
+	// ★ 蛋孵化时 `engineTail` 非空 ⇒ **即使一个库目录都没声明也要生成**：蛋里的引擎在
+	//   `/engine/<目录基名>`（不在 `/engine` 根上），没有这条变量它的 RUNPATH（写死宿主构建目录）
+	//   在空间里是死的 ⇒ 127。宿主孵化时 `engineTail` 恒空 ⇒ 本条件与旧行为逐字相同。
+	if (len(libSpaces) > 0 || len(engineTail) > 0) && !declaredLibPath {
 		if env == nil {
 			env = map[string]string{}
 		}
-		search := make([]string, 0, len(libSpaces)+1)
+		// ③ 生成值 = 声明的库落点在前、引擎侧目录垫尾。缺省垫 `/engine`；蛋孵化时由映射侧给
+		//    `/engine/<目录基名>`（与 `/engine/lib`）—— 蛋里的引擎不在 `/engine` 根上，垫错位置
+		//    就是「RUNPATH 指向宿主、LD_LIBRARY_PATH 又指错」⇒ 127。
+		tail := engineTail
+		if len(tail) == 0 {
+			tail = []string{spaceEngineDir}
+		}
+		search := make([]string, 0, len(libSpaces)+len(tail))
 		search = append(search, libSpaces...)
-		search = append(search, spaceEngineDir)
+		search = append(search, tail...)
 		env["LD_LIBRARY_PATH"] = strings.Join(search, ":")
 	}
 	if !cardKnown {

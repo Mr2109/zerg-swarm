@@ -2334,7 +2334,7 @@ func init() {
 		{
 			path:        []string{"cocoon", "pack"},
 			summary:     "把一棵源目录打成单文件卵包（`*.egg` · 底层 = `zerg_egg.go` 真搬体 · 命令面只转发不翻译）",
-			usage:       "zerg cocoon pack <源目录> <输出.egg> [--align <n>] [--chunk-size <n>] [--self-test]",
+			usage:       "zerg cocoon pack <源目录> <输出.egg> [--align <n>] [--chunk-size <n>] [--engine-dir <目录>] [--self-test]",
 			arity:       "any",
 			args:        []string{"源目录", "输出 .egg 件（旗标逐字来自 scripts/x" + "3/zerg-egg.py 的真搬体 · 原样透传）"},
 			endpoint:    "",
@@ -4452,10 +4452,10 @@ func init() {
 		{
 			path:    []string{"fs", "write"},
 			kind:    "FsWrite",
-			summary: "写/追加本仓一件（**D2**：`--dry-run` 零副作用 · 缺 `--yes` ⇒ 2 · 写面先落审计 `edit_audit.jsonl`）· 禁绝对路径出仓 · 禁符号链接 · 父目录不存在 ⇒ 2（✗ 不自建）· `--allow-sibling-repo <名>` 显式开闸写兄弟仓（闭集只认 Zerg-内部文档 · 审计行带 `sibling_repo`/`sibling_root` · 缺省仍 fail-closed）",
-			usage:   "zerg fs write <件> [--content <文本> | --content-stdin] [--append] [--by <谁>] [--allow-sibling-repo <名>] [--json <字段>] [--dry-run | --yes]",
+			summary: "写/追加本仓一件（**D2**：`--dry-run` 零副作用 · 缺 `--yes` ⇒ 2 · 写面先落审计 `edit_audit.jsonl`）· 禁绝对路径出仓 · 禁符号链接 · 父目录不存在 ⇒ 2（✗ 不自建）· `--replace <补丁件>` 定点替换（每格 `old` 恰好命中 1 次才改 · **不必先读全文**）· `--allow-sibling-repo <名>` 显式开闸写兄弟仓（闭集只认 Zerg-内部文档 · 审计行带 `sibling_repo`/`sibling_root` · 缺省仍 fail-closed）",
+			usage:   "zerg fs write <件> [--content <文本> | --content-stdin | --replace <补丁件>] [--append] [--by <谁>] [--allow-sibling-repo <名>] [--json <字段>] [--dry-run | --yes]",
 			arity:   "any",
-			args:    []string{"件（仓根相对路径 · 父目录必须**已存在**；给 `--allow-sibling-repo <名>` 时改按**兄弟仓根**解析 · 闭集只认 `Zerg-内部文档`）", "内容来源：`--content <文本>` 或 `--content-stdin`（**二选一**）"},
+			args:    []string{"件（仓根相对路径 · 父目录必须**已存在**；给 `--allow-sibling-repo <名>` 时改按**兄弟仓根**解析 · 闭集只认 `Zerg-内部文档`）", "内容来源：`--content <文本>` / `--content-stdin` / `--replace <补丁件>`（**三选一**；补丁件 = `[{\"old\":…,\"new\":…}]` · 每格 `old` 恰好命中 1 次 · 与 `dev edit --replace` 同形 · 走它**不必先读全文**）"},
 			fields:  fsWriteFields,
 			danger:  &dangerSpec{dangerD2, "件路径（仓根相对）", "写/追加**本仓工作树内**的一件（同目录临时件 + rename 原子写 · 写后读回对拍 · 不等即按前态写回）；审计先落 `<状态目录>/edit_audit.jsonl`（事件 `fs_file_written`）—— 可逆：按该审计行的 `fs_before_sha256` 恢复（件原本不在 ⇒ 删件）", "缺口 `GAP-20261017-10`（P0）· 同族 D2 写面先例 `script inventory sync`（--dry-run 零副作用 · 缺 --yes fail-closed · 写面进审计）", false, dangerScopeRepo},
 			opened:  true,

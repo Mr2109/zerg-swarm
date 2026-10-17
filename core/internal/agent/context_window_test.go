@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"fmt"
+	"log"
 	"strings"
 	"testing"
 )
@@ -223,4 +225,133 @@ func TestCompressByRoundsStillWorks(t *testing.T) {
 		t.Errorf("压缩后轮数应 ≤ 窗口 5，实得 %d", got)
 	}
 	t.Logf("✓ 轮数条件仍在：30 轮 ⇒ 压到 %d 轮", countRounds(a.history))
+}
+
+// ── GAP-20261018-03：阈值扣掉实际固定开销（✗ 不硬编码 16K）────────────────────
+
+// overheadText — 造一个恰好 tokens 个 token 的 ASCII 串（estimateTextTokens=(len+2)/3）。
+func overheadText(tokens int) string {
+	if tokens <= 0 {
+		return ""
+	}
+	return strings.Repeat("x", tokens*3-2) // (3t−2+2)/3 = t
+}
+
+// TestEffectiveCompactBudget_Dynamic — 验收①：动态扣减（两组数字）。
+//
+//	固定开销 0      ⇒ 有效预算 32768，阈值 16384（= ctx×ratio，与老口径逐字同值）
+//	固定开销 16000  ⇒ 有效预算 16768，阈值 8384
+func TestEffectiveCompactBudget_Dynamic(t *testing.T) {
+	t.Setenv("ZERG_AGENT_CTX_TOKENS", "32768")
+	t.Setenv("ZERG_AGENT_COMPACT_RATIO", "0.5")
+
+	// ① 固定开销 0（不传）⇒ 与老口径逐字一致
+	if got := effectiveCompactBudget(32768, "", ""); got != 32768 {
+		t.Fatalf("固定开销 0 ⇒ 有效预算应为 32768，实得 %d", got)
+	}
+	if got := compactTokenThresholdWithOverhead("", ""); got != 16384 {
+		t.Fatalf("固定开销 0 ⇒ 阈值应为 16384（32768×0.5），实得 %d", got)
+	}
+	if got := compactTokenThreshold(); got != 16384 {
+		t.Fatalf("老口径阈值应仍为 16384，实得 %d", got)
+	}
+
+	// ② 固定开销 16000（system prompt）⇒ (32768−16000)×0.5 = 8384
+	sys := overheadText(16000)
+	if got := estimateTextTokens(sys); got != 16000 {
+		t.Fatalf("夹具有问题：估算 %d ≠ 16000", got)
+	}
+	if got := effectiveCompactBudget(32768, sys, ""); got != 16768 {
+		t.Fatalf("固定开销 16000 ⇒ 有效预算应为 16768，实得 %d", got)
+	}
+	if got := compactTokenThresholdWithOverhead(sys, ""); got != 8384 {
+		t.Fatalf("固定开销 16000 ⇒ 阈值应为 8384，实得 %d", got)
+	}
+
+	// ③ 工具定义走同一条扣减路（两个来源合起来算）
+	if got := compactTokenThresholdWithOverhead("", overheadText(16000)); got != 8384 {
+		t.Fatalf("只有工具定义 16000 ⇒ 阈值也应为 8384，实得 %d", got)
+	}
+	if got := compactTokenThresholdWithOverhead(overheadText(8000), overheadText(8000)); got != 8384 {
+		t.Fatalf("sys 8000 + tools 8000 ⇒ 阈值应为 8384，实得 %d", got)
+	}
+	t.Logf("✓ 动态生效：开销 0 ⇒ 16384；开销 16000 ⇒ 8384（旧口径仍 16384）")
+}
+
+// TestEffectiveCompactBudget_Floor — 验收②：固定开销 ≥ ctx ⇒ 有效预算不为负，回落下限 2048 + warning。
+func TestEffectiveCompactBudget_Floor(t *testing.T) {
+	t.Setenv("ZERG_AGENT_CTX_TOKENS", "32768")
+	t.Setenv("ZERG_AGENT_COMPACT_RATIO", "0.5")
+
+	sys := overheadText(32000) // 32000 ≥ ctx 32768? 否，32768−32000=768 < 2048 ⇒ 触底
+	b := compactBudgetWithOverhead(32768, sys, "")
+	if b.Fixed != 32000 {
+		t.Fatalf("固定开销应为 32000，实得 %d", b.Fixed)
+	}
+	if b.Budget != compactFixedOverheadFloor {
+		t.Fatalf("有效预算应回落到下限 %d，实得 %d", compactFixedOverheadFloor, b.Budget)
+	}
+	if !b.Floored {
+		t.Fatal("触底标记应为 true")
+	}
+	if got := effectiveCompactBudget(32768, sys, ""); got < 0 || got != 2048 {
+		t.Fatalf("有效预算必须非负且 = 2048，实得 %d", got)
+	}
+	// 固定开销 > ctx（真实的「爆窗」形态）也绝不为负
+	if got := effectiveCompactBudget(32768, overheadText(40000), ""); got != 2048 {
+		t.Fatalf("固定开销 40000 > ctx ⇒ 仍应回落 2048，实得 %d", got)
+	}
+	if got := compactTokenThresholdWithOverhead(sys, ""); got != 1024 {
+		t.Fatalf("触底后阈值应为 2048×0.5=1024，实得 %d", got)
+	}
+
+	// warning 逐字可核（只这一条，且带固定开销/ctx/下限后的预算三个数）
+	var buf strings.Builder
+	origOut, origFlags := log.Writer(), log.Flags()
+	log.SetOutput(&buf)
+	log.SetFlags(0)
+	defer func() { log.SetOutput(origOut); log.SetFlags(origFlags) }()
+	_ = compactTokenThresholdWithOverhead(sys, "")
+	got := buf.String()
+	want := fmt.Sprintf("⚠️ zerg agent ctx: fixed overhead %d ≥ ctx %d — effective compact budget floored to %d", 32000, 32768, 2048)
+	if !strings.Contains(got, want) {
+		t.Fatalf("warning 未按预期打出：\nwant contains: %s\ngot: %s", want, got)
+	}
+	t.Logf("✓ 下限保护：%s", strings.TrimSpace(got))
+}
+
+// TestNeedCompress_DeductsSystemPrompt — 判据接线：history 首条 system（子代理形态）被当作固定开销，
+// 从预算里扣掉、同时从用量里排除（✗ 两头都算）。
+func TestNeedCompress_DeductsSystemPrompt(t *testing.T) {
+	t.Setenv("ZERG_AGENT_CTX_TOKENS", "32768")
+	t.Setenv("ZERG_AGENT_COMPACT_RATIO", "0.5")
+
+	// 子代理形态：history[0] = system prompt（16000 token）+ 3 轮 × 3000 token
+	a := NewAgent(Config{ContextWindow: 100})
+	a.history = append([]Message{{Role: "system", Content: overheadText(16000)}}, buildTokenHistory(3, 3000)...)
+	if got := a.compactSysPrompt(); got == "" {
+		t.Fatal("应从 history 首条 system 取到 sysPrompt")
+	}
+	if got := a.compactThresholdTokens(); got != 8384 {
+		t.Fatalf("阈值应扣掉 sysPrompt：期望 8384，实得 %d", got)
+	}
+	// 用量侧不含那条 system（≈9006，而不是 25006）
+	if got := a.compactionTokens(); got > 9600 {
+		t.Fatalf("用量侧不应重复计 system prompt：实得 %d（≈9006 才对）", got)
+	}
+	if !a.needCompress() {
+		t.Fatalf("用量 %d > 阈值 %d ⇒ 必须压（旧口径 16384 时不压 = 残留 bug）", a.compactionTokens(), a.compactThresholdTokens())
+	}
+
+	// 负控：同样 3 轮、但没有 system prompt ⇒ 阈值回到 16384，用量 ≈9006 ⇒ 不压
+	b := NewAgent(Config{ContextWindow: 100})
+	b.history = buildTokenHistory(3, 3000)
+	if got := b.compactThresholdTokens(); got != 16384 {
+		t.Fatalf("无 system prompt 时阈值应回到 16384（零回归），实得 %d", got)
+	}
+	if b.needCompress() {
+		t.Fatalf("用量 %d 未超阈值 %d ⇒ 不该压", b.compactionTokens(), b.compactThresholdTokens())
+	}
+	t.Logf("✓ 接线：有 sys(16000) ⇒ 用量 %d > 阈值 %d ⇒ 压；无 sys ⇒ 用量 %d < 阈值 %d ⇒ 不压",
+		a.compactionTokens(), a.compactThresholdTokens(), b.compactionTokens(), b.compactThresholdTokens())
 }

@@ -163,12 +163,37 @@ type compactClassifyFn func(error) CompactErrClass
 
 // compactOptions — MaybeCompact 的可选入参聚合
 type compactOptions struct {
-	classify compactClassifyFn
-	trigger  string // T3.1：本次压缩的触发原因（闭集；空=未指定 ⇒ 按 force 推导）
+	classify   compactClassifyFn
+	trigger    string // T3.1：本次压缩的触发原因（闭集；空=未指定 ⇒ 按 force 推导）
+	fixedSys   string // GAP-20261018-03：固定开销之一——会话 system prompt（调用方给）
+	fixedTools string // GAP-20261018-03：固定开销之二——工具定义 JSON（调用方给）
 }
 
 // CompactOption — MaybeCompact 新增的「可选入参」：不改签名形态的扩展点（变参）。
 type CompactOption func(*compactOptions)
+
+// WithFixedOverhead — GAP-20261018-03：本次判据要扣掉的**固定开销**（sysPrompt + 工具定义 JSON）。
+//
+// 为什么由调用方传：两个来源都在调用处（chat_handlers 的 `SessionSystemPrompt(...)` 与
+// `BuildToolsParam()`），压缩层拿不到会话、也不该去猜提示长什么样 ⇒ 传入而不是回读。
+// 不传（或两个都空）⇒ 阈值与旧口径**逐字一致**（零回归：既有调用点一行都不用改）。
+func WithFixedOverhead(sysPrompt, toolsJSON string) CompactOption {
+	return func(o *compactOptions) {
+		o.fixedSys = sysPrompt
+		o.fixedTools = toolsJSON
+	}
+}
+
+// resolveCompactOverhead — 取本次调用的固定开销（未传 ⇒ 空串 ⇒ 判据回落旧口径）
+func resolveCompactOverhead(opts []CompactOption) (sysPrompt, toolsJSON string) {
+	o := compactOptions{}
+	for _, fn := range opts {
+		if fn != nil {
+			fn(&o)
+		}
+	}
+	return o.fixedSys, o.fixedTools
+}
 
 // WithErrClass — 直接注入失败元信息（调用方已从 HTTP 响应得知状态码/Retry-After 时用）
 func WithErrClass(cls CompactErrClass) CompactOption {
@@ -544,8 +569,21 @@ func (s *ChatStore) MaybeCompact(ctx context.Context, sessionID, model string, m
 	defer s.compactLocks.Delete(sessionID)
 
 	// 阈值判断（不足不压）——沿用 max(min(ctx×0.5, 8000), 2000)
-	if !ShouldCompactPtr(msgs, model) {
+	// GAP-20261018-03：调用方给了固定开销（WithFixedOverhead）⇒ 阈值先扣 sysPrompt + 工具定义；
+	// 没给 ⇒ ShouldCompactPtrWithOverhead 内部逐字回落 ShouldCompactPtr（零回归）。
+	fixedSys, fixedTools := resolveCompactOverhead(opts)
+	if !ShouldCompactPtrWithOverhead(msgs, model, fixedSys, fixedTools) {
 		return false, nil
+	}
+	// 观测面（只加不删）：阈值下降要有可见证据 —— 四个数一起打（ctx / 固定开销 / 有效预算 / 阈值）
+	if fixedSys != "" || fixedTools != "" {
+		ctx, fixed, budget, threshold := CompactBudgetReadout(model, fixedSys, fixedTools)
+		floored := ""
+		if budget <= CompactFixedOverheadFloor {
+			floored = fmt.Sprintf(" ⚠️ 有效预算触底（ctx %d − 固定开销 %d < 下限 %d）", ctx, fixed, CompactFixedOverheadFloor)
+		}
+		log.Printf("📐 session %s compaction budget: ctx=%d fixed=%d budget=%d threshold=%d baseline=%d%s",
+			sessionID, ctx, fixed, budget, threshold, CompactTriggerTokens(model), floored)
 	}
 
 	now := float64(compactNow().Unix())

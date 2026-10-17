@@ -430,3 +430,250 @@ func TestFSRead_SmallFileNoTruncationNotice(t *testing.T) {
 		t.Errorf("stderr 不许报截断：%q", errb)
 	}
 }
+
+// ── GAP-20261018-09：`fs write --replace <补丁件>`（**定点替换** · 不必先把全文读进上下文）───────
+//
+// 病灶（对话里真撞 · 已亲核）：`fs write` 是**整件覆盖** ⇒ 改一行必须先拿全文；而读面有两层截断
+// （`fs read` 缺省 2000 行 ＋ 对话面回执 8000 字符）⇒ 19000 字节量级的真件只取得到约 8KB，
+// 模型判定对、`--dry-run` 也说可写，却**拼不出「完整原文 ＋ 只改一行」** ⇒ 停手不写。
+//
+// 判据（与 `dev edit --replace` **同一把尺** —— 直接复用 `applyReplacements`，✗ 不另造语法）：
+//
+//	① 正控：> 8000 字节的件上只改**一行**（补丁件走**仓内相对**路径）⇒ rc=0 ·
+//	   读回与「原文只换那一行」**逐字节相同** · 与原文的**差异行数 == 1**（其余字节一个不动）·
+//	   审计 `fs_bytes` == 写后大小 · `fs_append` == false；
+//	② 零副作用两档：`--dry-run` / 缺 `--yes` ⇒ 件逐字节不变、审计行数不变；
+//	③ 负控三态：`old` 命中 **0 次** ⇒ 2 具名 · 命中**多次** ⇒ 2 具名 ·
+//	   `--replace` 与整件写（`--content`）/`--append` **同给** ⇒ 2 具名（互斥）；
+//	④ 靶件不存在 ⇒ 2（定点替换只在**既有件**上做）；
+//	⑤ 兄弟仓：给 `--allow-sibling-repo` 改真件 ⇒ 0；不给旗标 ⇒ 2（默认仍 fail-closed）。
+//
+// 夹具全在 `t.TempDir()` 里（`ZERG_REPO` 指合成仓根 ⇒ 一个字节都不落真仓）。
+
+// fsuoReplaceFixture —— 造一件 > 8000 字节的文本件：返回 (仓根, 仓内相对路径, 原文)。
+// 中间那一行带 `type=record` 且**全件唯一** ⇒ 正好用来验「只改一处」。
+func fsuoReplaceFixture(t *testing.T) (string, string, string) {
+	t.Helper()
+	// ★ 仓根取**解析后**的真实路径：`TMPDIR=/tmp` 时 macOS 的 `/tmp -> /private/tmp`，
+	//   而 `fs write` 的「父目录经符号链接出仓」判据在默认态（无兄弟仓）拿未解析的仓根比
+	//   已解析的父目录 ⇒ 会误判成「出仓」（那是既有判据，不是本单的面）⇒ 夹具给真路径。
+	repo := t.TempDir()
+	if r, err := filepath.EvalSymlinks(repo); err == nil {
+		repo = r
+	}
+	rel := filepath.Join("项目文档", "探针-v2.5.15.md")
+	lines := make([]string, 0, 900)
+	for i := 1; i <= 900; i++ {
+		lines = append(lines, fmt.Sprintf("第%04d行：定点替换夹具 filler-%d —— 这一行只为把件撑到 8000 字节以上", i, i))
+	}
+	lines[449] = "type=record（本行待改：old 必须在件里恰好命中 1 次）"
+	orig := strings.Join(lines, "\n") + "\n"
+	if len(orig) <= 8000 {
+		t.Fatalf("夹具要 > 8000 字节（对话面回执上限）：得 %d 字节", len(orig))
+	}
+	mustWrite(t, filepath.Join(repo, rel), orig)
+	return repo, rel, orig
+}
+
+// fsuoWritePatch —— 落一枚补丁件（`[{"old":…,"new":…}]` · 与 `dev edit --replace` 同形）。
+func fsuoWritePatch(t *testing.T, path, old, new string) {
+	t.Helper()
+	body, err := json.Marshal([]map[string]string{{"old": old, "new": new}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, path, string(body))
+}
+
+// fsuoAuditLines —— 审计件的非空行数（零副作用两档要拿它比「有没有多一行」）。
+func fsuoAuditLines(t *testing.T, state string) int {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(state, "edit_audit.jsonl"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0
+		}
+		t.Fatal(err)
+	}
+	return len(fsToolSplitNonEmpty(string(b)))
+}
+
+func fsToolSplitNonEmpty(s string) []string {
+	out := []string{}
+	for _, ln := range strings.Split(s, "\n") {
+		if strings.TrimSpace(ln) != "" {
+			out = append(out, ln)
+		}
+	}
+	return out
+}
+
+// fsuoDiffLines —— 两份文本的**差异行数**（「其余字节一个不动」的硬判据）。
+func fsuoDiffLines(a, b string) int {
+	al := strings.Split(strings.TrimSuffix(a, "\n"), "\n")
+	bl := strings.Split(strings.TrimSuffix(b, "\n"), "\n")
+	if len(al) != len(bl) {
+		return -1
+	}
+	n := 0
+	for i := range al {
+		if al[i] != bl[i] {
+			n++
+		}
+	}
+	return n
+}
+
+// TestFSWrite_ReplaceInPlace —— 判据 ①–④。
+func TestFSWrite_ReplaceInPlace(t *testing.T) {
+	repo, rel, orig := fsuoReplaceFixture(t)
+	abs := filepath.Join(repo, rel)
+	state := t.TempDir()
+	oldLine := "type=record（本行待改：old 必须在件里恰好命中 1 次）"
+	newLine := "type=record（本行已改：定点替换只动这一行 · 2026-10-18）"
+
+	// 补丁件放**仓内相对**路径（↔ `dev edit --replace` 的「仓内相对按仓根」同一套口径）
+	if err := os.MkdirAll(filepath.Join(repo, "补丁"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fsuoWritePatch(t, filepath.Join(repo, "补丁", "换一行.json"), oldLine, newLine)
+
+	// ② 干跑：零副作用（件逐字节不变 · 审计零行）
+	audit0 := fsuoAuditLines(t, state)
+	rc, out, errb := fsRunTest(t, repo, state, "write", rel, "--replace", "补丁/换一行.json", "--dry-run")
+	if rc != 0 {
+		t.Fatalf("干跑 ⇒ rc=0：rc=%d stdout=%q stderr=%q", rc, out, errb)
+	}
+	if !strings.Contains(out, "定点替换") {
+		t.Errorf("计划件要点明模式是定点替换：%q", out)
+	}
+	if b, _ := os.ReadFile(abs); string(b) != orig {
+		t.Fatalf("干跑零副作用：件被改了")
+	}
+	if n := fsuoAuditLines(t, state); n != audit0 {
+		t.Errorf("干跑零副作用：审计多出 %d 行", n-audit0)
+	}
+
+	// ② 缺 --yes：rc=2 · 一个字节都不动
+	rc, _, errb = fsRunTest(t, repo, state, "write", rel, "--replace", "补丁/换一行.json")
+	if rc != 2 || !strings.Contains(errb, "缺 --yes") {
+		t.Fatalf("缺 --yes ⇒ rc=2：rc=%d stderr=%q", rc, errb)
+	}
+	if b, _ := os.ReadFile(abs); string(b) != orig {
+		t.Fatalf("缺 --yes 那一档：件被改了")
+	}
+
+	// ① 正控：真写（**调用方从未读过全文** —— 这一格只喂了 old/new 两行）
+	rc, out, errb = fsRunTest(t, repo, state, "write", rel, "--replace", "补丁/换一行.json", "--yes")
+	if rc != 0 {
+		t.Fatalf("定点替换真写 ⇒ rc=0：rc=%d stdout=%q stderr=%q", rc, out, errb)
+	}
+	want := strings.Replace(orig, oldLine, newLine, 1)
+	gotB, rerr := os.ReadFile(abs)
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	got := string(gotB)
+	if got != want {
+		t.Fatalf("读回必须 == 「原文只换那一行」（逐字节）：got %d 字节 / want %d 字节", len(got), len(want))
+	}
+	if n := fsuoDiffLines(orig, got); n != 1 {
+		t.Fatalf("与原文的差异行数必须 == 1（其余字节一个不动）：得 %d", n)
+	}
+	if !strings.Contains(got, newLine) || strings.Contains(got, oldLine) {
+		t.Errorf("目标行没被换掉（或旧行还在）")
+	}
+	if !strings.Contains(out, "定点替换") {
+		t.Errorf("写成功行要点明模式（定点替换）：%q", out)
+	}
+	// 审计：大小 == 写后件大小 · append == false
+	ab, aerr := os.ReadFile(filepath.Join(state, "edit_audit.jsonl"))
+	if aerr != nil {
+		t.Fatalf("真写要落审计：%v", aerr)
+	}
+	rows := fsToolSplitNonEmpty(string(ab))
+	var row map[string]any
+	if err := json.Unmarshal([]byte(rows[len(rows)-1]), &row); err != nil {
+		t.Fatalf("审计最后一行不是 JSON：%v", err)
+	}
+	if int(row["fs_bytes"].(float64)) != len(want) {
+		t.Errorf("审计 fs_bytes 要 == 写后大小 %d：得 %v", len(want), row["fs_bytes"])
+	}
+	if row["fs_append"] != false {
+		t.Errorf("定点替换不是追加：fs_append=%v", row["fs_append"])
+	}
+
+	// ③ 负控 a：`old` 命中 0 次 ⇒ 2 具名
+	fsuoWritePatch(t, filepath.Join(repo, "补丁", "零命中.json"), "这一串在件里根本不存在-ZZ", "ZZZ9-NOT-IN-FILE-QQ")
+	before0, _ := os.ReadFile(abs)
+	rc, _, errb = fsRunTest(t, repo, state, "write", rel, "--replace", "补丁/零命中.json", "--yes")
+	if rc != 2 || !strings.Contains(errb, "命中 0 次") {
+		t.Errorf("old 命中 0 次 ⇒ rc=2 · 具名「命中 0 次」：rc=%d stderr=%q", rc, errb)
+	}
+	if after0, _ := os.ReadFile(abs); string(after0) != string(before0) {
+		t.Errorf("被拒的那一格：件一个字节都不许动")
+	}
+
+	// ③ 负控 b：`old` 命中多次 ⇒ 2 具名（`第0` 在 900 行里出现多次）
+	fsuoWritePatch(t, filepath.Join(repo, "补丁", "多命中.json"), "filler-1", "filler-X")
+	rc, _, errb = fsRunTest(t, repo, state, "write", rel, "--replace", "补丁/多命中.json", "--yes")
+	if rc != 2 || !strings.Contains(errb, "恰好 1 次") || !strings.Contains(errb, "命中") {
+		t.Errorf("old 命中多次 ⇒ rc=2 · 具名「恰好 1 次」：rc=%d stderr=%q", rc, errb)
+	}
+	if after1, _ := os.ReadFile(abs); string(after1) != string(before0) {
+		t.Errorf("被拒的那一格：件一个字节都不许动")
+	}
+
+	// ③ 负控 c：与整件写 / `--append` 同给 ⇒ 2（互斥）
+	rc, _, errb = fsRunTest(t, repo, state, "write", rel, "--replace", "补丁/换一行.json", "--content", "x", "--yes")
+	if rc != 2 || !strings.Contains(errb, "互斥") {
+		t.Errorf("`--replace` 与 `--content` 同给 ⇒ rc=2 · 具名「互斥」：rc=%d stderr=%q", rc, errb)
+	}
+	rc, _, errb = fsRunTest(t, repo, state, "write", rel, "--replace", "补丁/换一行.json", "--append", "--yes")
+	if rc != 2 || !strings.Contains(errb, "互斥") {
+		t.Errorf("`--replace` 与 `--append` 同给 ⇒ rc=2 · 具名「互斥」：rc=%d stderr=%q", rc, errb)
+	}
+
+	// ④ 靶件不存在 ⇒ 2（定点替换只在既有件上做）
+	rc, _, errb = fsRunTest(t, repo, state, "write", filepath.Join("项目文档", "没有这件.md"),
+		"--replace", "补丁/换一行.json", "--yes")
+	if rc != 2 || !strings.Contains(errb, "靶件不存在") {
+		t.Errorf("靶件不存在 ⇒ rc=2 · 具名「靶件不存在」：rc=%d stderr=%q", rc, errb)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "项目文档", "没有这件.md")); err == nil {
+		t.Errorf("被拒的那一格：✗ 不许把靶件建出来")
+	}
+}
+
+// TestFSWrite_ReplaceSiblingRepo —— 判据 ⑤：兄弟仓 ＋ `--replace`（给旗标能改真件；不给仍 2）。
+func TestFSWrite_ReplaceSiblingRepo(t *testing.T) {
+	repo, sib, rel := fsuoSynthRepoWithSibling(t)
+	state := t.TempDir()
+	patchDir := t.TempDir()
+	orig := "第一行：文档面\n第二行：原文\n"
+	fsuoWritePatch(t, filepath.Join(patchDir, "换一行.json"), "第二行：原文", "第二行：已改（定点替换）")
+
+	// 不给旗标 ⇒ rc=2（默认仍 fail-closed）· 件一个字节都不动
+	rc, _, errb := fsRunTest(t, repo, state, "write", filepath.Join("..", "Zerg-内部文档", rel),
+		"--replace", filepath.Join(patchDir, "换一行.json"), "--yes")
+	if rc != 2 || !strings.Contains(errb, "件出仓了") {
+		t.Fatalf("不给旗标写兄弟仓 ⇒ rc=2 · 旧文案：rc=%d stderr=%q", rc, errb)
+	}
+	if b, _ := os.ReadFile(filepath.Join(sib, rel)); string(b) != orig {
+		t.Fatalf("被拒的那一格：兄弟仓件不许动")
+	}
+
+	// 给旗标 ⇒ rc=0 · 只改那一行
+	rc, out, errb := fsRunTest(t, repo, state, "write", rel, "--replace", filepath.Join(patchDir, "换一行.json"),
+		"--yes", "--allow-sibling-repo", "Zerg-内部文档")
+	if rc != 0 {
+		t.Fatalf("给旗标 ＋ --replace 改兄弟仓 ⇒ rc=0：rc=%d stdout=%q stderr=%q", rc, out, errb)
+	}
+	want := "第一行：文档面\n第二行：已改（定点替换）\n"
+	if b, _ := os.ReadFile(filepath.Join(sib, rel)); string(b) != want {
+		t.Errorf("兄弟仓读回要 == 期望（只改一行）：got=%q want=%q", b, want)
+	}
+	if !strings.Contains(errb, "写了兄弟仓 Zerg-内部文档 的件") {
+		t.Errorf("写兄弟仓必须留痕（stderr 一行）：%q", errb)
+	}
+}

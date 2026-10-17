@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -629,4 +630,152 @@ func TestCompactByTokens_Under30MessagesStillCompacts(t *testing.T) {
 		t.Fatal("5 条小消息不应触发压缩（防首轮就压）")
 	}
 	t.Logf("✓ 对照: 5 条小消息（< %d）⇒ ShouldCompact=false", CompactHardMinMessages)
+}
+
+// ── GAP-20261018-03：压缩阈值扣掉实际固定开销（✗ 不硬编码 16K）────────────────
+
+// overheadASCII — 造一个恰好 tokens 个 token 的 ASCII 串（本包 estimateTokens: ascii/4）。
+func overheadASCII(tokens int) string {
+	if tokens <= 0 {
+		return ""
+	}
+	return strings.Repeat("x", tokens*4) // ascii/4 = tokens
+}
+
+// overheadMsgs — 造 n 条消息，合计约 tokensPerMsg×n token（ASCII 口径：4 字节/token）。
+func overheadMsgs(n, tokensPerMsg int) []Message {
+	body := overheadASCII(tokensPerMsg)
+	out := make([]Message, n)
+	for i := range out {
+		out[i] = Message{ID: int64(i + 1), Role: "user", Content: body, Active: true}
+	}
+	return out
+}
+
+// TestCompactTriggerTokensOverhead — 动态扣减两组数字 + 零回归。
+func TestCompactTriggerTokensOverhead(t *testing.T) {
+	// ① 不传固定开销 ⇒ 与老口径逐字一致（8K 模型：8192×0.5 = 4096）
+	if got, want := CompactTriggerTokensWithOverhead("gemma-12B", "", ""), CompactTriggerTokens("gemma-12B"); got != want {
+		t.Fatalf("空参数应与老口径逐字一致：%d ≠ %d", got, want)
+	}
+	if got := CompactTriggerTokens("gemma-12B"); got != 4096 {
+		t.Fatalf("gemma-12B 老口径阈值应为 4096，实得 %d", got)
+	}
+	// ② 固定开销 6000 ⇒ 预算 8192−6000=2192 ⇒ 阈值 1096 → 下限 MinWindow 2000
+	if got := CompactTriggerTokensWithOverhead("gemma-12B", overheadASCII(6000), ""); got != CompactMinWindow {
+		t.Fatalf("固定开销 6000 ⇒ 阈值应落到 MinWindow %d，实得 %d", CompactMinWindow, got)
+	}
+	// ③ 只给工具定义也走同一条扣减路
+	if got := CompactTriggerTokensWithOverhead("gemma-12B", "", overheadASCII(6000)); got != CompactMinWindow {
+		t.Fatalf("只有工具定义 6000 ⇒ 阈值也应落到 %d，实得 %d", CompactMinWindow, got)
+	}
+	// ④ 32K 模型：固定开销 16000 ⇒ 8384，但活跃窗口上限 8000 仍收口（对话口径不变）
+	ctx, fixed, budget, threshold := CompactBudgetReadout("Qwen3.8-27B", overheadASCII(16000), "")
+	if ctx != 32768 || fixed != 16000 || budget != 16768 {
+		t.Fatalf("读数不符：ctx=%d fixed=%d budget=%d", ctx, fixed, budget)
+	}
+	if threshold != CompactActiveWindow {
+		t.Fatalf("32K 模型阈值应被活跃窗口 %d 收口，实得 %d", CompactActiveWindow, threshold)
+	}
+	t.Logf("✓ 动态：gemma 4096 → 2000；Qwen 32K：ctx=%d 固定开销=%d 有效预算=%d 阈值=%d（未扣开销=%d）",
+		ctx, fixed, budget, threshold, CompactTriggerTokens("Qwen3.8-27B"))
+}
+
+// TestCompactBudgetOverheadFloor — 固定开销 ≥ ctx ⇒ 有效预算不为负，回落 2048。
+func TestCompactBudgetOverheadFloor(t *testing.T) {
+	ctx, fixed, budget, threshold := CompactBudgetReadout("gemma-12B", overheadASCII(32000), "")
+	if fixed != 32000 {
+		t.Fatalf("固定开销应为 32000，实得 %d", fixed)
+	}
+	if budget < 0 || budget != CompactFixedOverheadFloor {
+		t.Fatalf("有效预算必须非负且回落到 %d，实得 %d（ctx=%d）", CompactFixedOverheadFloor, budget, ctx)
+	}
+	if threshold != CompactMinWindow {
+		t.Fatalf("触底后阈值应为 MinWindow %d（1024 → 抬到 2000），实得 %d", CompactMinWindow, threshold)
+	}
+	// 固定开销 > ctx 也绝不为负
+	if _, _, b2, _ := CompactBudgetReadout("gemma-12B", overheadASCII(40000), ""); b2 != CompactFixedOverheadFloor {
+		t.Fatalf("固定开销 40000 > ctx ⇒ 仍应回落 %d，实得 %d", CompactFixedOverheadFloor, b2)
+	}
+	t.Logf("✓ 下限保护：ctx=%d 固定开销=%d ⇒ 有效预算=%d（非负）· 阈值=%d", ctx, fixed, budget, threshold)
+}
+
+// TestShouldCompactWithOverhead — 判据接线两态：同一批消息，给不给固定开销结论相反。
+func TestShouldCompactWithOverhead(t *testing.T) {
+	msgs := overheadMsgs(12, 250) // 12 条 × 250 = 3000 token（≥ 极低拦截线 6）
+
+	// 老口径（gemma 阈值 4096）⇒ 3000 不超 ⇒ 不压
+	if ShouldCompact(msgs, "gemma-12B") {
+		t.Fatalf("3000 token 未超老阈值 %d ⇒ 不该压", CompactTriggerTokens("gemma-12B"))
+	}
+	// 空参数 ⇒ 回落老口径（零回归）
+	if ShouldCompactWithOverhead(msgs, "gemma-12B", "", "") {
+		t.Fatal("空参数应回落老口径（不压）")
+	}
+	ptr := make([]*Message, len(msgs))
+	for i := range msgs {
+		m := msgs[i]
+		ptr[i] = &m
+	}
+	if ShouldCompactPtrWithOverhead(ptr, "gemma-12B", "", "") != ShouldCompactPtr(ptr, "gemma-12B") {
+		t.Fatal("指针版空参数应与老口径一致")
+	}
+	// 扣掉 6000 固定开销（阈值 2000）⇒ 3000 已超 ⇒ 压
+	if !ShouldCompactWithOverhead(msgs, "gemma-12B", overheadASCII(6000), "") {
+		t.Fatal("扣掉 6000 固定开销后（阈值 2000）3000 token 应触发压缩")
+	}
+	if !ShouldCompactPtrWithOverhead(ptr, "gemma-12B", overheadASCII(6000), "") {
+		t.Fatal("指针版扣掉固定开销后应触发压缩")
+	}
+	t.Logf("✓ 两态：3000 token / gemma：老阈值 %d ⇒ 不压；扣 6000 开销（阈值 %d）⇒ 压",
+		CompactTriggerTokens("gemma-12B"), CompactTriggerTokensWithOverhead("gemma-12B", overheadASCII(6000), ""))
+}
+
+// TestMaybeCompactWithFixedOverhead — 单一入口真正吃 WithFixedOverhead（含观测行四个数）。
+func TestMaybeCompactWithFixedOverhead(t *testing.T) {
+	st, _ := newCompactStore(t)
+	se, err := st.CreateSession("gemma-12B", "desktop", "", "固定开销会话")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 24 条 × 125 token = 3000（老阈值 4096 ⇒ 不压；首 3 + 尾 20 之外仍有 1 条可压）
+	longCN := strings.Repeat("测", 88) // 88/0.7 ≈ 125 token/条
+	ids := compactSeed(t, st, se.ID, 24, longCN)
+	msgs := compactActive(t, st, se.ID)
+	if len(msgs) != len(ids) {
+		t.Fatalf("夹具消息数不符：%d ≠ %d", len(msgs), len(ids))
+	}
+	total := 0
+	for _, m := range msgs {
+		total += compactMessageTokens(*m)
+	}
+	if total > CompactTriggerTokens("gemma-12B") {
+		t.Fatalf("夹具有问题：%d token 已超老阈值 %d", total, CompactTriggerTokens("gemma-12B"))
+	}
+
+	var buf strings.Builder
+	origOut, origFlags := log.Writer(), log.Flags()
+	log.SetOutput(&buf)
+	log.SetFlags(0)
+	defer func() { log.SetOutput(origOut); log.SetFlags(origFlags) }()
+
+	// 不传固定开销 ⇒ 不压（零回归）
+	if did, err := st.MaybeCompact(context.Background(), se.ID, "gemma-12B", msgs,
+		nil, func(context.Context, []map[string]any) (string, error) { return "不该被调用", nil }, false); did || err != nil {
+		t.Fatalf("不传固定开销时 %d token 未超阈值 ⇒ 不该压（did=%v err=%v）", total, did, err)
+	}
+	// 传固定开销 ⇒ 压，且打出 ctx/固定开销/有效预算/阈值四个数
+	did, err := st.MaybeCompact(context.Background(), se.ID, "gemma-12B", msgs,
+		nil, func(context.Context, []map[string]any) (string, error) { return "扣开销摘要", nil }, false,
+		WithFixedOverhead(overheadASCII(6000), ""))
+	if err != nil || !did {
+		t.Fatalf("扣固定开销后应触发压缩: did=%v err=%v", did, err)
+	}
+	line := buf.String()
+	for _, want := range []string{"ctx=8192", "fixed=", "budget=", "threshold=2000", "baseline=4096"} {
+		if !strings.Contains(line, want) {
+			t.Fatalf("观测行缺 %q：\n%s", want, line)
+		}
+	}
+	t.Logf("✓ 端到端：%d token ⇒ 老阈值不压 / 扣开销后压；观测行：%s", total, strings.TrimSpace(line))
 }

@@ -1150,8 +1150,14 @@ var chsBaseline = chsBaselineSet{
 	//   字节由现跑 `zerg gate check check-help-shape --emit-baseline` 取数照抄（**禁手写** —— 件头纪律）。
 	//   危险档面（`help dangerous` 127 行 / 48993 字节 · 115 条）与 `help config`（21 / 1748）**一分未变**：
 	//   本命令零危险档、零配置项 ⇒ 这是「没有顺手放宽」的反证，不是省了没量。
-	"help --all":     {HasLines: true, Lines: 464, HasBytes: true, Bytes: 248949},
-	"help":           {HasLines: true, Lines: 339, HasBytes: true, Bytes: 85286, HasLast: true, Last: "      非交互用 `--token-stdin`；详见 `zerg help credentials`）。"},
+	// ★ 2026-10-18（本枚 · `GAP-20261018-09`：`fs write` 加 `--replace <补丁件>`）：**行数不变**
+	//   （464 / 339 —— 只是同一条 usage 串变长，没有新增命令/用法行）；字节由现跑
+	//   `zerg gate check check-help-shape --emit-baseline --bin <新制品>` 取数照抄（**禁手写**）：
+	//   `help --all` 248949 → 249360（+411）· 裸 `help` 85286 → 85426（+140）。
+	//   危险档面（`help dangerous` 127 行 / 48993 字节 · 115 条）与 `help config`（21 / 1748）**一分未变**：
+	//   `fs write` 早就在危险档表里、本单只加内容来源旗标 ⇒ 表尾「已开放/未开放」两数不动。
+	"help --all":     {HasLines: true, Lines: 464, HasBytes: true, Bytes: 249360},
+	"help":           {HasLines: true, Lines: 339, HasBytes: true, Bytes: 85426, HasLast: true, Last: "      非交互用 `--token-stdin`；详见 `zerg help credentials`）。"},
 	"help dangerous": {HasLines: true, Lines: 127, HasBytes: true, Bytes: 48993, HasRows: true, Rows: 115, HasTail: true, Tail: "上表 115 条：**已开放 102 条**（确认档齐就真执行 —— 逐条见上行标记）；**未开放 13 条**（真跑一律**拒执**、退码 2 = 不给结论，只有 `--dry-run` 出计划件 = 退码 0）。"},
 	"help config":    {HasLines: true, Lines: 21, HasBytes: true, Bytes: 1748},
 }

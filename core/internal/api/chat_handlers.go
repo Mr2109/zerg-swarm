@@ -499,7 +499,9 @@ func (h *ChatHandlers) SendMessageTool(w http.ResponseWriter, r *http.Request) {
 	}
 	history, _ := h.store.GetActiveMessages(id)
 	// 丙批 §4.2（2026-09-10）：压缩走单一入口 MaybeCompact（冷却/硬熔断/召回指针在内部）
-	if did, cerr := h.store.MaybeCompact(r.Context(), id, se.Model, history, chat.LinguaFn(), chat.SummarizeWithInfer(h.infer, id, se.Model), false); did {
+	// GAP-20261018-03：阈值扣固定开销。本路径的 sysPrompt 在压缩点之后才组装（见下方 525 行
+	// ≤ 依赖 progRT）⇒ 这里只交工具定义那一半；流式主路径两半都交（sysPrompt 已在手）。
+	if did, cerr := h.store.MaybeCompact(r.Context(), id, se.Model, history, chat.LinguaFn(), chat.SummarizeWithInfer(h.infer, id, se.Model), false, chat.WithFixedOverhead("", chat.CompactFixedOverheadToolsJSON())); did {
 		h.store.ClearSessionPrompt(id) // §4.1：压缩后系统提示需重建
 	} else if cerr != nil {
 		log.Printf("⚠️ session %s compaction failed (cooldown recorded): %v", id, cerr)
@@ -978,7 +980,9 @@ func (h *ChatHandlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	// 压缩耗时 10-30s——用户在 UI 看到"正在压缩历史…"而非静默卡住
 	writeSSE("compacting", `{}`)
-	compacted, cerr := h.store.MaybeCompact(r.Context(), id, se.Model, history, chat.LinguaFn(), chat.SummarizeWithInfer(h.infer, id, se.Model), false)
+	compacted, cerr := h.store.MaybeCompact(r.Context(), id, se.Model, history, chat.LinguaFn(), chat.SummarizeWithInfer(h.infer, id, se.Model), false,
+		// GAP-20261018-03：阈值扣固定开销——两个来源都在本处（sysPrompt 上一行现成，工具面取真发出的那份）
+		chat.WithFixedOverhead(sysPrompt, chat.CompactFixedOverheadToolsJSON()))
 	if cerr != nil {
 		log.Printf("⚠️ session %s compaction failed (cooldown recorded): %v", id, cerr)
 	}

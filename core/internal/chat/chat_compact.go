@@ -57,11 +57,53 @@ func RegisterModelCtx(model string, ctx int) {
 
 // CompactTriggerTokens — 计算模型的实际压缩触发阈值（比例 + 活跃窗口 + 下限）
 func CompactTriggerTokens(model string) int {
+	return compactTriggerTokensFor(model, "", "")
+}
+
+// CompactFixedOverheadFloor — 有效预算下限（GAP-20261018-03）。
+// 固定开销扣完若不足此值 ⇒ 回落到此值（✗ 不产出负数/零），调用方记 warning。
+const CompactFixedOverheadFloor = 2048
+
+// compactBudgetReadout — **纯函数**：按固定开销扣减上下文预算（与 agent 层同一算式）。
+//
+//	fixed  = estimateTokens(sysPrompt) + estimateTokens(toolsJSON)
+//	budget = max(ctx − fixed, CompactFixedOverheadFloor)
+//
+// 口径说明：本包用**自己的** estimateTokens（CJK 感知）——阈值与用量（compactMessageTokens）
+// 必须同一把尺，否则「固定开销 16K」与「历史 16K」不是同一个量纲。
+func compactBudgetReadout(ctx int, sysPrompt, toolsJSON string) (fixed, budget int, floored bool) {
+	fixed = estimateTokens(sysPrompt) + estimateTokens(toolsJSON)
+	budget = ctx - fixed
+	if budget < CompactFixedOverheadFloor {
+		budget = CompactFixedOverheadFloor
+		floored = true
+	}
+	return fixed, budget, floored
+}
+
+// compactTriggerTokensFor — 扣固定开销后的触发阈值（= 有效预算 × 比例，再套活跃窗口与下限）。
+//
+// 两个参数**都为空** ⇒ 走与旧版**逐字一致**的路径（ctx×ratio → cap ActiveWindow → floor MinWindow）；
+// 给了固定开销 ⇒ 先把 ctx 扣成「有效预算」，再乘比例——这样小窗口（8K 级）不会被固定开销顶穿：
+//
+//	gemma-12B (ctx 8192) + 固定开销 16000 ⇒ 有效预算触底 2048 ⇒ 阈值 1024 → 抬到 MinWindow 2000
+func compactTriggerTokensFor(model string, sysPrompt, toolsJSON string) int {
 	ctx := compactModelCtxs[model]
 	if ctx <= 0 {
 		ctx = 262144
 	}
-	t := int(float64(ctx) * CompactThresholdRatio)
+	if sysPrompt == "" && toolsJSON == "" {
+		t := int(float64(ctx) * CompactThresholdRatio)
+		if t > CompactActiveWindow {
+			t = CompactActiveWindow
+		}
+		if t < CompactMinWindow {
+			t = CompactMinWindow
+		}
+		return t
+	}
+	_, budget, _ := compactBudgetReadout(ctx, sysPrompt, toolsJSON)
+	t := int(float64(budget) * CompactThresholdRatio)
 	if t > CompactActiveWindow {
 		t = CompactActiveWindow
 	}
@@ -69,6 +111,11 @@ func CompactTriggerTokens(model string) int {
 		t = CompactMinWindow
 	}
 	return t
+}
+
+// CompactTriggerTokensWithOverhead — 对外入口：扣固定开销后的触发阈值（供观测/测试直接读）。
+func CompactTriggerTokensWithOverhead(model, sysPrompt, toolsJSON string) int {
+	return compactTriggerTokensFor(model, sysPrompt, toolsJSON)
 }
 
 // chatCompactReq — 压缩请求体
@@ -96,6 +143,21 @@ func ShouldCompact(msgs []Message, model string) bool {
 	return compactOverThreshold(msgs, model)
 }
 
+// ShouldCompactWithOverhead — 扣掉固定开销（sysPrompt + 工具定义）后的判据（GAP-20261018-03）。
+//
+// 两个参数都为空 ⇒ 回落到 ShouldCompact（与旧口径逐字一致，零回归）。
+// 固定开销的**来源**由调用方给（chat_handlers 拿 SessionSystemPrompt + BuildToolsParam）——
+// ✗ 不在本层猜（本层拿不到会话，也不该知道提示长什么样）。
+func ShouldCompactWithOverhead(msgs []Message, model, sysPrompt, toolsJSON string) bool {
+	if sysPrompt == "" && toolsJSON == "" {
+		return ShouldCompact(msgs, model)
+	}
+	if len(msgs) < CompactHardMinMessages {
+		return false
+	}
+	return compactOverThresholdWithOverhead(msgs, compactTriggerTokensFor(model, sysPrompt, toolsJSON))
+}
+
 // ShouldCompactPtr — 指针版（Store 返回 []*Message）
 func ShouldCompactPtr(msgs []*Message, model string) bool {
 	if len(msgs) < CompactHardMinMessages {
@@ -106,6 +168,21 @@ func ShouldCompactPtr(msgs []*Message, model string) bool {
 		out[i] = *m
 	}
 	return compactOverThreshold(out, model)
+}
+
+// ShouldCompactPtrWithOverhead — 指针版 + 固定开销（空参数 ⇒ 回落 ShouldCompactPtr）
+func ShouldCompactPtrWithOverhead(msgs []*Message, model, sysPrompt, toolsJSON string) bool {
+	if sysPrompt == "" && toolsJSON == "" {
+		return ShouldCompactPtr(msgs, model)
+	}
+	if len(msgs) < CompactHardMinMessages {
+		return false
+	}
+	out := make([]Message, len(msgs))
+	for i, m := range msgs {
+		out[i] = *m
+	}
+	return compactOverThresholdWithOverhead(out, compactTriggerTokensFor(model, sysPrompt, toolsJSON))
 }
 
 // estimateTokens — 按内容中英比例估 token（2026-09-05: 原 len(rune)/2 一刀切对中文偏高估
@@ -143,12 +220,48 @@ func compactMessageTokens(m Message) int {
 
 // compactOverThreshold — token 估算超阈值（P4-39 含工具 JSON——2026-09-05 用 estimateTokens）
 func compactOverThreshold(msgs []Message, model string) bool {
-	trigger := CompactTriggerTokens(model)
+	return compactOverThresholdWithOverhead(msgs, CompactTriggerTokens(model))
+}
+
+// compactOverThresholdWithOverhead — 与给定阈值比较（阈值由调用方算好——判据与阈值同源）。
+//
+// GAP-20261018-03：阈值这一侧已按「ctx − 固定开销」缩过，用量这一侧仍是**只数消息**
+// （固定开销不重复计：它是每轮都发的常量，不是可压的会话内容）。
+func compactOverThresholdWithOverhead(msgs []Message, trigger int) bool {
 	total := 0
 	for _, m := range msgs {
 		total += compactMessageTokens(m) // 与观测同一估算器（见 compactMessageTokens 注释）
 	}
 	return float64(total) > float64(trigger)
+}
+
+// CompactFixedOverheadToolsJSON — 压缩阈值扣的「工具定义」那一半（JSON 文本）。
+//
+// 取 BuildToolsParam()（**真正发出去的那份**：L0 常驻 + zerg 唯一 CLI 工具）——
+// ✗ 只取 ChatZergToolParam 一个：那会漏掉其余 L0 工具的 schema，固定开销被低估。
+// 序列化失败 ⇒ 空串（调用方据此只扣 sysPrompt，✗ 不拿半截 JSON 当开销）。
+func CompactFixedOverheadToolsJSON() string {
+	b, err := json.Marshal(BuildToolsParam())
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+// CompactBudgetReadout — 只读读数（观测面用）：ctx / 固定开销 / 有效预算 / 阈值。
+//
+// 四个数一起给出，是为了让「阈值为什么降了」在日志里可核（不是靠换算）。
+// sysPrompt/toolsJSON 为空时返回的就是老口径（fixed=0，budget=ctx，threshold=CompactTriggerTokens）。
+func CompactBudgetReadout(model, sysPrompt, toolsJSON string) (ctx, fixed, budget, threshold int) {
+	ctx = compactModelCtxs[model]
+	if ctx <= 0 {
+		ctx = 262144
+	}
+	fixed, budget, _ = compactBudgetReadout(ctx, sysPrompt, toolsJSON)
+	if sysPrompt == "" && toolsJSON == "" {
+		fixed, budget = 0, ctx
+	}
+	return ctx, fixed, budget, compactTriggerTokensFor(model, sysPrompt, toolsJSON)
 }
 
 // compactSystemPrompt — P4-39 T3: 结构化摘要模板（6 段——Hermes 8 段简化——小模型按结构生成可靠）

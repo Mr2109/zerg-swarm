@@ -467,9 +467,18 @@ func zergClip(s string) string {
 // 措辞三条：① 说清「截断的是显示、不是命令失败」（✗ 别让模型以为命令坏了）；
 // ② 给两条**真存在**的精确读面（gap show / code show）＋一条定位面（help <族>）；
 // ③ 明确「别拿 ls 刷屏、别放弃」——这正是那次会话里模型停下的原因。
+//
+// ★ GAP-20261018-09（2026-10-18）第四条：**改件不必读全文**。病灶是「`fs write` 整件覆盖 ⇒
+// 要先拿到全文」＋「读面两层截断」互相锁死：19265 字节的真件只取得到约 8KB，模型判对了、
+// `--dry-run` 也说可写，却拼不出「完整原文 + 只改一行」⇒ 停手不写、门禁仍红。
+// ⇒ 截断提示里必须点名 `fs write --replace <补丁件>`（定点替换：每格 `old` 恰好命中 1 次），
+// 让模型看见「这条路不用读全文」，而不是继续按 `--offset` 一窗窗拼。
 func zergCmdClipNote(bytesN, runesN int) string {
 	return fmt.Sprintf("（输出已截断，共 %d 字节 / %d 字符；只回了前 %d 字符。"+
 		"要找单条目请用能按 id 精确取的子命令：`zerg gap show <GAP id>`（单条全文、一字不截）、"+
 		"`zerg code show <件>:<行>`、`zerg gate find <词>`；不确定该族有哪些动作先 `zerg help <族>`。"+
+		"★ 要**改**件也**不必读全文**：`zerg fs write <件> --replace <补丁件> --yes`（补丁件 = "+
+		"`[{\"old\":…,\"new\":…}]` · 每格 `old` 在件里**恰好命中 1 次** ⇒ 定点改，其余字节一个不动）"+
+		"—— ✗ 别为了改一行去按 --offset 一窗窗把全文拼回来。"+
 		"✗ 别拿 ls 一遍遍刷屏，✗ 也别放弃）", bytesN, runesN, zergCmdOutLimit)
 }
