@@ -1136,8 +1136,12 @@ type chsFaceBl struct {
 type chsBaselineSet map[string]chsFaceBl
 
 var chsBaseline = chsBaselineSet{
-	"help --all":     {HasLines: true, Lines: 452, HasBytes: true, Bytes: 245174},
-	"help":           {HasLines: true, Lines: 327, HasBytes: true, Bytes: 81511, HasLast: true, Last: "      非交互用 `--token-stdin`；详见 `zerg help credentials`）。"},
+	// ★ 2026-10-17 · `GAP-20261010-20`（`zerg audit hardcoded-addr` 一条新 path）：`help --all` 与裸 `help`
+	//   各 +2 行（族内一条新命令 ⇒ 两处各多一行用法行 + 与族级段相关的换行）；字节由现跑
+	//   `zerg gate check check-help-shape --emit-baseline` 取数照抄（**禁手写** —— 件头纪律）。
+	//   危险档面（`help dangerous`）与 `help config` **不动**：本命令零危险档。
+	"help --all":     {HasLines: true, Lines: 454, HasBytes: true, Bytes: 246414},
+	"help":           {HasLines: true, Lines: 329, HasBytes: true, Bytes: 82751, HasLast: true, Last: "      非交互用 `--token-stdin`；详见 `zerg help credentials`）。"},
 	"help dangerous": {HasLines: true, Lines: 127, HasBytes: true, Bytes: 48993, HasRows: true, Rows: 115, HasTail: true, Tail: "上表 115 条：**已开放 102 条**（确认档齐就真执行 —— 逐条见上行标记）；**未开放 13 条**（真跑一律**拒执**、退码 2 = 不给结论，只有 `--dry-run` 出计划件 = 退码 0）。"},
 	"help config":    {HasLines: true, Lines: 21, HasBytes: true, Bytes: 1748},
 }

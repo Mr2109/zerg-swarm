@@ -387,6 +387,13 @@ func run(args []string, stdout, stderr io.Writer) int {
 			inv.unknown = append(inv.unknown, f)
 		}
 	}
+	// ★ 同一条数据驱动收口（缺口 `GAP-20261010-20` · 2026-10-17）：`--fail-on-hit` 在解析面刚上户口
+	//   （`parseInvocation` 专用 case）⇒ **全族共用**；若不在此收口，别族（usage 未列它的命令）真给它
+	//   会从「未知旗标 2」退化成**静默吞**（硬约束⑤：既有命令的退码与输出一字不动）。
+	//   形状逐字照拄上面 `--on`/`--off` 那条：把不归本命令的那一枚**补回 `inv.unknown`**。
+	if inv.hasFlag("--fail-on-hit") && !usageDeclaresFlag(cmd, "--fail-on-hit") {
+		inv.unknown = append(inv.unknown, "--fail-on-hit")
+	}
 	// ★ 同一条数据驱动收口（缺口账 `GAP-20260927-259` · 本枚）：`--notes` 在解析面刚上户口
 	//   （`valueFlagName`）⇒ **全族共用**；若不在此收口，别族（usage 未列它的命令）真给它
 	//   会从「未知旗标 2」退化成**静默吞**（硬约束⑤：既有命令的退码与输出一字不动）。形状逐字
@@ -1808,6 +1815,21 @@ func init() {
 			optFields: []string{"verified"},
 			endpoint:  "",
 			run:       cmdAuditCover,
+		},
+		// ---- `GAP-20261010-20`（2026-10-17）：**仓内硬编码机器地址**的扇盘清单（只读 · L0）----
+		// 拍定「做新命令、**不**扩既有断言」：既有 `check-hardcoded-private-paths` 是**门**（判红用），
+		// 本命令是**扇盘工具**（给人看清单：件:行:内容 + 总数 + 按目录分组计），默认 rc=0；
+		// 只有显式 `--fail-on-hit` 才把命中 > 0 透成 1。★ 规则表/白名单**复用**判据门那两张（不立第二份）。
+		{
+			path:     []string{"audit", "hardcoded-addr"},
+			kind:     "AuditHardcodedAddr",
+			summary:  "仓内「硬编码机器地址」**扇盘清单**（只读 · 零写盘 · L0）：扫 `core/` `agent/` `shared/` `scripts/`（不含 `ui/`/依赖树/点目录），逐处点名 `件:行:内容` + 命中总数 + **按目录分组计（处·件）**；规则与值白名单**直接复用**判据门 `check-hardcoded-private-paths` 的三族规则（`192.168.x` / 集群 `10.0.x` / 机器主机名 `*.local`；回环与文档段是声明过的合法写法 ⇒ 不报；裸端口数字不判）· 排除 `*_test.go` 夹具 / 注释行 / Rust 夹具段 / 二进制件 · 豁免件 `scripts/audit-addr-allow.txt`（一行 `路径:子串` · 写坏的行 ⇒ 2，不许静默失效）· **默认清单档：有命中仍退 0**；`--fail-on-hit` ⇒ 命中 > 0 退 1（供门/CI）· `8` = 仓根解析不到 / 扫描面 0 件（空转 ≠ 干净）",
+			usage:    auditAddrUsage,
+			arity:    "none",
+			args:     []string{"（不收位置参数 —— 仓根由 `--root <仓根>` 给）"},
+			fields:   auditAddrFields,
+			endpoint: "",
+			run:      cmdAuditHardcodedAddr,
 		},
 		// ---- D3b 第三步（2026-09-21）：**提交面**（缺口-命令面 §九 I4）----
 		// 按文件名暂存（禁 `git add -A`）· 过快速档才放行 · 禁 `--no-verify` · 提交信息模板。
@@ -5085,6 +5107,13 @@ func parseInvocation(args []string) (*invocation, error) {
 		//   —— `--unit` 指向**仓内不存在**路径时的**显式放行闸**（默认拒 2 · ✗ 不许默默放行）。
 		//   语义是布尔档 ⇒ 与 `--aging`/`--stale`/`--allow-drifted` 同一种形态（写进 `inv.kv`）。
 		case a == "--allow-missing-unit":
+			inv.kvSet(a, "true")
+		// ★ 本枚（缺口 `GAP-20261010-20` · 2026-10-17）：`audit hardcoded-addr` 的**布尔**旗标
+		//   `--fail-on-hit` —— 默认清单档（有命中仍 0）；给了它才把「命中 > 0」透成 rc=1（供门/CI）。
+		//   与 `--aging`/`--stale`/`--allow-drifted` 同一种形态（写进 `inv.kv`（`kvSet`）⇒ `foreignFlag` 看得见）；
+		//   ★ 必须在下面「未知旗标」兜底**之前**上户口，否则派单里写着它会一律退 2「未知旗标」= 旗标等于不可用。
+		//   ★ **✗ 不进 `valueFlagName`**（那张表是**取值**旗标名表 · 门73 判据丙）。
+		case a == "--fail-on-hit":
 			inv.kvSet(a, "true")
 		// ★ 本枚（缺口 `GAP-20260928-54`）：`gap ls --untriaged` 的**布尔**面旗标（只列未打
 		//   `triage_batch` 标记的条）。与 `--aging`/`--stale`/`--allow-drifted` 同一种形态（写进
