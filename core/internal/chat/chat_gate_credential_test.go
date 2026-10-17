@@ -19,6 +19,9 @@ import (
 // TestChatGateCredentialClass — 命令面侧的凭据类拦截（正控 ＋ 负控① ＋ 防误杀）。
 func TestChatGateCredentialClass(t *testing.T) {
 	g := &ChatGate{}
+	// ★ GAP-20261017-09（2026-10-17）：对话工具面收窄成「只能用虫族命令」⇒ 凭据类拦截的**判据面**
+	// 从旧 `bash` 工具迁到 `zerg` 工具（ChatGate 先硬闸「首词逐字 zerg」，再拿命令体跑同一张规则表）。
+	// 规则表本身一条未改：下面的正控/负控/防误杀清单逐字照旧，只是命令前加首词 zerg。
 	mustBlock := []string{
 		// 正控：凭据类路径/键名（合成串——✗ 不含任何真凭据值）
 		`cat .env`, `cat .env.local`, `cp .env /tmp/x`, `head -n5 subdir/.env`,
@@ -30,7 +33,7 @@ func TestChatGateCredentialClass(t *testing.T) {
 		`echo "${ZERG_AUTH_TOKEN}"`, `echo ${API_KEY}`, `printenv ZERG_TOKEN`,
 	}
 	for _, cmd := range mustBlock {
-		d, err := g.Check("bash", credBashArgs(cmd), "chat")
+		d, err := g.Check("zerg", credCmdArgs(cmd), "chat")
 		if err != nil {
 			t.Fatalf("%s err=%v", cmd, err)
 		}
@@ -45,7 +48,7 @@ func TestChatGateCredentialClass(t *testing.T) {
 		`zerg gate find check-password-argv`,
 	}
 	for _, cmd := range mustAllow {
-		d, err := g.Check("bash", credBashArgs(cmd), "chat")
+		d, err := g.Check("zerg", credCmdArgs(cmd), "chat")
 		if err != nil {
 			t.Fatalf("%s err=%v", cmd, err)
 		}
@@ -92,10 +95,10 @@ func TestCredentialPoleConsistency(t *testing.T) {
 	}
 }
 
-// credBashArgs — 按真模型发来的形态造 bash 工具 args（JSON 串：内含引号须转义）——
+// credCmdArgs — 按真模型发来的形态造 zerg 工具 args（命令前补首词 zerg —— GAP-20261017-09 后的判据面）——
 // ✗ 别用「裸拼」 `{"command":"<cmd>"}`：cmd 带 `"` 时会造出**非法 JSON**，extractCommand 会在
 // 第一个裸 `"` 处截断 ⇒ 本判据测的就不是真链路了（实测踩过）。
-func credBashArgs(cmd string) string { return `{"command":` + strconv.Quote(cmd) + `}` }
+func credCmdArgs(cmd string) string { return `{"command":` + strconv.Quote("zerg "+cmd) + `}` }
 
 // credTestRepoRoot 从包目录上溯找仓根（认 core/internal/agent 这棵树）。
 func credTestRepoRoot(t *testing.T) string {

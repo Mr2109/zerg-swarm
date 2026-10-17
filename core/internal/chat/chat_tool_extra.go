@@ -64,12 +64,21 @@ func executeChatToolInner(name string, args map[string]any, workDir string) Chat
 		}
 		return ChatToolResult{Content: fmt.Sprintf("未知工具: %s（先 tool_search 搜索）", name)}
 	}
+	// ★★ GAP-20261017-09（2026-10-17 用户口径「虫族对话 基于虫族 CLI 干活，只能使用虫族命令」）：
+	// 撤下面在执行面**先** fail-closed —— 模型兑旧名字（bash/read/write/edit/glob/grep/ls）直接调也跑不动。
+	// 旧 `bash` 的执行分支不在这里（它在 agent/bash_v101.go，由 ChatGate 拦截，见 chat_gate.go）。
+	if ChatToolForbidden(name) {
+		return ChatToolResult{Error: chatZergOnlyRefusal(name)}
+	}
 	// 副作用工具安全提示（描述已标注——执行前再确认一次）
 	switch name {
 	case "kill_process", "delete_file", "stop_service", "start_service":
 		// 这些工具设计为操作型——直接执行（描述含风险提示）
 	}
 	switch name {
+	// ── 虫族 CLI（GAP-20261017-09：对话唯一工具——只能跑 zerg 子命令）──
+	case ZergCmdToolName:
+		return res(ChatZergCommand(args, workDir))
 	// ── 记忆（乙批 2026-09-10——设计稿 §3.2/§3.3）──
 	case "memory":
 		// 写回跨会话记忆（条目制 + 预算 + 威胁扫描 + 出处分级）

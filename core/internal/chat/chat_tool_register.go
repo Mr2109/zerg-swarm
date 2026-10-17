@@ -34,4 +34,18 @@ func RegisterChatExtraTools() {
 			},
 		})
 	}
+	// ★ GAP-20261017-09（2026-10-17）：对话工具面收窄成「只能用虫族命令」——`zerg` 是本对话唯一 CLI 工具。
+	// 为什么必须在这里注册：对话主路径走 agent 的 ec.ExecuteTool ⇒ 名字不在 AllTools 里会被
+	// resolveToolNameCoded 判「未知工具」（schema 由 BuildToolsParam / HermesToolDefs 出，这里只管执行路由）。
+	agent.RegisterExtraTool(agent.ExtraTool{
+		Name: ZergCmdToolName,
+		Desc: zergCmdToolDesc,
+		Fn: func(args map[string]any, workDir string) (string, error) {
+			res := ExecuteChatTool(ZergCmdToolName, args, workDir)
+			if res.Error != "" {
+				return "", fmt.Errorf("%s", res.Error)
+			}
+			return res.Content, nil
+		},
+	})
 }

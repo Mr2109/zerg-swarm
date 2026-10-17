@@ -20,18 +20,14 @@ type ChatToolMeta struct {
 
 // chatToolRegistry — 工具注册表（300+ 目录——首批实装 60+）
 var chatToolRegistry = []ChatToolMeta{
-	// ═══ L0 核心常驻（12）═══
-	{Name: "bash", Category: "文件与代码", Keywords: []string{"命令", "执行", "shell", "运行"}, L0: true},
-	{Name: "read", Category: "文件与代码", Keywords: []string{"读文件", "查看内容", "cat"}, L0: true},
-	{Name: "write", Category: "文件与代码", Keywords: []string{"写文件", "创建文件"}, L0: true},
-	{Name: "edit", Category: "文件与代码", Keywords: []string{"编辑", "修改", "替换"}, L0: true},
-	{Name: "glob", Category: "文件与代码", Keywords: []string{"找文件", "文件匹配", "按名搜"}, L0: true},
-	{Name: "grep", Category: "文件与代码", Keywords: []string{"搜内容", "关键词搜索", "代码搜索"}, L0: true},
-	{Name: "ls", Category: "文件与代码", Keywords: []string{"列目录", "列表", "目录"}, L0: true},
-	{Name: "kb_search", Category: "知识库", Keywords: []string{"经验", "知识", "查库", "教训", "历史"}, L0: true},
+	// ═══ L0 核心常驻 ═══
+	// ★ GAP-20261017-09（2026-10-17 用户口径「虫族对话 基于虫族 CLI 干活，只能使用虫族命令」）：
+	//   bash / read / write / edit / glob / grep / ls（＋引导器 tool_search / kb_search）已从**对话工具面撤下** ⇒
+	//   条目从这里与 HermesToolDefs 一并删除（两表必须一致，判据 chat_tool_registry_l0_test.go）。
+	//   ★ 别再按旧印象把它们加回来：实测会话 chat_20261017_144221_647a5a 就是「fs run 拒 ls ⇒ 转手用 bash」。
+	{Name: "zerg", Category: "系统", Keywords: []string{"虫族命令", "zerg", "cli", "命令", "执行", "查询"}, L0: true},
 	{Name: "web_search", Category: "网络与调研", Keywords: []string{"网络", "搜索", "调研"}, L0: true},
 	{Name: "web_fetch", Category: "网络与调研", Keywords: []string{"网页", "抓取", "url"}, L0: true},
-	{Name: "tool_search", Category: "系统", Keywords: []string{"发现工具", "找工具", "工具列表"}, L0: true},
 	{Name: "skill_load", Category: "知识库", Keywords: []string{"技能", "skill", "加载"}, L0: true},
 	// 2026-09-11 一致性审计补齐：这两个此前只在提示词定义表（HermesToolDefs）里、不在注册表
 	// → tool_search 发现不了、UI 资源库也不列（两处真相源漂移）。见 chat_tool_registry_l0_test.go 锁死。

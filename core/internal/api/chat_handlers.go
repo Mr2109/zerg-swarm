@@ -57,7 +57,7 @@ const chatSystemPrompt = `你是虫族 AI（Zerg）的对话助手——运行�
 - 简单问题快速答——复杂问题**一次做完**（探测→定位→结论）——不要分轮慢慢试（用户说"继续"才推进=失败）。
 
 # 知识库铁律（最高优先级）
-- 遇到不清楚/不确定的问题：先调用 kb_search 查虫族知识库；库中无所需再说明。
+- 遇到不清楚/不确定的问题：先在仓里查（zerg code find '<正则>' 按内容搜、zerg code show <件>:<行> 看原文）；查不到就如实说不确定。知识库直查（kb_search）已撤、虫族 CLI 本版也没有知识库查询命令——✗ 不许凭印象编答案。
 - 用户是职业剪辑师与虫族系统管理者——涉及 FCPX/达芬奇/多机位/音频/虫族系统/模型部署的问题优先查库再答。
 - 按需取用，不是每个问题都查。
 
@@ -66,13 +66,13 @@ const chatSystemPrompt = `你是虫族 AI（Zerg）的对话助手——运行�
 - 工具/安装/网络失败阻塞真实路径时：直说失败并尝试替代方案（换包管理器/换思路/问用户）。绝不编造输出（假数据/假文件/假 API 响应）——报告阻塞好过发明结果。
 
 # 工具使用
-- 多个独立查询/搜索/读取（不互相依赖）批量合并到同一次回复（运行时并行执行）——不要一个工具一轮。
+- 多条互相独立的 zerg 命令（不互相依赖）批量合并到同一次回复（运行时并行执行）——不要一条命令一轮。
 - 仅当后一步依赖前一步结果时才串行（如先读文件再改文件）。
-- 工作目录是虫族项目根（{{REPO_ROOT}}）——查项目文件用 glob（按名找）/grep（按内容搜）/read（读文件）——不要用 bash 的 find/搜索绕路。
+- 工作目录是虫族项目根（{{REPO_ROOT}}）——查项目文件一律用 zerg 命令：zerg code show <件>:<行>（看一段）、zerg code find '<正则>'（按内容搜）、zerg help（命令树）——没有 glob/grep/read/bash。
 - 工具失败或结果不满足时——换工具/换参数/换思路继续——不要停下来问用户"要不要继续"。
 - 任务未完成不要自己停——持续调用工具推进直到给出完整答案。只有真的收到"（已经尽力尝试了多种方式…）"这样的收尾指令时才收尾。
-- 【工具分层（重要）】主提示只带基础工具（bash/read/write/edit/glob/grep/ls/kb_search/web_search/web_fetch/skill_load）。**需要其他能力时用 tool_search 搜索发现**——如查系统状态搜"系统"（cpu_status/mem_status/port_check/port_services——**本机服务/端口清单用 port_services——不要 bash lsof（输出截断）**）、查影音搜"剪辑"（media_info/ffmpeg/footage/fcpx）、查效率搜"计算"（calc/json_format）、查知识库搜"知识库"（kb_read/kb_stats）。发现后直接调用。
-- 【专业领域先搜工具（重要）】涉及剪辑/FCPX/达芬奇/多机位（搜"剪辑"）、音乐下载（搜"音乐"）、系统状态（搜"系统"）、外部项目素材（footage 数据库——搜"剪辑"）时——**第一步就用 tool_search 找专用工具**——不要用 glob/grep 在项目目录里找外部资源（外部项目不在工作区——找不到是正常的）。
+- 【工具面（重要）】本对话**只有 zerg 一个工具**（虫族 CLI）——一切操作经 zerg 命令（首词逐字 zerg，不许管道/重定向/串联/命令替换）。没有 bash/read/write/edit/glob/grep/ls，也没有 web_search/web_fetch/skill_load/zerg_overview 与 tool_search——不确定有什么命令就先跑 zerg help（全命令树）或 zerg help <族名>。
+- 【看技能用虫族命令】技能（skill）先 zerg skill ls（清单：名字 · 触发描述），再 zerg skill show <名>（正文）——skill_load 已撤，这是唯一正门。
 
 # 身份
 - 你就是虫族 AI（Zerg）——虫族本地模型集群的一员。
@@ -552,6 +552,11 @@ func (h *ChatHandlers) SendMessageTool(w http.ResponseWriter, r *http.Request) {
 	ec.AgentName = "chat"
 	ec.Session = id // T1.2 观测：把会话透给工具判定事件（只观测；有会话才落 trace/span 骨架）
 	execFn := func(ctx context.Context, name string, targs map[string]any) (string, string, error) {
+		// ★ 2026-10-17 二次收窄（GAP-20261017-09）：撤下工具**执行面** fail-closed。
+		// agent 的 web_search / web_fetch 分支不查门（实测兑旧名直调会真联网）⇒ 由 chat 侧兜住。
+		if err := chat.ChatExecGuard(id, name, targs); err != nil {
+			return "", "", err
+		}
 		// 批次A(2026-09-10): tool_search 执行器接线（此前无执行器——模型调用必空转）
 		if name == "tool_search" {
 			agent.ObserveToolAllow(id, name, targs) // T1.2 观测：判定层之外的执行路径同样必须有判定事件
@@ -1065,6 +1070,11 @@ func (h *ChatHandlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 				var content string
 				var dur string
 				var execErr error
+				// ★ 2026-10-17 二次收窄（GAP-20261017-09）：撤下工具**执行面** fail-closed（与非流式同一条闸）。
+				if gErr := chat.ChatExecGuard(id, name, targs); gErr != nil {
+					resCh <- execRes{"", "", gErr}
+					return
+				}
 				// 批次A(2026-09-10): tool_search 执行器接线（流式主路径）
 				if name == "tool_search" {
 					agent.ObserveToolAllow(id, name, targs) // T1.2 观测：判定层之外的执行路径同样必须有判定事件

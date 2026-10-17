@@ -14,17 +14,37 @@ import (
 // ChatGate — 对话工具安全门（实现 agent.ToolGater）
 type ChatGate struct{}
 
-// Check — 工具调用检查（危险命令黑名单——精确匹配命令尾）
-// 返回 agent.Decision{Action: allow/block}——block 带引导建议
+// Check — 工具调用检查
+//
+// ★★ GAP-20261017-09（2026-10-17 用户口径「虫族对话 基于虫族 CLI 干活，只能使用虫族命令」）：
+// 对话面的**非虫族工具**在这里 fail-closed —— bash/read/write/edit/glob/grep/ls 已被撤下
+// （chatForbiddenTools，执行层闸口：agent 的 read/write/edit/glob/grep/ls/bash 都会先过本门，
+// 见 core/internal/agent/exec.go 与 bash_v101.go 的 gate.Check 调用点）。
+// 旧 bash 分支（危险命令黑名单 ＋ 凭据类拦截）**保留**，但它现在只服务 zerg 命令面：
+// 判定前先把首词 zerg 去掉，黑名单/凭据规则照旧判命令体（规则一条未放宽）。
 func (g *ChatGate) Check(toolName, args string, agentName string) (agent.Decision, error) {
-	if toolName != "bash" {
+	name := strings.ToLower(strings.TrimSpace(toolName))
+	if ChatToolForbidden(name) {
+		return agent.Decision{Action: "block", Message: chatZergOnlyRefusal(name)}, nil
+	}
+	if name != ZergCmdToolName {
 		return agent.Decision{Action: "allow"}, nil
 	}
-	// 提取命令（bash 工具 args 里 command 字段）
+	// 提取命令（zerg 工具 args 里 command 字段——与旧 bash 同一形态）
 	cmd := extractCommand(args)
 	if cmd == "" {
 		return agent.Decision{Action: "allow"}, nil
 	}
+	// ① 硬闸（首词逐字 zerg ＋ 禁用元字符）——与执行器同一函数（✗ 两处各写一套）
+	if why := zergCmdVerdict(cmd); why != "" {
+		return agent.Decision{Action: "block", Message: why}, nil
+	}
+	// ② 判「命令体」：去掉首词 zerg 后的各参数用空格拼回（argv 切分失败 ⇒ 上面硬闸已挡）
+	argv, err := splitZergArgv(strings.TrimSpace(cmd))
+	if err != nil || len(argv) < 2 {
+		return agent.Decision{Action: "allow"}, nil
+	}
+	cmd = strings.Join(argv[1:], " ")
 	// 危险命令黑名单（两类：目标类=后边界防误伤 / 动作类=任意位置）
 	// 只拦绝对不可逆 + 系统级（rm 根目录/mkfs/shutdown/格式化/未知脚本管道）
 	type rule struct {

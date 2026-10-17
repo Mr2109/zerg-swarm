@@ -68,8 +68,19 @@ func TestChatToolSearchBilingual(t *testing.T) {
 		t.Errorf("短词 \"id\" 召回 %d 条（应 0，长度守卫失效）：%v", len(short), short)
 	}
 	// 但真正的短工具名要能搜到（全等路径）
-	if got := probe("ls"); !contains(got, "ls") {
-		t.Errorf("短工具名 \"ls\" 应命中自身，实得 %v", got)
+	// ★ GAP-20261017-09（2026-10-17）：旧样例写死 "ls"，而 ls 已从**对话工具面/注册表**撤下
+	// （对话只能用虫族命令）⇒ 现按注册表**现读**取最短的那个名字当样例，✗ 别再写死可能被撤下的字面量。
+	shortName := ""
+	for _, m := range chatToolRegistry {
+		if shortName == "" || len(m.Name) < len(shortName) {
+			shortName = m.Name
+		}
+	}
+	if shortName == "" {
+		t.Fatal("注册表为空（抽取口径失效）")
+	}
+	if got := probe(shortName); !contains(got, shortName) {
+		t.Errorf("短工具名 %q 应命中自身，实得 %v", shortName, got)
 	}
 }
 
