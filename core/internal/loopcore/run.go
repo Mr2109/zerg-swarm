@@ -71,6 +71,16 @@ func Run(ctx context.Context, cfg Config, model, sysPrompt string, msgs []map[st
 				// 本轮轨迹 `res.Traces` 此刻都已定稿 —— 两个调用点（顶部 defer / ⑤ 非自然出口）都在全部
 				// 返回路径的收尾之后，故派生不会读到半成品正文。
 				claims = DeriveClaims(res.Content, res.Traces)
+				base := VerifyOutputClaims(claims, res.Traces)
+				// 第二半（同一条 GAP）：命令**真跑过**时，正文里的硬读数还要逐字核 ——
+				// `rc=N` 对那条回执的真实 rc、`文件:行` 对 root 下的真实件（口径与「不误杀」边界见
+				// claims_numbers.go 文件头）。裁决走**同一枚** `VerifyClaims`（receipt.go 一行未改）：
+				// 这里只把它的命中失败**并进**派生那一批（`mergeNumericClaims`），✗ 不另开一套裁决。
+				// 调用方显式给了 `d.OutputClaims` 的那一支不走这里（尊重调用方，见下面那个分支）。
+				num := VerifyNumericClaims(res.Content, res.Traces, d.CWD)
+				claimCheck = mergeNumericClaims(base, num.HardFailed)
+				claimChecked = true
+				return claimCheck
 			}
 			claimCheck = VerifyOutputClaims(claims, res.Traces)
 			claimChecked = true
