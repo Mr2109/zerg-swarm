@@ -11329,7 +11329,296 @@
    "want_rc": 2,
    "want_stdout_bytes": 0,
    "why": "K2 甲档（字段面外 ⇒ 2 + stdout 零字节）"
-  }
+  },
+{
+ "argv": [
+  "skill",
+  "new",
+  "--nosuchflag-zz"
+ ],
+ "command": "skill new",
+ "id": "skill new#未知旗标",
+ "want_rc": 2,
+ "want_stdout_bytes": 0,
+ "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不建任何目录、不写审计"
+},
+{
+ "argv": [
+  "skill",
+  "new",
+  "--schema",
+  "zerg/v9"
+ ],
+ "command": "skill new",
+ "id": "skill new#不认的契约主号",
+ "want_rc": 2,
+ "want_stdout_bytes": 0,
+ "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+},
+{
+ "argv": [
+  "skill",
+  "new",
+  "zz-probe",
+  "--yes"
+ ],
+ "command": "skill new",
+ "id": "skill new#缺 --desc",
+ "want_rc": 2,
+ "want_stdout_bytes": 0,
+ "why": "`--desc` 就是注入系统提示的那一行触发器 —— 缺了等于造一件不进提示的技能（要整篇给走 `--from`）"
+},
+{
+ "argv": [
+  "skill",
+  "new",
+  "Zz-Bad",
+  "--desc",
+  "x",
+  "--yes"
+ ],
+ "command": "skill new",
+ "id": "skill new#名不合规",
+ "want_rc": 2,
+ "want_stdout_bytes": 0,
+ "why": "大写/空格/`_` ⇒ 结构拒（**执行前判**，先于建目录：名同时是目录名与 `skill_load` 的钥匙）"
+},
+{
+ "argv": [
+  "skill",
+  "new",
+  "zz-probe",
+  "--desc",
+  "x"
+ ],
+ "command": "skill new",
+ "id": "skill new#缺 --yes（D2）",
+ "want_rc": 2,
+ "want_stdout_bytes": 0,
+ "why": "D2 三态：缺 `--yes` ⇒ 2 + **零写**（`writeGuardYes` 在处理器第一句 · 先于任何盘面动作）"
+},
+{
+ "argv": [
+  "skill",
+  "new",
+  "zz-probe",
+  "--desc",
+  "x",
+  "--dry-run",
+  "--yes"
+ ],
+ "command": "skill new",
+ "id": "skill new#--dry-run 与 --yes 同给",
+ "want_rc": 2,
+ "want_stdout_bytes": 0,
+ "why": "门98 共享判定（`dryRunYesConflict`）· 两旗标同给 ⇒ 2，**先于任何盘面动作**"
+},
+{
+ "argv": [
+  "skill",
+  "new",
+  "zz-probe",
+  "--desc",
+  "a\nb",
+  "--yes"
+ ],
+ "command": "skill new",
+ "id": "skill new#--desc 多行",
+ "want_rc": 2,
+ "want_stdout_bytes": 0,
+ "why": "frontmatter 里 `description:` 是一行 YAML ⇒ 换行会截断（退 2，✗ 不静默取首行）"
+},
+{
+ "argv": [
+  "skill",
+  "edit",
+  "--nosuchflag-zz"
+ ],
+ "command": "skill edit",
+ "id": "skill edit#未知旗标",
+ "want_rc": 2,
+ "want_stdout_bytes": 0,
+ "why": "未知旗标 = 用法错 · 执行前判，不碰任何目标"
+},
+{
+ "argv": [
+  "skill",
+  "edit",
+  "--schema",
+  "zerg/v9"
+ ],
+ "command": "skill edit",
+ "id": "skill edit#不认的契约主号",
+ "want_rc": 2,
+ "want_stdout_bytes": 0,
+ "why": "不认的契约主号 · 执行前判"
+},
+{
+ "argv": [
+  "skill",
+  "edit",
+  "zz-no-such-skill",
+  "--yes"
+ ],
+ "command": "skill edit",
+ "id": "skill edit#两种改法都不给",
+ "want_rc": 2,
+ "want_stdout_bytes": 0,
+ "why": "`--desc` 与 `--from` 必须**恰好给一个**：都不给 ⇒ 没有改法（2 · 零写）"
+},
+{
+ "argv": [
+  "skill",
+  "edit",
+  "zz-no-such-skill",
+  "--desc",
+  "y",
+  "--from",
+  "-",
+  "--yes"
+ ],
+ "command": "skill edit",
+ "id": "skill edit#两种改法同给",
+ "want_rc": 2,
+ "want_stdout_bytes": 0,
+ "why": "两种改法同给 ⇒ 歧义 ⇒ 拒（不挑一个执行 · 也不读 stdin）"
+},
+{
+ "argv": [
+  "skill",
+  "edit",
+  "zz-no-such-skill",
+  "--desc",
+  "y",
+  "--yes"
+ ],
+ "command": "skill edit",
+ "id": "skill edit#名不在册",
+ "want_rc": 2,
+ "want_stdout_bytes": 0,
+ "why": "点名点到册外 = 用法错 2（同 `skill show` 那一档 · 只给最像的合法输入与候选，不挪任何目录）"
+},
+{
+ "argv": [
+  "skill",
+  "edit",
+  "zz-no-such-skill",
+  "--desc",
+  "y"
+ ],
+ "command": "skill edit",
+ "id": "skill edit#缺 --yes（D2）",
+ "want_rc": 2,
+ "want_stdout_bytes": 0,
+ "why": "D2 三态：缺 `--yes` ⇒ 2 + 零写（不备份、不写件、不写审计）"
+},
+{
+ "argv": [
+  "skill",
+  "edit",
+  "zz-no-such-skill",
+  "--desc",
+  "y",
+  "--dry-run",
+  "--yes"
+ ],
+ "command": "skill edit",
+ "id": "skill edit#--dry-run 与 --yes 同给",
+ "want_rc": 2,
+ "want_stdout_bytes": 0,
+ "why": "门98 共享判定 · 同给 ⇒ 2，先于任何盘面动作"
+},
+{
+ "argv": [
+  "skill",
+  "edit",
+  "zz-no-such-skill",
+  "--desc",
+  "a\nb",
+  "--yes"
+ ],
+ "command": "skill edit",
+ "id": "skill edit#--desc 多行",
+ "want_rc": 2,
+ "want_stdout_bytes": 0,
+ "why": "描述行是一行 YAML ⇒ 换行会截断（执行前判 ⇒ 2）"
+},
+{
+ "argv": [
+  "skill",
+  "rm",
+  "--nosuchflag-zz"
+ ],
+ "command": "skill rm",
+ "id": "skill rm#未知旗标",
+ "want_rc": 2,
+ "want_stdout_bytes": 0,
+ "why": "未知旗标 = 用法错 · 执行前判，不挪任何目录"
+},
+{
+ "argv": [
+  "skill",
+  "rm",
+  "--schema",
+  "zerg/v9"
+ ],
+ "command": "skill rm",
+ "id": "skill rm#不认的契约主号",
+ "want_rc": 2,
+ "want_stdout_bytes": 0,
+ "why": "不认的契约主号 · 执行前判"
+},
+{
+ "argv": [
+  "skill",
+  "rm",
+  "--yes"
+ ],
+ "command": "skill rm",
+ "id": "skill rm#缺实参",
+ "want_rc": 2,
+ "want_stdout_bytes": 0,
+ "why": "缺技能名 ⇒ 2（名是唯一目标；✗ 不默认「全下架」）"
+},
+{
+ "argv": [
+  "skill",
+  "rm",
+  "zz-no-such-skill",
+  "--yes"
+ ],
+ "command": "skill rm",
+ "id": "skill rm#名不在册",
+ "want_rc": 2,
+ "want_stdout_bytes": 0,
+ "why": "册外 = 用法错 2（同 `skill show` 档）"
+},
+{
+ "argv": [
+  "skill",
+  "rm",
+  "zz-no-such-skill"
+ ],
+ "command": "skill rm",
+ "id": "skill rm#缺 --yes（D2）",
+ "want_rc": 2,
+ "want_stdout_bytes": 0,
+ "why": "D2 三态：缺 `--yes` ⇒ 2 + 零写（不挪、不删、不写审计）"
+},
+{
+ "argv": [
+  "skill",
+  "rm",
+  "zz-no-such-skill",
+  "--dry-run",
+  "--yes"
+ ],
+ "command": "skill rm",
+ "id": "skill rm#--dry-run 与 --yes 同给",
+ "want_rc": 2,
+ "want_stdout_bytes": 0,
+ "why": "门98 共享判定 · 同给 ⇒ 2，先于任何盘面动作"
+}
  ],
  "exemptions": [],
  "id": "cli-contract.v1",

@@ -8,11 +8,11 @@
     "non_literal_read": "非字面量取空白规整化后的表达式文本"
   },
   "counts": {
-    "literals": 650,
-    "literal_sites": 1369,
+    "literals": 665,
+    "literal_sites": 1408,
     "non_literals": 14,
     "non_literal_sites": 84,
-    "sites_total": 1453
+    "sites_total": 1492
   },
   "literals": [
     {
@@ -166,7 +166,10 @@
         "core/cmd/zerg/family_fs_tools.go:466",
         "core/cmd/zerg/family_gate_reap.go:585",
         "core/cmd/zerg/family_script_inventory.go:788",
-        "core/cmd/zerg/family_script_retire.go:971"
+        "core/cmd/zerg/family_script_retire.go:971",
+        "core/cmd/zerg/family_skill.go:562",
+        "core/cmd/zerg/family_skill.go:713",
+        "core/cmd/zerg/family_skill.go:791"
       ]
     },
     {
@@ -404,6 +407,14 @@
       "value": "bad_n_predict",
       "sites": [
         "core/cmd/zerg/family_agent_ops.go:938"
+      ]
+    },
+    {
+      "value": "bad_name",
+      "sites": [
+        "core/cmd/zerg/family_skill.go:483",
+        "core/cmd/zerg/family_skill.go:600",
+        "core/cmd/zerg/family_skill.go:746"
       ]
     },
     {
@@ -1069,6 +1080,19 @@
       ]
     },
     {
+      "value": "desc_multiline",
+      "sites": [
+        "core/cmd/zerg/family_skill.go:501",
+        "core/cmd/zerg/family_skill.go:614"
+      ]
+    },
+    {
+      "value": "desc_required",
+      "sites": [
+        "core/cmd/zerg/family_skill.go:496"
+      ]
+    },
+    {
       "value": "dev_edit_failed",
       "sites": [
         "core/cmd/zerg/family_dev_reclaim.go:318"
@@ -1145,6 +1169,12 @@
       "value": "duplicate_name",
       "sites": [
         "core/cmd/zerg/family_config.go:461"
+      ]
+    },
+    {
+      "value": "edit_mode_required",
+      "sites": [
+        "core/cmd/zerg/family_skill.go:609"
       ]
     },
     {
@@ -1821,7 +1851,7 @@
         "core/cmd/zerg/family_gap_state.go:2960",
         "core/cmd/zerg/family_gap_state.go:3303",
         "core/cmd/zerg/family_gap_state.go:3574",
-        "core/cmd/zerg/main.go:5721"
+        "core/cmd/zerg/main.go:5774"
       ]
     },
     {
@@ -2401,6 +2431,13 @@
       ]
     },
     {
+      "value": "name_mismatch",
+      "sites": [
+        "core/cmd/zerg/family_skill.go:536",
+        "core/cmd/zerg/family_skill.go:662"
+      ]
+    },
+    {
       "value": "narrow_not_in_shape",
       "sites": [
         "core/cmd/zerg/family_gap.go:7398"
@@ -2476,6 +2513,12 @@
       "value": "no_evidence",
       "sites": [
         "core/cmd/zerg/family_dev_candidate.go:139"
+      ]
+    },
+    {
+      "value": "no_frontmatter",
+      "sites": [
+        "core/cmd/zerg/family_skill.go:670"
       ]
     },
     {
@@ -3845,35 +3888,89 @@
       ]
     },
     {
+      "value": "skill_backup_failed",
+      "sites": [
+        "core/cmd/zerg/family_skill.go:696",
+        "core/cmd/zerg/family_skill.go:701",
+        "core/cmd/zerg/family_skill.go:706"
+      ]
+    },
+    {
       "value": "skill_body_unreadable",
       "sites": [
-        "core/cmd/zerg/family_skill.go:276"
+        "core/cmd/zerg/family_skill.go:292",
+        "core/cmd/zerg/family_skill.go:642"
+      ]
+    },
+    {
+      "value": "skill_dir_create_failed",
+      "sites": [
+        "core/cmd/zerg/family_skill.go:567"
+      ]
+    },
+    {
+      "value": "skill_exists",
+      "sites": [
+        "core/cmd/zerg/family_skill.go:513"
+      ]
+    },
+    {
+      "value": "skill_not_a_dir",
+      "sites": [
+        "core/cmd/zerg/family_skill.go:635",
+        "core/cmd/zerg/family_skill.go:768"
       ]
     },
     {
       "value": "skill_not_loadable",
       "sites": [
-        "core/cmd/zerg/family_skill.go:284"
+        "core/cmd/zerg/family_skill.go:300"
       ]
     },
     {
       "value": "skill_root_absent",
       "sites": [
-        "core/cmd/zerg/family_skill.go:209",
-        "core/cmd/zerg/family_skill.go:246"
+        "core/cmd/zerg/family_skill.go:225",
+        "core/cmd/zerg/family_skill.go:262",
+        "core/cmd/zerg/family_skill.go:507",
+        "core/cmd/zerg/family_skill.go:620",
+        "core/cmd/zerg/family_skill.go:753"
       ]
     },
     {
       "value": "skill_root_empty",
       "sites": [
-        "core/cmd/zerg/family_skill.go:221"
+        "core/cmd/zerg/family_skill.go:237"
       ]
     },
     {
       "value": "skill_root_unreadable",
       "sites": [
-        "core/cmd/zerg/family_skill.go:215",
-        "core/cmd/zerg/family_skill.go:252"
+        "core/cmd/zerg/family_skill.go:231",
+        "core/cmd/zerg/family_skill.go:268"
+      ]
+    },
+    {
+      "value": "skill_target_unreadable",
+      "sites": [
+        "core/cmd/zerg/family_skill.go:518",
+        "core/cmd/zerg/family_skill.go:630",
+        "core/cmd/zerg/family_skill.go:763"
+      ]
+    },
+    {
+      "value": "skill_trash_failed",
+      "sites": [
+        "core/cmd/zerg/family_skill.go:796",
+        "core/cmd/zerg/family_skill.go:801",
+        "core/cmd/zerg/family_skill.go:806"
+      ]
+    },
+    {
+      "value": "skill_write_failed",
+      "sites": [
+        "core/cmd/zerg/family_skill.go:572",
+        "core/cmd/zerg/family_skill.go:718"
       ]
     },
     {
@@ -3901,6 +3998,19 @@
       ]
     },
     {
+      "value": "source_conflict",
+      "sites": [
+        "core/cmd/zerg/family_skill.go:491"
+      ]
+    },
+    {
+      "value": "source_empty",
+      "sites": [
+        "core/cmd/zerg/family_skill.go:531",
+        "core/cmd/zerg/family_skill.go:656"
+      ]
+    },
+    {
       "value": "source_undeclared",
       "sites": [
         "core/cmd/zerg/family_model_pull.go:163",
@@ -3911,7 +4021,9 @@
       "value": "source_unreadable",
       "sites": [
         "core/cmd/zerg/family_model_put.go:221",
-        "core/cmd/zerg/family_model_verify.go:463"
+        "core/cmd/zerg/family_model_verify.go:463",
+        "core/cmd/zerg/family_skill.go:526",
+        "core/cmd/zerg/family_skill.go:651"
       ]
     },
     {
@@ -4570,7 +4682,9 @@
       "value": "writeback_mismatch",
       "sites": [
         "core/cmd/zerg/family_dev_edit.go:946",
-        "core/cmd/zerg/family_doc.go:206"
+        "core/cmd/zerg/family_doc.go:206",
+        "core/cmd/zerg/family_skill.go:578",
+        "core/cmd/zerg/family_skill.go:723"
       ]
     },
     {
@@ -4677,7 +4791,7 @@
         "core/cmd/zerg/family_repo_diffstat.go:105",
         "core/cmd/zerg/family_route.go:85",
         "core/cmd/zerg/gate.go:609",
-        "core/cmd/zerg/main.go:6109"
+        "core/cmd/zerg/main.go:6162"
       ]
     },
     {

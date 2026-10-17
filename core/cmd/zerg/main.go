@@ -4410,6 +4410,55 @@ func init() {
 			fields:  []string{"name", "description", "state", "path", "bytes", "lines", "body"},
 			run:     cmdSkillShow,
 		},
+		// ---- 技能库族 · M2 三条 D2 写面（设计稿 `zerg-技能库设计稿-20261017.md` §3.3–3.5）----
+		// 三态照 `doc meta fill` / `script inventory sync`：`--dry-run` 零副作用 · 缺 `--yes` ⇒ 2 ·
+		// 写面进 `<状态目录>/skill_audit.jsonl`（审计先落盘）· 写完回读对拍 sha256。
+		// ✗ 零新增旗标名（`--desc` / `--from` 早就在 `valueFlagName` 表里）⇒ 门73 两处登记面零改动。
+		{
+			path:    []string{"skill", "new"},
+			kind:    "SkillNew",
+			summary: "新建一条技能（**D2 写面**：默认干跑 · `--dry-run` 零副作用 · 缺 `--yes` ⇒ 2 · 同名已存在 ⇒ 14 不覆盖 · 写面进审计）",
+			usage:   "zerg skill new <名> (--desc <一句话触发器> | --from <件|->) [--by <谁>] [--dry-run | --yes] [--json <字段>]",
+			arity:   "any",
+			args:    []string{"技能名（`^[a-z0-9][a-z0-9-]{0,63}$` · 同时是目录名）", "（`--desc` 或 `--from` 二选一：前者的那一行会进系统提示，是触发器；后者是仓外整件 · `-` = stdin）"},
+			fields:  []string{"result", "name", "path", "before_sha256", "after_sha256", "bytes", "audit_path"},
+			danger: &dangerSpec{dangerD2, "技能名",
+				"在技能根建一个 `<名>/SKILL.md`（可逆：同名已存在即拒 14 · 写前算 sha256 · 写后回读对拍 · 审计先落盘）",
+				"zerg-技能库设计稿-20261017.md §3.3 · 同族先例 doc meta fill（D2）· 写权限只给人的既有教条（ai_boundary.go:209）",
+				false, dangerScopeRepo},
+			opened: true,
+			run:    cmdSkillNew,
+		},
+		{
+			path:    []string{"skill", "edit"},
+			kind:    "SkillEdit",
+			summary: "改一条技能（**D2 写面**：`--desc` 只改描述行 / `--from <件|->` 整篇替换 · 互斥 · 默认干跑 · 缺 `--yes` ⇒ 2 · 写前备份 ＋ 审计）",
+			usage:   "zerg skill edit <名> (--desc <新触发器> | --from <件|->) [--by <谁>] [--dry-run | --yes] [--json <字段>]",
+			arity:   "any",
+			args:    []string{"技能名（与 `zerg skill ls` 的 `name` 逐字相同）", "改法：`--desc`（只改描述行 · 正文一字不动）或 `--from`（整篇 · `-` = stdin）"},
+			fields:  []string{"result", "name", "path", "mode", "before_sha256", "after_sha256", "bytes", "backup_path", "audit_path"},
+			danger: &dangerSpec{dangerD2, "技能名",
+				"改 `<名>/SKILL.md`（可逆：写前备份到 `<状态目录>/skill-backup/<ts>/<名>/` + 写后回读对拍 + 审计先落盘）",
+				"zerg-技能库设计稿-20261017.md §3.4 · 同族先例 doc meta fill（D2）",
+				false, dangerScopeUnknown}, // 落点由 ZERG_SKILLS_DIR 决定 ⇒ 可能仓内、可能仓外（guard.go:108）
+			opened: true,
+			run:    cmdSkillEdit,
+		},
+		{
+			path:    []string{"skill", "rm"},
+			kind:    "SkillRm",
+			summary: "下架一条技能（**D2 写面**：**不硬删** —— 整目录挪进 `<状态目录>/skill-trash/<ts>/` 可逆；默认干跑 · 缺 `--yes` ⇒ 2 · 写面进审计）",
+			usage:   "zerg skill rm <名> [--by <谁>] [--dry-run | --yes] [--json <字段>]",
+			arity:   "any",
+			args:    []string{"技能名（= 目录名）"},
+			fields:  []string{"result", "name", "path", "trash_path", "audit_path"},
+			danger: &dangerSpec{dangerD2, "技能名",
+				"把 `<名>/` 整目录挪进回收站（可逆：`os.Rename` 同卷即时生效；跨卷 ⇒ 照实报 1，不降级成删除）",
+				"zerg-技能库设计稿-20261017.md §3.5 · 同族先例 doc meta fill（D2）",
+				false, dangerScopeUnknown},
+			opened: true,
+			run:    cmdSkillRm,
+		},
 	}
 	// 群级只读（§十二 `P-066`）：这些命令「无目标 = 读全群」是**定义**，不是遗漏。
 	for _, c := range commands {
@@ -4847,7 +4896,11 @@ func parseInvocation(args []string) (*invocation, error) {
 			// `--acceptance` 的**三态语义不变**：`setValueFlag("--acceptance", "")` 照旧置
 			// `acceptanceDeclared=true` 而不 append ⇒ 仍发 `null`（「没写」与「写了空」是两件事，
 			// 不许在这里合并 —— 与 `--acceptance=` 分派（本 switch 下一 case）的行为逐字一致）。
-			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+			// ★ 单枚 `-` 是**真值**（`-` = stdin 的 CLI 惯例）：本判与上面
+			// `noteValueFlagLooksLikeFlag` 的口径（`nxt == "-"` ⇒ 真值）原来不一致 ——
+			// 结果是 `--from -` 被当「给过、值空」，`-` 这一档**永远够不到**。
+			// 本枚只补这一格（判定面），`--k=v` 与裸形语义其余一字不动。
+			if i+1 < len(args) && (!strings.HasPrefix(args[i+1], "-") || args[i+1] == "-") {
 				i++
 				inv.setValueFlag(a, args[i])
 			} else {

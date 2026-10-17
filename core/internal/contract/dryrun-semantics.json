@@ -1358,6 +1358,13 @@
    "语义": "dryrun.v1",
    "零副作用判据": "`fs write --dry-run`：只打计划件（落点 / 既有件 / 模式 / 本次与写后字节数 / 写前后 sha / 审计落点），**不写件、不落审计、不建父目录** ⇒ 目标件 sha256 与 `<状态目录>/edit_audit.jsonl` 行数两处都不变（现跑：探针件不存在时 dry-run 后盘上仍无该件、审计行数不变）；`fs run --dry-run`：只打计划件（argv / 工作目录 / 超时 / 白名单），**一个子进程都不起**（现跑：rc=0 且 stdout 只有计划面）",
    "备注": "缺口 `GAP-20261017-10`（P0 · 提案 DEV-3024 · 提案 DEV-3025 登记）：照 `script inventory sync` 那一套三态（`--dry-run` 零副作用 · 缺 `--yes` ⇒ 2 · 写面先落审计 `edit_audit.jsonl`）"
+  },
+  {
+   "file": "core/cmd/zerg/family_skill.go",
+   "类": "技能库写面（`skill new|edit|rm` 的 D2 三态）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "`--dry-run` ⇒ 只打计划件（result=planned + path + after_sha256 + bytes）· 不建目录 · 不写件 · 不备份 · 不挪目录 · **不写审计**；缺 `--yes` ⇒ 2 + 零写；两旗标同给 ⇒ 2（writeGuardYes 先于任何盘面动作）",
+   "备注": "门98 调用点粒度：writeGuardYes 在 cmdSkillNew/Edit/Rm 的**第一句**（设计稿 zerg-技能库设计稿-20261017.md §6.1 M2 段 · 提案 DEV-3028）"
   }
  ]
 

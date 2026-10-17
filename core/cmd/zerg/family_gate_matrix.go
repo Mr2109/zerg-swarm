@@ -143,7 +143,14 @@ func cmdGateMatrix(inv *invocation, stdout, stderr io.Writer) int {
 		sb.WriteString("# 命令面 must-fail 矩阵（导出自 " + path + " · id=" + mf.ID + "）\n")
 		sb.WriteString("command\tcase\twant_rc\twant_stdout_bytes\targv\twhy\n")
 		for _, r := range rows {
-			sb.WriteString(strings.Join([]string{r["command"], r["case"], r["want_rc"], r["bytes"], r["argv"], r["why"]}, "\t") + "\n")
+			// ★ 一格 = 一行：`argv` 里可以有**真换行**（`--desc "a\nb"` 就是「多行描述」那一格 ——
+			//   命令面真收的字节），直接拼进 TSV 会把一格拆成两行 ⇒ 导出件比真源多出行
+			//   （`cli_gate_matrix_test.go` 逐字核「注释头 1 + 列名 1 + 格 N」）。
+			//   `gateMatrixTSVField` 只折三种会改行/改列的控制字符，其余字节一字不动。
+			sb.WriteString(strings.Join([]string{
+				gateMatrixTSVField(r["command"]), gateMatrixTSVField(r["case"]), gateMatrixTSVField(r["want_rc"]),
+				gateMatrixTSVField(r["bytes"]), gateMatrixTSVField(r["argv"]), gateMatrixTSVField(r["why"]),
+			}, "	") + "\n")
 		}
 		// ★ GAP-20260927-303：写面改**原子替换**（同目录临时件 → `os.Rename` 换名）——
 		//   旧形态 `os.WriteFile` 先截断 `out` 再写，写到一半崩 ⇒ 落点是**半份矩阵**（无退点无备份）。
@@ -157,6 +164,18 @@ func cmdGateMatrix(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s: 已导出 %d 格 → %s\n", progName, len(rows), out)
 	}
 	return listCmd(inv, stdout, stderr, []string{"command", "case", "want_rc", "why"}, rows)
+}
+
+// gateMatrixTSVField —— `--out` TSV 的**一格必须落在一行内**（格式不变式 · 见 `gateMatrixOutPlan`）。
+//
+// 为什么会有人踩：`argv` 可以带**真换行**（`skill new zz --desc "a\nb"` 就是「`--desc` 多行」那一格，
+// 命令面真收这个字节 ⇒ 不许把矩阵数据改成转义形态去迁就导出面）。但 TSV 以 `\n` 分行 ⇒ 真换行会把
+// 一格拆成两行，导出件就比真源多出行（`cli_gate_matrix_test.go` 判的就是行数 = 格数 + 2）。
+//
+// 口径：只折三种**会改行/改列**的控制字符（`\t` / `\n` / `\r` ⇒ 两字符反斜杠形态），
+// 其余字节**一字不动**（✗ 不转义反斜杠本身 —— 既有格的内容必须保持原样可读）。
+func gateMatrixTSVField(s string) string {
+	return strings.NewReplacer("\t", `\t`, "\n", `\n`, "\r", `\r`).Replace(s)
 }
 
 // gateMatrixOutPlan —— `--out <件>` 落盘面的**计划件**（`--dry-run` ⇒ 走 stdout · 缺 `--yes` ⇒ 走 stderr）。
