@@ -59,7 +59,20 @@ func Run(ctx context.Context, cfg Config, model, sysPrompt string, msgs []map[st
 	claimChecked := false
 	outputClaims := func() OutputClaimCheck {
 		if !claimChecked {
-			claimCheck = VerifyOutputClaims(d.OutputClaims, res.Traces)
+			claims := d.OutputClaims
+			if len(claims) == 0 {
+				// GAP-20261018-01（P0）：调用方没给引用载体（现网全部如此 —— 本单现状：
+				// `grep -rn 'OutputClaims:' core --include='*.go' | grep -v _test` ⇒ 0 命中）⇒
+				// 从**本轮定稿的正文**里保守派生「声称成功」类主张（判据与零回归口径见 output_claims_derive.go）：
+				// 句子声称成功 ∧ 点名了一条 `zerg …` 命令 ∧ 该命令的回执 rc≠0（⇒ send_back）/ 本轮根本没跑过
+				// 那条命令（⇒ retract）⇒ 生成一条主张。真话（回执 rc=0）与无声称成功句的正文**一律派生为空**
+				// ⇒ 下方判定面与接线前逐字节一致。
+				// 派生位点必须在**第一次调用本闭包之前**（本闭包记忆化、只算一次）：正文 `res.Content` 与
+				// 本轮轨迹 `res.Traces` 此刻都已定稿 —— 两个调用点（顶部 defer / ⑤ 非自然出口）都在全部
+				// 返回路径的收尾之后，故派生不会读到半成品正文。
+				claims = DeriveClaims(res.Content, res.Traces)
+			}
+			claimCheck = VerifyOutputClaims(claims, res.Traces)
 			claimChecked = true
 		}
 		return claimCheck
