@@ -58,6 +58,17 @@ const (
 	fsRunOutputCap = 64 << 10
 	// fsReadOffsetDefault —— `--offset` 缺省 = 第 1 行（1 起）。
 	fsReadOffsetDefault = 1
+	// fsReadDefaultMaxLines —— `fs read` 的**缺省窗口**（GAP-20261018-08）：缺省只读这么多行。
+	//
+	// 病灶（对话里真撞 · 已亲核）：缺省「读整件」⇒ 一篇 400+ 行 md 加上后续内容就把模型 ctx 顶爆
+	// （连续两次 `system_warning: Input tokens have exceeded the limit`），而正文里同时出现**未解析的
+	// 工具调用原文**（模型拿不到结果 ⇒ 同一调用重发两次），两篇文档一篇未改。
+	//
+	// 定 2000 行（与 `tool_output.max_lines` 同量级）—— 两个硬要求：
+	//  ① **不静默截断**：超窗口时最后一行逐字报「已截断：显示 a–b / 共 N 行，续读用 --offset b+1」
+	//     （✗ 不许只说「已截断」—— 模型拿不到续读起点就会重发同一条调用，正是本 GAP 的原始病灶）；
+	//  ② **显式即授权**：`--limit N` 显式给值 ⇒ 按 N（**不封顶**，✗ 不偷偷再夹一次）。
+	fsReadDefaultMaxLines = 2000
 )
 
 // fsRunHeadAllow —— `fs run` 的**首词硬白名单**（规格逐字六枚 · fail-closed：不在表里一律 rc=2）。
@@ -266,6 +277,11 @@ func fsToolSplitLines(body string) []string {
 //	8 —— 判不了：仓根解析不到 / 件读不动 / 件不是文本
 //
 // ★ 只读 ⇒ 危险档 0（命令树里 `danger` 为空）· 零写盘 · 不落审计。
+//
+// ★ GAP-20261018-08（2026-10-18）：**缺省不再读整件** —— 缺省窗口 `fsReadDefaultMaxLines`（2000 行），
+// 超窗口时**不静默截断**：人面末行逐字给「已截断：显示 a–b / 共 N 行，续读用 --offset b+1」，
+// 机器面 `limit` 报**实际生效**的窗口（拿它与 `total_lines`/`offset` 一比就知道后面还有没有）。
+// `--limit N` 显式给值 ⇒ 按 N（不封顶）。
 func cmdFSRead(inv *invocation, stdout, stderr io.Writer) int {
 	if len(inv.args) != 1 {
 		inv.setErr("usage", "bad_arity", "`fs read` 只收一个件路径")
@@ -322,7 +338,7 @@ func cmdFSRead(inv *invocation, stdout, stderr io.Writer) int {
 		}
 		offset = n
 	}
-	limit := 0 // 0 = 到件尾
+	limit := 0 // 0 = 未显式给（≠「到件尾」：见下面 effLimit）
 	if inv.hasFlag("--limit") {
 		n, perr := strconv.Atoi(strings.TrimSpace(inv.flagVal("--limit")))
 		if perr != nil || n < 1 {
@@ -331,6 +347,12 @@ func cmdFSRead(inv *invocation, stdout, stderr io.Writer) int {
 			return exitUsage
 		}
 		limit = n
+	}
+	// ★ GAP-20261018-08：缺省窗口 = fsReadDefaultMaxLines（**不再是「到件尾」**）；
+	//   显式 `--limit N` 按 N（显式即授权 ⇒ 不封顶 · 也不拿缺省去二次夹）。
+	effLimit := fsReadDefaultMaxLines
+	if inv.hasFlag("--limit") {
+		effLimit = limit
 	}
 	if offset > total && total > 0 {
 		inv.setErr("usage", "window_out_of_range", "窗口越界")
@@ -343,10 +365,18 @@ func cmdFSRead(inv *invocation, stdout, stderr io.Writer) int {
 		start = 0
 	}
 	end := total
-	if limit > 0 && start+limit < end {
-		end = start + limit
+	if effLimit > 0 && start+effLimit < end {
+		end = start + effLimit
 	}
+	truncated := end < total
 	window := lines[start:end]
+	// ★ 不静默截断（GAP-20261018-08）：stderr 始终点明「被夹了、夹到哪」——
+	//   机器面（`--json`）不带这一句（stdout 必须是纯 JSON），它靠 `total_lines` / `offset` / `limit`
+	//   三格自己算得出来；人面则在**末行**逐字给出续读命令（模型看到的就是 stdout）。
+	if truncated {
+		fmt.Fprintf(stderr, "%s: ★ **已截断** —— 显示 %d–%d 行 / 共 %d 行（缺省窗口 %d 行 · 续读 `--offset %d`）\n",
+			progName, offset, end, total, fsReadDefaultMaxLines, end+1)
+	}
 	if inv.jsonGiven {
 		if rc := requireFields(inv, stderr); rc != exitOK {
 			return rc
@@ -356,7 +386,7 @@ func cmdFSRead(inv *invocation, stdout, stderr io.Writer) int {
 			"content":     strings.Join(window, "\n"),
 			"total_lines": strconv.Itoa(total),
 			"offset":      strconv.Itoa(offset),
-			"limit":       strconv.Itoa(limit),
+			"limit":       strconv.Itoa(effLimit),
 		}
 		return selectJSONList(stdout, stderr, inv, inv.path, inv.fields, []map[string]string{row})
 	}
@@ -367,6 +397,11 @@ func cmdFSRead(inv *invocation, stdout, stderr io.Writer) int {
 		table = append(table, []string{strconv.Itoa(start + i + 1), ln})
 	}
 	renderRows(stdout, stderr, inv.tty && !inv.plain, []string{"line", "text"}, table)
+	if truncated {
+		// ★ 末行三件：已截断 ／ 显示范围与总行数 ／ **续读命令**（逐字可照抄）。
+		fmt.Fprintf(stdout, "已截断：显示 %d–%d / 共 %d 行，续读用 --offset %d（显式 `--limit N` 可放宽窗口）\n",
+			offset, end, total, end+1)
+	}
 	return exitOK
 }
 

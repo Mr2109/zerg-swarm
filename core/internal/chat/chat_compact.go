@@ -29,9 +29,13 @@ const (
 	CompactThresholdRatio = 0.5  // 阈值比例（模型上下文窗口 × 0.5）
 	CompactProtectLastN   = 20   // 保护最近 N 条
 	CompactProtectFirstN  = 3    // 保护最早 N 条
-	CompactMinMessages    = 30   // 最少消息数才压缩（防频繁压缩小会话）
+	CompactMinMessages    = 30   // 常规消息数门槛（**辅助条件**，✗ 不再是一票否决——见 ShouldCompact）
 	CompactActiveWindow   = 8000 // 对话活跃窗口目标 token（超此压缩——对话实用阈值）
 	CompactMinWindow      = 2000 // 触发下限（窗口再小也不低于此）
+	// CompactHardMinMessages — 极低拦截线（GAP-20261018-02）：少于 6 条一律不压（防首轮就压）。
+	// 条数只用来「防频繁压」，✗ 不当「token 已超也不压」的否决票：20 条 20K token 的会话
+	// 照样该压（旧判据 `len < 30 ⇒ return false` 正是这条病）。
+	CompactHardMinMessages = 6
 )
 
 // compactModelCtxs — 模型→上下文窗口注册表（main 启动时从 fleet.yaml 构建）
@@ -73,9 +77,20 @@ type chatCompactReq struct {
 	Messages  []interface{} `json:"messages"`
 }
 
-// ShouldCompact — 判断历史是否需要压缩（token 估算 + 消息数双条件——P4-39 按模型阈值）
+// ShouldCompact — 判断历史是否需要压缩。
+//
+// 判据（GAP-20261018-02 后的口径）：
+//
+//	条数 < CompactHardMinMessages(6)        ⇒ 不压（极低拦截线：防首轮就压）
+//	其余一切（含 6 ≤ 条数 < 30）            ⇒ **只看 token 估算是否超阈值**
+//
+// 为什么不再拿 30 条一票否决：旧判据 `len(msgs) < 30 ⇒ return false` 让「条数少但每条很长」
+// 的会话（真机：一条 read 回执 20K、20 条就把 ctx 顶满）永远压不动 —— 条数多的确是一种形态，
+// 但它只是「会话够长」的充分条件，不是必要条件。
+// CompactMinMessages(30) 保留为**辅助条件**：达到它时行为与旧版完全一致（照按 token 判）；
+// 未达到它也不再否决，只由 CompactHardMinMessages 兜住「刚开局」那一档。
 func ShouldCompact(msgs []Message, model string) bool {
-	if len(msgs) < CompactMinMessages {
+	if len(msgs) < CompactHardMinMessages {
 		return false
 	}
 	return compactOverThreshold(msgs, model)
@@ -83,7 +98,7 @@ func ShouldCompact(msgs []Message, model string) bool {
 
 // ShouldCompactPtr — 指针版（Store 返回 []*Message）
 func ShouldCompactPtr(msgs []*Message, model string) bool {
-	if len(msgs) < CompactMinMessages {
+	if len(msgs) < CompactHardMinMessages {
 		return false
 	}
 	out := make([]Message, len(msgs))

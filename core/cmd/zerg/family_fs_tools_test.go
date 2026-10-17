@@ -21,9 +21,13 @@ package main_test
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -209,5 +213,220 @@ func TestFSWrite_SiblingRepoGate(t *testing.T) {
 		"--allow-sibling-repo", "../whatever")
 	if rc != 2 || !strings.Contains(errb, "非白名单兄弟仓") {
 		t.Errorf("写面非白名单 ⇒ rc=2 · 具名：rc=%d stderr=%q", rc, errb)
+	}
+}
+
+// ── GAP-20261018-08：`fs read` 缺省窗口收口（2000 行 · 不静默截断 · `--offset` 续读拼回整件）──────────
+//
+// 病灶（对话里真撞）：缺省「读整件」⇒ 一篇 400+ 行 md 就把模型 ctx 顶爆（`system_warning: Input tokens
+// have exceeded the limit`），而模型看不到窗口边界 ⇒ 同一调用重发两次、文档一篇未改。
+//
+// 两态 ＋ 一条负控（缺一不算完）：
+//
+//	态① 4200 行件缺省读 ⇒ 行数 == 2000（≤ 上限）· **末行逐字**含「已截断：显示 1–2000 / 共 4200 行，
+//	     续读用 --offset 2001 …」；`--limit 3000` 显式给值 ⇒ 按 3000（显式即授权 · 不悄悄再夹）；
+//	态② `--offset 2001` / `--offset 4001` 续读到尾 ⇒ 三段 `--json content` 拼起来与整件 **sha256 相等**
+//	     （内容连续 · 不重不漏 —— 这是「收口没收坏内容」的唯一硬判据）；
+//	负控 420 行件（< 上限）⇒ **不报**截断（✗ 不许把没截的说成截断），且 420 行全出。
+//
+// 夹具全在 `t.TempDir()` 里（`ZERG_REPO` 指合成仓根 ⇒ 一个字节都不落真仓）。
+
+// fsReadWindowLines —— 人面输出的「数据行」与「截断末行」分开取（首行是表头 `line/text`）。
+func fsReadWindowLines(t *testing.T, out string) (rows []string, notice string) {
+	t.Helper()
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(lines) == 0 || strings.TrimSpace(lines[0]) == "" {
+		return nil, ""
+	}
+	body := lines[1:]
+	if n := len(body); n > 0 && strings.HasPrefix(body[n-1], "已截断：") {
+		notice = body[n-1]
+		body = body[:n-1]
+	}
+	return body, notice
+}
+
+// fsReadBigRepo —— 合成仓 ＋ 一件 n 行的文本件；返回 (仓根, 仓内相对路径, 整件字节)。
+func fsReadBigRepo(t *testing.T, n int) (string, string, string) {
+	t.Helper()
+	repo := filepath.Join(t.TempDir(), "Zerg")
+	mustWrite(t, filepath.Join(repo, "core", "internal", "version", "version.go"), "package version\n")
+	var b strings.Builder
+	for i := 1; i <= n; i++ {
+		fmt.Fprintf(&b, "第%04d行：读量收口夹具 filler-%d\n", i, i)
+	}
+	rel := filepath.Join("docs", "big.md")
+	mustWrite(t, filepath.Join(repo, rel), b.String())
+	return repo, rel, b.String()
+}
+
+// fsReadSHA —— 整串 sha256（十六进制）。
+func fsReadSHA(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])
+}
+
+// TestFSRead_DefaultWindowCap — 态①：缺省 2000 行夹口 ＋ 末行逐字提示（含总行数与续读起点）。
+func TestFSRead_DefaultWindowCap(t *testing.T) {
+	const total = 4200
+	repo, rel, _ := fsReadBigRepo(t, total)
+	state := t.TempDir()
+
+	rc, out, errb := fsRunTest(t, repo, state, "read", rel)
+	if rc != 0 {
+		t.Fatalf("缺省读 ⇒ rc=0：rc=%d stderr=%q", rc, errb)
+	}
+	rows, notice := fsReadWindowLines(t, out)
+	if len(rows) != 2000 {
+		t.Fatalf("缺省窗口应恰 2000 行（≤ 上限）：得 %d 行", len(rows))
+	}
+	wantNotice := "已截断：显示 1–2000 / 共 4200 行，续读用 --offset 2001（显式 `--limit N` 可放宽窗口）"
+	if notice != wantNotice {
+		t.Fatalf("末行提示必须逐字（范围 ＋ 总行数 ＋ 续读命令）：\n得 %q\n要 %q", notice, wantNotice)
+	}
+	if !strings.HasPrefix(rows[0], "1	") || !strings.HasSuffix(rows[0], "第0001行：读量收口夹具 filler-1") {
+		t.Errorf("首行不是第 1 行：%q", rows[0])
+	}
+	if !strings.HasPrefix(rows[len(rows)-1], "2000	") || !strings.HasSuffix(rows[len(rows)-1], "filler-2000") {
+		t.Errorf("末条数据行应是第 2000 行：%q", rows[len(rows)-1])
+	}
+	if !strings.Contains(errb, "已截断") {
+		t.Errorf("stderr 也要点明截断（人机两面同一判据）：%q", errb)
+	}
+
+	// 机器面：`limit` 报**实际生效**的窗口（旧口径报 0 = 到件尾 ⇒ 调用方看不出被夹了）
+	rc, jout, _ := fsRunTest(t, repo, state, "read", rel, "--json", "path,content,total_lines,offset,limit")
+	if rc != 0 {
+		t.Fatalf("--json 读 ⇒ rc=0：rc=%d", rc)
+	}
+	var env struct {
+		Items []map[string]string `json:"items"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(jout)), &env); err != nil || len(env.Items) != 1 {
+		t.Fatalf("机器面解析失败：err=%v out=%q", err, jout)
+	}
+	if env.Items[0]["limit"] != "2000" || env.Items[0]["total_lines"] != "4200" || env.Items[0]["offset"] != "1" {
+		t.Errorf("机器面三格应是 limit=2000 / total_lines=4200 / offset=1：%v", env.Items[0])
+	}
+	if strings.Contains(jout, "已截断") {
+		t.Errorf("机器面 stdout 必须是纯 JSON（截断只在 stderr 与三格读数里）：%q", jout)
+	}
+
+	// 显式 `--limit` 即授权：按 3000（不封顶、也不拿缺省去二次夹）
+	rc, out, _ = fsRunTest(t, repo, state, "read", rel, "--limit", "3000")
+	if rc != 0 {
+		t.Fatalf("--limit 3000 ⇒ rc=0：rc=%d", rc)
+	}
+	rows, notice = fsReadWindowLines(t, out)
+	if len(rows) != 3000 {
+		t.Fatalf("`--limit 3000` 应出 3000 行：得 %d 行", len(rows))
+	}
+	if want := "已截断：显示 1–3000 / 共 4200 行，续读用 --offset 3001（显式 `--limit N` 可放宽窗口）"; notice != want {
+		t.Errorf("--limit 档末行提示不逐字：\n得 %q\n要 %q", notice, want)
+	}
+}
+
+// TestFSRead_OffsetContinuationSHA — 态②：续读到尾后拼接 == 整件（sha256 相等 ⇒ 不重不漏）。
+func TestFSRead_OffsetContinuationSHA(t *testing.T) {
+	const total = 4200
+	repo, rel, body := fsReadBigRepo(t, total)
+	state := t.TempDir()
+
+	type win struct {
+		offset string // "" = 不传 `--offset`
+		rows   int
+	}
+	var windows []string
+	for _, w := range []win{{"", 2000}, {"2001", 2000}, {"4001", 200}} {
+		argv := []string{"read", rel, "--json", "content,total_lines,offset,limit"}
+		if w.offset != "" {
+			argv = append(argv, "--offset", w.offset)
+		}
+		rc, jout, errb := fsRunTest(t, repo, state, argv...)
+		if rc != 0 {
+			t.Fatalf("续读 offset=%q ⇒ rc=0：rc=%d stderr=%q", w.offset, rc, errb)
+		}
+		var env struct {
+			Items []map[string]string `json:"items"`
+		}
+		if err := json.Unmarshal([]byte(strings.TrimSpace(jout)), &env); err != nil || len(env.Items) != 1 {
+			t.Fatalf("offset=%q 机器面解析失败：err=%v out=%q", w.offset, err, jout)
+		}
+		it := env.Items[0]
+		// `limit` 报**窗口请求**（缺省 2000）· 实得行数由 content 自己数 —— 两格各管一件事。
+		if it["limit"] != "2000" || it["total_lines"] != strconv.Itoa(total) {
+			t.Fatalf("offset=%q 窗口读数错（limit=%q total_lines=%q）：要 limit=2000 / total=%d",
+				w.offset, it["limit"], it["total_lines"], total)
+		}
+		first := 1
+		if w.offset != "" {
+			first, _ = strconv.Atoi(w.offset)
+		}
+		got := strings.Split(it["content"], "\n")
+		if len(got) != w.rows {
+			t.Fatalf("offset=%q 实得 %d 行（要 %d 行）", w.offset, len(got), w.rows)
+		}
+		wantHead := fmt.Sprintf("第%04d行：读量收口夹具 filler-%d", first, first)
+		wantTail := fmt.Sprintf("第%04d行：读量收口夹具 filler-%d", first+w.rows-1, first+w.rows-1)
+		if !strings.HasPrefix(got[0], wantHead) || !strings.HasPrefix(got[len(got)-1], wantTail) {
+			t.Fatalf("offset=%q 窗口首尾行对不上：首 %q 尾 %q", w.offset, got[0], got[len(got)-1])
+		}
+		if w.offset == "" {
+			windows = windows[:0]
+		}
+		windows = append(windows, it["content"])
+	}
+	// 三段按顺序拼回整件：窗口之间补回被 `strings.Join` 吃掉的那个换行，末尾补回件尾换行。
+	got := strings.Join(windows, "\n") + "\n"
+	if got != body {
+		t.Fatalf("续读拼接与整件**不是逐字节同**（长度 got=%d want=%d · 首差 %d）",
+			len(got), len(body), fsReadFirstDiff(got, body))
+	}
+	if a, b := fsReadSHA(got), fsReadSHA(body); a != b {
+		t.Fatalf("sha256 不等：拼接=%s 整件=%s", a, b)
+	} else {
+		t.Logf("续读三段拼接 sha256 == 整件 sha256 == %s（共 %d 行 / %d 字节）", a, total, len(body))
+	}
+}
+
+// fsReadFirstDiff —— 首个不同字节的下标（-1 = 前缀相同）。
+func fsReadFirstDiff(a, b string) int {
+	n := len(a)
+	if len(b) < n {
+		n = len(b)
+	}
+	for i := 0; i < n; i++ {
+		if a[i] != b[i] {
+			return i
+		}
+	}
+	return -1
+}
+
+// TestFSRead_SmallFileNoTruncationNotice — 负控：没超窗口 ⇒ ✗ 不许报「已截断」（400+ 行件也要全出）。
+func TestFSRead_SmallFileNoTruncationNotice(t *testing.T) {
+	const total = 420
+	repo, rel, _ := fsReadBigRepo(t, total)
+	state := t.TempDir()
+
+	rc, out, errb := fsRunTest(t, repo, state, "read", rel)
+	if rc != 0 {
+		t.Fatalf("读 420 行件 ⇒ rc=0：rc=%d stderr=%q", rc, errb)
+	}
+	rows, notice := fsReadWindowLines(t, out)
+	if notice != "" {
+		t.Fatalf("420 行 < 缺省上限 2000 ⇒ **不许**报截断（假截断会把模型骗去续读）：%q", notice)
+	}
+	if len(rows) != total {
+		t.Fatalf("420 行件应全出：得 %d 行", len(rows))
+	}
+	if len(rows) > 2000 {
+		t.Errorf("行数必须 ≤ 缺省上限 2000：得 %d", len(rows))
+	}
+	if !strings.HasSuffix(rows[len(rows)-1], "第0420行：读量收口夹具 filler-420") {
+		t.Errorf("末行应是第 420 行：%q", rows[len(rows)-1])
+	}
+	if strings.Contains(errb, "已截断") {
+		t.Errorf("stderr 不许报截断：%q", errb)
 	}
 }

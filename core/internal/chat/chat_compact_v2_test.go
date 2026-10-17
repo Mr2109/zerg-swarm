@@ -111,7 +111,7 @@ func approxEq(a, b float64) bool {
 
 // ── 阈值 ─────────────────────────────────────────────────────────────
 
-// TestCompactThresholdBoundary — 不足不压（消息数 < 30 / token 未达阈值均不压）
+// TestCompactThresholdBoundary — 不足不压（条数 < 极低拦截线 6 / token 未达阈值 均不压）
 func TestCompactThresholdBoundary(t *testing.T) {
 	st, _ := newCompactStore(t)
 	se, err := st.CreateSession("gemma-12B", "desktop", "", "阈值边界会话")
@@ -120,16 +120,17 @@ func TestCompactThresholdBoundary(t *testing.T) {
 	}
 	longCN := strings.Repeat("测", 300) // ≈428 token/条
 
-	// 情形 A: 消息数不足（10 条——token 虽超阈值也不压）
-	compactSeed(t, st, se.ID, 10, longCN)
+	// 情形 A: 条数低于极低拦截线（5 条——token 虽超阈值也不压；GAP-20261018-02 后的口径：
+	// 拦截线从 30 降到 6，只防「刚开局就压」，6 条以上一律交给 token 判）
+	compactSeed(t, st, se.ID, 5, longCN)
 	sumCalls := 0
 	did, err := st.MaybeCompact(context.Background(), se.ID, "gemma-12B", compactActive(t, st, se.ID),
 		nil, func(context.Context, []map[string]any) (string, error) { sumCalls++; return "摘要", nil }, false)
 	if err != nil || did {
-		t.Fatalf("消息数不足不应压缩: did=%v err=%v", did, err)
+		t.Fatalf("条数低于极低拦截线不应压缩: did=%v err=%v", did, err)
 	}
 	if sumCalls != 0 {
-		t.Fatalf("消息数不足不应调用摘要函数（实调 %d 次）", sumCalls)
+		t.Fatalf("条数不足不应调用摘要函数（实调 %d 次）", sumCalls)
 	}
 	if f := compactGetFail(se.ID); f != nil {
 		t.Fatalf("未压缩不应产生冷却态: %+v", f)
@@ -146,7 +147,7 @@ func TestCompactThresholdBoundary(t *testing.T) {
 	if sumCalls != 0 {
 		t.Fatalf("token 未达阈值不应调用摘要函数（实调 %d 次）", sumCalls)
 	}
-	t.Logf("✓ 阈值边界: 消息数不足(10) 与 token 不足(30×hi) 均不压缩")
+	t.Logf("✓ 阈值边界: 条数不足(5，< 极低拦截线 %d) 与 token 不足(30×hi) 均不压缩", CompactHardMinMessages)
 }
 
 // TestCompactThresholdTrigger — 消息数 ≥30 且 token 超阈值 → 触发压缩
@@ -559,4 +560,73 @@ func TestCompactCooldownFullJitter(t *testing.T) {
 		t.Fatalf("抖动 1 → 期望 900s（上限不变），实际 %v", got)
 	}
 	t.Log("✓ full jitter：随机(0,base) 生效；base 分级 60/300/900s 不变")
+}
+
+// ── GAP-20261018-02：条数只防频繁压，✗ 不当「token 已超也不压」的一票否决 ──────────
+
+// TestCompactByTokens_Under30MessagesStillCompacts — 验收②：
+//
+//	20 条（< 30）但估算 token 已超阈值 ⇒ 触发（旧判据在这里 return false）
+//	26 条（< 30 · 有中间段）        ⇒ 真压出摘要（端到端）
+//	5 条小消息                      ⇒ 不压（极低拦截线：防首轮就压）
+func TestCompactByTokens_Under30MessagesStillCompacts(t *testing.T) {
+	longCN := strings.Repeat("测", 300) // estimateTokens: 300/0.7 ≈ 428 token/条
+	small := func(n int) []Message {
+		out := make([]Message, n)
+		for i := range out {
+			out[i] = Message{ID: int64(i + 1), Role: "user", Content: longCN, Active: true}
+		}
+		return out
+	}
+
+	// ① 触发面：20 条 < 30 —— 先现读 token 总量，确认它真超了阈值（不然本格测的是空气）
+	msgs20 := small(20)
+	total := 0
+	for _, m := range msgs20 {
+		total += compactMessageTokens(m)
+	}
+	trig := CompactTriggerTokens("gemma-12B")
+	if total <= trig {
+		t.Fatalf("夹具有问题：20 条合计 %d token 未超阈值 %d", total, trig)
+	}
+	if !ShouldCompact(msgs20, "gemma-12B") {
+		t.Fatalf("20 条（< %d）但 %d token > 阈值 %d ⇒ 必须触发压缩", CompactMinMessages, total, trig)
+	}
+	t.Logf("✓ 触发面: 20 条（< %d）· %d token > %d ⇒ ShouldCompact=true", CompactMinMessages, total, trig)
+
+	// ② 端到端：26 条 < 30，中间段 = 26−3−20 = 3 条 ⇒ 真压（摘要落库 + 首 3 尾 20 保留）
+	st, _ := newCompactStore(t)
+	se, err := st.CreateSession("gemma-12B", "desktop", "", "少于30条也要压")
+	if err != nil {
+		t.Fatal(err)
+	}
+	compactSeed(t, st, se.ID, 26, longCN)
+	sumCalls := 0
+	did, err := st.MaybeCompact(context.Background(), se.ID, "gemma-12B", compactActive(t, st, se.ID),
+		nil, func(context.Context, []map[string]any) (string, error) { sumCalls++; return "少于30条摘要", nil }, false)
+	if err != nil || !did {
+		t.Fatalf("26 条（< %d）超阈值应触发压缩: did=%v err=%v", CompactMinMessages, did, err)
+	}
+	if sumCalls != 1 {
+		t.Fatalf("应恰好调用摘要函数 1 次（实 %d）", sumCalls)
+	}
+	if compactFindSummary(t, st, se.ID) == nil {
+		t.Fatal("压缩后应存在摘要消息（摘要区在）")
+	}
+	// 26 − 3 被归档 + 1 摘要 = 24 条活动（首 3 + 尾 20 + 摘要 ⇒ 仍能继续对话）
+	if active := compactActive(t, st, se.ID); len(active) != 26-3+1 {
+		t.Fatalf("压缩后活动消息数应为 %d，实得 %d", 26-3+1, len(active))
+	}
+	t.Logf("✓ 端到端: 26 条 ⇒ 压中间 3 条 + 摘要 1 条 ⇒ 活动 24 条（首 %d + 尾 %d + 摘要）",
+		CompactProtectFirstN, CompactProtectLastN)
+
+	// ③ 对照：5 条小消息 ⇒ 不压（低于极低拦截线；且 token 也远不够）
+	small5 := make([]Message, 5)
+	for i := range small5 {
+		small5[i] = Message{ID: int64(i + 1), Role: "user", Content: "hi", Active: true}
+	}
+	if ShouldCompact(small5, "gemma-12B") {
+		t.Fatal("5 条小消息不应触发压缩（防首轮就压）")
+	}
+	t.Logf("✓ 对照: 5 条小消息（< %d）⇒ ShouldCompact=false", CompactHardMinMessages)
 }

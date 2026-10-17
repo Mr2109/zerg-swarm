@@ -921,6 +921,86 @@ func unescapeJSONString(s string) string {
 	return b.String()
 }
 
+// ── 形态 D（GAP-20261018-08 · 2026-10-18）：XML 风格调用 ───────────────────────────────────
+//
+//	<invoke name="zerg"><parameter name="command">zerg fs read …</parameter></invoke>
+//
+// 病灶（对话真跑 · 已亲核）：模型把调用退化成这段 XML 原文 ⇒ 既有四档（格式1 JSON ／ 格式2 多对象 ／
+// 格式3 `<function=X><parameter=K>` ／ 裸参数对象）**都不认** `name="…"` 这种取属性写法 ⇒ 0 调用、
+// 原文当正文交付；模型拿不到结果 ⇒ 同一条调用重发两次、文档一篇未改（还叠着 ctx 爆掉）。
+//
+// ★ 分寸（保守优先 · 拿不准就当文本 ⇒ 一律写进下面四条判据）：
+//
+//	① **独立成行**：`<invoke` 必须是本行第一个非空白字符（内联在句子里的「…示例：`<invoke …>` 这种格式」
+//	   ⇒ 前面同一行有字 ⇒ **不算调用**）；
+//	② **不在代码栅栏内**：`<invoke` 之前 ``` 的出现次数为奇数 ⇒ 讲解/举例的栅栏块 ⇒ **不算调用**；
+//	③ **成对闭合**：`</invoke>` 必须在场（正则整体匹配，缺闭 ⇒ 一个字都不动，交上游 bad_format 阶梯）；
+//	④ **形状合法**：名字是工具名形状 ＋ 至少一个 `<parameter name="…">`（空参数表 ⇒ 不算调用）。
+//
+// 四条同时成立才抽成 {name,args}；与既有各档**在同一处汇合**（都返回 []agent.ToolCall，由调用方同一出口派发）。
+//
+// ★ 名字取自模型自述（与格式3 同一条口径）⇒ 不认识的名字由执行层拒，不在这里猜归属。
+var (
+	reXMLInvoke  = regexp.MustCompile(`(?s)<invoke\s+name="([^"<>]{1,64})"\s*>(.*?)</invoke>`)
+	reXMLInvokeP = regexp.MustCompile(`(?s)<parameter\s+name="([^"<>]{1,64})"\s*>(.*?)</parameter>`)
+	reToolNameID = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.-]{0,63}$`)
+)
+
+// xmlInvokeStandsAlone — 判据 ①＋②：块起点必须**独立成行**，且不在 ``` 代码栅栏里。
+func xmlInvokeStandsAlone(content string, idx int) bool {
+	if idx < 0 || idx > len(content) {
+		return false
+	}
+	before := content[:idx]
+	if i := strings.LastIndexByte(before, '\n'); i >= 0 {
+		if strings.TrimSpace(before[i+1:]) != "" {
+			return false // 同一行前面有字 ⇒ 内联在句子里（讲解/举例常这样）⇒ 当文本
+		}
+	} else if strings.TrimSpace(before) != "" {
+		return false // 首行但前面有字 ⇒ 同上
+	}
+	return strings.Count(before, "```")%2 == 0 // 栅栏内 ⇒ 当文本
+}
+
+// unescapeXMLEntities — 只还原五个基本实体（XML 风格里最常见的转义），其余逐字保留。
+func unescapeXMLEntities(s string) string {
+	return strings.NewReplacer("&lt;", "<", "&gt;", ">", "&quot;", `"`, "&apos;", "'", "&amp;", "&").Replace(s)
+}
+
+// parseXMLInvokeCalls — 形态 D：取所有「四条判据全过」的 XML 风格调用。
+// 返回 (calls, 剥掉这些块后的正文, 是否命中)；一条都不命中 ⇒ (nil, content, false)（**原文不动**）。
+func parseXMLInvokeCalls(content string) ([]agent.ToolCall, string, bool) {
+	var calls []agent.ToolCall
+	rest := content
+	for _, m := range reXMLInvoke.FindAllStringSubmatchIndex(content, -1) {
+		if !xmlInvokeStandsAlone(content, m[0]) {
+			continue
+		}
+		name := content[m[2]:m[3]]
+		if !reToolNameID.MatchString(name) {
+			continue
+		}
+		args := map[string]any{}
+		for _, p := range reXMLInvokeP.FindAllStringSubmatch(content[m[4]:m[5]], -1) {
+			k := strings.TrimSpace(p[1])
+			if k == "" {
+				continue
+			}
+			args[k] = strings.TrimSpace(unescapeXMLEntities(p[2]))
+		}
+		if len(args) == 0 {
+			continue // 判据④：空参数表 ⇒ 无效调用（当文本）
+		}
+		raw := content[m[0]:m[1]]
+		calls = append(calls, toolCallFromArgs(name, args, raw))
+		rest = strings.Replace(rest, raw, "", 1)
+	}
+	if len(calls) == 0 {
+		return nil, content, false
+	}
+	return calls, strings.TrimSpace(rest), true
+}
+
 // toolCallFromArgs — 参数对象 → 一条工具调用（RawArgs 由 args 序列化，RawCall 存命中原文）。
 func toolCallFromArgs(name string, args map[string]any, rawCall string) agent.ToolCall {
 	rawArgs, _ := json.Marshal(args)
@@ -932,6 +1012,12 @@ func toolCallFromArgs(name string, args map[string]any, rawCall string) agent.To
 func parseTextToolCalls(content string, face *toolFace) ([]agent.ToolCall, string, bool) {
 	spans := toolCallSpans(content)
 	if len(spans) == 0 {
+		// 形态 D（GAP-20261018-08）：XML 风格 `<invoke name="x"><parameter name="k">v</parameter></invoke>`
+		// ★ 只认「独立成行 ＋ 成对闭合 ＋ 形状合法」的块（判据见 parseXMLInvokeCalls 的注释）；
+		//   讲解/举例那种内联或栅栏里的标签 ⇒ 一条都不命中 ⇒ 走到下面的既有档，原文不动。
+		if calls, rest, ok := parseXMLInvokeCalls(content); ok {
+			return calls, rest, false
+		}
 		// 形态 B：无标签的裸参数对象（只在唯一工具面时认归属）
 		start, raw := argsOnlyFragment(content, face)
 		if start < 0 {

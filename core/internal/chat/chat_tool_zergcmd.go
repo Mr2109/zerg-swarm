@@ -175,7 +175,7 @@ var zergCmdFamilies = []zergCmdFamily{
 	{"dev", 10},
 	{"itask", 9},
 	{"publish", 8},
-	{"code", 7},
+	{"code", 8},
 	{"build", 6},
 	{"cocoon", 6},
 	{"doc", 6},
