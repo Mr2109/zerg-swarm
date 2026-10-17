@@ -12,6 +12,8 @@
 //	(a) 声称 `rc=0` 但那条命令的回执 `rc=2` ⇒ 派生 1 条 ⇒ 判 send_back（片段与回执原文不符）
 //	(b) 声称某条命令成功、但本轮 traces 里**根本没这条命令** ⇒ 派生 1 条 ⇒ 判 retract（假回执）
 //	(c) 真话（声称 rc=0 且回执 rc=0）⇒ 派生 **0 条**（真话不判）
+//	GAP-20261018-03 四组：假设句（点名命令 ＋ 成功类词、本轮没跑）⇒ 0 条 · 提议句（回执 rc=0）⇒ 0 条 ·
+//	正控「我已跑 … rc=0」无回执 ⇒ 仍 1 条 · 正控2「我已跑 … rc=0」回执 rc=2 ⇒ 仍 send_back
 //	零回归：没有「声称成功」句 / 有成功句但没点名命令 / 否定句 ⇒ 派生 0 条
 //	e2e 两态：伪造成功 ⇒ 必须产出终局说明；正文与回执一致 ⇒ 正文逐字节不变（不加任何说明）
 package loopcore
@@ -116,6 +118,89 @@ func TestDeriveClaims_ConservativeExtraction(t *testing.T) {
 	// （否则上面那些 0 条可能只是「派生整个哑了」）
 	if claims := DeriveClaims("zerg gate check --fast rc=0。", failed); len(claims) != 1 {
 		t.Fatalf("对照组应派生 1 条，实际 %d 条", len(claims))
+	}
+}
+
+// ── GAP-20261018-03：提议句 / 条件句不是「声称成功」⇒ 一律不抽 ─────────────────
+
+// hypotheticalToothSentence — 线上逐字那句（模型顶住编造、只提议去查；本轮根本没跑那条命令）。
+const hypotheticalToothSentence = "如果你需要我实际去查（跑 `zerg code show core/internal/loopcore/nonexistent_tooth_test.go:42`），允许我调一次工具，我立刻执行并给你结果"
+
+// TestDeriveClaims_HypotheticalIsNotAClaim — (a) 假设句 + traces 无该命令 ⇒ 派生 **0 条**。
+func TestDeriveClaims_HypotheticalIsNotAClaim(t *testing.T) {
+	// ① 逐字形态：不含成功类词，本来就 0 条 —— 钉住「线上那句逐字不改」。
+	if claims := DeriveClaims(hypotheticalToothSentence, nil); len(claims) != 0 {
+		t.Fatalf("(a) 逐字假设句应派生 0 条，实际 %d 条：%+v", len(claims), claims)
+	}
+	// ② 同一句再加上成功类词 ⇒ 改前：派生 1 条、判 retract（提议语气被当「声称成功」）；改后：0 条。
+	bitten := hypotheticalToothSentence + "，成功后回报"
+	if claims := DeriveClaims(bitten, nil); len(claims) != 0 {
+		got := VerifyClaims(claims, MemberReceipts(nil))
+		t.Fatalf("★ (a) 假设句（点名命令 ＋ 成功类词、本轮没跑）不得派生主张，实际 %d 条 %+v ⇒ 裁决 %+v", len(claims), claims, got)
+	}
+	// 反面对照：同一句话里把提议词换成完成时 ⇒ 必须仍抽得出来（证明排除没把整条派生哑掉）。
+	completed := "我已跑 `zerg code show core/internal/loopcore/nonexistent_tooth_test.go:42`，rc=0"
+	if claims := DeriveClaims(completed, nil); len(claims) != 1 {
+		t.Fatalf("(a) 对照：完成时同命令句应派生 1 条，实际 %d 条", len(claims))
+	}
+	// 不跨句：提议句单独成句时，**下一句**的真回执宣言必须照旧判得出来。
+	next := hypotheticalToothSentence + "\n" + "zerg gate check --fast rc=0。"
+	if claims := DeriveClaims(next, nil); len(claims) != 1 {
+		t.Fatalf("(a) 排除不得跨句（下一句是完成时声称）⇒ 应派生 1 条，实际 %d 条：%+v", len(claims), claims)
+	}
+}
+
+// TestDeriveClaims_ProposalWithCleanReceiptStillNoClaim — (b) 提议句 + 本轮**真跑过**该命令且 rc=0 ⇒ 仍 0 条。
+func TestDeriveClaims_ProposalWithCleanReceiptStillNoClaim(t *testing.T) {
+	const cmd = "zerg code show x:1"
+	traces := []Trace{zergTrace("9", cmd, gateCheckOKOut)}
+	proposal := "如果你需要，我跑 `" + cmd + "`，跑成功后回报"
+	if claims := DeriveClaims(proposal, traces); len(claims) != 0 {
+		t.Fatalf("(b) 提议句（即便回执 rc=0）不得派生主张，实际 %d 条：%+v", len(claims), claims)
+	}
+	// 同句去掉提议词、回执改 rc≠0 ⇒ send_back（证明这条装置本身有牙，0 条不是因为派生哑了）。
+	failTraces := []Trace{zergTrace("9", cmd, gateCheckFailOut)}
+	// 提议句 ＋ 失败回执 ⇒ 仍 0 条（提议句本来就不该判，回执成败都不改变这一点）。
+	if claims := DeriveClaims(proposal, failTraces); len(claims) != 0 {
+		t.Fatalf("(b) 提议句（回执 rc≠0）同样不得派生主张，实际 %d 条：%+v", len(claims), claims)
+	}
+	claims := DeriveClaims("我跑 `"+cmd+"`，跑成功后回报。", failTraces)
+	if len(claims) != 1 {
+		t.Fatalf("(b) 对照：无提议词的失败回执句应派生 1 条，实际 %d 条", len(claims))
+	}
+	if got := VerifyClaims(claims, MemberReceipts(failTraces)); len(got) != 1 || got[0].Verdict != VerdictSendBack {
+		t.Fatalf("(b) 对照应判 send_back，实际 %+v", got)
+	}
+}
+
+// TestDeriveClaims_CompletedClaimStillDerived — (c) 正控：完成时声称 + traces **没有**该命令 ⇒ 仍派生 1 条。
+func TestDeriveClaims_CompletedClaimStillDerived(t *testing.T) {
+	content := "我已跑 `zerg gap export --out X --yes`，rc=0"
+	claims := DeriveClaims(content, nil)
+	if len(claims) != 1 {
+		t.Fatalf("★ (c) 完成时声称必须仍派生 1 条（排除不应把牙拔掉），实际 %d 条：%+v", len(claims), claims)
+	}
+	if !strings.HasPrefix(claims[0].ReceiptID, ClaimNonexistentPrefix) {
+		t.Fatalf("(c) 本轮没跑过该命令 ⇒ 回执号应为 %q 前缀，实际 %q", ClaimNonexistentPrefix, claims[0].ReceiptID)
+	}
+	if got := VerifyClaims(claims, MemberReceipts(nil)); len(got) != 1 || got[0].Verdict != VerdictRetract {
+		t.Fatalf("(c) 应判 retract（假回执），实际 %+v", got)
+	}
+}
+
+// TestDeriveClaims_CompletedClaimFailedReceiptStillSendBack — (d) 正控2：完成时声称 + 回执 rc=2 ⇒ 仍判 send_back。
+func TestDeriveClaims_CompletedClaimFailedReceiptStillSendBack(t *testing.T) {
+	content := "我已跑 `zerg gate check x --check`，rc=0"
+	traces := []Trace{zergTrace("11", "zerg gate check x --check", gateCheckFailOut)}
+	claims := DeriveClaims(content, traces)
+	if len(claims) != 1 {
+		t.Fatalf("★ (d) 完成时声称 + 失败回执必须派生 1 条，实际 %d 条：%+v", len(claims), claims)
+	}
+	if claims[0].ReceiptID != "11" {
+		t.Fatalf("(d) 应引用那条失败回执（ID=11），实际 %q", claims[0].ReceiptID)
+	}
+	if got := VerifyClaims(claims, MemberReceipts(traces)); len(got) != 1 || got[0].Verdict != VerdictSendBack {
+		t.Fatalf("(d) 应判 send_back，实际 %+v", got)
 	}
 }
 

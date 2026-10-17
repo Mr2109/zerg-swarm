@@ -12,6 +12,13 @@
 //	① 只抽**声称成功**的句子（标记闭集见 `claimSuccessMarkers`），且该句**点名了一条 `zerg …` 命令**；
 //	   没有点名命令的泛称（「全部通过」「已修复」）不抽 —— 没有回执可对，抽了只能判 revise（缺引用），白增噪声。
 //	② 否定句整句不抽（「未通过」「没成功」「失败」…）：它们不是「声称成功」。
+//	②b **非声称语气整句不抽**（GAP-20261018-03）：句中（**同一句内**）出现提议 / 将来 / 条件 / 请求许可词
+//	   （闭集见 `claimNonAssertiveMarkers`：`如果你` `如需` `允许我` `我可以` `我立刻` `将会` `下一步` `我打算` …）
+//	   ⇒ 该句不是「声称已发生」，**不抽**。血证形态：诚实模型顶住编造、只提议「如果你需要我实际去查（跑
+//	   `zerg code show …:42`），允许我调一次工具」—— 这种句子一旦同句带成功类词，就会被当成「声称该命令跑成功」
+//	   派生主张（该命令本轮没跑 ⇒ 判假回执 retract）。
+//	   **分寸**：同句另有完成时标记（`已跑` `跑过` `已执行` `已完成` …，见 `claimCompletionMarkers`）⇒ 以完成时为准，
+//	   照旧按声称成功处理（「我已跑 `zerg gap export --out X --yes`，rc=0」这类真回执不得被误伤）。
 //	③ 逐条去本轮 `traces` 里按**命令串**找那次真实调用（归一化 = 去首尾空白 + 折叠内部空白，见
 //	   `normalizeForMatch`；不改动命令内容）：
 //	   · 找到、且该回执 rc ≠ 0 ⇒ `Claim{ReceiptID: 该回执ID, Quote: 该句}`
@@ -50,6 +57,19 @@ var (
 	// claimNegationMarkers — 否定 / 失败词：句内出现任一条 ⇒ **整句不抽**（否定句不是「声称成功」）。
 	claimNegationMarkers = []string{"未", "没", "失败", "无法", "不通过", "不成功", "不能"}
 
+	// claimNonAssertiveMarkers — 提议 / 将来 / 条件 / 请求许可语气（GAP-20261018-03 闭集）。
+	// 句内出现任一条 ⇒ 该句不是「声称已发生」⇒ 不抽（除非同句另有完成时标记，见下）。
+	// 只排除**非完成**语气：不列「已跑」「跑过」这类完成时词，否则会把真回执一起拔掉。
+	claimNonAssertiveMarkers = []string{
+		"如果你", "如果需要", "如需", "若要", "要我", "你是要", "要不要", "是否需要",
+		"允许我", "我可以", "我立刻", "我可以立刻", "让我", "我这就",
+		"建议你", "你可以", "你可以跑", "可以用", "可用",
+		"将会", "将会执行", "下一步", "接下来我", "我打算", "我将",
+	}
+	// claimCompletionMarkers — 完成时语气（「已经真跑过」）：与非声称语气词**同句**出现时以它为准，
+	// 免得「我已跑 … rc=0，接下来我…」这类真回执被一句里的提议词误伤。
+	claimCompletionMarkers = []string{"已跑", "跑过", "已经跑", "已执行", "执行了", "已运行", "已完成"}
+
 	// claimZergRC — `zerg` 工具回执的首行形态（chat_tool_zergcmd.go 逐字 `fmt.Fprintf(&b, "rc=%d\n", rc)`）。
 	claimZergRC = regexp.MustCompile(`(?m)^rc=(\d+)\s*$`)
 	// claimBashExitRC — `bash` 工具回执的元数据尾注形态（agent/bash_v101.go 逐字 `[exit_code] %d`）。
@@ -74,24 +94,39 @@ func splitClaimSentences(content string) []string {
 	})
 }
 
-// claimsSuccess — 该句是否在**声称成功**：含闭集标记 ∧ 不含任何否定/失败词。
+// claimsSuccess — 该句是否在**声称成功**：含闭集标记 ∧ 不含任何否定/失败词 ∧ **不是提议/将来/条件语气**。
 func claimsSuccess(sentence string) bool {
-	has := false
-	for _, m := range claimSuccessMarkers {
-		if strings.Contains(sentence, m) {
-			has = true
-			break
-		}
-	}
-	if !has {
+	if !claimSentenceHas(sentence, claimSuccessMarkers) {
 		return false
 	}
-	for _, m := range claimNegationMarkers {
+	if claimSentenceHas(sentence, claimNegationMarkers) {
+		return false
+	}
+	return !claimsNonAssertiveTone(sentence)
+}
+
+// claimSentenceHas — 该句是否含闭集里的任一条（纯子串判，闭集都很短）。
+func claimSentenceHas(sentence string, markers []string) bool {
+	for _, m := range markers {
 		if strings.Contains(sentence, m) {
-			return false
+			return true
 		}
 	}
-	return true
+	return false
+}
+
+// claimsNonAssertiveTone — 该句是「提议 / 将来 / 条件 / 请求许可」语气（而不是「已经发生」的声称）。
+//
+// 判面只在本句内：调用方 `DeriveClaims` 是**逐句**调 `claimsSuccess` 的 ⇒ 天然不跨句、不扫全文
+// （上一句的「如果你需要…」不会把下一句的真回执判掉）。
+//
+// 分寸：命中非声称词 ＋ 同句**没有**完成时标记 ⇒ 判非声称；同句另有「已跑 / 跑过 / 已执行…」⇒
+// **以完成时为准**，仍按声称成功处理 —— 「我已跑 `zerg gap export --out X --yes`，rc=0」这类真回执不得被误伤。
+func claimsNonAssertiveTone(sentence string) bool {
+	if !claimSentenceHas(sentence, claimNonAssertiveMarkers) {
+		return false
+	}
+	return !claimSentenceHas(sentence, claimCompletionMarkers)
 }
 
 // isCommandToken — 该 token 像不像命令词（命令名 / 旗标 / 路径）。
