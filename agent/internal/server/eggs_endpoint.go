@@ -328,8 +328,27 @@ func (s *Server) handleEggs(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"eggs":         eggs,
+		"residency":    s.residencyRecords(),
 		"generated_at": time.Now().UTC().Format(time.RFC3339),
 	})
+}
+
+// residencyRecords 驻留账本快照（缺口 `GAP-20261018-13`）：`/eggs` 与 `/services` 的
+// **纯追加**子键 `residency[]`，一格不改既有载荷（旧消费侧读自己那几格，看不见这一键也不受
+// 影响；新消费侧据此把「声明在但进程没了」与「已声明但后端不在」分开）。
+//
+// ★ 它为什么必须由子端给：进程在不在**只有在子端向**量得到（引擎听 127.0.0.1）。命令面拿
+// 到的 `port` 只是子端"我起过这个端口"的自报 —— 本缺口正是「自报当真值」。
+// ★ 空账 ⇒ 空数组（不是 `null`）：机读侧把「键在、数组空」读成「没有曾装载过的证据」，与
+// 「键不在（旧版子端）」分得开。
+func (s *Server) residencyRecords() []backend.ResidencyRecord {
+	if s == nil || s.agent == nil || s.agent.backends == nil {
+		return []backend.ResidencyRecord{}
+	}
+	if rs := s.agent.backends.ResidencyRecords(); rs != nil {
+		return rs
+	}
+	return []backend.ResidencyRecord{}
 }
 
 // handleServices GET /services —— 只读：槽位与卵的现状（载荷同 §5.4，真数据接线完成）。
@@ -357,5 +376,8 @@ func (s *Server) handleServices(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	writeJSON(w, http.StatusOK, servicesSnapshot(buildSlot(mgr), eggs, s.externalOccupants(), gtt, time.Now()))
+	snap := servicesSnapshot(buildSlot(mgr), eggs, s.externalOccupants(), gtt, time.Now())
+	// ★ 缺口 `GAP-20261018-13`：与 `/eggs` 同一份**纯追加**子键（既有键一格不动）。
+	snap["residency"] = s.residencyRecords()
+	writeJSON(w, http.StatusOK, snap)
 }

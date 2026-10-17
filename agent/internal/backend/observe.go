@@ -177,6 +177,12 @@ func (m *Manager) PIDSet() map[int]struct{} {
 // EggObservations 当前托管卵的只读快照（按 egg_id 排序，可复现）。
 // 单次持锁出一份自洽快照；空窗剩余秒数在同一临界区内按同一 now 计算（与状态一致）。
 func (m *Manager) EggObservations() []EggObservation {
+	// ★ 缺口 `GAP-20261018-13`：观测面是**唯一**被周期驱动的地方（`server/events_endpoint.go`
+	// 的 1s 只读巡检 → 本函数；主控也定期拉 `/eggs`）⇒ 存在性巡检挂在这里，**不另起 goroutine**。
+	// 节流在 `PatrolResidency` 内（最短 2s）⇒ 本行不会把 `/eggs` 拖慢。
+	//
+	// ★ 顺序：先巡检（它自己按 `m.mu → resMu` 序拿锁），**再**进本函数的 `m.mu` —— 不嵌套。
+	m.PatrolResidency()
 	m.mu.Lock()
 	now := time.Now()
 	out := make([]EggObservation, 0, len(m.procs))

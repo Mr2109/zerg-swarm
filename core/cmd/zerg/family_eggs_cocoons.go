@@ -76,6 +76,19 @@ const (
 	eggStateIdle     = "未加载"
 	eggStateDeclared = "已声明但后端不在"
 	eggStateUnknown  = "取不到"
+	// ★ 缺口 `GAP-20261018-13`：**第六档**「声明在但进程没了」——
+	// 主控/子端名册说「装过」，子端的**驻留账本**也证明它曾经真装上（有活进程证据），而**现在
+	// 进程已经不在**。它与下面两档是**三个不同的结论**，此前后两者被混成同一个词
+	// （`已声明但后端不在`）⇒ 运维在 `egg ls` 上**看不出服务掉了**，正是本缺口的根：
+	//
+	//	声明在但进程没了  装过、跑过、**现在进程没了**（掉线 —— 要人看的那一档）
+	//	已声明但后端不在  声明了「已加载」，而子端**从来没有**这一枚的装载证据（从未装上 / 起不来）
+	//
+	// 判据来源：子端 `/eggs` 的 `residency[]`（`agent/internal/backend/residency_ledger.go` 的
+	// 驻留账本 —— 进程存在性巡检的结论），`state == "vanished"` 即本档。
+	// ★ 旧版子端没有 `residency[]`（键缺席）⇒ 一律**不判**本档（不回落到「已声明但后端不在」去
+	// 冒充一个结论 —— 见 `eggBackendProbeLive` 的注释）。
+	eggStateLost = "声明在但进程没了"
 	// ★ 缺口 `GAP-20260925-44`（命令面 · 异步查询）：**第五档**「装载中」—— 真后端还没起来、
 	// 但主控装载登记表里有一枚**在装**（`load_tasks` 的 `phase=accepted`）。它与「未加载」
 	// （没有在装的）与「已声明但后端不在」（声明了却装不起来）是**三个不同的结论** ——
@@ -84,8 +97,8 @@ const (
 	eggStateLoading = "装载中"
 )
 
-// eggStateClosedSet —— 五词闭集（机检用一处取值 · 判词与测试都引它，不各抄一份）。
-var eggStateClosedSet = []string{eggStateLoaded, eggStateIdle, eggStateDeclared, eggStateUnknown, eggStateLoading}
+// eggStateClosedSet —— 六词闭集（机检用一处取值 · 判词与测试都引它，不各抄一份）。
+var eggStateClosedSet = []string{eggStateLoaded, eggStateIdle, eggStateDeclared, eggStateUnknown, eggStateLoading, eggStateLost}
 
 // eggDisplay —— 人面 / 行式面的**三格**（判据①：每行三格齐；缺一格即红）。
 var eggDisplay = []string{"host", "model", "state"}
@@ -118,12 +131,51 @@ const (
 	eggFieldWatchdogVerdict = "watchdog_verdict"
 )
 
+// eggFieldResidencyState / eggFieldResidencyLastSeen —— 驻留账本两格（缺口 `GAP-20261018-13`）。
+//
+// 为什么走**可选字段层**（`eggOptionalFields`，与上面两格同一体例）：`eggFields` 是**冻结**的
+// 帮助/文档导出面字段表，动它要重生成命令页与契约基线；而这两格是「证据面」——机器要能直接
+// 引用「账本怎么说」「最后一次见到活着的时刻」而不必再解析人面文案。
+//
+// 值域：`residency_state` = 子端账本原词（loaded / vanished / released；账本里没有这一枚 ⇒ 空）；
+// `residency_last_seen` = 子端账本原值（RFC3339；缺席 ⇒ 空）。★ 两格一律**不编**：
+// 读不到就留空（`--json` 出口遇空值整键略去）。
+const (
+	eggFieldResidencyState    = "residency_state"
+	eggFieldResidencyLastSeen = "residency_last_seen"
+)
+
+// residencyStateVanished 子端驻留账本里的「进程没了」态（**逐字**照子端
+// `agent/internal/backend/residency_ledger.go` 的 `ResidencyStateVanished` —— 同一格不许两套词）。
+const residencyStateVanished = "vanished"
+
+// eggResidencyStateLoaded 子端驻留账本里的「装上了」态（同上，逐字照 `ResidencyStateLoaded`）。
+// 体检面用它分辨「账本说装过，而子端此刻不报它」这一种**句柄丢失**（不是「进程没了」）。
+const eggResidencyStateLoaded = "loaded"
+
+// residencyStateOr / residencyLastSeenOr —— 账本一格的人面/机器面取值（缺席 ⇒ 空串）。
+func residencyStateOr(f eggBackendFact, model string) string {
+	if rec, ok := f.Residency[model]; ok {
+		return rec.State
+	}
+	return ""
+}
+
+func residencyLastSeenOr(f eggBackendFact, model string) string {
+	if rec, ok := f.Residency[model]; ok {
+		return rec.LastSeen
+	}
+	return ""
+}
+
 // eggOptionalFields —— `--json` 的**可选字段层**（`optFields`）：登在出口白名单里、点得出来，但**不进**
 // `eggFields` 那一份**冻结**的帮助 / 文档导出面字段表 —— 与 `approveOptionalFields` 及 `code find` 的
 // `count` **同一体例**（冻结表不动、可选只增）⇒ 不造「表列着、面不产出」的反例，也无需重生成命令页。
 //
 // 两格**逐字照子端**（见上）——本面只投影、不解释。
-var eggOptionalFields = []string{eggFieldLastOutputAgoS, eggFieldWatchdogVerdict, eggFieldModality}
+var eggOptionalFields = []string{eggFieldLastOutputAgoS, eggFieldWatchdogVerdict, eggFieldModality,
+	// ★ 缺口 `GAP-20261018-13`：驻留账本证据两格（「账本说什么」＋「最后一次见到活着的时刻」）。
+	eggFieldResidencyState, eggFieldResidencyLastSeen}
 
 // eggRequired —— 「三格齐」机检用的字段表（少一格 ⇒ 红）。
 var eggRequired = []string{"host", "model", "state"}
@@ -461,6 +513,11 @@ func projectEggs(c *client, inv *invocation, stderr io.Writer, only string) ([]m
 				// ★ 本笔（L5「按用途选卵」· C）：`modality` —— 逐字来自名册载荷键 `modality`
 				// （`/api/fleet/models` ⇒ 本件**不新开端点**）。空值留空（✗ 不回落 `text`）。
 				eggFieldModality: cd.modality,
+				// ★ 缺口 `GAP-20261018-13`：驻留账本两格 —— 初值**空**（「还没有账本回据」），
+				//   真值由 `eggReconcileBackends` 从子端 `/eggs` 的 `residency[]` 逐字落定。
+				//   ✗ 不在这里编：账本键缺席（旧版子端）＝不判，不是「release」也不是「vanished」。
+				eggFieldResidencyState:    "",
+				eggFieldResidencyLastSeen: "",
 			})
 		}
 	}
@@ -543,6 +600,18 @@ type eggBackendFact struct {
 	Reachable bool
 	Running   map[string]int
 	Why       string
+	// PIDs / EggStates 模型 id ⇒ 子端 `/eggs` 那一格报的 `pid` / `state`（**逐字照报**）。
+	// ★ 缺口 `GAP-20261018-13`：体检面要能分开「进程在（pid 有）」与「端口在听」——
+	// 这两件此前在本面**合成一格**（都从 `port` 推），正是「看不出服务掉了」的一半。
+	PIDs      map[string]int
+	EggStates map[string]string
+	// GTT 模型 id ⇒ 子端归因到的逐进程 GTT（**逐字文本** · GiB；子端没量到 ⇒ 键缺席）。
+	// 体检面直接引用它，不在命令层重算（那会造出「第二个读法」）。
+	GTT map[string]string
+	// Residency 模型 id ⇒ 子端驻留账本（`/eggs` 的 `residency[]`）里该卵的**最近一条记录**。
+	// 键缺席 = 不在账本里（没装过 / 已显式卸 / 旧版子端没这个键）⇒ 调用方**不判**「进程没了」。
+	Residency map[string]eggResidencyFact
+
 	// Profile 模型 id ⇒ 子端 `/eggs` 报的 `has_profile`（**逐字取自节点侧** —— 那一格是子端
 	// 按**它自己的**实测档案目录算出来的，`agent/internal/server/eggs_endpoint.go` 的 `eggProfileOf`）。
 	//
@@ -554,8 +623,33 @@ type eggBackendFact struct {
 	Watchdog map[string]eggBackendWatchdog
 }
 
-// eggBackendWatchdog —— 子端 `/eggs` 逐卵的看门狗读数（**逐字**取自子端 `watchdog` 子对象）。
+// eggResidencyFact —— 子端驻留账本（`/eggs` 的 `residency[]`）一行的**命令面投影**
+// （缺口 `GAP-20261018-13` · 子端真源 = `agent/internal/backend/residency_ledger.go`）。
 //
+// 口径：**逐字照子端**，一格不改写 ——
+//
+//	State     loaded / vanished / released（子端闭集；`vanished` = 进程没了）
+//	PID/Port  账本里记的进程 pid / 端口（vanish 之后仍在 —— 那是「它丢之前的样貌」）
+//	LastSeen  最后一次观测到「进程在」的时刻（**掉线时间点的下界**，机读可直接引用）
+//	LoadedAt  首次观测到 ready 的时刻（装载时刻的观测值）
+//	PortLive  子端最近一次拨号的结果
+//	Reason    最近一次事件的原因（process_vanished / port_closed / released）
+//
+// ★ 键缺席（这一枚不在 `residency[]` 里）**不等于** `released`：旧版子端整个键都没有。
+// ⇒ 调用方一律「缺席 ⇒ 不判」，绝不拿缺席去冒充「进程没了」（§九 M3 铁律）。
+type eggResidencyFact struct {
+	State    string
+	PID      int
+	Port     int
+	Unit     string
+	LoadedAt string
+	LastSeen string
+	Detected string
+	PortLive string // "true"/"false"/""（子端没给这一格 ⇒ 空 = 不判）
+	Reason   string
+}
+
+// eggBackendWatchdog —— 子端 `/eggs` 逐卵的看门狗读数（**逐字**取自子端 `watchdog` 子对象）。
 // ★ `GAP-20260925-15`（Face A）：这是**上一次请求**的活性快照 ——
 //
 //	LastOutputAgoS = 子端 `watchdog.last_output_ago_s`（数值文本，逐字；`0` 也是真读数）；
@@ -601,11 +695,27 @@ func eggBackendProbeLive(machine string, a agentAddr) eggBackendFact {
 		return eggBackendFact{Why: fmt.Sprintf("子端 %s/eggs 的响应不是合法 JSON（%v）", agentChildBase(a), err)}
 	}
 	running := map[string]int{}
+	pids := map[string]int{}
+	eggStates := map[string]string{}
+	gtt := map[string]string{}
 	watchdog := map[string]eggBackendWatchdog{}
 	for _, it := range asList(doc["eggs"]) {
 		o := asObj(it)
 		if o == nil {
 			continue
+		}
+		// ★ 缺口 `GAP-20261018-13`：`pid` / `state` **逐字**留下（不过 `port>0` 那道过滤）——
+		//   体检面要靠它们分开「进程在」与「端口在听」（此前本面把两件合成一格）。
+		if id := eggIDOf(o); id != "" {
+			if pid, err := strconv.Atoi(cell(o["pid"])); err == nil && pid > 0 {
+				pids[id] = pid
+			}
+			if st := cell(o["state"]); st != "" {
+				eggStates[id] = st
+			}
+			if g := cell(o["gtt_gb"]); g != "" {
+				gtt[id] = g
+			}
 		}
 		port, _ := strconv.Atoi(cell(o["port"]))
 		if port <= 0 {
@@ -617,10 +727,7 @@ func eggBackendProbeLive(machine string, a agentAddr) eggBackendFact {
 		if s := cell(o["state"]); s == "dead" || s == "missing" {
 			continue
 		}
-		id := cell(o["model"])
-		if id == "" {
-			id = cell(o["egg_id"])
-		}
+		id := eggIDOf(o)
 		if id != "" {
 			running[id] = port
 			// ★ `GAP-20260925-15`（Face A）：把子端 `/eggs` **已经透出**的 `watchdog` 子对象**逐字**
@@ -647,15 +754,54 @@ func eggBackendProbeLive(machine string, a agentAddr) eggBackendFact {
 		if !ok || v == nil {
 			continue
 		}
-		id := cell(o["model"])
-		if id == "" {
-			id = cell(o["egg_id"])
-		}
+		id := eggIDOf(o)
 		if id != "" {
 			profile[id] = cell(v) == "true"
 		}
 	}
-	return eggBackendFact{Reachable: true, Running: running, Watchdog: watchdog, Profile: profile}
+	// ★ 缺口 `GAP-20261018-13`：驻留账本（`residency[]`）**逐条**照报 —— 这是「进程曾经真在」
+	//   的唯一证据面。键整个不在（旧版子端）⇒ 空表 ⇒ 调用方一律不判「进程没了」（不冒充结论）。
+	residency := map[string]eggResidencyFact{}
+	for _, it := range asList(doc["residency"]) {
+		o := asObj(it)
+		if o == nil {
+			continue
+		}
+		id := eggIDOf(o)
+		if id == "" {
+			continue
+		}
+		rec := eggResidencyFact{
+			State:    cell(o["state"]),
+			Unit:     cell(o["unit"]),
+			LoadedAt: cell(o["loaded_at"]),
+			LastSeen: cell(o["last_seen"]),
+			Detected: cell(o["detected_at"]),
+			Reason:   cell(o["reason"]),
+		}
+		rec.PID, _ = strconv.Atoi(cell(o["pid"]))
+		rec.Port, _ = strconv.Atoi(cell(o["port"]))
+		if v, ok := o["port_live"]; ok && v != nil {
+			rec.PortLive = strconv.FormatBool(cell(v) == "true")
+		}
+		// 同一枚卵若在账本里有多条（子端按 egg_id 收敛，正常只一条）⇒ **只认最后一条**：
+		// 载荷顺序即子端的定序（按 egg_id 排序后逐条列出）⇒ 同名后写覆盖前写由 map 语义保证，
+		// 这里显式「后到覆盖」而不是「先到为准」，免得把旧读数当现读。
+		residency[id] = rec
+	}
+	return eggBackendFact{
+		Reachable: true, Running: running, Watchdog: watchdog, Profile: profile,
+		PIDs: pids, EggStates: eggStates, GTT: gtt, Residency: residency,
+	}
+}
+
+// eggIDOf —— `/eggs` 一格的卵名（`model` 优先、回落 `egg_id`：两格同源，不许任一处改词）。
+func eggIDOf(o jsonObj) string {
+	id := cell(o["model"])
+	if id == "" {
+		id = cell(o["egg_id"])
+	}
+	return id
 }
 
 // eggBackendTimeout 单机探测的超时（子端是**近端**服务；一条 `egg ls` 对每台机只问一次）。
@@ -699,6 +845,14 @@ func eggBackends(hosts []string) map[string]eggBackendFact {
 // 有卵读不到时：`state` 落 `取不到`（**照实说** · 绝不并进「未加载」）、`inv` 里留下
 // `error.kind=blocked` + `detail=backend_unreadable`、stderr 逐台把原因说白。
 func eggReconcileBackends(inv *invocation, rows []map[string]string, stderr io.Writer) int {
+	_, rc := eggReconcileBackendsWithFacts(inv, rows, stderr)
+	return rc
+}
+
+// eggReconcileBackendsWithFacts 同上，但把**本轮各机子端回据**一并交回调用方
+// （缺口 `GAP-20261018-13`：`egg doctor` 要在同一份回据上把「进程 / 端口 / 账本」三面摆进一行，
+// ✗ 不许自己再打一遍子端 —— 那样两处读数可能相隔几秒，且等于开了第二个读法）。
+func eggReconcileBackendsWithFacts(inv *invocation, rows []map[string]string, stderr io.Writer) (map[string]eggBackendFact, int) {
 	hosts := make([]string, 0, len(rows))
 	for _, r := range rows {
 		hosts = append(hosts, r["host"])
@@ -744,14 +898,30 @@ func eggReconcileBackends(inv *invocation, rows []map[string]string, stderr io.W
 		if port, ok := f.Running[r["model"]]; ok {
 			r["state"] = eggStateLoaded
 			r["backend_port"] = strconv.Itoa(port)
+			r[eggFieldResidencyState] = residencyStateOr(f, r["model"])
+			r[eggFieldResidencyLastSeen] = residencyLastSeenOr(f, r["model"])
 			continue
 		}
 		// ③ 真后端不在：主控有一枚**在装** ⇒ `装载中`（缺口 `GAP-20260925-44` 的第五档 ——
 		//    「还在冷装」与「没在跑/装不起来」必须分得开）；主控声「已加载」⇒ **已声明但后端不在**
 		//    （本缺口的正题）；主控也没声 ⇒ `未加载`（两处一致）。
 		r["backend_port"] = ""
-		if loadOK && pending[r["host"]+"\t"+r["model"]] {
+		r[eggFieldResidencyState] = residencyStateOr(f, r["model"])
+		r[eggFieldResidencyLastSeen] = residencyLastSeenOr(f, r["model"])
+		if loadOK && pending[r["host"]+"	"+r["model"]] {
 			r["state"] = eggStateLoading
+			continue
+		}
+		// ★ 缺口 `GAP-20261018-13`（本单的正题）：**先判「装过、现在进程没了」**，再判
+		//   「声明了却从没装上」—— 这两件事此前共用 `已声明但后端不在` 一个词，于是
+		//   **服务掉了**在 `egg ls` 上看不出来（真机：edge-node 上 agentd 活着、进程全没、
+		//   日志只有心跳 ⇒ 事后谁都说不清丢没丢）。
+		//
+		//   判据 = 子端驻留账本里该卵 `state == vanished`（子端做过进程存在性巡检，
+		//   `agent/internal/backend/residency_ledger.go`）。★ 账本里没有这一枚 ⇒ **不判本档**
+		//   （旧版子端 / 从未装上 ⇒ 照旧走下面的 `已声明但后端不在`，不冒充「掉了」）。
+		if rec, ok := f.Residency[r["model"]]; ok && rec.State == residencyStateVanished {
+			r["state"] = eggStateLost
 			continue
 		}
 		if declared == eggStateLoaded {
@@ -761,7 +931,7 @@ func eggReconcileBackends(inv *invocation, rows []map[string]string, stderr io.W
 		r["state"] = eggStateIdle
 	}
 	if len(unreadable) == 0 {
-		return exitOK
+		return facts, exitOK
 	}
 	names := make([]string, 0, len(unreadable))
 	for h := range unreadable {
@@ -778,7 +948,7 @@ func eggReconcileBackends(inv *invocation, rows []map[string]string, stderr io.W
 	fmt.Fprintf(stderr, "  为什么这必须是独立一格（不许并进 `%s`）：子端引擎监听 127.0.0.1 ⇒ **只有在子端向**拿得到真后端；\n", eggStateIdle)
 	fmt.Fprintf(stderr, "  读不到就只是读不到 —— 写成 `%s` 是**编一个数**（§九 M3 铁律）\n", eggStateIdle)
 	fmt.Fprintf(stderr, "error.kind=blocked · detail=backend_unreadable · retryable=true · remedy=fix_precondition\n")
-	return exitBlocked
+	return facts, exitBlocked
 }
 
 // cmdEggLs —— `zerg egg ls`：卵 × 设备矩阵（**只读投影** · 波② `T4`），每枚卵三格 `host`/`model`/`state`。

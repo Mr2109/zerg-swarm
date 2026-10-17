@@ -2308,6 +2308,23 @@ func init() {
 			//   （`optFields`：登在出口白名单、`--json` 点得出来，但不进冻结帮助 / 文档导出面字段表）。
 			optFields: eggOptionalFields,
 		},
+		// ★ 缺口 `GAP-20261018-13`（第二层：体检正门）：卵的**三面对账**一条命令看全 ——
+		//   声明态（主控 `/api/models/{name}`）⟷ 进程态/端口态（子端 `/eggs`，含驻留账本的
+		//   `residency[]`）⟷ GTT 占用 ＋ 上次装载时刻，并**逐项点名**不一致。
+		// 退码 = 0 全一致 / 1 有不一致 / 8 判不了（件头 `family_egg_doctor.go` 的「退码约定」）；
+		// 只用既有端点、只 GET ⇒ 非危险档（`danger == nil`）、无干跑档（本命令零写面）。
+		{
+			path:    []string{"egg", "doctor"},
+			kind:    "EggDoctor",
+			summary: "卵体检（只读三面对账：声明态 / 进程态 / 端口态 / GTT / 上次装载时刻 ＋ 不一致项逐条点名 · 退码 0 一致 / 1 不一致 / 8 判不了）",
+			usage:   "zerg egg doctor [--machine <机>] [--json <字段>]",
+			arity:   "any",
+			args:    []string{"机器（`--machine`，可省：缺省体检全机群）"},
+			fields:  eggDoctorFields,
+			endpoint: "GET /api/fleet/models + GET /api/fleet/status + GET /api/models/{name} ＋ 子端 GET /eggs" +
+				"（现成端点包装 · 不新开一条路 · 只读）",
+			run: cmdEggDoctor,
+		},
 		{
 			path:     []string{"cocoon", "ls"},
 			kind:     "Cocoon",
@@ -4442,20 +4459,20 @@ func init() {
 		{
 			path:    []string{"fs", "read"},
 			kind:    "FsRead",
-			summary: "只读一件（仓根相对 · 人面出**带行号文本**）· `--json` 闭集五格（path/content/total_lines/offset/limit）· 零写盘 · 件不存在 ⇒ 2（不给结论 · ✗ 不冒充空件）· `--allow-sibling-repo <名>` 显式开闸读兄弟仓（闭集只认 Zerg-内部文档 · 缺省仍 fail-closed）",
+			summary: "只读一件（仓根相对 · 人面出**带行号文本**）· `--json` 闭集五格（path/content/total_lines/offset/limit）· 零写盘 · 件不存在 ⇒ 2（不给结论 · ✗ 不冒充空件）· `--allow-sibling-repo <名>` 显式开闸读兄弟仓（闭集只认登记过的兄弟仓名 · 缺省仍 fail-closed）",
 			usage:   "zerg fs read <件> [--offset N] [--limit N] [--allow-sibling-repo <名>] [--json <字段>]",
 			arity:   "any",
-			args:    []string{"件（仓根相对路径；绝对路径只收**仓内**的 —— 出仓 ⇒ 2；给 `--allow-sibling-repo <名>` 时改按**兄弟仓根**解析 · 闭集只认 `Zerg-内部文档`）", "窗口：`--offset N` 起始行（1 起 · 缺省 1）· `--limit N` 取几行（缺省 0 = 到件尾）"},
+			args:    []string{"件（仓根相对路径；绝对路径只收**仓内**的 —— 出仓 ⇒ 2；给 `--allow-sibling-repo <名>` 时改按**兄弟仓根**解析 · 闭集只认登记过的兄弟仓名）", "窗口：`--offset N` 起始行（1 起 · 缺省 1）· `--limit N` 取几行（缺省 0 = 到件尾）"},
 			fields:  fsReadFields,
 			run:     cmdFSRead,
 		},
 		{
 			path:    []string{"fs", "write"},
 			kind:    "FsWrite",
-			summary: "写/追加本仓一件（**D2**：`--dry-run` 零副作用 · 缺 `--yes` ⇒ 2 · 写面先落审计 `edit_audit.jsonl`）· 禁绝对路径出仓 · 禁符号链接 · 父目录不存在 ⇒ 2（✗ 不自建）· `--replace <补丁件>` 定点替换（每格 `old` 恰好命中 1 次才改 · **不必先读全文**）· `--allow-sibling-repo <名>` 显式开闸写兄弟仓（闭集只认 Zerg-内部文档 · 审计行带 `sibling_repo`/`sibling_root` · 缺省仍 fail-closed）",
+			summary: "写/追加本仓一件（**D2**：`--dry-run` 零副作用 · 缺 `--yes` ⇒ 2 · 写面先落审计 `edit_audit.jsonl`）· 禁绝对路径出仓 · 禁符号链接 · 父目录不存在 ⇒ 2（✗ 不自建）· `--replace <补丁件>` 定点替换（每格 `old` 恰好命中 1 次才改 · **不必先读全文**）· `--allow-sibling-repo <名>` 显式开闸写兄弟仓（闭集只认登记过的兄弟仓名 · 审计行带 `sibling_repo`/`sibling_root` · 缺省仍 fail-closed）",
 			usage:   "zerg fs write <件> [--content <文本> | --content-stdin | --replace <补丁件>] [--append] [--by <谁>] [--allow-sibling-repo <名>] [--json <字段>] [--dry-run | --yes]",
 			arity:   "any",
-			args:    []string{"件（仓根相对路径 · 父目录必须**已存在**；给 `--allow-sibling-repo <名>` 时改按**兄弟仓根**解析 · 闭集只认 `Zerg-内部文档`）", "内容来源：`--content <文本>` / `--content-stdin` / `--replace <补丁件>`（**三选一**；补丁件 = `[{\"old\":…,\"new\":…}]` · 每格 `old` 恰好命中 1 次 · 与 `dev edit --replace` 同形 · 走它**不必先读全文**）"},
+			args:    []string{"件（仓根相对路径 · 父目录必须**已存在**；给 `--allow-sibling-repo <名>` 时改按**兄弟仓根**解析 · 闭集只认登记过的兄弟仓名）", "内容来源：`--content <文本>` / `--content-stdin` / `--replace <补丁件>`（**三选一**；补丁件 = `[{\"old\":…,\"new\":…}]` · 每格 `old` 恰好命中 1 次 · 与 `dev edit --replace` 同形 · 走它**不必先读全文**）"},
 			fields:  fsWriteFields,
 			danger:  &dangerSpec{dangerD2, "件路径（仓根相对）", "写/追加**本仓工作树内**的一件（同目录临时件 + rename 原子写 · 写后读回对拍 · 不等即按前态写回）；审计先落 `<状态目录>/edit_audit.jsonl`（事件 `fs_file_written`）—— 可逆：按该审计行的 `fs_before_sha256` 恢复（件原本不在 ⇒ 删件）", "缺口 `GAP-20261017-10`（P0）· 同族 D2 写面先例 `script inventory sync`（--dry-run 零副作用 · 缺 --yes fail-closed · 写面进审计）", false, dangerScopeRepo},
 			opened:  true,

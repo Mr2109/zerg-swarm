@@ -871,9 +871,15 @@ func gcrLiveData(root string) (*gcrData, string) {
 	exp := gcrPySplitlines(gcrReadOr(cands[len(cands)-1]))
 
 	ident, counts := "", ""
+	// ★ 缺口 `GAP-20261018-13`（本笔）：原来只看导出物的**前 10 行**（py 原件的 `exp[:10]`），
+	//   而 `zerg help export` 此后加了 8 行 YAML frontmatter ⇒ `> 命令面身份：` / `> 本版：`
+	//   被推到第 13/15 行 ⇒ 生成器**读不到计数**，`--check` 恒 rc=2「导出物抬头的计数读不出来」，
+	//   命令页从此**无法重生成**（前端门 `check-public-face-commands` 因此对新命令恒红）。
+	//   修法只改**扫描窗口**，判据（前缀逐字 + 计数正则）一字未动：前 40 行足够覆盖
+	//   frontmatter ＋ 两个抬头行，且不含任何表格行（表格在空行之后）。
 	lim := len(exp)
-	if lim > 10 {
-		lim = 10
+	if lim > 40 {
+		lim = 40
 	}
 	for _, l := range exp[:lim] {
 		if strings.HasPrefix(l, "> 命令面身份：") {

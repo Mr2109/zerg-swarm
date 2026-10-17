@@ -484,6 +484,10 @@ func (m *Manager) evictSubprocLocked(name string, sp *subproc, why string) float
 		m.stopSubproc(sp)
 	}
 	delete(m.procs, name)
+	// ★ 缺口 `GAP-20261018-13`：**显式卸载**要在驻留账本里记 `released` ——
+	//   否则巡检看到「账本有 loaded、进程没了」会把**人按的停**误报成「进程静默消失」
+	//   （那是把真信号冲淡成噪声，比不报更坏）。这是「从 procs 里移除」的唯一收口。
+	m.markResidencyReleased(name, why)
 	return gb
 }
 

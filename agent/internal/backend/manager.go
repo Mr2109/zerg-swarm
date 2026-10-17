@@ -143,6 +143,20 @@ type Manager struct {
 	// 来源 = `/load` 体里的 `egg_max_s`（`SetEggMaxOverride`），读点 = `InferForward` 每次调用
 	// （⇒ 逐请求生效）；缺省空 ⇒ 回落 env `ZERG_EGG_MAX_S` ⇒ 再回落 0。在 m.mu 下读写。
 	eggMaxOverride map[string]time.Duration
+	// ── 驻留账本（缺口 `GAP-20261018-13` · 见 residency_ledger.go）───────────────────────
+	//
+	// ★ 为什么它必须在 `Manager` 上而不在某个请求里：本缺口的病是「证据随进程蒸发」——
+	// 账本要活到**进程退出之后**（落盘），且要在**每次观测**时被巡检（不是请求触发）。
+	//
+	// ⚠ 锁序：`resMu` **只允许**在 m.mu 之外拿，或在其内层拿（顺序恒为 `m.mu → resMu`）——
+	// `PatrolResidency` 先摘 m.mu 快照再拿 resMu；`markResidencyReleased` 由持 m.mu 的
+	// `evictSubprocLocked` 调用 ⇒ 同序，不构成环。
+	resMu               sync.Mutex
+	residency           map[string]*ResidencyRecord
+	residencyLoaded     bool      // 账本已从盘上读过（一次）
+	residencyQuietUntil time.Time // 巡检节流（最短间隔见 residencyPatrolMin）
+	residencyLoadWarned bool      // 读失败/坏件只记一次日志
+	residencySaveWarned bool      // 写失败只记一次日志
 }
 
 // defaultReapInterval 是后台 TTL 回收循环的扫描间隔（只决定"多久查一次"，不是 TTL 本身）。
