@@ -43,6 +43,23 @@ rules:
     - name: "start_chat"
       action: block
       message: "模型禁开新会话界面（动界面类 ⇒ 显式 block）"
+    # ★ 2026-10-18（存量红两条 · 与 GAP-20260927-232 同批）：Hermes 工具注册面又新增三枚，
+    #   本表漏登 ⇒ 经网关的整发请求落默认档 block（子代理一发 403）。逐条按语义分档：
+    #   · `browser_vault`（凭据仓储的**模型盲**入口：`list` 只回句柄/元数据（口令永不回给模型）、
+    #     `fill` 在服务端按**绑定 origin 精确匹配**校验后注入，口令不进工具结果/日志/会话库 ⇒
+    #     **秘密不出模型侧**）⇒ 读类 **allow**，与同族五条 `browser_vault_{list,fill,unlock,enter_code,save_login}`
+    #     同档；真正的外发面（`send_message` / `feishu_drive_*_comment` / `yb_send_*` / `ha_call_service`）
+    #     另有显式 block —— 给本条目单独 block 既不减牙（同族仍 allow）又只会换来 403 噪声。
+    #   · `set_theme`（改桌面主题/配色/布局 = 动用户看着的界面）⇒ 动界面类 **block**（同 setup_choose/start_chat）。
+    #   · `setup_beat`（上线下引导卡片：推卡并等用户点选 = 自动化/动界面）⇒ **block**（同 cronjob_manage 保守档）。
+    - name: "browser_vault"
+      action: allow
+    - name: "set_theme"
+      action: block
+      message: "模型禁改桌面主题/布局（动界面类 ⇒ 显式 block）"
+    - name: "setup_beat"
+      action: block
+      message: "模型禁驱动上线引导卡片（自动化/动界面类 ⇒ 显式 block）"
     - name: "terminal"
       # ★ 2026-09-24 Mr2109 点头：由 `require_approval` 降为 `allow` —— 子代理要用它干开发活
       #   （跑测试/编译/git 现读）；「无审批通道按拒」这条对本场景等于禁死。牙不减：args_deny 四条原样保留。

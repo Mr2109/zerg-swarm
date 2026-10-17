@@ -34,6 +34,7 @@ browser_press
 browser_scroll
 browser_snapshot
 browser_type
+browser_vault
 browser_vault_enter_code
 browser_vault_fill
 browser_vault_list
@@ -106,5 +107,7 @@ yb_query_group_members
 yb_search_sticker
 yb_send_dm
 yb_send_sticker
+set_theme
+setup_beat
 setup_choose
 start_chat

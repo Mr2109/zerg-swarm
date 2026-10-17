@@ -610,7 +610,7 @@ func (h *ChatHandlers) SendMessageTool(w http.ResponseWriter, r *http.Request) {
 	kres := loopcore.Run(r.Context(), loopcore.Config{
 		MaxRounds: chat.MaxToolRounds, WallClock: chat.WallClockFor(se.Model),
 		RoundTimeout: chat.RoundTimeoutFor(se.Model), KeepRecent: 3,
-	}, se.Model, sysPrompt, msgs, loopcore.Deps{Infer: inferAdapter, Exec: execFn, Hooks: progHooks, Session: id}) // T1.2: Session 只供观测
+	}, se.Model, sysPrompt, msgs, loopcore.Deps{Infer: inferAdapter, Exec: execFn, Hooks: progHooks, Session: id, CWD: loopcore.RepoRoot()}) // T1.2: Session 只供观测
 	if kres.Err != "" {
 		_ = h.store.DeleteMessage(id, userMsg.ID)
 		writeChatError(w, http.StatusBadGateway, fmt.Errorf("%s", kres.Err))
@@ -1077,6 +1077,7 @@ func (h *ChatHandlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 		// T1.2 观测：会话透给内核（内核侧"工具被隐藏 ⇒ 不执行"这类拒绝要能归因；allow 由工具执行路径记）
 		Session: id,
 		Hooks:   progHooks,
+		CWD:     loopcore.RepoRoot(), // 产出引用的文件解析根（`文件:行` 腿，见 claims_numbers.go）
 		Exec: func(ctx context.Context, name string, targs map[string]any) (string, string, error) {
 			// P4-36 异步+心跳（工具执行期间 SSE 不断流——UI 实时"执行中 N 秒"）
 			type execRes struct {

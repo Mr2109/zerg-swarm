@@ -223,6 +223,7 @@ func loopcoreRun(ctx context.Context, a *Agent, ls *loopState, sysPrompt string,
 		Tools:        nil, // CA 工具经 callModel 内部 ls.tools（tools 参数透传 nil）
 		Terminator:   term,
 		OnToolResult: caToolResult(ls),
+		CWD:          loopcore.RepoRoot(), // 产出引用的文件解析根（`文件:行` 腿，见 claims_numbers.go）
 	})
 }
 

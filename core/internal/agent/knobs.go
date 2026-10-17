@@ -87,6 +87,13 @@ var knobs = []Knob{
 	{Name: "prefixcache.maxUnknownShapes", Current: "16", Source: "core/internal/gateway/prefix_cache.go:673", Face: "无面", Note: "未知形态保留上限"},
 	{Name: "ssestee.sseTeeLimit", Current: "16384", Source: "core/internal/gateway/sse_usage_tee.go:21", Face: "无面", Note: "SSE 尾窗字节数（16<<10）"},
 	{Name: "tokencap.maxTokensCapDefault", Current: "32768", Source: "core/internal/gateway/tokencap.go:39", Face: "无面", Note: "token 上限兜底默认（= maxOutCeiling）"},
+	// ── gateway 包（2026-10-18 补齐：输出预算 fail-closed 那一批，tokencap.go 144-180） ──
+	{Name: "tokencap.OutbudgetFailModeEnv", Current: "ZERG_OUTBUDGET_FAIL_MODE", Source: "core/internal/gateway/tokencap.go:154", Face: "只读面", Note: "fail-closed 开关的环境变量名（每次裁决现读，改即生效，不必重编）"},
+	{Name: "tokencap.outbudgetFailModeClosed", Current: "closed", Source: "core/internal/gateway/tokencap.go:159", Face: "无面", Note: "开关字面 closed：默认档，判不了即按拒发（fail-closed）"},
+	{Name: "tokencap.outbudgetFailModeOpen", Current: "open", Source: "core/internal/gateway/tokencap.go:160", Face: "无面", Note: "开关字面 open：唯恰等于它才回到旧档（放行 + 一行日志）"},
+	{Name: "tokencap.outBudgetMinAvail", Current: "512", Source: "core/internal/gateway/tokencap.go:174", Face: "无面", Note: "剩余输出空间硬下限（< 它 ⇒ 拒发；故意低于 minOutTokens 1024）"},
+	{Name: "tokencap.outBudgetRejectCodeOverCtx", Current: "output_budget_prompt_over_ctx", Source: "core/internal/gateway/tokencap.go:178", Face: "无面", Note: "拒发错误码：提示已超上下文（经 TransformError 回给调用方）"},
+	{Name: "tokencap.outBudgetRejectCodeRemainder", Current: "output_budget_remainder_below_min", Source: "core/internal/gateway/tokencap.go:179", Face: "无面", Note: "拒发错误码：剩余输出额度不足"},
 }
 
 // Knobs — 回读旋钮表（导出 · 供命令/文档面消费）。
