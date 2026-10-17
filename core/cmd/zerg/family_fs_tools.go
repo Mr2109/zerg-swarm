@@ -98,6 +98,103 @@ func fsToolRoot(inv *invocation, stderr io.Writer) (string, int) {
 	return root, exitOK
 }
 
+// ── GAP-20261018-07（2026-10-18）：兄弟仓读写正门 `--allow-sibling-repo <仓名>` ──────────────────
+//
+// 病灶（现读 · 对话里真撞）：目标件在**仓根的兄弟目录** `Zerg-内部文档/`（`../Zerg-内部文档/项目文档/…md`）时，
+// `fs read` / `fs write` 一律 rc=2「件出仓了 ⇒ ✗ 只碰本仓工作树」⇒ **文档面在对话里既读不到原文、
+// 也写不回去**（判红看得见、原文够不着），只能由人手工搬。
+//
+// 本条照 `dev edit --allow-sibling-repo <名>` 的既有先例（`GAP-20261001-07` 甲案 · `family_dev_edit.go`）
+// 开一道**正门**，口径逐条对齐：
+//
+//	· 旗标**只收仓名、不收路径**；名必须**逐字** ∈ `devEditSiblingRepos` —— 那是**同一份编译期闭集**
+//	  （✗ 不另立第二张白名单）。给路径形态（`../Zerg-内部文档`）/ 别家仓名 / 空名 ⇒ rc=2 且**具名**报
+//	  「非白名单兄弟仓」。
+//	· **默认态逐字不变**：不给旗标 ⇒ `fsToolResolvePath` 那条旧判据、退码、文案一位不动（仍 fail-closed）。
+//	· 给旗标 ⇒ 解析根换成 `<仓根>/../<仓名>`（= `filepath.Join(repoRoot, "..", 仓名, rel)`），且对**解析结果**
+//	  再校一次 `filepath.Rel(兄弟仓根, 结果)`：以 `..` 开头 / 是绝对路径 ⇒ rc=2（✗ 不许
+//	  `--allow-sibling-repo Zerg-内部文档 ../../etc/passwd` 从兄弟仓再绕出去）；另加「路径段版」`pathWithinDir` 复核。
+//	· 兄弟仓根不在盘上 ⇒ rc=8（**不给结论** · 与 `dev edit` 同码同判词）。
+//	· 人面落点写成 `<仓名>/<仓内相对>`（`Zerg-内部文档/项目文档/…`）；**机器面 `path` 仍是兄弟仓内相对路径**
+//	  （与 `dev edit` 的 `File` 同口径 ⇒ 回读时原样喂回这个相对路径即可），兄弟仓名与根进审计行。
+var fsToolSiblingRepos = devEditSiblingRepos // 唯一真源：与 `dev edit` 同一份闭集（✗ 不抄第二份）
+
+// fsToolSibling —— 解析 `--allow-sibling-repo <仓名>`。
+//
+// 返回 (仓名, 兄弟仓根, rc)。**不给旗标 ⇒ ("","",exitOK) 且零输出** —— 调用方随后走的仍是旧那条
+// 仓内判据，所以默认态的输出/退码逐字不变（这条是 GAP 的硬要求）。
+func fsToolSibling(inv *invocation, stderr io.Writer, root string) (string, string, int) {
+	if !inv.hasFlag("--allow-sibling-repo") {
+		return "", "", exitOK
+	}
+	name := strings.TrimSpace(inv.flagVal("--allow-sibling-repo"))
+	if !devEditSiblingRepoKnown(name) {
+		inv.setErr("usage", "unknown_sibling_repo", "同级仓名不在编译期闭集里")
+		fmt.Fprintf(stderr, "%s: ★ **拒执** —— `--allow-sibling-repo %s`：**非白名单兄弟仓**（只认 %s · 只收仓名、✗ 不收路径 —— 路径形态一律拒）⇒ 退码 2（GAP-20261018-07）\n",
+			progName, name, strings.Join(fsToolSiblingRepos, " / "))
+		return "", "", exitUsage
+	}
+	dir := filepath.Join(filepath.Dir(root), name)
+	if st, serr := os.Stat(dir); serr != nil || !st.IsDir() {
+		inv.setErr("blocked", "sibling_root_absent", "同级仓根不在盘上")
+		fmt.Fprintf(stderr, "%s: 兄弟仓 %s 的根不在盘上（%s）⇒ 不给结论（退码 8 · 不猜 · GAP-20261018-07）\n",
+			progName, name, dir)
+		return "", "", exitBlocked
+	}
+	return name, dir, exitOK
+}
+
+// fsToolLabel —— 人面用的**可读落点**（兄弟仓 ⇒ `Zerg-内部文档/…`；本仓 ⇒ 原样 rel）。
+// ★ 只动**人面**；机器面 `path` 走 `rel`（兄弟仓内相对 · 与 `dev edit` 的 `File` 同口径）。
+func fsToolLabel(sibName, rel string) string {
+	if sibName == "" {
+		return rel
+	}
+	return sibName + "/" + rel
+}
+
+// fsToolResolvePathIn —— 换根版解析：`sibName == ""` ⇒ **逐字**转给 `fsToolResolvePath`（旧路一位不动）。
+//
+// 给了兄弟仓名时三种写法都收，但**一律再判一次「解析结果在不在兄弟仓根下」**：
+//
+//	`项目文档/x.md`          —— 相对**兄弟仓根**（主用法 · 与 `dev edit --file` 同口径）
+//	`../Zerg-内部文档/项目文档/x.md` —— 相对**主仓根**的旧写法（人已经习惯这么敲 · 收到就能用）
+//	`/abs/…/Zerg-内部文档/项目文档/x.md` —— 绝对路径（含空格也能用 —— argv 是一枚实参）
+//
+// 越界判据 = `filepath.Rel` 结果不以 `..` 开头 + 非绝对 + 路径段版 `pathWithinDir`（两道都过才收）。
+func fsToolResolvePathIn(inv *invocation, stderr io.Writer, root, sibName, sibRoot, raw string) (string, string, int) {
+	if sibName == "" {
+		return fsToolResolvePath(inv, stderr, root, raw)
+	}
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		inv.setErr("usage", "path_required", "缺件路径")
+		fmt.Fprintf(stderr, "%s: 要给一个件路径（仓根相对；✗ 空串）⇒ 退码 2\n", progName)
+		return "", "", exitUsage
+	}
+	clean := filepath.Clean(filepath.FromSlash(s))
+	var cand string
+	switch {
+	case filepath.IsAbs(clean):
+		cand = clean
+	case clean == ".." || strings.HasPrefix(clean, ".."+string(os.PathSeparator)):
+		// 「相对主仓根」的旧写法：先按主仓根拼，落点判据在下面统一判（✗ 这里不算放行）。
+		cand = filepath.Clean(filepath.Join(root, clean))
+	default:
+		cand = filepath.Clean(filepath.Join(sibRoot, clean))
+	}
+	rel, rerr := filepath.Rel(sibRoot, cand)
+	outside := rerr != nil || filepath.IsAbs(rel) ||
+		rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator))
+	if outside || !pathWithinDir(sibRoot, cand) {
+		inv.setErr("usage", "file_outside_repo", "件不在同级仓根下")
+		fmt.Fprintf(stderr, "%s: 件**越出**兄弟仓 %s 的根（%s → %s）⇒ 退码 2（`--allow-sibling-repo` 只开这一棵兄弟树 · ✗ 不许 `..` 绕出 · GAP-20261018-07）\n",
+			progName, sibName, s, cand)
+		return "", "", exitUsage
+	}
+	return cand, filepath.ToSlash(rel), exitOK
+}
+
 // fsToolResolvePath —— 把用户给的件路径解析成 (绝对路径, 仓内相对路径)。
 //
 // 出仓判据**按路径段**判（`pathWithinDir` · 与 `code find --path` 同一条口径）：
@@ -173,27 +270,33 @@ func cmdFSRead(inv *invocation, stdout, stderr io.Writer) int {
 	if len(inv.args) != 1 {
 		inv.setErr("usage", "bad_arity", "`fs read` 只收一个件路径")
 		fmt.Fprintf(stderr, "%s: `fs read` 只收**一个**件路径（收到 %d 枚）⇒ 退码 2\n", progName, len(inv.args))
-		fmt.Fprintf(stderr, "用法：%s fs read <件> [--offset N] [--limit N] [--json <字段>]\n", progName)
+		fmt.Fprintf(stderr, "用法：%s fs read <件> [--offset N] [--limit N] [--allow-sibling-repo <名>] [--json <字段>]\n", progName)
 		return exitUsage
 	}
 	root, rc := fsToolRoot(inv, stderr)
 	if rc != exitOK {
 		return rc
 	}
-	abs, rel, rc := fsToolResolvePath(inv, stderr, root, inv.args[0])
+	// ★ GAP-20261018-07：不给 `--allow-sibling-repo` ⇒ 这一支零输出、旧判据一位不动。
+	sibName, sibRoot, rc := fsToolSibling(inv, stderr, root)
 	if rc != exitOK {
 		return rc
 	}
+	abs, rel, rc := fsToolResolvePathIn(inv, stderr, root, sibName, sibRoot, inv.args[0])
+	if rc != exitOK {
+		return rc
+	}
+	label := fsToolLabel(sibName, rel)
 	st, serr := os.Stat(abs)
 	if serr != nil {
 		// 规格逐字：件不存在 ⇒ rc=2 **不给结论**（✗ 不当成「空件 read 成功」）。
 		inv.setErr("usage", "file_absent", "件不存在")
-		fmt.Fprintf(stderr, "%s: 件不存在：%s ⇒ **不给结论**（退码 2 · ✗ 不把「没有」读成「空件」）\n", progName, rel)
+		fmt.Fprintf(stderr, "%s: 件不存在：%s ⇒ **不给结论**（退码 2 · ✗ 不把「没有」读成「空件」）\n", progName, label)
 		return exitUsage
 	}
 	if st.IsDir() {
 		inv.setErr("usage", "target_is_dir", "点的是目录")
-		fmt.Fprintf(stderr, "%s: 点的是目录、不是件：%s ⇒ 退码 2\n", progName, rel)
+		fmt.Fprintf(stderr, "%s: 点的是目录、不是件：%s ⇒ 退码 2\n", progName, label)
 		return exitUsage
 	}
 	body, rerr := os.ReadFile(abs)
@@ -258,7 +361,7 @@ func cmdFSRead(inv *invocation, stdout, stderr io.Writer) int {
 		return selectJSONList(stdout, stderr, inv, inv.path, inv.fields, []map[string]string{row})
 	}
 	// 人面：**带行号文本**（与 `code show` 同一个渲染器 / 同一对列名 ⇒ 两个面不会长歪）。
-	fmt.Fprintf(stderr, "%s: %s 第 %d 行起 %d 行（共 %d 行）\n", progName, rel, offset, len(window), total)
+	fmt.Fprintf(stderr, "%s: %s 第 %d 行起 %d 行（共 %d 行）\n", progName, label, offset, len(window), total)
 	table := make([][]string, 0, len(window))
 	for i, ln := range window {
 		table = append(table, []string{strconv.Itoa(start + i + 1), ln})
@@ -270,6 +373,10 @@ func cmdFSRead(inv *invocation, stdout, stderr io.Writer) int {
 // ── `fs write` ───────────────────────────────────────────────────────────────
 
 // fsWriteAuditLine —— `event=fs_file_written` 的一行（**自己的**字段名 · 缺必需格 ⇒ 这一行不许写）。
+//
+// ★ GAP-20261018-07（只增两格 · 均 `omitempty`）：写**兄弟仓**时明写「哪个仓 + 它的根」——
+// 写兄弟仓这种事必须留痕（`FsPath` 仍是兄弟仓内相对路径 ⇒ 绝对落点 = `FsSiblingRoot/FsPath`）。
+// 不给旗标 ⇒ 两格都不写 ⇒ 既有行 / 历史行逐字节不变（只增键，既有键不动）。
 type fsWriteAuditLine struct {
 	At         string `json:"at"`
 	Event      string `json:"event"`
@@ -283,6 +390,8 @@ type fsWriteAuditLine struct {
 	By         string `json:"by"`
 	Confirm    string `json:"confirm"`
 	RollbackTo string `json:"rollback_hint"`
+	Sibling    string `json:"sibling_repo,omitempty"`
+	SiblingAt  string `json:"sibling_root,omitempty"`
 }
 
 // fsWriteAppendAudit —— 追加一行（`O_APPEND` · 历史行逐字节不变 · **失败即拒**）。
@@ -333,7 +442,7 @@ func cmdFSWrite(inv *invocation, stdout, stderr io.Writer) int {
 	if len(inv.args) != 1 {
 		inv.setErr("usage", "bad_arity", "`fs write` 只收一个件路径")
 		fmt.Fprintf(stderr, "%s: `fs write` 只收**一个**件路径（收到 %d 枚）⇒ 退码 2\n", progName, len(inv.args))
-		fmt.Fprintf(stderr, "用法：%s fs write <件> [--content <文本> | --content-stdin] [--append] [--by <谁>] [--dry-run | --yes]\n", progName)
+		fmt.Fprintf(stderr, "用法：%s fs write <件> [--content <文本> | --content-stdin] [--append] [--by <谁>] [--allow-sibling-repo <名>] [--dry-run | --yes]\n", progName)
 		return exitUsage
 	}
 	contentGiven := inv.hasFlag("--content")
@@ -351,14 +460,35 @@ func cmdFSWrite(inv *invocation, stdout, stderr io.Writer) int {
 	if rc != exitOK {
 		return rc
 	}
-	abs, rel, rc := fsToolResolvePath(inv, stderr, root, inv.args[0])
+	// ★ GAP-20261018-07：兄弟仓正门（不给旗标 ⇒ 零输出 · 旧判据一位不动）。
+	sibName, sibRoot, rc := fsToolSibling(inv, stderr, root)
 	if rc != exitOK {
 		return rc
 	}
+	// 写面的「根」= 实际落点那棵树（本仓 / 兄弟仓）—— 符号链接父目录判据必须跟着换根，
+	// 否则兄弟仓的每一次写都会被「父目录经符号链接出仓」误杀（兄弟仓本来就在主仓根外）。
+	base := root
+	if sibName != "" {
+		base = sibRoot
+	}
+	// ★ 兄弟仓模式下另取**解析后的根**：`/tmp` 这类根本身就是符号链接（macOS `/tmp -> /private/tmp`），
+	//   只拿未解析的 base 去比已解析的 parent ⇒ 兄弟仓每一次写都会被误判「父目录经符号链接出仓」。
+	//   默认态（sibName 空）baseReal == base ⇒ 两个判据同一条，行为**逐字不变**。
+	baseReal := base
+	if sibName != "" {
+		if r, eerr := filepath.EvalSymlinks(base); eerr == nil {
+			baseReal = r
+		}
+	}
+	abs, rel, rc := fsToolResolvePathIn(inv, stderr, root, sibName, sibRoot, inv.args[0])
+	if rc != exitOK {
+		return rc
+	}
+	label := fsToolLabel(sibName, rel)
 	// ② 符号链接：终段 lstat 直接判；父目录按**解析后的真实路径**判「没出仓」。
 	if st, lerr := os.Lstat(abs); lerr == nil && st.Mode()&os.ModeSymlink != 0 {
 		inv.setErr("usage", "target_is_symlink", "目标件是符号链接")
-		fmt.Fprintf(stderr, "%s: 目标件是**符号链接**：%s ⇒ 退码 2（写面只写真件 · ✗ 不跟链接出仓）\n", progName, rel)
+		fmt.Fprintf(stderr, "%s: 目标件是**符号链接**：%s ⇒ 退码 2（写面只写真件 · ✗ 不跟链接出仓）\n", progName, label)
 		return exitUsage
 	}
 	parent := filepath.Dir(abs)
@@ -367,10 +497,10 @@ func cmdFSWrite(inv *invocation, stdout, stderr io.Writer) int {
 		// ③ 父目录不存在 ⇒ 2 **不自建**（自建目录 = 第二个写面 · 规格逐字禁）。
 		inv.setErr("usage", "parent_absent", "父目录不存在")
 		fmt.Fprintf(stderr, "%s: 父目录不存在：%s ⇒ 退码 2（**✗ 不自建目录** —— 先由人/正门把目录建好）\n",
-			progName, filepath.Dir(rel))
+			progName, filepath.Dir(label))
 		return exitUsage
 	}
-	if realParent, eerr := filepath.EvalSymlinks(parent); eerr == nil && !pathWithinDir(root, realParent) {
+	if realParent, eerr := filepath.EvalSymlinks(parent); eerr == nil && !pathWithinDir(base, realParent) && !pathWithinDir(baseReal, realParent) {
 		inv.setErr("usage", "path_outside_repo", "父目录经符号链接出仓")
 		fmt.Fprintf(stderr, "%s: 父目录经符号链接指向仓外（%s）⇒ 退码 2（✗ 不跟链接出仓）\n", progName, realParent)
 		return exitUsage
@@ -428,7 +558,7 @@ func cmdFSWrite(inv *invocation, stdout, stderr io.Writer) int {
 
 	if inv.dryRun {
 		inv.changed = boolPtr(false) // 干跑零副作用 ⇒ 幂等面说真话
-		fsWritePrintPlan(planOut, stderr, rel, existed, appendMode, len(payload), len(after), beforeSHA, afterSHA, auditPath, true)
+		fsWritePrintPlan(planOut, stderr, label, sibName, sibRoot, existed, appendMode, len(payload), len(after), beforeSHA, afterSHA, auditPath, true)
 		if inv.jsonGiven {
 			if rc := requireFields(inv, stderr); rc != exitOK {
 				return rc
@@ -439,7 +569,7 @@ func cmdFSWrite(inv *invocation, stdout, stderr io.Writer) int {
 	}
 	if !inv.yes {
 		inv.changed = boolPtr(false) // 未执行 ⇒ 零变化
-		fsWritePrintPlan(planOut, stderr, rel, existed, appendMode, len(payload), len(after), beforeSHA, afterSHA, auditPath, false)
+		fsWritePrintPlan(planOut, stderr, label, sibName, sibRoot, existed, appendMode, len(payload), len(after), beforeSHA, afterSHA, auditPath, false)
 		if inv.jsonGiven {
 			if rc := requireFields(inv, stderr); rc != exitOK {
 				return rc
@@ -461,6 +591,7 @@ func cmdFSWrite(inv *invocation, stdout, stderr io.Writer) int {
 		FsPath: rel, FsBefore: beforeSHA, FsAfter: afterSHA, FsBytes: len(after),
 		FsAppend: appendMode, FsExisted: existed, By: by, Confirm: "--yes",
 		RollbackTo: "把该件恢复成审计行里的 fs_before_sha256（不存在 ⇒ 删件）",
+		Sibling:    sibName, SiblingAt: sibRoot,
 	}
 	if err := fsWriteAppendAudit(auditPath, audit); err != nil {
 		inv.setErr("blocked", "audit_unwritable", "审计写不进 ⇒ 不写件")
@@ -498,8 +629,14 @@ func cmdFSWrite(inv *invocation, stdout, stderr io.Writer) int {
 		return exitFail
 	}
 	inv.changed = boolPtr(true)
-	fmt.Fprintf(stdout, "已写 %s · %d 字节 · sha %s → %s%s\n", rel, len(after),
+	fmt.Fprintf(stdout, "已写 %s · %d 字节 · sha %s → %s%s\n", label, len(after),
 		fsToolSHA16(beforeSHA), fsToolSHA16(afterSHA), map[bool]string{true: "（追加）", false: ""}[appendMode])
+	// ★ GAP-20261018-07：写**兄弟仓**必须在 stderr 留一行痕（谁都能在管道输出里看见「这一笔出仓了」），
+	// 并与审计行的 `sibling_repo`/`sibling_root` 两格同源（人面与机器面不会各说一套）。
+	if sibName != "" {
+		fmt.Fprintf(stderr, "%s: ★ 写了兄弟仓 %s 的件 %s（根 %s · 审计行带 sibling_repo/sibling_root · GAP-20261018-07）\n",
+			progName, sibName, label, sibRoot)
+	}
 	fmt.Fprintf(stdout, "审计落点 %s（事件 fs_file_written · 追加只写）\n", auditPath)
 	if inv.jsonGiven {
 		return selectJSONList(stdout, stderr, inv, inv.path, inv.fields, []map[string]string{fsWriteRow(rel, "written", len(after), beforeSHA, afterSHA, appendMode, auditPath)})
@@ -521,13 +658,16 @@ func fsWriteRow(rel, result string, n int, beforeSHA, afterSHA string, appendMod
 }
 
 // fsWritePrintPlan —— 计划件（干跑与「缺 --yes」两档**打印同一份** · 零副作用）。
-func fsWritePrintPlan(out, stderr io.Writer, rel string, existed, appendMode bool, payloadN, afterN int, beforeSHA, afterSHA, auditPath string, dryRun bool) {
+func fsWritePrintPlan(out, stderr io.Writer, label, sibName, sibRoot string, existed, appendMode bool, payloadN, afterN int, beforeSHA, afterSHA, auditPath string, dryRun bool) {
 	head := "--yes 前的一次预览"
 	if dryRun {
 		head = "--dry-run"
 	}
 	fmt.Fprintln(out, "计划件（"+head+" · 零副作用 —— 未写件、未写审计）")
-	fmt.Fprintf(out, "  落点     : %s\n", rel)
+	fmt.Fprintf(out, "  落点     : %s\n", label)
+	if sibName != "" {
+		fmt.Fprintf(out, "  兄弟仓   : %s（根 %s · 显式开闸 `--allow-sibling-repo` · 写面留痕进审计 `sibling_repo`/`sibling_root`）\n", sibName, sibRoot)
+	}
 	fmt.Fprintf(out, "  既有件   : %s\n", map[bool]string{true: "在（append 时以它为基础）", false: "不在（新建）"}[existed])
 	fmt.Fprintf(out, "  模式     : %s\n", map[bool]string{true: "追加（--append）", false: "整件覆盖"}[appendMode])
 	fmt.Fprintf(out, "  本次内容 : %d 字节\n", payloadN)
