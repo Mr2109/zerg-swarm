@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -262,5 +263,60 @@ core
 	}
 	if !strings.Contains(stripped, "我先看一下目录") {
 		t.Errorf("strip 丢失正文: %q", stripped)
+	}
+}
+
+// TestChatStoreConcurrentWritersDoNotBusy —— **多任务并行**的存储面牙（2026-10-17 本枚）：
+// 两条任务线同时写同一个对话库（建会话 / 写消息）⇒ 一条都不许 `SQLITE_BUSY`。
+//
+// 变异（必红）：把 `chatDSN` 换回裸 `path`（不挂 `busy_timeout`）⇒ WAL 只允许一个写者，
+// 第二个写者**立刻**拿到 `database is locked (5)` ⇒ 下面 errs 非空、用例当场红。
+// 实测：修前 `zerg chat ask` 两路并发 3/3 复现 500 `SQLITE_BUSY`（建会话与写消息各一次）。
+func TestChatStoreConcurrentWritersDoNotBusy(t *testing.T) {
+	t.Setenv("ZERG_CHAT_DB_PATH", filepath.Join(t.TempDir(), "chat.db"))
+	store, err := OpenChatStore()
+	if err != nil {
+		t.Fatalf("打开对话库失败：%v", err)
+	}
+	defer store.Close()
+
+	// 两条任务线各建一个会话 —— 并发写同一张 sessions 表。
+	type res struct {
+		id  string
+		err error
+	}
+	outs := make([]res, 2)
+	var wg sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			se, err := store.CreateSession("test-model", "test", "", "")
+			if err != nil {
+				outs[i].err = err
+				return
+			}
+			// 再并发写消息（第二个写面）
+			if _, err := store.AddMessage(&Message{
+				SessionID: se.ID, Role: "assistant", Content: "并发写", Model: "test-model",
+				Active: true, Timestamp: float64(time.Now().Unix()),
+			}); err != nil {
+				outs[i].err = err
+				return
+			}
+			outs[i].id = se.ID
+		}(i)
+	}
+	wg.Wait()
+	for i, o := range outs {
+		if o.err != nil {
+			t.Fatalf("第 %d 路并发写撞锁（缺 busy_timeout ⇒ 多任务并行必有一条 500）：%v", i+1, o.err)
+		}
+		if o.id == "" {
+			t.Fatalf("第 %d 路没建出会话", i+1)
+		}
+	}
+	if outs[0].id == outs[1].id {
+		t.Fatalf("两路会话 id 相同：%q", outs[0].id)
 	}
 }

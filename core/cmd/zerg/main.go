@@ -470,7 +470,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 	//   `inv.unknown`** ⇒ 由下面**同一条**判词 + 同一个退码 2 收口（不另写判词 · 不另取码）。
 	//   `chat` 族 7 条命令的 usage 已按需列出它们 ⇒ 归它们（既有命令一字不动）。
 	for _, f := range []string{"--session", "--images", "--window", "--new", "--archived",
-		"--no-stream", "--markdown", "--last-in-cwd"} {
+		"--no-stream", "--markdown", "--last-in-cwd",
+		// ★ 2026-10-17（本枚）：`chat ask` / `chat send` 机器面 —— 两枚取值（`--prompt-file` / `--as`）
+		//   与一枚布尔（`--stream`）同样「全族共用」⇒ 不在此收口，别族真给它们会从「未知旗标 2」
+		//   退化成**静默吞**（硬约束⑤）。归 `chat send` 与 `chat ask` 两条（usage 已列它们）。
+		"--prompt-file", "--as", "--stream"} {
 		if inv.hasFlag(f) && !usageDeclaresFlag(cmd, f) {
 			inv.unknown = append(inv.unknown, f)
 		}
@@ -3103,9 +3107,9 @@ func init() {
 			path:     []string{"chat", "send"},
 			kind:     "ChatSend",
 			summary:  "对话主写面（SSE 流式 · `POST /api/chat/sessions/{id}/send`；`--json`/非 TTY/`--no-stream` ⇒ 非流式 · §7.5）",
-			usage:    "zerg chat send <提示> [--session <id>] [--new] [--last] [--last-in-cwd] [--model 名] [--images <路径>…] [--no-stream] [--markdown] [--wait] [--json <字段>]",
+			usage:    "zerg chat send [--prompt-file <路径> | <提示> | -] [--session <id>] [--new] [--last] [--last-in-cwd] [--model 名] [--images <路径>…] [--no-stream] [--markdown] [--wait] [--json <字段>]",
 			arity:    "any",
-			args:     []string{"提示（`-` = 从 stdin 读 · 零 shell 解释 · §5.5 ③）"},
+			args:     []string{"提示（`-` = 从 stdin 读 · 与 `--prompt-file` 三选一 · 零 shell 解释 · §5.5 ③）"},
 			fields:   chatSendFields,
 			endpoint: "POST /api/chat/sessions/{id}/send",
 			run:      cmdChatSend,
@@ -3155,6 +3159,53 @@ func init() {
 			opened:   true,
 			endpoint: "DELETE /api/chat/sessions/{id}",
 			run:      cmdChatRm,
+		},
+		// ---- `zerg chat` 机器正门 ＋ 会话别名（2026-10-17 本枚 · 命令树 264 → 268 · **+4** 条 path）----
+		// ★ 为什么加这四条（用户原话「怎么更方便长期对话和多任务对话」）：
+		//   ① **长期对话的真痛点 = 记不住 `chat_xxx` 那串 id** ⇒ 会话别名（`alias set|ls|rm`），
+		//      ✗ 不是再加一层 `--session`；
+		//   ② **多任务的真痛点 = 一个任务一条线、互不串** ⇒ 同一套别名天然解决（`ask --as <名>`）；
+		//   ③ **机器调用的真痛点 = 一次进一次出、正文即结果** ⇒ `chat ask`（✗ 不靠流式 ✗ 不靠二次 `show`）。
+		// ★ 随动面已同批刷（门⑪ 计数 / 门69 冻结常量 / cli-matrix / newcmd-paths / error-detail / 命令页四件）。
+		{
+			path:     []string{"chat", "ask"},
+			kind:     "ChatAsk",
+			summary:  "机器正门：**一次进一次出**（`--as <名>` 有别名就续上、没有就新建**并登记**；默认只把成稿正文打上 stdout · ✗ 不靠流式 · ✗ 不靠二次 `show`）",
+			usage:    "zerg chat ask --as <名> [--prompt-file <路径> | <题> | -] [--stream] [--json <字段>]",
+			arity:    "any",
+			args:     []string{"提示（与 `--prompt-file` 三选一 · `-` = 从 stdin 读）"},
+			fields:   chatAskFields,
+			endpoint: "POST /api/chat/sessions（无别名时新建）· POST /api/chat/sessions/{id}/send",
+			run:      cmdChatAsk,
+		},
+		{
+			path:    []string{"chat", "alias", "set"},
+			kind:    "ChatAliasSet",
+			summary: "登记会话别名（名字 → 完整会话 id · 落 `<状态目录>/chat-aliases.json` · 写走**独占文件锁**）",
+			usage:   "zerg chat alias set <名> --session <会话id> [--json <字段>]",
+			arity:   "any",
+			args:    []string{"别名（非空 · ≤64 字符 · ✗ 不含空白/控制字符）"},
+			fields:  chatAliasSetFields,
+			run:     cmdChatAliasSet,
+		},
+		{
+			path:    []string{"chat", "alias", "ls"},
+			kind:    "ChatAliasLs",
+			summary: "列会话别名（默认表格式 · `--json` 挑字段 · 读走共享锁快照 · 按名字排序）",
+			usage:   "zerg chat alias ls [--json <字段>]",
+			arity:   "none",
+			fields:  chatAliasLsFields,
+			run:     cmdChatAliasLs,
+		},
+		{
+			path:    []string{"chat", "alias", "rm"},
+			kind:    "ChatAliasRm",
+			summary: "删一条会话别名（名字不在表里 ⇒ **2** · 会话本身不动 · 写走独占文件锁）",
+			usage:   "zerg chat alias rm <名> [--json <字段>]",
+			arity:   "any",
+			args:    []string{"别名"},
+			fields:  chatAliasRmFields,
+			run:     cmdChatAliasRm,
 		},
 		// ---- §十八.3 融合四件（批 E · T-59）----
 		// 依赖次序（**不许倒**）：能力路由（T-41 的 id 规范化真源）→ `ask` → 意图 schema → `plan`/`apply`。
@@ -5147,6 +5198,12 @@ func parseInvocation(args []string) (*invocation, error) {
 			inv.kvSet(a, "true")
 		case a == "--last-in-cwd":
 			inv.kvSet(a, "true")
+		// ★ 本枚（2026-10-17 · `chat ask` 机器正门）：`--stream` 是**布尔**档 —— 默认**不**流式（只出成稿），
+		//   显式 `--stream` 才逐帧打。与上面五枚同一种形态（写进 `inv.kv`（`kvSet`）⇒ `foreignFlag` 看得见）；
+		//   ★ **✗ 不进 `valueFlagName`**（那张表是取值旗标名表 · 门73 判据丙）；★ 单列一条 `case`
+		//   （✗ 不许与兄弟合并成一串 `||`：门73 取数面按 `case a == "--x"` 逐条现读）。
+		case a == "--stream":
+			inv.kvSet(a, "true")
 		// `code find` 的**短形**上下文/归一旗标（缺口 `GAP-20260927-250/252` · 本枚）：
 		//   `-i`（大小写归一 · 布尔）· `-A<N>`/`--after <N>`（后文）· `-B<N>`/`--before <N>`（前文）·
 		//   `-C<N>`（前后各 N，POSIX grep 惯用 · 与缺口症状逐字 `-A2`/`-C1` 同形）。
@@ -5520,9 +5577,13 @@ func valueFlagName(a string) string {
 	//   **✗ 不进本表**：它们各写一条 `parseInvocation` 专用 `case`（门73 判据丙：布尔进名字表 =
 	//   值/无值两态不一致；同族先例 `--no-fallback` 的那次形态纠正）。
 	switch a {
-	case "--session", "--images", "--window":
+	case "--session", "--images", "--window", "--prompt-file", "--as":
 		return a
 	}
+	// ★ 2026-10-17（本枚 · `chat ask` / `chat send` 机器面）：`--prompt-file <路径>`（提示整件从盘上读）
+	//   与 `--as <名>`（会话别名）都是**取值**旗标 ⇒ 落在上一排（与 `--session` 同表）。
+	//   `--stream` 是**布尔**档 ⇒ **✗ 不进本表**，各写一条 `parseInvocation` 专用 `case`
+	//   （门73 判据丙：布尔进名字表 = 值/无值两态不一致）。
 	// ★ 2026-09-28（缺口 `GAP-20260928-127` 的 ⑥ · 本枚）：`--no-fallback` **从本表移出** ——
 	//   它的语义本就是**布尔档**（用法串只写裸形 `[--no-fallback]`），按「取值」收进本表
 	//   是**形态不统一**（门73 判据丙）。现在与 `--count`/`--files-only` 同一种形态

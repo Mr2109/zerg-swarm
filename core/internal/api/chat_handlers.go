@@ -397,6 +397,25 @@ func (h *ChatHandlers) ListMessages(w http.ResponseWriter, r *http.Request) {
 	writeChatJSON(w, http.StatusOK, map[string]any{"messages": msgs})
 }
 
+// chatDonePayload — 收尾帧（`done`）载荷。
+//
+// ★ GAP-20261017-17：`content` / `reasoning` 取**落库同一份**（即 `stripReasoningFromContent` 的产物），
+// ✗ 不取 `result.Content`（含 reasoning 的原始串）—— 客户端 `chat send --json content` 直接读这一格，
+// 必须与 `chat show` 读 messages 表的那一份逐字节同源；该字段缺席时客户端只能回落逐帧 `delta` 拼串
+// （半截正文 · `max_rounds` 时被截断）。★ 两格**同源到底**：只补 `content` 不补 `reasoning` 会让
+// 「正文同源、思考仍取自拼串」—— 两个面各说一套，等于没修。
+func chatDonePayload(astID int64, title, msgContent, msgReasoning string, result *chat.InferResult) map[string]any {
+	return map[string]any{
+		"message_id":       astID,
+		"title":            title,
+		"content":          msgContent,
+		"reasoning":        msgReasoning,
+		"input_tokens":     result.InputTokens,
+		"output_tokens":    result.OutputTokens,
+		"reasoning_tokens": result.ReasoningTokens,
+	}
+}
+
 // isValidAnswerBody — 剥离后正文有效性检查（2026-09-05: 防「中文前英文推理剥离」误吞正文——
 // 正文须 ≥8 字且含非标点实词字符——纯标点/省略号视为无效）
 func isValidAnswerBody(s string) bool {
@@ -1277,14 +1296,10 @@ func (h *ChatHandlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 		_ = h.store.UpdateSessionTitle(id, title)
 		se.Title = title
 	}
-	// 6. SSE done（含消息 id + 标题）
-	donePayload := map[string]any{
-		"message_id":       astID,
-		"title":            se.Title,
-		"input_tokens":     result.InputTokens,
-		"output_tokens":    result.OutputTokens,
-		"reasoning_tokens": result.ReasoningTokens,
-	}
+	// 6. SSE done（含消息 id + 标题 + **落库同一份正文**）
+	// ★ GAP-20261017-17：`content` 必给 —— `chat send --json content` 直接读这一格；
+	//   ✗ 别取 `result.Content`（那是含 reasoning 的原始串，与 messages 表里落的那一份不同源）。
+	donePayload := chatDonePayload(astID, se.Title, msgContent, msgReasoning, result)
 	// C2(2026-09-10): 未命中工具边界的 steer 交还客户端（排队续发——字不丢）
 	if st := drainSteer(id); len(st) > 0 {
 		donePayload["steer_undrained"] = st

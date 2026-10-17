@@ -70,6 +70,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
@@ -92,6 +93,11 @@ const (
 	chatListLimitDefault = 100
 	// chatWindowLimitDefault —— `chat show --window <mid>` 的窗口半径（服务端缺省 20 · 上限 100，见 `chat_window_handler.go`）。
 	chatWindowLimitDefault = 20
+	// chatAliasFileName —— **会话别名表**的落点（`<状态目录>/chat-aliases.json` · 缺省 `~/.zerg/state/…`）：
+	// 「长期对话记不住 `chat_xxx` 那串 id」的正解 —— 名字 ↔ 会话 id 的**一张平表**（见 `chatAliasMutate`）。
+	chatAliasFileName = "chat-aliases.json"
+	// chatAliasNameMaxRunes —— 别名长度上限（人面表格一列放得下；✗ 不是安全边界，只是可读性闸）。
+	chatAliasNameMaxRunes = 64
 )
 
 // ---- 退出码的**名字**（码值本身一处不写：真源 = `exitcodes.go` 的表）------------------------
@@ -170,7 +176,7 @@ func chatNormalizeSessionRef(s string) (string, bool) {
 func cmdChatRoot(inv *invocation, stdout, stderr io.Writer) int {
 	if len(inv.args) > 0 {
 		return chatReportErr(inv, stderr, "usage", "not_a_chat_action",
-			fmt.Sprintf("`zerg chat %s` 不是本族的动作 —— 子命令只有 7 条：new · ls · send · show · abort · steer · rm（族级帮助：`%s help chat`）",
+			fmt.Sprintf("`zerg chat %s` 不是本族的动作 —— 子命令：new · ls · send · show · abort · steer · rm · ask · alias set|ls|rm（族级帮助：`%s help chat`）",
 				inv.args[0], progName),
 			exitCodeOf("usage"))
 	}
@@ -178,7 +184,7 @@ func cmdChatRoot(inv *invocation, stdout, stderr io.Writer) int {
 	// 进 REPL 只会立刻读到 EOF ⇒ 与「无 TTY」同一档收口（同 rc 2 · 同一句提示）。
 	if !inv.tty || !isTTYFile(os.Stdin) {
 		return chatReportErr(inv, stderr, "usage", "subcommand_required",
-			"非交互（无 TTY）下裸跑 `zerg chat` 没有意义：请加子命令（`zerg chat new|ls|send|show|abort|steer|rm`），或进 TTY 使用交互模式",
+			"非交互（无 TTY）下裸跑 `zerg chat` 没有意义：请加子命令（`zerg chat new|ls|send|show|abort|steer|rm|ask|alias`），或进 TTY 使用交互模式",
 			exitCodeOf("usage"))
 	}
 	return chatEnterREPL(inv, stdout, stderr)
@@ -605,6 +611,30 @@ type chatTurn struct {
 	Interrupted    bool
 	Err            string
 	Ended          bool
+	// FinalContent —— `done.content`（★ GAP-20261017-17：服务端落库的**同一份**正文，reasoning 已剥离）；
+	// 空 = 旧主控 / `interrupted` 档没给该字段 ⇒ 回落逐帧 `delta` 拼串（向后兼容）。
+	FinalContent string
+	// FinalReasoning —— `done.reasoning`（同上：落库那一份思考列）；空 ⇒ 回落逐帧拼串。
+	FinalReasoning string
+}
+
+// chatTurnContent —— 本轮正文的真源（`§5.4` 的 `content` 一格）。
+//
+// ★ GAP-20261017-17：优先 `done.content`（＝服务端落库的 `msgContent`，与 `chat show` **逐字节同源**）；
+// 该字段缺席（旧主控 / `interrupted` 档）时回落逐帧 `delta` 拼出来的串 —— 向后兼容，旧主控读数不变。
+func (t *chatTurn) reportContent() string {
+	if t.FinalContent != "" {
+		return t.FinalContent
+	}
+	return t.Output.String()
+}
+
+// chatTurnReasoning —— 思考列的真源（与 `reportContent` 同一口径，两格同源到底）。
+func (t *chatTurn) reportReasoning() string {
+	if t.FinalReasoning != "" {
+		return t.FinalReasoning
+	}
+	return t.Reasoning.String()
 }
 
 func cmdChatSend(inv *invocation, stdout, stderr io.Writer) int {
@@ -664,8 +694,8 @@ func cmdChatSend(inv *invocation, stdout, stderr io.Writer) int {
 		"session_id":       sid,
 		"message_id":       turn.MessageID,
 		"role":             "assistant",
-		"content":          turn.Output.String(),
-		"reasoning":        turn.Reasoning.String(),
+		"content":          turn.reportContent(),
+		"reasoning":        turn.reportReasoning(),
 		"tool_calls":       chatJoinNonEmpty(turn.Tools, " | "),
 		"title":            turn.Title,
 		"interrupted":      strconv.FormatBool(turn.Interrupted),
@@ -837,6 +867,15 @@ func chatHandleEvent(turn *chatTurn, evName, data string, streaming, markdown bo
 		turn.InputTokens = cell(o["input_tokens"])
 		turn.OutputTokens = cell(o["output_tokens"])
 		turn.ReasonTokens = cell(o["reasoning_tokens"])
+		// ★ GAP-20261017-17：`done.content` 有就收下（＝落库那一份）；✗ 别拿逐帧 `delta` 拼出来的串
+		//   当正文 —— 那串含 reasoning、且 `max_rounds` 时被截断（现读形态：send 4 772 B 半截 ↔ show 1 516 B 成稿）。
+		if c := cell(o["content"]); strings.TrimSpace(c) != "" {
+			turn.FinalContent = c
+		}
+		// 思考列同一口径（两格同源到底；缺席 ⇒ 回落逐帧拼串，旧主控读数不变）。
+		if r := cell(o["reasoning"]); strings.TrimSpace(r) != "" {
+			turn.FinalReasoning = r
+		}
 		if v, ok := o["interrupted"]; ok && chatTruthy(cell(v)) {
 			turn.Interrupted = true
 		}
@@ -1166,10 +1205,409 @@ func cmdChatRm(inv *invocation, stdout, stderr io.Writer) int {
 	return exitOK
 }
 
+// ---- 会话别名（`chat alias set|ls|rm` · 2026-10-17 本枚）-----------------------------------
+//
+// ★ 它解决的**两个真痛点**（不是在命令树上多加一层 `--session`）：
+//
+//	① **长期对话**：人记不住 `chat_20261017_010203_ab12cd` 那串 id ⇒ 名字即入口（`--as 清缺口`）；
+//	② **多任务对话**：一个任务一条线、互不串 ⇒ 同一张表天然分线，`chat ask --as <名>` 各自续各自的。
+//
+// 存储：`<状态目录>/chat-aliases.json`（缺省 `~/.zerg/state/chat-aliases.json`），形状 = 一张平表
+// `{"清缺口":"chat_2026…","审查门64":"chat_2026…"}` —— ★ 名字 → **完整**会话 id，只此一处真源。
+//
+// ★★ 并发安全（本件唯一的硬约束，✗ 不许省）：别名文件是**共件** —— 两条任务线同时新建会话时会
+// 一起写它。未加锁的「读 → 改 → 写」在并发下必坏：后写者拿着**旧快照**整份覆盖 ⇒ 另一条线的别名
+// 凭空消失（last wins），并发高峰还可能写出半截 JSON（后读者解析失败 ⇒ 两条线全断）。故：
+//
+//	· **写永远独占锁**：`os.OpenFile(O_CREATE|O_RDWR)` ＋ `syscall.Flock(LOCK_EX)`（同 `judge_lock.go`
+//	  的取锁原语），且「读 → 改 → 写」**整段**在同一把锁里完成（✗ 不是只锁最后那次 write）；
+//	· **读用共享锁**（`LOCK_SH`）—— 读也不许裸读，否则可能读到写者 `rename` 之前/之后的两态；
+//	· 落盘走 `tmp ＋ rename`（同一目录 ⇒ 原子替换，读者永远看到完整的一份）。
+//
+// 退码：0 成功 · 2 用法错（别名形状不合法 / 缺 `--session` / `rm` 的名字不在表里）·
+// 8 不给结论（别名件读不到 / 解析不了 / 写不进 —— 「读不到真源」一律 8，✗ 不假绿）。
+
+// chatAliasPath —— 别名表落点（状态目录真源 = `statepath.File` · ✗ 不写死 `~/.zerg`）。
+func chatAliasPath() string { return statepath.File(chatAliasFileName) }
+
+// chatAliasClean —— 别名形状闸（**一处判据**：set / rm / ask 三处同源）。
+// 只收「非空 · ≤64 个字符 · 不含空白与控制字符」—— 空名会让 `alias ls` 出一行无名条目，
+// 带空白的名字在 `--as <名>` 上必然被 shell 拆开（静默拆成两个参数 ⇒ 用户看到的是「名字不存在」）。
+func chatAliasClean(raw string) (string, bool) {
+	n := strings.TrimSpace(raw)
+	if n == "" || n == "-" || len([]rune(n)) > chatAliasNameMaxRunes {
+		return "", false
+	}
+	for _, r := range n {
+		if r < 0x20 || r == 0x7f || r == ' ' || r == '\u3000' {
+			return "", false
+		}
+	}
+	return n, true
+}
+
+// chatAliasLock —— 拿别名表那把锁（`exclusive` ⇒ `LOCK_EX`；否则 `LOCK_SH`）。
+// 返回的句柄必须交给 `chatAliasUnlock`（✗ 不靠 GC：fd 不关 = 锁不放，同进程后续取锁会自锁）。
+func chatAliasLock(path string, exclusive bool) (*os.File, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return nil, err
+	}
+	mode := syscall.LOCK_SH
+	if exclusive {
+		mode = syscall.LOCK_EX
+	}
+	if err := syscall.Flock(int(f.Fd()), mode); err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	return f, nil
+}
+
+// chatAliasUnlock —— 放锁并关 fd（顺序：先 `LOCK_UN` 再 `Close`）。
+func chatAliasUnlock(f *os.File) {
+	if f == nil {
+		return
+	}
+	_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	_ = f.Close()
+}
+
+// chatAliasReadFile —— 读表（**调用方必须已持锁** · ✗ 不在这函数里取锁，否则读改写那段会放锁一次）。
+// 文件不存在 ⇒ 空表（首跑）；空件 ⇒ 空表；解析不了 ⇒ 交回错误（上层判 8，✗ 不当零条）。
+func chatAliasReadFile(path string) (map[string]string, error) {
+	m := map[string]string{}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return m, nil
+		}
+		return nil, err
+	}
+	if strings.TrimSpace(string(b)) == "" {
+		return m, nil
+	}
+	if err := json.Unmarshal(b, &m); err != nil {
+		return nil, err
+	}
+	if m == nil {
+		m = map[string]string{}
+	}
+	return m, nil
+}
+
+// chatAliasSnapshot —— 共享锁下取一份只读快照（`alias ls` / `ask` 的解析用）。
+func chatAliasSnapshot() (map[string]string, error) {
+	path := chatAliasPath()
+	f, err := chatAliasLock(path, false)
+	if err != nil {
+		return nil, err
+	}
+	defer chatAliasUnlock(f)
+	return chatAliasReadFile(path)
+}
+
+// chatAliasMutate —— **排他锁**下「读 → 改 → 写」整段（★ 锁括住整段，不是只锁写）。
+func chatAliasMutate(mut func(m map[string]string) error) error {
+	path := chatAliasPath()
+	f, err := chatAliasLock(path, true)
+	if err != nil {
+		return err
+	}
+	defer chatAliasUnlock(f)
+	m, err := chatAliasReadFile(path)
+	if err != nil {
+		return err
+	}
+	if err := mut(m); err != nil {
+		return err
+	}
+	b, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, append(b, '\n'), 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+// chatAliasResolve —— 名字 ⇒ 会话 id（`ask` 的入口）。三态：命中 / 未命中 / 读不到（rc≠0）。
+func chatAliasResolve(inv *invocation, stderr io.Writer, name string) (string, bool, int) {
+	m, err := chatAliasSnapshot()
+	if err != nil {
+		return "", false, chatReportErr(inv, stderr, "blocked", "alias_file_unreadable",
+			fmt.Sprintf("读不到别名表 %s：%v ⇒ 不给结论（退码 8）", chatAliasPath(), err), exitCodeOf("blocked"))
+	}
+	sid, ok := m[name]
+	if !ok || strings.TrimSpace(sid) == "" {
+		return "", false, exitOK
+	}
+	id, shapeOK := chatNormalizeSessionRef(sid)
+	if !shapeOK {
+		// ★ 表被手改坏 ⇒ 如实报，✗ 不悄悄新建一条（那会让「同一别名两条线」——正是别名要防的事）。
+		return "", false, chatReportErr(inv, stderr, "usage", "alias_points_bad_session",
+			fmt.Sprintf("别名 %q 指向的会话 id %q 形状不合法（表件 %s 被手改过 ⇒ 先 `%s chat alias rm %s` 再重建）",
+				name, sid, chatAliasPath(), progName, name), exitCodeOf("usage"))
+	}
+	return id, true, exitOK
+}
+
+// chatAliasSetFields / chatAliasLsFields / chatAliasRmFields —— `--json` 可取字段（§5.4 扁平化）。
+var chatAliasSetFields = []string{"alias", "session_id"}
+var chatAliasLsFields = []string{"alias", "session_id"}
+var chatAliasRmFields = []string{"alias", "removed"}
+
+// cmdChatAliasSet —— `zerg chat alias set <名> --session <完整 id>`（登记 / 改名）。
+func cmdChatAliasSet(inv *invocation, stdout, stderr io.Writer) int {
+	if inv.jsonGiven && len(inv.fields) == 0 {
+		return requireFields(inv, stderr)
+	}
+	if len(inv.args) == 0 {
+		return chatReportErr(inv, stderr, "usage", "missing_alias",
+			"`zerg chat alias set <名> --session <会话id>` 缺别名", exitCodeOf("usage"))
+	}
+	if len(inv.args) > 1 {
+		return chatReportErr(inv, stderr, "usage", "extra_positional",
+			fmt.Sprintf("`chat alias set` 只收**一个**名字（多给了 %d 枚）", len(inv.args)-1), exitCodeOf("usage"))
+	}
+	name, ok := chatAliasClean(inv.args[0])
+	if !ok {
+		return chatReportErr(inv, stderr, "usage", "bad_alias",
+			fmt.Sprintf("别名 %q 形状不合法（非空 · ≤%d 字符 · ✗ 不含空白/控制字符）", inv.args[0], chatAliasNameMaxRunes),
+			exitCodeOf("usage"))
+	}
+	raw := strings.TrimSpace(inv.flagVal("--session"))
+	if raw == "" {
+		return chatReportErr(inv, stderr, "usage", "missing_session",
+			"`chat alias set` 要 `--session <完整 id>`（✗ 不按标题/前缀猜：`O-12` 只认完整 id）", exitCodeOf("usage"))
+	}
+	sid, ok := chatNormalizeSessionRef(raw)
+	if !ok {
+		return chatReportErr(inv, stderr, "usage", "bad_session_id",
+			fmt.Sprintf("会话 id %q 形状不合法（`O-12`：`chat_<8位日>_<6位时>_<6位hex>`）", raw), exitCodeOf("usage"))
+	}
+	if err := chatAliasMutate(func(m map[string]string) error {
+		m[name] = sid
+		return nil
+	}); err != nil {
+		return chatReportErr(inv, stderr, "blocked", "alias_write_failed",
+			fmt.Sprintf("别名表 %s 写不进：%v ⇒ 不给结论（退码 8）", chatAliasPath(), err), exitCodeOf("blocked"))
+	}
+	row := map[string]string{"alias": name, "session_id": sid}
+	if inv.jsonGiven {
+		return selectJSON(stdout, stderr, inv, inv.path, inv.fields, row)
+	}
+	fmt.Fprintf(stdout, "%s\t%s\n", name, sid)
+	fmt.Fprintf(stderr, "%s: 别名 %q → %s（续接：`%s chat ask --as %s \"…\"`）\n", progName, name, sid, progName, name)
+	return exitOK
+}
+
+// cmdChatAliasLs —— 列别名（默认表格式 · `--json` 可挑字段 · 按名字排序 ⇒ 两次读数逐字可比）。
+func cmdChatAliasLs(inv *invocation, stdout, stderr io.Writer) int {
+	if inv.jsonGiven && len(inv.fields) == 0 {
+		return requireFields(inv, stderr)
+	}
+	if len(inv.args) > 0 {
+		return chatReportErr(inv, stderr, "usage", "extra_positional",
+			fmt.Sprintf("`chat alias ls` 不收位置参数（多给了 %q）", inv.args[0]), exitCodeOf("usage"))
+	}
+	m, err := chatAliasSnapshot()
+	if err != nil {
+		return chatReportErr(inv, stderr, "blocked", "alias_file_unreadable",
+			fmt.Sprintf("读不到别名表 %s：%v ⇒ 不给结论（退码 8）", chatAliasPath(), err), exitCodeOf("blocked"))
+	}
+	names := make([]string, 0, len(m))
+	for n := range m {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	rows := make([]map[string]string, 0, len(names))
+	for _, n := range names {
+		rows = append(rows, map[string]string{"alias": n, "session_id": m[n]})
+	}
+	inv.metaAddJSON("total", strconv.Itoa(len(rows)))
+	// ★ ✗ 不把表件绝对路径塞进 `meta`：那会让 `--json` 的 stdout 字节数**随机器变**（本机状态目录
+	//   与矩阵/基线的冻结字节断言冲突）。路径已上 stderr（人面），机器面只要条目。
+	fmt.Fprintf(stderr, "%s: 别名 %d 条（表件 %s）\n", progName, len(rows), chatAliasPath())
+	if inv.jsonGiven {
+		return selectJSONList(stdout, stderr, inv, inv.path, inv.fields, rows)
+	}
+	table := make([][]string, 0, len(rows))
+	for _, r := range rows {
+		table = append(table, []string{r["alias"], r["session_id"]})
+	}
+	renderRows(stdout, stderr, inv.tty && !inv.plain, []string{"alias", "session_id"}, table)
+	return exitOK
+}
+
+// cmdChatAliasRm —— 删一条别名（**名字不在表里 ⇒ 用法错 2**：✗ 不许「删成功了」骗人）。
+func cmdChatAliasRm(inv *invocation, stdout, stderr io.Writer) int {
+	if inv.jsonGiven && len(inv.fields) == 0 {
+		return requireFields(inv, stderr)
+	}
+	if len(inv.args) == 0 {
+		return chatReportErr(inv, stderr, "usage", "missing_alias",
+			"`zerg chat alias rm <名>` 缺别名", exitCodeOf("usage"))
+	}
+	if len(inv.args) > 1 {
+		return chatReportErr(inv, stderr, "usage", "extra_positional",
+			fmt.Sprintf("`chat alias rm` 只收**一个**名字（多给了 %d 枚）", len(inv.args)-1), exitCodeOf("usage"))
+	}
+	name, ok := chatAliasClean(inv.args[0])
+	if !ok {
+		return chatReportErr(inv, stderr, "usage", "bad_alias",
+			fmt.Sprintf("别名 %q 形状不合法（非空 · ≤%d 字符 · ✗ 不含空白/控制字符）", inv.args[0], chatAliasNameMaxRunes),
+			exitCodeOf("usage"))
+	}
+	missing := false
+	if err := chatAliasMutate(func(m map[string]string) error {
+		if _, ok := m[name]; !ok {
+			missing = true
+			return nil
+		}
+		delete(m, name)
+		return nil
+	}); err != nil {
+		return chatReportErr(inv, stderr, "blocked", "alias_write_failed",
+			fmt.Sprintf("别名表 %s 写不进：%v ⇒ 不给结论（退码 8）", chatAliasPath(), err), exitCodeOf("blocked"))
+	}
+	if missing {
+		return chatReportErr(inv, stderr, "usage", "alias_not_found",
+			fmt.Sprintf("别名 %q 不在表里（用 `%s chat alias ls` 看现有名字）", name, progName), exitCodeOf("usage"))
+	}
+	row := map[string]string{"alias": name, "removed": "true"}
+	if inv.jsonGiven {
+		return selectJSON(stdout, stderr, inv, inv.path, inv.fields, row)
+	}
+	fmt.Fprintf(stdout, "%s\n", name)
+	fmt.Fprintf(stderr, "%s: 别名 %q 已删（会话本身不动）\n", progName, name)
+	return exitOK
+}
+
+// ---- `chat ask`（机器正门 · 2026-10-17 本枚）------------------------------------------------
+//
+// ★ 形态：`zerg chat ask --as <名> [--prompt-file <f> | <题> | -] [--stream] [--json <字段>]`
+//
+// ★ 语义（一句话）：**一次进、一次出、正文即结果** ——
+//
+//	· 有别名 ⇒ 续上那个会话（多任务各走各的线）；
+//	· 没有 ⇒ 新建**并当场登记**别名（下次同 `--as` 就续上，✗ 不用记 `chat_xxx`）；
+//	· 发一轮 ⇒ 回包给**成稿**（取 `done.content`，与 `chat show` 逐字节同源 —— 见 GAP-20261017-17）；
+//	· **默认只打成稿正文到 stdout**（✗ 不打印流式帧 · ✗ 要二次 `chat show`）；流式必须显式 `--stream`。
+//
+// ★ 退出码（机器可判）：0 成功 · **1 模型/这一轮失败**（含服务端 `interrupted:true`）· **2 用法错**
+// （缺 `--as` / 来源互斥 / 别名形状 / 会话 id 形状）；其余分档照 `chatPostTurn`（8 不给结论 · 12 打不到 · 14 租约）。
+
+// chatAskFields —— `--json` 可取字段（§5.4 扁平化 · 默认口径 = `content` 一格）。
+var chatAskFields = []string{"alias", "session_id", "created_session", "message_id", "role",
+	"content", "reasoning", "title", "interrupted",
+	"input_tokens", "output_tokens", "reasoning_tokens"}
+
+func cmdChatAsk(inv *invocation, stdout, stderr io.Writer) int {
+	if inv.jsonGiven && len(inv.fields) == 0 {
+		return requireFields(inv, stderr) // K2 甲档（全族一致：给 --json 就得说字段）
+	}
+	// ① 别名（「一条任务一条线」的锚）：✗ 不给 --as ⇒ 用法错 2。
+	//    ✗ 也不回落 `--last`：那会把两条线悄悄接到同一个会话上（正是别名要防的事）。
+	if !inv.hasFlag("--as") {
+		return chatReportErr(inv, stderr, "usage", "missing_alias",
+			"`zerg chat ask` 必须给 `--as <名>`（有别名就续上，没有就新建并登记；一个任务一条线）",
+			exitCodeOf("usage"))
+	}
+	name, ok := chatAliasClean(inv.flagVal("--as"))
+	if !ok {
+		return chatReportErr(inv, stderr, "usage", "bad_alias",
+			fmt.Sprintf("`--as %q` 形状不合法（非空 · ≤%d 字符 · ✗ 不含空白/控制字符）",
+				inv.flagVal("--as"), chatAliasNameMaxRunes), exitCodeOf("usage"))
+	}
+	// ② 与「直接点名会话」的四枚互斥（✗ 不许两套会话指定法同时生效 ⇒ 静默取一个）。
+	if inv.hasFlag("--session") || inv.hasFlag("--new") || inv.last || inv.hasFlag("--last-in-cwd") {
+		return chatReportErr(inv, stderr, "usage", "alias_and_session_conflict",
+			"`--as <名>` 与 `--session`/`--new`/`--last`/`--last-in-cwd` 互斥（别名自己就是会话指针）",
+			exitCodeOf("usage"))
+	}
+	prompt, rc := chatPromptFromInv(inv, stderr)
+	if rc != exitOK {
+		return rc
+	}
+	sid, found, rc := chatAliasResolve(inv, stderr, name)
+	if rc != exitOK {
+		return rc
+	}
+	created := false
+	if !found {
+		id, rc := chatNewSessionCall(inv, stderr,
+			fmt.Sprintf("别名 %q 还没有会话 ⇒ 新建", name))
+		if rc != exitOK {
+			return rc
+		}
+		sid, created = id, true
+		// ★ 登记在**发话之前**：哪怕这一轮模型失败，别名也已指向这条线 —— 下次同 `--as` 接着聊，
+		//   ✗ 不留「新建了会话却没人认得它」的孤儿。
+		if err := chatAliasMutate(func(m map[string]string) error {
+			m[name] = sid
+			return nil
+		}); err != nil {
+			return chatReportErr(inv, stderr, "blocked", "alias_write_failed",
+				fmt.Sprintf("会话 %s 已建，但别名 %q 写不进 %s：%v ⇒ 不给结论（退码 8）",
+					sid, name, chatAliasPath(), err), exitCodeOf("blocked"))
+		}
+	}
+	bb, _ := json.Marshal(map[string]any{"content": prompt})
+	// 流式**必须显式要**（默认只出成稿；`--json`/非 TTY ⇒ 恒非流式，同 §7.5 口径）。
+	streaming := inv.hasFlag("--stream") && !inv.jsonGiven && inv.tty
+	turn, rc := chatPostTurn(inv, newClient(), sid, string(bb), streaming, false, stdout, stderr)
+	if turn == nil {
+		return rc // 打不到 / 租约冲突 / 服务端判失败 —— 码由 `chatPostTurn` 给（模型失败 = 1）
+	}
+	chatLastWrite(sid, stderr)
+	row := map[string]string{
+		"alias":            name,
+		"session_id":       sid,
+		"created_session":  strconv.FormatBool(created),
+		"message_id":       turn.MessageID,
+		"role":             "assistant",
+		"content":          turn.reportContent(),
+		"reasoning":        turn.reportReasoning(),
+		"title":            turn.Title,
+		"interrupted":      strconv.FormatBool(turn.Interrupted),
+		"input_tokens":     turn.InputTokens,
+		"output_tokens":    turn.OutputTokens,
+		"reasoning_tokens": turn.ReasonTokens,
+	}
+	if inv.jsonGiven {
+		if r := selectJSON(stdout, stderr, inv, inv.path, inv.fields, row); r != exitOK {
+			return r
+		}
+		return rc
+	}
+	if !streaming {
+		// ★ 正文即结果：stdout **只有**成稿（进度/落点一律 stderr · §5.5 ②）。
+		out := row["content"]
+		fmt.Fprint(stdout, out)
+		if !strings.HasSuffix(out, "\n") {
+			fmt.Fprintln(stdout)
+		}
+	}
+	fmt.Fprintf(stderr, "#%s · 别名 %s · msg %s%s\n", sid, name, orDash(turn.MessageID),
+		map[bool]string{true: " · 本轮新建会话", false: ""}[created])
+	return rc
+}
+
 // ---- 小工具（本件内共享；✗ 不引第三方库）----------------------------------------------------
 
 // chatCreateSession —— 建会话（`chat send --new` 用；`chat new` 走 `cmdChatNew` —— **同一处**请求体）。
 func chatCreateSession(inv *invocation, stderr io.Writer) (string, int) {
+	return chatNewSessionCall(inv, stderr, "`--new` 已建会话")
+}
+
+// chatNewSessionCall —— 建会话的**唯一**实现（`label` 只影响人面那一行 · 请求体与校验一处不分叉）。
+func chatNewSessionCall(inv *invocation, stderr io.Writer, label string) (string, int) {
 	body := map[string]any{"source": chatSourceCLI}
 	if v := strings.TrimSpace(inv.modelWant); v != "" {
 		body["model"] = v
@@ -1188,29 +1626,52 @@ func chatCreateSession(inv *invocation, stderr io.Writer) (string, int) {
 		return "", chatReportErr(inv, stderr, "blocked", "response_shape_unexpected",
 			"主控建会话的响应里没有会话 id ⇒ 不给结论（退码 8）", exitCodeOf("blocked"))
 	}
-	fmt.Fprintf(stderr, "%s: `--new` 已建会话 %s（source=%s）\n", progName, id, chatSourceCLI)
+	fmt.Fprintf(stderr, "%s: %s %s（source=%s）\n", progName, label, id, chatSourceCLI)
 	return id, exitOK
 }
 
 // chatPromptFromInv —— 取提示（§5.5 ③：`-` = 从 stdin 读，**零 shell 解释**）。
+//
+// ★ 2026-10-17（本枚）：三种来源**三选一互斥** —— ① 位置参数（`<题>` / `-` = stdin）
+// ② `--prompt-file <路径>`（整件读入 · 中文与换行原样保留 · ✗ 不按行拼）。同给 ⇒ **用法错 2**
+// （★ 不许「后一个静默盖掉前一个」：静默吞会让机器调用把**另一份**提示发出去而毫无信号）。
 func chatPromptFromInv(inv *invocation, stderr io.Writer) (string, int) {
-	if len(inv.args) == 0 {
-		return "", chatReportErr(inv, stderr, "usage", "missing_prompt",
-			"`zerg chat send <提示>` 缺提示（管道档：`echo \"…\" | zerg chat send -`）", exitCodeOf("usage"))
+	fileGiven := inv.hasFlag("--prompt-file")
+	if fileGiven && len(inv.args) > 0 {
+		return "", chatReportErr(inv, stderr, "usage", "prompt_source_conflict",
+			"`--prompt-file` 与位置参数互斥（三选一：`<题>` / `-`（stdin）/ `--prompt-file <路径>`）",
+			exitCodeOf("usage"))
 	}
-	if inv.args[0] == "-" {
-		b, err := io.ReadAll(os.Stdin)
+	if fileGiven {
+		p := strings.TrimSpace(inv.flagVal("--prompt-file"))
+		if p == "" {
+			return "", chatReportErr(inv, stderr, "usage", "missing_flag_value",
+				"`--prompt-file` 给了旗标却没给路径", exitCodeOf("usage"))
+		}
+		if p == "-" {
+			return chatPromptFromStdin(inv, stderr)
+		}
+		b, err := os.ReadFile(p)
 		if err != nil {
-			return "", chatReportErr(inv, stderr, "usage", "content_unreadable",
-				fmt.Sprintf("`-` 档从 stdin 读提示失败：%v", err), exitCodeOf("usage"))
+			// ★ 路径不存在 ⇒ **用法错 2**（`error.kind=usage`）—— 与「提示来源给错」同档，
+			//   ✗ 不落 8：那是「打到了主控但读不到真源」的档，与本地件无关。
+			return "", chatReportErr(inv, stderr, "usage", "prompt_file_unreadable",
+				fmt.Sprintf("`--prompt-file %s` 读不到：%v", p, err), exitCodeOf("usage"))
 		}
 		s := strings.TrimRight(string(b), "\n")
 		if strings.TrimSpace(s) == "" {
 			return "", chatReportErr(inv, stderr, "usage", "missing_prompt",
-				"`-` 档从 stdin 读到的提示是空的", exitCodeOf("usage"))
+				fmt.Sprintf("`--prompt-file %s` 里是空的（提示至少要有一个非空白字）", p), exitCodeOf("usage"))
 		}
-		// ★ **零 shell 解释**（§5.5 ③ 逐字）：引号 / `$(...)` / 反引号**原样保留** —— 本函数不做任何转义处理。
 		return s, exitOK
+	}
+	if len(inv.args) == 0 {
+		return "", chatReportErr(inv, stderr, "usage", "missing_prompt",
+			"缺提示（三选一：`<题>` / `-`（stdin）/ `--prompt-file <路径>`；管道档：`echo \"…\" | zerg chat send -`）",
+			exitCodeOf("usage"))
+	}
+	if inv.args[0] == "-" {
+		return chatPromptFromStdin(inv, stderr)
 	}
 	joined := strings.TrimSpace(strings.Join(inv.args, " "))
 	if joined == "" {
@@ -1218,6 +1679,22 @@ func chatPromptFromInv(inv *invocation, stderr io.Writer) (string, int) {
 			"提示是空的（§5.5 ③：管道档用 `-`）", exitCodeOf("usage"))
 	}
 	return joined, exitOK
+}
+
+// chatPromptFromStdin —— `-` 档：整条 stdin 读入（**零 shell 解释** · 尾部换行剥掉）。
+func chatPromptFromStdin(inv *invocation, stderr io.Writer) (string, int) {
+	b, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		return "", chatReportErr(inv, stderr, "usage", "content_unreadable",
+			fmt.Sprintf("`-` 档从 stdin 读提示失败：%v", err), exitCodeOf("usage"))
+	}
+	s := strings.TrimRight(string(b), "\n")
+	if strings.TrimSpace(s) == "" {
+		return "", chatReportErr(inv, stderr, "usage", "missing_prompt",
+			"`-` 档从 stdin 读到的提示是空的", exitCodeOf("usage"))
+	}
+	// ★ **零 shell 解释**（§5.5 ③ 逐字）：引号 / `$(...)` / 反引号**原样保留** —— 本函数不做任何转义处理。
+	return s, exitOK
 }
 
 // chatMarkdownRender —— `--markdown` 的**最小渲染档**（`O-9`：默认纯文本 ＋ 本旗标 opt-in）。

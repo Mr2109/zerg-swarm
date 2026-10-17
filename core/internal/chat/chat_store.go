@@ -10,6 +10,7 @@ import (
 	_ "modernc.org/sqlite"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -101,6 +102,20 @@ CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, timestam
 CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(content, tokenize='trigram');
 `
 
+// chatDSN — 对话库的 DSN：在路径上挂 `busy_timeout`（毫秒）。
+//
+// ★ 为什么必须有它（2026-10-17 · 多任务并行的根因）：`database/sql` 的连接池里 **PRAGMA 是按连接生效**的
+// （`db.Exec("PRAGMA …")` 只改了恰好借到的那一条连接），而 WAL 只允许**一个写者**在同一时刻持锁。
+// 没有 busy_timeout 时第二个写者**立刻**拿到 `SQLITE_BUSY` ⇒ 两条任务线同时 `chat ask` 必有一条
+// 500 `database is locked (5)`（实测复现 3/3：并发建会话 / 并发写消息各撞一次）。
+// 挂上 DSN 参数后每条连接都自带等待窗口（5s）⇒ 并发写者排队而不是报错。
+func chatDSN(path string) string {
+	if strings.Contains(path, "?") {
+		return path
+	}
+	return path + "?_pragma=busy_timeout(5000)"
+}
+
 // OpenChatStore — 打开/初始化对话数据库
 // 2026-09-10 甲批 T1（Mr2109拍板）：默认落 ~/.zerg-chat/chat.db（持久，与项目路径无关；ZERG_CHAT_DB_PATH 可覆盖）。
 // 旧路径 /tmp/zerg-chat/chat.db 会被一次性迁移（VACUUM INTO 一致性快照 + integrity_check + 行数比对）；
@@ -111,7 +126,7 @@ func OpenChatStore() (*ChatStore, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("chat: 创建目录失败: %w", err)
 	}
-	db, err := sql.Open("sqlite", path)
+	db, err := sql.Open("sqlite", chatDSN(path))
 	if err != nil {
 		return nil, fmt.Errorf("chat: 打开数据库失败: %w", err)
 	}

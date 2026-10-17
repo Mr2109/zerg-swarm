@@ -11658,6 +11658,222 @@
    "want_rc": 2,
    "want_stdout_bytes": 0,
    "why": "给了 --json 不给字段 ⇒ 2 + stdout 0 字节（§4.1 K2 甲档 · 码**取自退码表** `usage`）"
+  },
+  {
+   "id": "chat/ask#未知旗标",
+   "command": "chat ask",
+   "argv": [
+    "chat",
+    "ask",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "chat/ask#不认的契约主号",
+   "command": "chat ask",
+   "argv": [
+    "chat",
+    "ask",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "chat/alias/set#未知旗标",
+   "command": "chat alias set",
+   "argv": [
+    "chat",
+    "alias",
+    "set",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "chat/alias/set#不认的契约主号",
+   "command": "chat alias set",
+   "argv": [
+    "chat",
+    "alias",
+    "set",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "chat/alias/set#--json 不给字段",
+   "command": "chat alias set",
+   "argv": [
+    "chat",
+    "alias",
+    "set",
+    "--json"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "给了 --json 不给字段 ⇒ 2 + stdout 0 字节（§4.1 K2 甲档 · 码**取自退码表** `usage`）"
+  },
+  {
+   "id": "chat/alias/ls#未知旗标",
+   "command": "chat alias ls",
+   "argv": [
+    "chat",
+    "alias",
+    "ls",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "chat/alias/ls#不认的契约主号",
+   "command": "chat alias ls",
+   "argv": [
+    "chat",
+    "alias",
+    "ls",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "chat/alias/ls#--json 不给字段",
+   "command": "chat alias ls",
+   "argv": [
+    "chat",
+    "alias",
+    "ls",
+    "--json"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "给了 --json 不给字段 ⇒ 2 + stdout 0 字节（§4.1 K2 甲档 · 码**取自退码表** `usage`）"
+  },
+  {
+   "id": "chat/alias/rm#未知旗标",
+   "command": "chat alias rm",
+   "argv": [
+    "chat",
+    "alias",
+    "rm",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "chat/alias/rm#不认的契约主号",
+   "command": "chat alias rm",
+   "argv": [
+    "chat",
+    "alias",
+    "rm",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "chat/alias/rm#--json 不给字段",
+   "command": "chat alias rm",
+   "argv": [
+    "chat",
+    "alias",
+    "rm",
+    "--json"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "给了 --json 不给字段 ⇒ 2 + stdout 0 字节（§4.1 K2 甲档 · 码**取自退码表** `usage`）"
+  },
+  {
+   "id": "chat/ask#缺 --as",
+   "command": "chat ask",
+   "argv": [
+    "chat",
+    "ask",
+    "题"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "`--as` 是机器正门**唯一**的会话锚 ⇒ 缺它只能退 2（✗ 不回落 `--last`：那会把两条任务线悄悄并到同一个会话）"
+  },
+  {
+   "id": "chat/ask#--prompt-file 与位置参数同给",
+   "command": "chat ask",
+   "argv": [
+    "chat",
+    "ask",
+    "题",
+    "--as",
+    "自测线甲",
+    "--prompt-file",
+    "/tmp/zz-no-such-prompt.md"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "提示来源**三选一互斥**（`<题>` / `-`（stdin）/ `--prompt-file <路径>`）⇒ 同给退 2（✗ 不静默取一个 —— 静默吞会把**另一份**提示发出去）"
+  },
+  {
+   "id": "chat/ask#--as 与 --session 同给",
+   "command": "chat ask",
+   "argv": [
+    "chat",
+    "ask",
+    "--as",
+    "自测线甲",
+    "--session",
+    "chat_20261017_010203_abcdef",
+    "题"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "别名自己就是会话指针 ⇒ 与 `--session` 同给退 2（✗ 不许两套会话指定法同时生效）"
+  },
+  {
+   "id": "chat/send#--prompt-file 与位置参数同给",
+   "command": "chat send",
+   "argv": [
+    "chat",
+    "send",
+    "题",
+    "--prompt-file",
+    "/tmp/zz-no-such-prompt.md"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "与 `chat ask` 同一处实现（`chatPromptFromInv`）⇒ 同给退 2（★ 判在**任何 HTTP / 状态写入之前**，故 stdout 0 字节）"
+  },
+  {
+   "id": "chat/alias/set#缺 --session",
+   "command": "chat alias set",
+   "argv": [
+    "chat",
+    "alias",
+    "set",
+    "自测线甲"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "`alias set` 必须点名 `--session <完整 id>` ⇒ 缺它退 2（✗ 不按标题/前缀猜 · `O-12` 只认完整 id）"
   }
  ],
  "tiers": {
