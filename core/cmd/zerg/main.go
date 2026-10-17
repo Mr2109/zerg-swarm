@@ -3052,7 +3052,7 @@ func init() {
 			path:    []string{"chat"},
 			kind:    "Chat",
 			summary: "对话正门：**裸跑按 TTY 分流**（有 TTY ⇒ 进交互 REPL · 无 TTY ⇒ 退 2 ＋ 提示）· 7 条子命令见下行（§5.5 ①）",
-			usage:   "zerg chat [<子命令>]",
+			usage:   "zerg chat [--session <会话id> | --new] [<子命令>]",
 			arity:   "any",
 			args:    []string{"子命令（裸跑 = 交互 REPL · 无 TTY ⇒ 退 2）"},
 			run:     cmdChatRoot,
