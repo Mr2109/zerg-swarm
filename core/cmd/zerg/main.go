@@ -4387,6 +4387,29 @@ func init() {
 			opened:  true,
 			run:     cmdFSRun,
 		},
+		// ---- 技能库族（设计稿 `zerg-技能库设计稿-20261017.md` §3 · M1 只读面）----
+		// 根只认一处：`statepath.SkillsDir()`（`ZERG_SKILLS_DIR` → `<仓根>/core/internal/agent/skills`）。
+		// ✗ 不开 `--root`、✗ 不新增第二个默认根；`--json` 字段表写字面量（`clicFieldsRE` 直读这一行）。
+		{
+			path:    []string{"skill", "ls"},
+			kind:    "SkillLs",
+			summary: "技能库清单（**只读**：名字 · 触发描述 · 状态 · 子件数 · 字节数 · 落点；状态把「agent 静默跳过」的件显式标出来）",
+			usage:   "zerg skill ls [--json <字段>]",
+			arity:   "none",
+			args:    []string{"（无位置参数 —— 技能根取唯一解析 `statepath.SkillsDir()` · ✗ 不开 `--root`）"},
+			fields:  []string{"name", "description", "state", "files", "bytes", "path"},
+			run:     cmdSkillLs,
+		},
+		{
+			path:    []string{"skill", "show"},
+			kind:    "SkillShow",
+			summary: "看一条技能的正文（**只读**：正文取自 `agent.SkillManager.Load` —— 与 CA 侧 `skill_load` 同一函数，构造上同字节）",
+			usage:   "zerg skill show <名> [--json <字段>]",
+			arity:   "any",
+			args:    []string{"技能名（与 `zerg skill ls` 的 `name` 逐字相同）"},
+			fields:  []string{"name", "description", "state", "path", "bytes", "lines", "body"},
+			run:     cmdSkillShow,
+		},
 	}
 	// 群级只读（§十二 `P-066`）：这些命令「无目标 = 读全群」是**定义**，不是遗漏。
 	for _, c := range commands {

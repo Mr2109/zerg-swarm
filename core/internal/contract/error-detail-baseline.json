@@ -8,11 +8,11 @@
     "non_literal_read": "非字面量取空白规整化后的表达式文本"
   },
   "counts": {
-    "literals": 645,
-    "literal_sites": 1362,
+    "literals": 650,
+    "literal_sites": 1369,
     "non_literals": 14,
     "non_literal_sites": 84,
-    "sites_total": 1446
+    "sites_total": 1453
   },
   "literals": [
     {
@@ -1821,7 +1821,7 @@
         "core/cmd/zerg/family_gap_state.go:2960",
         "core/cmd/zerg/family_gap_state.go:3303",
         "core/cmd/zerg/family_gap_state.go:3574",
-        "core/cmd/zerg/main.go:5698"
+        "core/cmd/zerg/main.go:5721"
       ]
     },
     {
@@ -3845,6 +3845,38 @@
       ]
     },
     {
+      "value": "skill_body_unreadable",
+      "sites": [
+        "core/cmd/zerg/family_skill.go:276"
+      ]
+    },
+    {
+      "value": "skill_not_loadable",
+      "sites": [
+        "core/cmd/zerg/family_skill.go:284"
+      ]
+    },
+    {
+      "value": "skill_root_absent",
+      "sites": [
+        "core/cmd/zerg/family_skill.go:209",
+        "core/cmd/zerg/family_skill.go:246"
+      ]
+    },
+    {
+      "value": "skill_root_empty",
+      "sites": [
+        "core/cmd/zerg/family_skill.go:221"
+      ]
+    },
+    {
+      "value": "skill_root_unreadable",
+      "sites": [
+        "core/cmd/zerg/family_skill.go:215",
+        "core/cmd/zerg/family_skill.go:252"
+      ]
+    },
+    {
       "value": "slots_shape_undecided",
       "sites": [
         "core/cmd/zerg/family_agent.go:643"
@@ -4645,7 +4677,7 @@
         "core/cmd/zerg/family_repo_diffstat.go:105",
         "core/cmd/zerg/family_route.go:85",
         "core/cmd/zerg/gate.go:609",
-        "core/cmd/zerg/main.go:6086"
+        "core/cmd/zerg/main.go:6109"
       ]
     },
     {

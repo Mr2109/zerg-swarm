@@ -11219,6 +11219,116 @@
    "want_rc": 2,
    "want_stdout_bytes": 0,
    "why": "D3 缺 `--yes` ⇒ fail-closed **不执行**（最高档 · 从不提问）；计划件走 **stderr** ⇒ stdout 只剩六键包封 —— 包封字节随 `progName` 派生的 `meta.idempotency_key` 变 ⇒ 本格标 `stdout_bytes_unpinned`：**只钉 `want_rc=2`、不钉字节**。一格同时钉「缺 `--yes` 退 2」与「机器面仍可读」，子进程一次都不起"
+  },
+  {
+   "argv": [
+    "skill",
+    "ls",
+    "--nosuchflag-zz"
+   ],
+   "command": "skill ls",
+   "id": "skill/ls#未知旗标",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "argv": [
+    "skill",
+    "ls",
+    "--schema",
+    "zerg/v9"
+   ],
+   "command": "skill ls",
+   "id": "skill/ls#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "argv": [
+    "skill",
+    "ls",
+    "--json"
+   ],
+   "command": "skill ls",
+   "id": "skill/ls#--json 不给字段",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "K2 甲档：`--json` 要字段表；码取自退码表 `usage`（requireFields）"
+  },
+  {
+   "argv": [
+    "skill",
+    "ls",
+    "extra"
+   ],
+   "command": "skill ls",
+   "id": "skill/ls#位置参数不收",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "`arity: none` 且不在危险档 ⇒ declaresNoPositional 判（main.go 的 arity 口径）"
+  },
+  {
+   "argv": [
+    "skill",
+    "show",
+    "--nosuchflag-zz"
+   ],
+   "command": "skill show",
+   "id": "skill/show#未知旗标",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错 · 执行前判"
+  },
+  {
+   "argv": [
+    "skill",
+    "show",
+    "--schema",
+    "zerg/v9"
+   ],
+   "command": "skill show",
+   "id": "skill/show#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "不认的契约主号 · 执行前判"
+  },
+  {
+   "argv": [
+    "skill",
+    "show"
+   ],
+   "command": "skill show",
+   "id": "skill/show#缺实参",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "缺名 ⇒ emitNameMiss 的「要给一枚技能名」支（同 calib show 先例）"
+  },
+  {
+   "argv": [
+    "skill",
+    "show",
+    "zz-不存在-zz"
+   ],
+   "command": "skill show",
+   "id": "skill/show#名不在册",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "点名点到册外 = 用法错 2（同族先例 gap show：「账读得到、点名点到账外」归用法面）"
+  },
+  {
+   "argv": [
+    "skill",
+    "show",
+    "ca-troubleshooting",
+    "--json"
+   ],
+   "command": "skill show",
+   "id": "skill/show#--json 不给字段",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "K2 甲档（字段面外 ⇒ 2 + stdout 零字节）"
   }
  ],
  "exemptions": [],
