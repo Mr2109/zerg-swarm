@@ -23,11 +23,85 @@ import (
 	"unicode/utf8"
 )
 
-// ForcedAnswerHint — 「停手交答案」那一轮注入的 user 消息（逐字固定，单测钉着它）。
+// ForcedAnswerHintSourceMark — 注入消息的**来源标注**（GAP-20261018-06）。
+//
+// 为什么要这一句：这条提示是**内核注入**的，不是用户说的。旧文案以「（停手：「开头并以
+// role=user 注入 ⇒ 实测模型把它读成**用户下达的命令**（同会话下一条任务里自述「用户第一条
+// 消息即要求停手、不再调用工具」，整轮零命令零事实）。来源归属因此必须写在**正文第一句**，
+// 且不得留「停手」这类会被读成用户命令的词。
+const ForcedAnswerHintSourceMark = "【系统提示 · 不是用户的新要求】"
+
+// ForcedAnswerHintRole — 注入消息的角色（保留 "user"）。
+//
+// 为什么**不**改成 "system"（本单评估过、按现读事实否决）：
+//   - chat 侧每次请求都把系统提示钉在**首条** system（`core/internal/chat/chat_infer.go:114`
+//     与 `:223`：msgsAll = [system(sysPrompt)] + msgs）；
+//   - 本仓已有逐字结论「llama-server system 须唯一在开头」（`core/internal/chat/chat_message.go:246`
+//     InsertSummaryMid 的注释），即上游对**中途再插一条 system** 没有兼容保证。
+//
+// ⇒ 中途插 system 属「换真源换风险」：可能被上游拒或被模板丢掉，那时这条提示**彻底消失**
+// （比误导更坏）。故沿用 user 角色，靠正文首句声明来源 —— 判据一行未动。
+const ForcedAnswerHintRole = "user"
+
+// ForcedAnswerHint — 「只交答案」那一轮注入的消息（逐字固定，单测钉着它）。
 // 与既有收尾提示（timeout / empty_args / bad_format）同一口吻：只许写事实与结论，不编造。
-const ForcedAnswerHint = "（停手：本轮不要再调用工具。把**已经拿到的事实与结论**直接用中文写出来——" +
-	"几行即可，每行说清「是哪一条 / 我跑了哪条命令 / 结果是什么 / 结论是什么」；" +
+// 文案四条含义（不调工具 / 给结论 / 报白不编 / 禁「下一步打算」）一字不减，只换掉会误导的
+// 表述与来源归属（GAP-20261018-06）。
+const ForcedAnswerHint = "（" + ForcedAnswerHintSourceMark + "本轮请不要再调工具。" +
+	"请把**已经拿到的事实与结论**直接用中文写出来——几行即可，" +
+	"每行说清「是哪一条 / 我跑了哪条命令 / 结果是什么 / 结论是什么」；" +
 	"信息确实不足就直说没查到，绝不编造。✗ 不要写「下一步打算 / 让我再查 / 我先把…做起来」——那不是交付。）"
+
+// forcedAnswerHintMsg — 构造注入消息（角色与正文的唯一出处 ⇒ 单测只需钉这一处）。
+func forcedAnswerHintMsg() map[string]any {
+	return map[string]any{"role": ForcedAnswerHintRole, "content": ForcedAnswerHint}
+}
+
+// IsForcedAnswerHint — 一条消息是不是本闸注入的那条提示。
+//
+// 认法按「来源标注 + user 角色」，**不按整串逐字比**：历史里的那条可能来自旧版文案
+// （旧版没有来源标注，但以「（停手：」开头）⇒ 两代都要认得出、都要能剥掉。
+func IsForcedAnswerHint(m map[string]any) bool {
+	role, _ := m["role"].(string)
+	if role != ForcedAnswerHintRole {
+		return false
+	}
+	c, _ := m["content"].(string)
+	if strings.Contains(c, ForcedAnswerHintSourceMark) {
+		return true
+	}
+	// 旧版（GAP-20261017-12 起至本单前）逐字前缀 —— 已落库/已进快照的历史仍要认。
+	return strings.HasPrefix(c, "（停手：本轮不要再调用工具。")
+}
+
+// DropForcedAnswerHints — 从消息里剥掉强制答题提示，返回**新切片**与剥掉的条数。
+//
+// GAP-20261018-06（本单最核心的修复）：这条提示的生命周期只有**一发请求**——
+// 模型看完它就得走，绝不许躺在历史里跨轮/跨任务生效（实测后果：一次 forced_answer
+// 之后，同会话下一条任务模型自述「用户第一条消息即要求停手」，零命令零事实）。
+// 三个调用位点（run.go）：① 进 Run 先剥历史遗留（含旧版快照/调用方复用的消息表）；
+// ② 补轮那一发推理返回后立刻剥（本发已送达模型）；③ 写快照前再剥一道（收口全部返回路径）。
+func DropForcedAnswerHints(msgs []map[string]any) ([]map[string]any, int) {
+	dropped := 0
+	out := make([]map[string]any, 0, len(msgs))
+	for _, m := range msgs {
+		if IsForcedAnswerHint(m) {
+			dropped++
+			continue
+		}
+		out = append(out, m)
+	}
+	if dropped == 0 {
+		return msgs, 0
+	}
+	return out, dropped
+}
+
+// withoutForcedAnswerHints — 只要剥干净后的消息（写快照那一类「只需结果」的位点用）。
+func withoutForcedAnswerHints(msgs []map[string]any) []map[string]any {
+	out, _ := DropForcedAnswerHints(msgs)
+	return out
+}
 
 const (
 	// forcedAnswerHeadRunes — 只判开头这么多个符文（结论先写、末尾带建议属正常交付）

@@ -68,7 +68,7 @@ func TestForcedAnswer_PlanIsNotDelivery(t *testing.T) {
 	}
 	gotHint := false
 	for _, m := range (*seen)[2] {
-		if c, _ := m["content"].(string); strings.Contains(c, "本轮不要再调用工具") {
+		if c, _ := m["content"].(string); strings.Contains(c, ForcedAnswerHintSourceMark) {
 			gotHint = true
 		}
 	}
@@ -94,7 +94,7 @@ func TestForcedAnswer_NormalRoundDoesNotRunExtra(t *testing.T) {
 	}
 	for i, ms := range *seen {
 		for _, m := range ms {
-			if c, _ := m["content"].(string); strings.Contains(c, "本轮不要再调用工具") {
+			if c, _ := m["content"].(string); strings.Contains(c, ForcedAnswerHintSourceMark) {
 				t.Fatalf("第 %d 轮被注入了强制交答案提示 —— 正常交付不该被推着再跑", i+1)
 			}
 		}
@@ -183,5 +183,141 @@ func TestNeedsForcedAnswerTable(t *testing.T) {
 		if got != c.want {
 			t.Errorf("%s：NeedsForcedAnswer=%v(why=%q)，want %v", c.name, got, why, c.want)
 		}
+	}
+}
+
+// ── GAP-20261018-06（P0）：注入提示的来源归属 + 跨轮清理 ──────────────────────────
+//
+// 症状（铁证 · 同会话连发两条任务）：第一条真跑 4 次工具；触发一次 `loop_hint forced_answer`
+// 之后，模型自述「**用户第一条消息即要求停手、不再调用工具**」，整轮零命令零事实；再发任务
+// 仍一条命令未跑 ⇒ 旧形态把一条 **role=user** 的内核提示留在 `msgs` 里**跨轮生效**。
+// 本组三条牙：② 文案（含来源标注、无「停手」）③ 同一程内不留到下一位 ／ 跨任务进来先剥。
+
+// hasForcedHint — 按**来源标注**认（不看 role：万一有人把角色改成 system，这条牙也要能认出来）。
+func hasForcedHint(msgs []map[string]any) bool {
+	for _, m := range msgs {
+		if c, _ := m["content"].(string); strings.Contains(c, ForcedAnswerHintSourceMark) {
+			return true
+		}
+	}
+	return false
+}
+
+// TestForcedAnswerHintWording — 验收②：注入的那条消息必须写明「来源是系统」，且**不得**出现「停手」。
+func TestForcedAnswerHintWording(t *testing.T) {
+	if !strings.Contains(ForcedAnswerHint, "系统提示") {
+		t.Fatalf("注入文案没写来源（须含「系统提示」）：%q", ForcedAnswerHint)
+	}
+	if !strings.Contains(ForcedAnswerHint, "不是用户") {
+		t.Fatalf("注入文案没否定「用户的新要求」：%q", ForcedAnswerHint)
+	}
+	if strings.Contains(ForcedAnswerHint, "停手") {
+		t.Fatalf("注入文案仍含「停手」（会被读成用户下达的命令）：%q", ForcedAnswerHint)
+	}
+	// 含义四条：不调工具 / 给结论 / 报白不编 / 禁「下一步打算」——改写文案不许把它们丢掉。
+	for _, want := range []string{"不要再调工具", "已经拿到的事实与结论", "直说没查到", "不要写「下一步打算"} {
+		if !strings.Contains(ForcedAnswerHint, want) {
+			t.Fatalf("文案改丢了含义 %q：%q", want, ForcedAnswerHint)
+		}
+	}
+	// 角色：保留 user（依据见常量注释 —— 上游 system 须唯一在开头，中途插 system 无兼容保证）。
+	if ForcedAnswerHintRole != "user" {
+		t.Fatalf("注入角色是 %q —— 中途插 system 无上游兼容保证，且退出验收口径", ForcedAnswerHintRole)
+	}
+	if got, _ := forcedAnswerHintMsg()["role"].(string); got != "user" {
+		t.Fatalf("注入消息的角色是 %q，want \"user\"", got)
+	}
+}
+
+// TestForcedAnswerHintNotLeakedToNextRequest — 验收③（同一程内）：补轮那一发看得到提示，
+// 它**之后**的请求一律看不到（旧形态会一直躺在 msgs 里，模型下一轮仍当用户命令读）。
+func TestForcedAnswerHintNotLeakedToNextRequest(t *testing.T) {
+	// 四发：① 工具 ② 打算（触发闸并注入）③ 补轮无视提示、又调工具 ④ 结论
+	infer, calls, seen := scriptInfer([]Response{
+		zergToolCall("c1"),
+		{Content: "零命中。让我再看看 family_agent.go 的实现。"},
+		zergToolCall("c2"),
+		{Content: "① want：两列 ② 命令：zerg code show x:62 ③ 两列不存在 ④ 仍缺 ⑤ 无"},
+	})
+	d := Deps{Infer: infer, Exec: okExec, Tools: []map[string]any{{"type": "function", "function": map[string]any{"name": "zerg"}}}}
+	Run(context.Background(), Config{MaxRounds: 8}, "m", "sys", nil, d)
+	if len(*calls) != 4 {
+		t.Fatalf("脚本应跑满 4 发（工具/打算/补轮工具/结论），实得 %d", len(*calls))
+	}
+	if !hasForcedHint((*seen)[2]) {
+		t.Fatal("补轮那一发没有拿到提示 —— 模型不可能知道要交结论（闸被改坏了）")
+	}
+	if hasForcedHint((*seen)[3]) {
+		t.Fatal("补轮**之后**的请求仍带着这条提示 —— 同程跨轮污染没治住")
+	}
+}
+
+// TestForcedAnswerHintStrippedOnEntry — 验收③（跨任务）：上一程遗留在历史里的提示喂进来，
+// 本程**第一发**请求就不得再看到它；且闸本身照旧能用（该轮仍注入一次新提示）。
+func TestForcedAnswerHintStrippedOnEntry(t *testing.T) {
+	old := []map[string]any{
+		{"role": "user", "content": "第一条任务"},
+		{"role": "assistant", "content": "① 结论：仍缺。"},
+		{"role": "user", "content": ForcedAnswerHint}, // 上一程遗留（旧形态会一直躺着）
+		{"role": "assistant", "content": "① 结论：仍缺。"},
+		{"role": "user", "content": "第二条任务"},
+	}
+	// 第二任务的第一发**真调工具**（这正是旧形态做不到的事：模型把遗留提示读成
+	// 「用户要求停手」⇒ 一条命令都不跑）⇒ 这里必须真的执行到工具。
+	infer, calls, seen := scriptInfer([]Response{
+		zergToolCall("t1"),
+		{Content: "让我先看看上一轮的结论。"},
+		{Content: "① want：两列 ② 命令：zerg code find recentRequests ③ 零命中 ④ 仍缺 ⑤ 无"},
+	})
+	execN := 0
+	d := Deps{Infer: infer, Tools: []map[string]any{{"type": "function", "function": map[string]any{"name": "zerg"}}},
+		Exec: func(ctx context.Context, name string, args map[string]any) (string, string, error) {
+			execN++
+			return "零命中（真读到的结果）", "3ms", nil
+		}}
+	res := Run(context.Background(), Config{MaxRounds: 8}, "m", "sys", old, d)
+	if hasForcedHint((*seen)[0]) {
+		t.Fatal("本程第一发请求仍看到上一程遗留的提示 —— 跨任务污染没治住（模型会照旧当用户命令读）")
+	}
+	if execN != 1 || len(res.Traces) != 1 {
+		t.Fatalf("第二任务必须真调工具（旧形态零命令）：exec=%d traces=%d", execN, len(res.Traces))
+	}
+	if len(*calls) != 3 {
+		t.Fatalf("第二任务应 3 发（工具→打算→补轮结论），实得 %d", len(*calls))
+	}
+	if !hasForcedHint((*seen)[2]) {
+		t.Fatal("本程触发 forced_answer 后没有注入提示 —— 闸被改坏了")
+	}
+	if hasForcedHint((*seen)[1]) {
+		t.Fatal("工具轮就看到了提示 —— 它只该出现在补轮那一发")
+	}
+	if res.ExitKind != "natural" || !strings.Contains(res.Content, "仍缺") {
+		t.Fatalf("补轮后应自然收尾且正文是结论：kind=%q content=%q", res.ExitKind, res.Content)
+	}
+}
+
+// TestForcedAnswerHintNotInCheckpoint — 快照是「**可续跑的会话历史**」⇒ 里面不许有这条提示
+// （续跑/下一程读到它就会复现「用户要求停手」）。
+func TestForcedAnswerHintNotInCheckpoint(t *testing.T) {
+	st, err := NewCheckpointStore(t.TempDir(), DurabilitySync)
+	if err != nil {
+		t.Fatalf("建检查点存储失败：%v", err)
+	}
+	infer, calls, _ := scriptInfer([]Response{
+		zergToolCall("c1"),
+		{Content: "让我再查一下。"},
+		{Content: "① want：两列 ② 命令：zerg code show x:62 ③ 两列不存在 ④ 仍缺 ⑤ 无"},
+	})
+	d := Deps{Infer: infer, Exec: okExec, Checkpoints: st, RunID: "run-gap06"}
+	Run(context.Background(), Config{MaxRounds: 8}, "m", "sys", nil, d)
+	if len(*calls) != 3 {
+		t.Fatalf("应 3 发（工具/打算/补轮结论），实得 %d", len(*calls))
+	}
+	snap, err := st.Load("run-gap06")
+	if err != nil {
+		t.Fatalf("读快照失败：%v", err)
+	}
+	if hasForcedHint(snap.State.Messages) {
+		t.Fatalf("快照里留着强制答题提示（%d 条消息）—— 续跑会被它毒化", len(snap.State.Messages))
 	}
 }

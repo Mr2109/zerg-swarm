@@ -168,6 +168,13 @@ func Run(ctx context.Context, cfg Config, model, sysPrompt string, msgs []map[st
 	// 否则 max_rounds 退出后再恢复会因为 startRound > maxRounds 而一步都跑不动（那是死循环式失效）。
 	lastRound := startRound - 1 + maxRounds
 
+	// ── GAP-20261018-06：进循环前先剥掉历史里的强制答题提示 ──
+	// 来源可能是：旧版快照（本条提示曾写进 Messages 一起落盘）、调用方复用的消息表、
+	// 或任何「上一轮遗留」。它只在**注入的那一发请求**里有意义 ⇒ 一律不参与本程。
+	// 为什么放在这里（而不是等下一轮 loop 里剥）：这一程的**第一发请求**就可能带毒 ——
+	// 实测症状正是「同会话下一条任务一条命令都没跑」，模型自述「用户第一条消息即要求停手」。
+	msgs, _ = DropForcedAnswerHints(msgs)
+
 	// ── T5.5 每步快照（粒度 = 步：一轮收尾后的完整状态；步内不落盘）──
 	// 只在"过了前置门"之后接线：落败者/已完成者上面就返回了，一步都不写。
 	// 存不下 ⇒ 如实记进 res.CheckpointErr 并发事件，**不改变循环行为**（快照不该变成新的失败点）。
@@ -177,7 +184,9 @@ func Run(ctx context.Context, cfg Config, model, sysPrompt string, msgs []map[st
 		}
 		st := CheckpointState{
 			RunID: d.RunID, Session: d.Session, StepIndex: step, Round: step,
-			Messages: msgs, Traces: res.Traces, ExitKind: exitKind,
+			// GAP-20261018-06：快照里**不留**强制答题提示 —— 快照是「可续跑的会话历史」，
+			// 而那条提示只服务注入它的那一发请求。旧版把它一起落盘 ⇒ 续跑/下一程开局就带毒。
+			Messages: withoutForcedAnswerHints(msgs), Traces: res.Traces, ExitKind: exitKind,
 			TotalTokens: res.Usage.TotalTokens, Model: model,
 		}
 		if _, err := d.Checkpoints.Save(st); err != nil {
@@ -221,6 +230,9 @@ func Run(ctx context.Context, cfg Config, model, sysPrompt string, msgs []map[st
 	// forcedOnce 是「已经补过一轮」的事实位 —— 补过之后**一律照旧收尾**，绝不在收尾处造死循环。
 	forcedOnce := false
 	planFallback := "" // 被闸下的那份「打算」（补轮空产出时退回它，不丢已有内容）
+	// GAP-20261018-06：这条提示只服务**一发请求** —— 记下它该在哪一轮被送出，
+	// 那一发推理一回来就立刻从 msgs 里剥掉（0 = 当前没有待送出的提示）。
+	forcedHintRound := 0
 
 	for round := startRound; round <= lastRound; round++ {
 		obsRound = round // T1.3：本层真实轮次（会话级结论用它当 Rounds，不猜）
@@ -280,6 +292,15 @@ func Run(ctx context.Context, cfg Config, model, sysPrompt string, msgs []map[st
 				return res
 			}
 		}
+		// ── GAP-20261018-06：这一发请已经送达模型 ⇒ 立刻把提示从 msgs 拿走 ──
+		// 位置是语义的一部分：必须在**本发推理返回之后、任何后续追加之前**（重试也还没走完时
+		// 提示仍要在 msgs 里，否则重试那一发就只剩「给结论」这条没头没尾的要求）。
+		// 拿走之后：① 本轮若带工具调用，后面的轮次/工具回传都不再看到它；
+		// ② 写快照时它已经不在 msgs 里；③ 本程结束也不会有「遗留到下一程」的机会。
+		if forcedHintRound == round {
+			msgs = withoutForcedAnswerHints(msgs)
+			forcedHintRound = 0
+		}
 		// 2026-09-10 修复"思考内容不全": 多轮时每轮覆盖 → 落库只剩末轮(UI 实时看到的过程全丢)。
 		// 中间轮(带工具调用)的正文=模型的思考/过程文本 → 归入思考；末轮才是最终回答。
 		if len(result.ToolCalls) > 0 {
@@ -325,7 +346,9 @@ func Run(ctx context.Context, cfg Config, model, sysPrompt string, msgs []map[st
 			// ── GAP-20261017-12（P0）：natural 前置闸（答案没交 ⇒ 补一轮，只补一次）──
 			// 本分支到此处的事实：本轮零工具调用、非坏格式 ⇒ 原版此处就是"自然收尾"。
 			// 闸判的是**正文形态**（空 / 打算口吻 —— 不判长度、不猜模型意图）：
-			// 判「不算交付」⇒ 注入一条「停手交答案」再跑一轮；第二次仍不交 ⇒ 照旧收尾（不再追加）。
+			// 判「不算交付」⇒ 注入一条「只交答案」的提示再跑一轮；第二次仍不交 ⇒ 照旧收尾（不再追加）。
+			// （该提示的来源标注与跨轮清理见 GAP-20261018-06：正文首句声明「系统提示 · 不是用户的新要求」，
+			// 且只服务注入它的那一发请求。）
 			if forcedOnce {
 				if strings.TrimSpace(res.Content) == "" && planFallback != "" {
 					res.Content = planFallback // 补轮空产出 ⇒ 退回上一轮正文（宁可给「打算」也不给空）
@@ -351,7 +374,11 @@ func Run(ctx context.Context, cfg Config, model, sysPrompt string, msgs []map[st
 				res.Content = ""
 				res.Reasoning = appendReasoning(res.Reasoning, result.Content)
 				emit("loop_hint", mustJSON(map[string]any{"kind": "forced_answer", "why": why}))
-				msgs = append(msgs, map[string]any{"role": "user", "content": ForcedAnswerHint})
+				// GAP-20261018-06：注入**下一发**才看得见的提示，并记下它只服务那一轮 ——
+				// 正文首句写明「来源是系统、不是用户的新要求」（旧文案「停手」被模型当用户命令，
+				// 且这条消息留在历史里跨轮生效）。角色仍用 user：依据见 ForcedAnswerHintRole 注释。
+				msgs = append(msgs, forcedAnswerHintMsg())
+				forcedHintRound = round + 1
 				continue
 			}
 			res.ExitKind = "natural"
