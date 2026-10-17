@@ -78,7 +78,15 @@ func Run(ctx context.Context, cfg Config, model, sysPrompt string, msgs []map[st
 				// 这里只把它的命中失败**并进**派生那一批（`mergeNumericClaims`），✗ 不另开一套裁决。
 				// 调用方显式给了 `d.OutputClaims` 的那一支不走这里（尊重调用方，见下面那个分支）。
 				num := VerifyNumericClaims(res.Content, res.Traces, d.CWD)
-				claimCheck = mergeNumericClaims(base, num.HardFailed)
+				// ★ 分级核的续（GAP-20261018-01 第二半）：① A 类同义形态 `退出码 N`；② B 类 ③
+				// 「反引号引文必须真在所指的那一行」——两腿的硬核判红并进**同一批**（同一枚 VerifyClaims，
+				// ✗ 不新开第五态）；③ C 类软核（其它计数）的取证分级只落 `output_claim_soft` 事件：
+				// ✗ 不进正文、✗ 不判红（口径见 output_claims_verify.go 文件头）。
+				gran := VerifyNumericGranular(res.Content, res.Traces, d.CWD)
+				if w := gran.WarningPayload(); w != "" && d.Events != nil {
+					d.Events("output_claim_soft", w)
+				}
+				claimCheck = mergeNumericClaims(base, append(num.HardFailed, gran.HardFailed...))
 				claimChecked = true
 				return claimCheck
 			}
