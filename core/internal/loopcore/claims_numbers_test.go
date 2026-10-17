@@ -16,6 +16,8 @@
 //	    正文**逐字节不变**
 //	(f) 真实回放：编造的 rc=0 + 件:行 ⇒ 必须同时出「命令没跑过」（第一半）与「件:行」（本单）
 //	(g) 调用方显式给了 `Deps.OutputClaims` ⇒ 本单的硬核**不介入**（尊重调用方）
+//	(h) ★ GAP-20261018-04 同句语境判定：复述题面 / 否定语境（「这个文件不在仓里，第 42 行无从谈起」）
+//	    ⇒ HardFailed **空**；肯定引用（「我已读了 X:999」）⇒ **照旧** retract（四组正控/负控）
 package loopcore
 
 import (
@@ -285,4 +287,123 @@ func TestVerifyNumericClaims_ReplayNoteCount(t *testing.T) {
 	if !strings.Contains(res.Content, "命中失败 2 条（假回执 retract 2") {
 		t.Fatalf("★ 有牙应有 2 条命中失败（命令那条 + 件:行 那条），实际 %q", res.Content)
 	}
+}
+
+// ══ (h) GAP-20261018-04 同句语境判定 ═══════════════════════════════════════════
+//
+// 那一发（逐字复现）：题面自带 `core/internal/loopcore/nonexistent_tooth_test.go:42`，模型老实回答
+// 「这个文件不在仓里，第 42 行无从谈起」并把题面的路径原样复述 ⇒ 旧口径判 1 条
+// `retract · nonexistent:core/internal/loopcore/nonexistent_tooth_test.go:42`，正文被追加【降级完成】
+// 终局说明＝**诚实回答被误杀**。本组四格：不判（a / d）＋ 仍判（b / c）。
+
+// numHonestDenialBody — (a) 逐字复现那一发的正文：否定的那句话与题面路径**同句**。
+const numHonestDenialBody = "题面问 core/internal/loopcore/nonexistent_tooth_test.go 的第 42 行写了什么？" +
+	"我核了：" + "core/internal/loopcore/nonexistent_tooth_test.go:42 这个文件不在仓里，第 42 行无从谈起。"
+
+// numHonestLiveExcerpt — 真机上那一发的**逐字摘录**（`~/.zerg/state/gap-20261018-03/body-live.txt`）：
+// 该路径只出现在一段**假设性引用**里（「如果你需要我实际去查…」），后面还接着「查不到这个文件」。
+const numHonestLiveExcerpt = "查不到这个文件，给不出第 42 行内容——我不会编。\n\n" +
+	"`zerg code find 'nonexistent_tooth'` 扫了 1498 个文件，命中仅 2 条，都在**另一个**测试文件 " +
+	"`core/internal/loopcore/output_claims_derive_test.go` 里：\n\n" +
+	"- 第 127 行：一个常量 `hypotheticalToothSentence`，文本正是\"如果你需要我实际去查（跑 " +
+	"`zerg code show core/internal/loopcore/nonexistent_tooth_test.go:42`）…\"\n"
+
+// TestVerifyNumericClaims_HonestDenialNotKilled — (a) 诚实回答不得被件:行 腿误杀。
+//
+// ★ 有牙的证明：同一处引用换成**肯定引用**（(b) 那一格）⇒ 仍判 1 条 retract；本格为空只因同句有否定词。
+func TestVerifyNumericClaims_HonestDenialNotKilled(t *testing.T) {
+	root := numRepoRoot(t) // 真仓根：该件确实**不存在** ⇒ 若判就是 1 条 retract
+
+	for _, body := range []string{numHonestDenialBody, numHonestLiveExcerpt} {
+		got := VerifyNumericClaims(body, nil, root)
+		if len(got.HardFailed) != 0 {
+			t.Fatalf("★ 同句已明说「不存在 / 查不到」⇒ 件:行 腿**不得**判红（复述题面不是引用主张），"+
+				"实际 %d 条：%+v\n正文：%s", len(got.HardFailed), got.HardFailed, body)
+		}
+	}
+
+	// 同一处引用、去掉否定语境 ⇒ 必须判（证明上面那两格不是「腿死了」）。
+	affirm := "我已读了 core/internal/loopcore/nonexistent_tooth_test.go:42，第 42 行是 func main()。"
+	got := VerifyNumericClaims(affirm, nil, root)
+	if len(got.HardFailed) != 1 || got.HardFailed[0].Verdict != VerdictRetract {
+		t.Fatalf("★ 肯定引用一个不存在的件 ⇒ 必须判 retract 1 条，实际 %+v", got.HardFailed)
+	}
+	t.Logf("(a) 诚实回答 0 条；同一处引用改成肯定引用 ⇒ %s（有牙）", got.HardFailed[0].Verdict)
+}
+
+// TestVerifyNumericClaims_NonAssertiveWordTable — 词表逐词的**两态**：带该词 ⇒ 不判；去掉该词 ⇒ 仍判。
+//
+// 逐词各跑一遍（不抽查）：这既证「表里每个词都真生效」，也证「不是把整条腿放空」。
+func TestVerifyNumericClaims_NonAssertiveWordTable(t *testing.T) {
+	const ref = "core/internal/loopcore/nonexistent_tooth_test.go:42"
+	root := numRepoRoot(t)
+	// 词表下界：否定 / 不存在 9 词 ＋ 疑问 / 假设 8 词（删词会让这一格先红）。
+	if n := len(numericNonAssertiveWords); n < 17 {
+		t.Fatalf("★ 非主张词表少于 17 词（实际 %d）：否定 9 词 ＋ 疑问/假设 8 词", n)
+	}
+	for _, w := range numericNonAssertiveWords {
+		// 模板本身不含词表里任何词（去掉 w 后是纯肯定引用）。
+		body := "对于 " + ref + " 这处，" + w + "，先放着。"
+		if got := VerifyNumericClaims(body, nil, root); len(got.HardFailed) != 0 {
+			t.Fatalf("★ 同句含 %q ⇒ 不判，实际 %d 条：%+v（正文 %q）", w, len(got.HardFailed), got.HardFailed, body)
+		}
+		bare := strings.Replace(body, w, "", 1)
+		got := VerifyNumericClaims(bare, nil, root)
+		if len(got.HardFailed) != 1 || got.HardFailed[0].Verdict != VerdictRetract {
+			t.Fatalf("★ 去掉 %q 后是肯定引用 ⇒ 必须仍判 retract 1 条，实际 %+v（正文 %q）", w, got.HardFailed, bare)
+		}
+	}
+	t.Logf("(h) 词表 %d 词逐词两态（带词不判 / 去词仍判）", len(numericNonAssertiveWords))
+}
+
+// TestVerifyNumericClaims_AffirmativeRefsStillGoRed — (b)(c) 两组正控：肯定引用照旧判。
+func TestVerifyNumericClaims_AffirmativeRefsStillGoRed(t *testing.T) {
+	root := numRootWith(t, map[string]string{"core/x/y.go": "package x\n\nfunc A() {}\n"}) // 3 行
+
+	// (b) 正控 1：件不存在 ＋ 「我已读了 …，第 999 行是 …」（句内无否定词）⇒ 仍 1 条 retract。
+	b := "我已读了 `core/internal/loopcore/nonexistent_x.go:999`，第 999 行是 func main()。"
+	gotB := VerifyNumericClaims(b, nil, root)
+	if len(gotB.HardFailed) != 1 || gotB.HardFailed[0].Verdict != VerdictRetract {
+		t.Fatalf("★ (b) 肯定引用一个不存在的件 ⇒ 仍应 1 条 retract，实际 %+v", gotB.HardFailed)
+	}
+	if !strings.Contains(gotB.HardFailed[0].Claim.ReceiptID, "core/internal/loopcore/nonexistent_x.go:999") {
+		t.Fatalf("★ (b) 合成回执号应点名该引用：%+v", gotB.HardFailed[0].Claim)
+	}
+
+	// (c) 正控 2：真存在的件 ＋ 行号超界，句内无否定词 ⇒ 仍 1 条 retract。
+	c := "该件共 3 行，第 core/x/y.go:999999 行是 func A() {}。"
+	gotC := VerifyNumericClaims(c, nil, root)
+	if len(gotC.HardFailed) != 1 || gotC.HardFailed[0].Verdict != VerdictRetract {
+		t.Fatalf("★ (c) 行号超界（真件 3 行、引 999999）⇒ 仍应 1 条 retract，实际 %+v", gotC.HardFailed)
+	}
+	t.Logf("(b) %s · (c) %s", gotB.HardFailed[0].Verdict, gotC.HardFailed[0].Verdict)
+}
+
+// TestVerifyNumericClaims_TruthfulAffirmativeStaysClean — (d) 真话组：真件 ＋ 合法行号 ＋ 肯定引用 ⇒ 空。
+func TestVerifyNumericClaims_TruthfulAffirmativeStaysClean(t *testing.T) {
+	root := numRootWith(t, map[string]string{"core/x/y.go": "package x\n\nfunc A() {}\n\nfunc B() {}\n"})
+	body := "我已读了 `core/x/y.go:3`，该件共 5 行，第 3 行是 func A() {}。"
+	if got := VerifyNumericClaims(body, nil, root); len(got.HardFailed) != 0 {
+		t.Fatalf("★ (d) 真话（真件 ＋ 行号在范围内 ＋ 肯定引用）⇒ HardFailed 必须为空，实际 %+v", got.HardFailed)
+	}
+	t.Log("(d) 真话：硬核 0 条")
+}
+
+// TestVerifyNumericClaims_DenialInOtherSentenceStillJudged — 边界：语境判定是**同句**，不是整段。
+//
+// 两句各自成立：前一句是肯定引用、后一句说的是另一件事 ⇒ 前一句照判（不然「段尾提一句不存在」
+// 就能把整段假引用洗白）。这一格同时钉住「窗口没有放大成整篇」。
+func TestVerifyNumericClaims_DenialInOtherSentenceStillJudged(t *testing.T) {
+	root := numRepoRoot(t)
+	body := "我已读了 core/internal/loopcore/nonexistent_tooth_test.go:42，第 42 行是 func main()。" +
+		"另：core/internal/loopcore/also_missing.go:7 这个文件不在仓里。"
+	got := VerifyNumericClaims(body, nil, root)
+	if len(got.HardFailed) != 1 {
+		t.Fatalf("★ 否定词只出现在**另一句** ⇒ 前一句的肯定引用仍应判 1 条，实际 %d 条：%+v",
+			len(got.HardFailed), got.HardFailed)
+	}
+	if !strings.Contains(got.HardFailed[0].Claim.Quote, "nonexistent_tooth_test.go:42") {
+		t.Fatalf("★ 判红的应是前一句那处肯定引用：%+v", got.HardFailed[0].Claim)
+	}
+	t.Logf("(h) 跨句不豁免：%s · %q", got.HardFailed[0].Verdict, got.HardFailed[0].Claim.Quote)
 }

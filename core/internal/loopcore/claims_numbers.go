@@ -23,6 +23,13 @@
 //	   ★ **只判「存在 ∧ 行号在范围内」**，✗ **不判「该行内容对不对」** —— 后者是语义判断（同一行常被
 //	   概括转述），判它会误杀，本批不做（留在语义核查那一层）。
 //
+//	   ★★ **同句语境判定（GAP-20261018-04）**：这处 `件:行` 只有在**肯定引用**时才算主张 ——
+//	   同一句里出现「否定 / 不存在」或「疑问 / 假设」词（见 `numericNonAssertiveWords`）⇒ **不判**：
+//	   那是在复述题面、或在说「这个件没有」，不是「我引用了这个件的这一行」。
+//	   铁证（实测那一发）：题面自带一个**不存在**的路径，模型老实答「这个文件不在仓里，第 42 行
+//	   无从谈起」并把题面的路径原样复述一遍 ⇒ 旧口径判 1 条 retract、正文被追加【降级完成】终局
+//	   说明，**诚实回答被误杀**。★ 判据一律**保守优先**（见下「边界」末条）。
+//
 //	③ 软 · 其它计数（`136 件` / `1114 断言` / `陈旧 7` 这类）—— **只写进 `SoftNotes`**：
 //	   ✗ 不生成主张、✗ 不进正文、✗ 不判红。理由：这类数字可能引自缺口账 / 上下文 / 门的历史读数，
 //	   一律判红会逼模型**不敢报数**（比漏判更坏）。
@@ -38,6 +45,8 @@
 //	· `root` 为空 ⇒ **只核 rc、不判文件引用**（解析不了根就别猜；零回归）。
 //	· 引用是绝对路径 / 含 `..` / 在 URL 里 ⇒ 不判（不是「仓内件:行」这种形态）。
 //	· 件读不了（权限等）⇒ 不判（判不出来就不猜，与 `traceExitCode` 同一条纪律）。
+//	· ★ **同句带否定 / 疑问 / 假设词 ⇒ 不判**（`numericRefIsAssertion`）—— **保守优先：拿不准就不判**；
+//	  宁可放过一个假引用，不可再误杀一段诚实回答（误杀的代价是给真话追加终局说明，比漏判严重得多）。
 //	· 软核**恒不影响**产出正文：`SoftNotes` 只进内存结构，谁都不许把它写进 `res.Content`。
 package loopcore
 
@@ -49,6 +58,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // NumericClaimCheck — 正文硬断言的核对结果（纯数据；✗ 不含任何裁决机制）。
@@ -86,6 +96,79 @@ var (
 	// numericFileRefAny — `<路径>:<数字>`，路径含 `/`（后缀不在已知集里也算引用）。
 	numericFileRefAny = regexp.MustCompile(`[\p{L}\p{N}_.\-@+~]+(?:/[\p{L}\p{N}_.\-@+~]+)+:([0-9]+)`)
 )
+
+// numericNonAssertiveWords — 「同句里出现这些词 ⇒ 该处 `件:行` **不是**在主张这个引用」的词表。
+//
+// 两组（逐字，改这里必须同批改 claims_numbers_test.go 的四组用例）：
+//
+//	① 否定 / 不存在 —— 模型在说「这个件没有」；
+//	② 疑问 / 假设 —— 模型在复述题面、问要不要、给条件式。
+//
+// ★ **保守优先：拿不准就不判。** 这张表只增不减，措辞上拿不准的一律按「不是主张」处理 ——
+// 宁可放过一个假引用（漏判），不可再误杀一段诚实回答（误杀会把真话追加【降级完成】终局说明）。
+var numericNonAssertiveWords = []string{
+	// ① 否定 / 不存在
+	"不存在", "没有", "不在", "无从谈起", "找不到", "缺失", "查无", "并无", "未找到",
+	// ② 疑问 / 假设
+	"如果你", "是否需要", "要不要", "假如", "假设", "若是", "如果要", "请确认",
+}
+
+// numericRefIsAssertion — 这处 `件:行` 是否属**肯定引用**（该判）；同句带非主张词 ⇒ false（不判）。
+//
+// ★ 判之前先把 `ref` 本身从同句里摘掉：词表要判的是**行文**，不是路径 —— 路径自己就可能带这些字
+// （`core/xxx/不存在.go:12` 是既有用例里的真形态），把路径算进去会把「肯定引用了这个不存在的件」
+// 也一起放过（那就成了漏判一条本来就该判的假引用）。
+func numericRefIsAssertion(sentence, ref string) bool {
+	ctx := sentence
+	if ref != "" {
+		ctx = strings.ReplaceAll(ctx, ref, " ")
+	}
+	for _, w := range numericNonAssertiveWords {
+		if strings.Contains(ctx, w) {
+			return false
+		}
+	}
+	return true
+}
+
+// claimSentenceBreak — 句子边界（与 `splitClaimSentences` 同一套：换行与中英硬句读；逗号**不**切）。
+//
+// ★ 这里另写一份而不是复用该函数：本腿要的是「某个**位置**所在的那一句」，需要边界的字节偏移，
+// 而 `splitClaimSentences` 只给切好的串、给不回位置。两处集合必须一致（改一处要同批核另一处）。
+func claimSentenceBreak(r rune) bool {
+	switch r {
+	case '\n', '\r', '。', '！', '？', '；', ';', '!', '?':
+		return true
+	}
+	return false
+}
+
+// sentenceAround — 取该字节位置所在的**一句**（裁剪空白；位置越界 ⇒ 空串 ⇒ 判不出来就不判）。
+func sentenceAround(content string, pos int) string {
+	if pos < 0 || pos > len(content) {
+		return ""
+	}
+	lo, hi := 0, len(content)
+	for i := 0; i < pos && i < len(content); {
+		r, w := utf8.DecodeRuneInString(content[i:])
+		if claimSentenceBreak(r) {
+			lo = i + w
+		}
+		i += w
+	}
+	for i := pos; i < len(content); {
+		r, w := utf8.DecodeRuneInString(content[i:])
+		if claimSentenceBreak(r) {
+			hi = i
+			break
+		}
+		i += w
+	}
+	if lo > hi || lo > len(content) {
+		return ""
+	}
+	return strings.TrimSpace(content[lo:hi])
+}
 
 // VerifyNumericClaims — 对定稿正文跑硬核（rc / 文件:行）与软核（其它计数）。
 //
@@ -221,14 +304,16 @@ func numericRCClaim(sentence string, cs []claimCand) (Claim, bool) {
 
 // fileRefHit — 一处 `文件:行` 引用及其所在行（所在行只作主张正文，参与判定）。
 type fileRefHit struct {
-	ref string // 逐字引用串（`core/x/y.go:12`）
-	ctx string // 引用所在的那一行（裁剪后）
+	ref  string // 逐字引用串（`core/x/y.go:12`）
+	ctx  string // 引用所在的那一行（裁剪后；只作主张正文）
+	sent string // 与 ref **同句**的语境（带否定 / 疑问 / 假设词 ⇒ 不判，见 numericRefIsAssertion）
 }
 
 // scanFileLineRefs — 扫出正文里所有 `文件:行` 引用（去重、保序）。
 //
 // 跳过：URL 里的（`https://h/a.go:1`）、以及 `--flag=core/x:12` 这种紧随 `=` 的旗标取值
-// （那是参数、不是「引用了这个件的这一行」）。
+// （那是参数、不是「引用了这个件的这一行」）；**同句带否定 / 疑问 / 假设词的也跳过**（判在
+// `judgeFileLineRef` 入口，这里先把同句语境一并取好 —— 取不出语境（空串）也不据此跳过）。
 func scanFileLineRefs(content string) []fileRefHit {
 	var out []fileRefHit
 	seen := make(map[string]bool, 8)
@@ -244,7 +329,11 @@ func scanFileLineRefs(content string) []fileRefHit {
 			return
 		}
 		seen[ref] = true
-		out = append(out, fileRefHit{ref: ref, ctx: lineAround(content, m[0])})
+		out = append(out, fileRefHit{
+			ref:  ref,
+			ctx:  lineAround(content, m[0]),
+			sent: sentenceAround(content, m[0]),
+		})
 	}
 	for _, m := range numericFileRefKnown.FindAllStringIndex(content, -1) {
 		add(m)
@@ -293,10 +382,16 @@ func lineAround(content string, pos int) string {
 	return s
 }
 
-// judgeFileLineRef — 判一处引用：只判「件在不在 ∧ 行号在不在范围内」。
+// judgeFileLineRef — 判一处引用：先判「这是不是**肯定引用**」，再判「件在不在 ∧ 行号在不在范围内」。
 //
-// 返回 (主张, 是否判红)。判不出来（root 空 / 绝对路径 / 含 `..` / 读不了件）⇒ false（不猜）。
+// 返回 (主张, 是否判红)。判不出来（同句带非主张词 / root 空 / 绝对路径 / 含 `..` / 读不了件）
+// ⇒ false（不猜）。
 func judgeFileLineRef(hit fileRefHit, root string) (Claim, bool) {
+	// ★ 同句语境优先：句子里已经在说「不存在 / 如果你要 / 要不要」⇒ 这是复述题面或否定陈述，
+	// 不是「我引用了这个件的这一行」⇒ **不判**（保守优先，见 numericNonAssertiveWords）。
+	if !numericRefIsAssertion(hit.sent, hit.ref) {
+		return Claim{}, false
+	}
 	i := strings.LastIndex(hit.ref, ":")
 	if i <= 0 {
 		return Claim{}, false
