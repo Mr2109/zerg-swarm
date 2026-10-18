@@ -132,10 +132,15 @@ const ffpIdentDepthMax = 4
 const (
 	ffpLegalFieldsPrefix = "合法字段:"
 	// 腿②「公告 == 可选」：一枚字段被判**选不出**时制品逐字打的标记（`zerg: 未知字段 "<f>"`）。
-	ffpUnknownFieldMark  = "未知字段"
-	ffpBogus             = "zzz-nonexistent-zz"
-	ffpPerCmdTimeout     = 15
-	ffpMinCoveredDefault = 29
+	ffpUnknownFieldMark = "未知字段"
+	ffpBogus            = "zzz-nonexistent-zz"
+	ffpPerCmdTimeout    = 15
+	// ★ 自检合成夹具的探针预算（GAP-20261019-05）：夹具是 `/bin/sh` 一行脚本，只验判据不验时延；
+	// 原先 2s/3s 在满载机上把「探针还没跑起来」读成「够不着」⇒ covered=0 ⇒ run() rc=2 ⇒ 端到端正控假红。
+	// 取 2× 生产预算（`ffpPerCmdTimeout`=15s）⇒ 判定面一个字节不改，只把夹具的时延噪声挤出去。
+	ffpSelfTestProbeTO     = 30 * time.Second
+	ffpSelfTestProbeTORepr = "30"
+	ffpMinCoveredDefault   = 29
 	// ★ 腿② 棘轮（`--min-selectable`）：今天能逐枚打靶的**格数**下限（只许上调、永不下调）。
 	ffpMinSelectableDefault = 92
 )
@@ -964,6 +969,21 @@ func ffpRun(root, binpath string, minCovered int, timeout time.Duration, timeout
 
 // ── 成对负控自检（py `selftest` · 7 控）────────────────────────────────────────
 
+// ffpSelfTestWhy —— 端到端夹具的失败诊断串（GAP-20261019-05）：rc ＋ 两条覆盖读数 ＋ 首条「够不着」原因。
+// 只打 `rc=2` 判不了「探针超时」与「判据真红」（两者码位相同）；满载机上因此说不清是谁的错。
+func ffpSelfTestWhy(rc int, res ffpResult) string {
+	why := "rc=" + strconv.Itoa(rc) +
+		" covered=" + strconv.Itoa(res.covered) + "/" + strconv.Itoa(res.minCovered) +
+		" sel_covered=" + strconv.Itoa(res.selCovered) + "/" + strconv.Itoa(res.minSelectable)
+	if len(res.notComparable) > 0 {
+		why += " nope:" + res.notComparable[0].path + "=" + res.notComparable[0].reason
+	}
+	if res.errorMsg != "" {
+		why += " err:" + res.errorMsg
+	}
+	return why
+}
+
 func ffpSelfTest(stdout io.Writer) int {
 	ok := true
 	chk := func(name string, cond bool, why string) {
@@ -1083,20 +1103,20 @@ func ffpSelfTest(stdout io.Writer) int {
 			"if [ \"$f\" = \"" + ffpBogus + "\" ]; then\n" +
 			"  printf '%s\\n' \"zerg: " + ffpUnknownFieldMark + " \\\"" + ffpBogus + "\\\"\" \"" +
 			ffpLegalFieldsPrefix + " host,model\" >&2\n  exit 2\nfi\nexit 0")
-		rcG, _ := ffpRun(tmp2, green, 1, 2*time.Second, "2", 1)
-		chk("腿②端到端正控：假制品全接受 ⇒ run() rc=0", rcG == 0, "rc="+strconv.Itoa(rcG))
+		rcG, resG := ffpRun(tmp2, green, 1, ffpSelfTestProbeTO, ffpSelfTestProbeTORepr, 1)
+		chk("腿②端到端正控：假制品全接受 ⇒ run() rc=0", rcG == 0, ffpSelfTestWhy(rcG, resG))
 		// ★ 红档（成对）：对登记格打「未知字段 <f>」**却**把 f 列进同条清单 = 「公告 ≠ 可选」⇒ 必红。
 		red := mk("f=\"\"\nfor a in \"$@\"; do f=\"$a\"; done\n" +
 			"printf '%s\\n' \"zerg: " + ffpUnknownFieldMark + " \\\"$f\\\"\" \"" +
 			ffpLegalFieldsPrefix + " host,model\" >&2\nexit 2")
-		rcR, resR := ffpRun(tmp2, red, 1, 2*time.Second, "2", 1)
+		rcR, resR := ffpRun(tmp2, red, 1, ffpSelfTestProbeTO, ffpSelfTestProbeTORepr, 1)
 		hit := false
 		for _, c := range resR.selContra {
 			if c.path == "zz ffp" && c.field == "model" {
 				hit = true
 			}
 		}
-		chk("腿②端到端负控（公告≠可选 ⇒ 必红）：run() rc=1 且逐格点名", rcR == 1 && hit, "rc="+strconv.Itoa(rcR))
+		chk("腿②端到端负控（公告≠可选 ⇒ 必红）：run() rc=1 且逐格点名", rcR == 1 && hit, ffpSelfTestWhy(rcR, resR))
 		_ = os.RemoveAll(tmp2) // ★ 自回收
 	}
 
@@ -1117,7 +1137,7 @@ func ffpSelfTest(stdout io.Writer) int {
 			"  *) exit 0;;\nesac\n"
 		bin := ffpPyJoin(tmp3, "fakerz")
 		_ = os.WriteFile(bin, []byte(script), 0o755)
-		rcNP, resNP := ffpRun(tmp3, bin, 2, 3*time.Second, "3", 1)
+		rcNP, resNP := ffpRun(tmp3, bin, 2, ffpSelfTestProbeTO, ffpSelfTestProbeTORepr, 1)
 		npHit := []string{}
 		for _, c := range resNP.selNotProbed {
 			if c.path == "gate bench" {

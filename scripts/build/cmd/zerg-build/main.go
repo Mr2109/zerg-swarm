@@ -39,7 +39,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"time"
+
+	"zerg-build/internal/zgb"
 )
 
 const usage = `用法: go run ./cmd/zerg-build [--debug] [--dist <目录>] [--repo-root <仓根>]
@@ -259,42 +260,13 @@ func dirExists(p string) bool {
 	return err == nil && fi.IsDir()
 }
 
-// copyPreserve ≈ `cp -p`：复制内容并保留权限与时间戳（ad-hoc 签名在 Mach-O 体内，随字节走）。
-func copyPreserve(src, dst string) error {
-	fi, err := os.Stat(src)
-	if err != nil {
-		return err
-	}
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	tmp := dst + ".tmp-zergbuild"
-	out, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, fi.Mode().Perm())
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(out, in); err != nil {
-		out.Close()
-		os.Remove(tmp)
-		return err
-	}
-	if err := out.Close(); err != nil {
-		os.Remove(tmp)
-		return err
-	}
-	if err := os.Chmod(tmp, fi.Mode().Perm()); err != nil {
-		os.Remove(tmp)
-		return err
-	}
-	_ = os.Chtimes(tmp, time.Now(), fi.ModTime())
-	if err := os.Rename(tmp, dst); err != nil {
-		os.Remove(tmp)
-		return err
-	}
-	return nil
-}
+// copyPreserve ≈ `cp -p`：**委派** zgb.CopyPreserve（唯一的拷贝实现）。
+//
+// ★ 血证（2026-10-18 · GAP-20261018-26）：本件原先自带一份同形实现、临时件名是
+// `dst + ".tmp-zergbuild"` ⇒ 与 build-all 的写者共用同一个临时名，并发时逐字报
+// `rename <…>/zerg-wall.tmp-zergbuild <…>/zerg-wall: no such file or directory`
+// 并退 2，`make build` 整条中止。两份实现必漂，故只留一份。
+func copyPreserve(src, dst string) error { return zgb.CopyPreserve(src, dst) }
 
 func sizeAndSHA(p string) (int64, string) {
 	fi, err := os.Stat(p)

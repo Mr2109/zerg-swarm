@@ -188,38 +188,44 @@ func SizeAndSHA(p string) (int64, string) {
 }
 
 // CopyPreserve ≈ `cp -p`：复制内容并保留权限与时间戳（ad-hoc 签名在 Mach-O 体内，随字节走）。
+//
+// ★ 临时件名必须**逐调用唯一**：早先写成 `dst + ".tmp-zergbuild"` ⇒ 所有写者对同一 dst
+// 共用同一个临时名，甲 rename 走后乙的 chmod/rename 逐字报
+// `rename <…>/zerg-wall.tmp-zergbuild <…>/zerg-wall: no such file or directory`
+// （并发实测 16 路里 14–15 路失败；两趟 `make build` 并行即中招、make 退 1）。
+// 正解 = 同目录 `os.CreateTemp`（随机尾 ⇒ 各拿一份）＋ `os.Rename`（同文件系统 ⇒ 原子替换）。
 func CopyPreserve(src, dst string) error {
 	fi, err := os.Stat(src)
 	if err != nil {
-		return err
+		return fmt.Errorf("拷贝 %s → %s：源件读不到：%w", src, dst, err)
 	}
 	in, err := os.Open(src)
 	if err != nil {
-		return err
+		return fmt.Errorf("拷贝 %s → %s：源件打不开：%w", src, dst, err)
 	}
 	defer in.Close()
-	tmp := dst + ".tmp-zergbuild"
-	out, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, fi.Mode().Perm())
+	out, err := os.CreateTemp(filepath.Dir(dst), filepath.Base(dst)+".tmp-zergbuild-")
 	if err != nil {
-		return err
+		return fmt.Errorf("拷贝 %s → %s：临时件建不起来：%w", src, dst, err)
 	}
+	tmp := out.Name()
 	if _, err := io.Copy(out, in); err != nil {
 		out.Close()
 		os.Remove(tmp)
-		return err
+		return fmt.Errorf("拷贝 %s → %s：写临时件失败：%w", src, dst, err)
 	}
 	if err := out.Close(); err != nil {
 		os.Remove(tmp)
-		return err
+		return fmt.Errorf("拷贝 %s → %s：关临时件失败：%w", src, dst, err)
 	}
 	if err := os.Chmod(tmp, fi.Mode().Perm()); err != nil {
 		os.Remove(tmp)
-		return err
+		return fmt.Errorf("拷贝 %s → %s：改权限失败：%w", src, dst, err)
 	}
 	_ = os.Chtimes(tmp, time.Now(), fi.ModTime())
 	if err := os.Rename(tmp, dst); err != nil {
 		os.Remove(tmp)
-		return err
+		return fmt.Errorf("拷贝 %s → %s：改名为最终件失败：%w", src, dst, err)
 	}
 	return nil
 }
