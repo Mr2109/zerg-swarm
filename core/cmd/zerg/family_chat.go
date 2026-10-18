@@ -1599,6 +1599,8 @@ func cmdChatAsk(inv *invocation, stdout, stderr io.Writer) int {
 	if !streaming {
 		// ★ 正文即结果：stdout **只有**成稿（进度/落点一律 stderr · §5.5 ②）。
 		out := row["content"]
+		// ★ GAP-20261018-25 第二半：报了数字却没带执行凭据 ⇒ 尾注未取证（只标不拦）。
+		out = annotateUnbackedClaims(out)
 		fmt.Fprint(stdout, out)
 		if !strings.HasSuffix(out, "\n") {
 			fmt.Fprintln(stdout)
