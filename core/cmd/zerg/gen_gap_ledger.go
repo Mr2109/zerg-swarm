@@ -85,8 +85,9 @@ const gglSourceName = "zerg-cli-gaps.jsonl"
 const gglExportTimeout = 90 * time.Second
 
 var (
-	// py `^缺口总账-(\d{8})\.md$`（`\d` Unicode ⇒ `\p{Nd}`）。
-	gglLedgerNameRE = regexp.MustCompile(`^缺口总账-[\p{Nd}]{8}\.md$`)
+	// 账本件名不再本件自写：族名口径见 ledger_family.go（ledgerFamilySplit · 单件名只是
+	// 族里「后缀=空」那一件）。GAP-20260927-323：旧读法 `^缺口总账-[\p{Nd}]{8}\.md$` 只认单件名
+	// ⇒ 一套逻辑产出的族里，页件与「无索引件的族」整族不可见。
 	// py `·\s*(\d{4})-(\d{2})-(\d{2})\s*$` with re.M（`\s` 近似为 ASCII 空白类，见未覆盖面）。
 	gglExportDateRE = regexp.MustCompile(`(?m)·[ \t\n\r\f\v]*([\p{Nd}]{4})-([\p{Nd}]{2})-([\p{Nd}]{2})[ \t\n\r\f\v]*$`)
 	// py `^Q-\d+$`（`\d` Unicode ⇒ `\p{Nd}`）。
@@ -276,7 +277,9 @@ func gglUniversalNL(s string) string {
 
 // ── 版本线 / 日期 / 落点 ──────────────────────────────────────────────────
 
-type gglCand struct{ ver, rel string }
+// gglCand —— 一件族成员（ver = 版本线目录名 · rel = 文档仓相对路径 · key = 族键
+// `缺口总账-<日期>` · kind = index/page/member）。
+type gglCand struct{ ver, rel, key, kind string }
 
 // gglWalk —— os.walk 产出序：先文件（readdir 原序）后按子目录原序下钻（followlinks=false 见未覆盖面）。
 func gglWalk(root string, fn func(dirpath string, files []string)) {
@@ -324,7 +327,9 @@ func gglLedgerCandidates(docs string) []gglCand {
 		}
 		gglWalk(vdir, func(dirpath string, files []string) {
 			for _, fn := range files {
-				if !gglLedgerNameRE.MatchString(fn) {
+				// 族名口径走共用规则：单件名只是族里「后缀=空」那一件，页件 / `-页` / `-1..-9` 同属一族。
+				piece, isFam := ledgerFamilySplit(fn)
+				if !isFam {
 					continue
 				}
 				rel := gglPyRelpath(gglPyJoin(dirpath, fn), docs)
@@ -338,7 +343,7 @@ func gglLedgerCandidates(docs string) []gglCand {
 				if exempt {
 					continue
 				}
-				out = append(out, gglCand{ver: ver, rel: rel})
+				out = append(out, gglCand{ver: ver, rel: rel, key: piece.Key, kind: piece.Kind})
 			}
 		})
 	}
@@ -377,19 +382,66 @@ func gglVerKeyLess(a, b gglVerKey) bool {
 	return a.s < b.s
 }
 
-// gglPickVersionDir —— 现读含结转账的最新版本线（sorted(..., key=vkey)[-1]）；读不到 ⇒ ("", false)。
-func gglPickVersionDir(docs string) (string, bool) {
-	cand := gglLedgerCandidates(docs)
-	if len(cand) == 0 {
-		return "", false
+// gglLedgerFamily —— 一族账本件（族键下的全部成员 · 旧读法只看得到最后一件）。
+type gglLedgerFamily struct {
+	Ver     string
+	Key     string
+	Members []gglCand // 按 rel 排序
+}
+
+// gglCandLess —— 挑最新族/最新件的同一把尺子：(版本线 vkey, 族键日期, 族键, 相对件名)。
+func gglCandLess(a, b gglCand) bool {
+	av, bv := gglVkey(a.ver), gglVkey(b.ver)
+	if gglVerKeyLess(av, bv) {
+		return true
 	}
-	best := 0
-	for i := 1; i < len(cand); i++ {
-		if gglVerKeyLess(gglVkey(cand[best].ver), gglVkey(cand[i].ver)) {
+	if gglVerKeyLess(bv, av) {
+		return false
+	}
+	ad, bd := ledgerFamilyDateKey(a.key), ledgerFamilyDateKey(b.key)
+	if ad != bd {
+		return ad < bd
+	}
+	if a.key != b.key {
+		return a.key < b.key
+	}
+	return a.rel < b.rel
+}
+
+// gglPickFamily —— 现读最新的「账本族」并交出**族里每一件**（见 ledger_family.go 的族名口径）。
+// 旧读法 `cand.sort(key=vkey)[-1]` 只挑一件（且候选只收单件名）⇒ 族里其余件不可见。
+// needIndex=true ⇒ 只挑「族里有索引件（后缀=空）」的族：落点要写索引件，✗ 不拿页件族当落点。
+func gglPickFamily(docs string, needIndex bool) (gglLedgerFamily, bool) {
+	cands := gglLedgerCandidates(docs)
+	best := -1
+	for i := range cands {
+		if needIndex && cands[i].kind != "index" {
+			continue
+		}
+		if best < 0 || gglCandLess(cands[best], cands[i]) {
 			best = i
 		}
 	}
-	return cand[best].ver, true
+	if best < 0 {
+		return gglLedgerFamily{}, false
+	}
+	fam := gglLedgerFamily{Ver: cands[best].ver, Key: cands[best].key}
+	for _, c := range cands {
+		if c.ver == fam.Ver && c.key == fam.Key {
+			fam.Members = append(fam.Members, c)
+		}
+	}
+	sort.SliceStable(fam.Members, func(i, j int) bool { return fam.Members[i].rel < fam.Members[j].rel })
+	return fam, true
+}
+
+// gglPickVersionDir —— 现读含结转账的最新版本线；读不到 ⇒ ("", false)。
+// 签名与调用点不变（✗ 不再自己挑单件），实现改由 gglPickFamily 的族挑选给出。
+func gglPickVersionDir(docs string) (string, bool) {
+	if fam, ok := gglPickFamily(docs, true); ok {
+		return fam.Ver, true
+	}
+	return "", false
 }
 
 // gglExportDate —— 从 export 人面取 `YYYYMMDD`（取不到 ⇒ ("", false)）。
@@ -440,7 +492,8 @@ func gglReadBytes(path string) ([]byte, bool) {
 //
 // ★ 六值面闭集复用 `gapImpactClosed`（`family_gap_export.go` 的真源），✗ 不另抄一份。
 
-const gglLedgerPrefix = "缺口总账"
+// gglLedgerPrefix —— 族名前缀（取自 ledger_family.go 的唯一字面量）。
+const gglLedgerPrefix = ledgerFamilyName
 
 var (
 	// 索引件首行：`## 缺口真源导出（**只列未闭**） · <YYYYMMDD|YYYY-MM-DD>`
@@ -1567,8 +1620,8 @@ func gglMain(stdout, stderr io.Writer, a gglArgs, repoRoot string) int {
 	ver := a.versionDir
 	if ver == "" {
 		if st, err := os.Stat(docs); err == nil && st.IsDir() {
-			if v, ok := gglPickVersionDir(docs); ok {
-				ver = v
+			if fam, ok := gglPickFamily(docs, true); ok {
+				ver = fam.Ver
 			}
 		}
 	}

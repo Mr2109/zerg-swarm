@@ -60,10 +60,9 @@ var (
 )
 
 var (
-	glvLedgerNameRE     = regexp.MustCompile(`^缺口总账-(\d{8})\.md$`)
-	glvLedgerDatePat    = `(\d{8}|\d{4}-\d{2}-\d{2})`
-	glvIndexNameRE      = regexp.MustCompile(`^缺口总账-` + glvLedgerDatePat + `\.md$`)
-	glvPageNameRE       = regexp.MustCompile(`^缺口总账-` + glvLedgerDatePat + `-([^-]+)-p(\d{2})\.md$`)
+	// 账本件名与日期写法不再本件自写：族名口径见 ledger_family.go（ledgerFamilySplit）。
+	// GAP-20260927-323：旧三枚（LedgerNameRE / IndexNameRE / PageNameRE）与生成器那份各认一套
+	// ⇒ 一套逻辑产出的族只有最后一件被看见；现门与生成器同调一份规则。
 	glvHdrRE            = regexp.MustCompile(`真源条数 \*\*(\d+)\*\* · 未闭 \*\*(\d+)\*\* · 已闭 \*\*(\d+)\*\*（其中「不做」\*\*(\d+)\*\*）`)
 	glvFaceRE           = regexp.MustCompile(`(?m)^> 按面：(.+)$`)
 	glvBulletRE         = regexp.MustCompile("^- `([^`]+)` (\\S+) · \\*\\*([^*]+)\\*\\* · ")
@@ -712,6 +711,7 @@ type glvFound struct {
 type glvFamily struct {
 	Index       *glvFound
 	Pages       []*glvFound
+	Members     []*glvFound // 族内非「索引 / 面页」件（`-页` / `-附` / `-1..-9`）
 	Family      []*glvFound
 	History     []*glvFound
 	Exempt      []*glvFound
@@ -749,6 +749,8 @@ func glvVkeyLess(a, b []int) bool {
 func glvCollectFamily(docs string) *glvFamily {
 	base := glvPyJoin(docs, glvLedgerDir)
 	var found []*glvFound
+	// members —— 族内「非索引 / 非面页」件（`-页` / `-附` / `-1..-9`）；旧读法把它们整件丢掉。
+	var members []*glvFound
 	if st, err := os.Stat(base); err == nil && st.IsDir() {
 		verEntries, _ := os.ReadDir(base)
 		var vers []string
@@ -765,27 +767,25 @@ func glvCollectFamily(docs string) *glvFamily {
 				sf := append([]string{}, files...)
 				sort.Strings(sf)
 				for _, fn := range sf {
-					pm := glvPageNameRE.FindStringSubmatch(fn)
-					m := glvIndexNameRE.FindStringSubmatch(fn)
-					if pm == nil && m == nil {
+					// 族名口径全部走共用规则（ledger_family.go）：单件名只是族里「后缀=空」那一件。
+					piece, isFam := ledgerFamilySplit(fn)
+					if !isFam {
 						continue
 					}
 					p := glvPyJoin(root, fn)
 					rel := glvPyRelpath(p, docs)
-					g := pm
-					if g == nil {
-						g = m
+					x := &glvFound{Path: p, Rel: rel, Ver: ver, Dir: glvPyDirname(p),
+						Kind: piece.Kind, Date: piece.Date, DateKey: ledgerFamilyDateKey(piece.Key),
+						Face: piece.Face, Page: piece.Page, Exempt: glvExempt(rel)}
+					if piece.Kind == "member" {
+						// 族内非「索引 / 面页」件：旧读法在这一行 continue ⇒ 整件静默丢出族外
+						// （连 History 都进不去）。现在登记进族的 Members，✗ 不再丢件。
+						if !x.Exempt {
+							members = append(members, x)
+						}
+						continue
 					}
-					kind := "index"
-					face, page := "", ""
-					if pm != nil {
-						kind = "page"
-						face = pm[2]
-						page = pm[3]
-					}
-					found = append(found, &glvFound{Path: p, Rel: rel, Ver: ver, Dir: glvPyDirname(p),
-						Kind: kind, Date: g[1], DateKey: strings.ReplaceAll(g[1], "-", ""),
-						Face: face, Page: page, Exempt: glvExempt(rel)})
+					found = append(found, x)
 				}
 			})
 		}
@@ -852,13 +852,16 @@ func glvCollectFamily(docs string) *glvFamily {
 			}
 		}
 	}
-	fam := &glvFamily{Index: index, Pages: pages, OrphanPages: orphans}
+	fam := &glvFamily{Index: index, Pages: pages, Members: members, OrphanPages: orphans}
 	if index != nil {
 		fam.Family = append(fam.Family, index)
 	}
 	fam.Family = append(fam.Family, pages...)
 	famPaths := map[string]bool{}
 	for _, x := range fam.Family {
+		famPaths[x.Path] = true
+	}
+	for _, x := range fam.Members {
 		famPaths[x.Path] = true
 	}
 	for _, x := range found {
@@ -1327,6 +1330,7 @@ func glvRun(root, docsRoot, source string, jsonOut bool, exportCmd []string, def
 			familyIDsVal = len(famIDs)
 		}
 		meta.set("ledger_family", glvKV("index", indexRel, "pages", len(pages),
+			"family_members", len(fam.Members),
 			"family_ids", familyIDsVal, "orphan_pages", len(fam.OrphanPages)))
 		meta.set("fingerprint", glvKV("export_fp", glvNilIfEmpty(expFP), "ledger_fp", glvNilIfEmpty(ledFP),
 			"ledger_generated", ledGenerated, "verdict", verdict))
@@ -1359,6 +1363,7 @@ func glvRun(root, docsRoot, source string, jsonOut bool, exportCmd []string, def
 	fmt.Fprintf(stdout, "  当期索引件: %s\n", curRel)
 	fmt.Fprintf(stdout, "  页件    : %d 件（历史件 %d · 豁免件 %d · 非族页件 %d）\n",
 		len(pages), len(history), len(exempt), len(fam.OrphanPages))
+	fmt.Fprintf(stdout, "  族内另件: %d 件（`-页` / `-附` / `-1..-9` ⇒ 门亦见其件）\n", len(fam.Members))
 	if len(problems) == 0 {
 		fmt.Fprintf(stdout, "  ── R1 三方对拍 ──\n")
 		fmt.Fprintf(stdout, "     真源    : %d 条 · 未闭 %d · 已闭 %d\n", len(sread.Recs), len(sread.Open), len(sread.Closed))

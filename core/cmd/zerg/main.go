@@ -370,6 +370,13 @@ func run(args []string, stdout, stderr io.Writer) int {
 	if inv.hasFlag("--judge-cmd") && !usageDeclaresFlag(cmd, "--judge-cmd") {
 		inv.unknown = append(inv.unknown, "--judge-cmd")
 	}
+	// ★ 同一条数据驱动收口（缺口 `GAP-20261010-16` · want③）：`--window-min` 在解析面刚上户口
+	//   （`valueFlagName`）⇒ 全族共用；若不在此收口，别族（usage 未列它的命令）真给它
+	//   会从「未知旗标 2」退化成**静默吞**（硬约束⑤：既有命令的退码与输出一字不动）。
+	//   形状逐字照拄上面 `--judge-cmd` 那条（把不归本命令的那一枚**补回 `inv.unknown`**）。
+	if inv.hasFlag("--window-min") && !usageDeclaresFlag(cmd, "--window-min") {
+		inv.unknown = append(inv.unknown, "--window-min")
+	}
 	// ★ 同一条数据驱动收口（缺口账 `GAP-20260928-172` · 2026-10-10 · 甲案）：`--force-recompute`
 	//   在解析面刚上户口（`parseInvocation` 专用 case）⇒ **全族共用**；若不在此收口，别族（usage
 	//   未列它的命令）真给它会从「未知旗标 2」退化成**静默吞**（硬约束⑤：既有命令的退码与输出
@@ -1135,16 +1142,18 @@ func init() {
 			path:     []string{"agent", "show"},
 			kind:     "Machine",
 			summary:  "看一台子端（投影 /api/fleet/status 的单机条目 —— 与 `agent ls` 同一份载荷）",
-			usage:    "zerg agent show <机器名> [--json <字段>]",
+			usage:    "zerg agent show <机器名> [--window-min <分钟>] [--json <字段>]",
 			arity:    "any",
 			args:     []string{"机器名"},
 			fields:   []string{"machine", "healthy", "code_version", "code_sha", "origin_sha", "same_origin", "cpu_pct", "gpu_pct", "mem_available_gb", "mem_total_gb", "models", "model", "backend_state", "active_requests", "gpu_used_gb", "backend_rss_gb", "gpu_temp_c", "last_seen"},
 			endpoint: "GET /api/fleet/status",
 			run:      cmdAgentShow,
-			// ★ 缺口 `GAP-20261010-16`：`recent_requests` 走**可选字段层**（`optFields`，与 `code find` 的
+			// ★ 缺口 `GAP-20261010-16`（want③）：`recent_requests`（最近 N 分钟请求数）与
+			//   `request_source`（当前请求来源）走**可选字段层**（`optFields`，与 `code find` 的
 			//   `count` 同一体例）—— 登在出口白名单里、`--json` 点得出来，却**不进** `fields` 那份
 			//   文档/帮助导出面的冻结表 ⇒ 随动面为零（✗ 不重生成命令页）。
-			optFields: []string{"recent_requests"},
+			//   ★ 两格都**只增不改**：载荷那 18 格的字段名/顺序一个字未动（旧消费侧零改动）。
+			optFields: []string{"recent_requests", "request_source"},
 		},
 		{
 			path:     []string{"agent", "models"},
@@ -5511,6 +5520,13 @@ func valueFlagName(a string) string {
 	switch a {
 	case "--file", "--message", "--proposal", "--tool", "--note", "--from", "--replace", "--root",
 		"--allow-cross-root", "--allow-sibling-repo", "--pre", "--removed", "--add-file":
+		return a
+	}
+	// ★ 缺口 `GAP-20261010-16`（want③）：`--window-min <分钟>` —— `agent show` 两列的**窗口宽度**
+	//   （默认 5 · 只收 1..1440；语义在 `cmdAgentShow` / `agentReqWindow` 里判）。与上面各排同一
+	//   口径：★ 本排是名字表「唯一真源」⇒ 不登记就一律退 2「未知旗标」= 新旗标等于不可用。
+	switch a {
+	case "--window-min":
 		return a
 	}
 	// 产出树面旗标（`W-50` · 任务单序132 · 2026-09-24 波17）：`--tree <树>`（**可重复** ——

@@ -79,7 +79,183 @@ func agentMarkUnknownGPU(o jsonObj, row map[string]string) {
 	}
 }
 
+// ---- 缺口 `GAP-20261010-16`（want③）：`agent show` 的「最近 N 分钟请求数 / 当前请求来源」----
+//
+// 数据源勘定（2026-10-18 只读现读，逐字；✗ 不按印象编）：
+//
+//	① 主控 `GET /api/fleet/status` 的单机条目现读键：machine · model · mem_available_gb ·
+//	   mem_total_gb · load · models · uptime · gpu_used_gb · gpu_temp_c · backend_rss_gb ·
+//	   active_requests · healthy · backend_state · cpu_pct · code_version · code_sha ·
+//	   version_mismatch · same_origin · last_seen · vram_known · vram_unified · vram_total_gb ·
+//	   vram_used_gb · vram_free_gb · gpu_pct —— **只有 `active_requests`（此刻在飞）**，
+//	   既无「窗口内请求数」、也无「对端来源」。
+//	② 子端 `GET /status` 现读键：active_requests · backend · backend_state · cpu_pct · gpu_pct ·
+//	   healthy · machine · mem_available_gb · model · models · port · uptime —— 同样两样都没有
+//	   （`active_requests` 是**瞬时**在飞数，把它当「N 分钟请求数」就是把「此刻几个人在喊」当
+//	   「这五分钟喊了几次」）。
+//	③ 子端 `GET /eggs`：eggs[] · generated_at（逐枚 `inflight` 在飞引用计数）—— 也不是窗口计数，无来源。
+//	④ 主控 `GET /api/fleet/logs/query`：现读只有 heartbeat / fleet / main 三类行，**没有逐请求行**
+//	   ⇒ 拿它数「请求」会把心跳当请求（正是本缺口要防的假数）。
+//
+// ⇒ **两列都没有现成字段**。本命令按下面这一份唯一契约读（有就用、没有就如实示未知）：
+//
+//	GET <子端>/status?window_s=<N*60>
+//	  recent_requests : 数字 = 该窗口内该子端 `/infer` 的命中数（✗ 不是 `active_requests`）
+//	  request_source  : 字符串（主机名或 IP），或对象 {host|ip|name} = 此刻在打该引擎的对端
+//
+// 现状（edge-node 子端 2.5.15）两键均缺席 ⇒ 两列示「未知（…原因…）」，✗ 绝不落 0（0 会被读成
+// 「真的没请求」）。真值要在 `agent/` 侧新增（窗口计数 ＋ `/infer` 记对端）—— 本单落件面
+// 不含 `agent/**`，故这里只**如实报未知并点名缺什么**，不造数。
+
+const (
+	// ★ 旗标名取 `--window-min`（不是 `--window`）：`--window <mid>` 已被 `chat show` 占为
+	//   **消息序号**（`family_chat.go` 的召回窗口锚）—— 同一枚旗标名两个语义 = 两道面一套词，
+	//   ✗ 不做。minutes 这一维加 `-min` 后缀，读起来与语义一致。
+	// agentReqWindowDefaultMin —— 默认窗口（分钟）：5。取它的理由：一口气打一发就能看出
+	// 「这台机最近有没有人用」，5 分钟前的陈迹又不至于混进来；要更窄/更宽给 `--window-min N`。
+	agentReqWindowDefaultMin = 5
+	// agentReqWindowMaxMin —— `--window-min` 的上界（一天）。比这更宽就不是「最近」了。
+	agentReqWindowMaxMin = 1440
+	// agentReqUnknown —— 「该读法在、这次没取到 / 子端还没有这一格」的唯一词。
+	// 与 `agentMarkUnknownGPU` 的 `n/a` 分属两件事：`n/a` = 该平台没有这条读数（现读判定）；
+	// `未知` = 有可能有、但这一次拿不到（打不到 / 缺字段）—— ✗ 两者不许互相顶替。
+	agentReqUnknown = "未知"
+	// agentReqProbeTimeout —— 这一次只读探测的上限。`agent show` 本来只打主控一发；
+	// 加这一发必须**短**（子端没在听时不许把 show 拖成秒级）。
+	agentReqProbeTimeout = 1500 * time.Millisecond
+)
+
+// agentShowPayloadFields —— `agent show` 投影 `/api/fleet/status` 单机条目时取的 18 格
+// （**逐字取自载荷**，§4.3 `U2`：不另造词汇）。
+var agentShowPayloadFields = []string{
+	"machine", "healthy", "code_version", "code_sha", "origin_sha", "same_origin",
+	"cpu_pct", "gpu_pct", "mem_available_gb", "mem_total_gb", "models", "model",
+	"backend_state", "active_requests", "gpu_used_gb", "backend_rss_gb", "gpu_temp_c", "last_seen",
+}
+
+// agentShowDisplay —— `agent show` 的**人面列 = 行式面列**（同一份 ⇒ 两个面字段集一致）。
+// = 载荷 18 格 ＋ 本缺口的两格。两格走命令树的**可选字段层**（`main.go` 的 `optFields`）⇒
+// `--json` 点得出来，却不进冻结的文档导出字段表（随动面为零）。
+var agentShowDisplay = append(append([]string{}, agentShowPayloadFields...), "recent_requests", "request_source")
+
+// agentReqWindow —— `--window-min <分钟>` 的取值：默认 5 · 只收 1..1440 的整数。
+// 没给 ⇒ 默认；**给了但没带值（裸形）或值不合** ⇒ 退 2 并点名 —— ✗ 不静默回落默认
+// （「给过、值空」与「没给」在这个仓里是两件事）。
+func agentReqWindow(inv *invocation, stderr io.Writer) (int, int) {
+	raw := strings.TrimSpace(inv.flagVal("--window-min"))
+	if raw == "" {
+		if inv.hasFlag("--window-min") {
+			inv.setErr("usage", "bad_window", "`--window-min` 给了但没带值")
+			fmt.Fprintf(stderr, "%s: `--window-min` 给了但**没带值**（裸形）⇒ 退码 2（不猜默认：%d 分钟要显式不要，就不给这一枚）\n",
+				progName, agentReqWindowDefaultMin)
+			return 0, exitUsage
+		}
+		return agentReqWindowDefaultMin, exitOK
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 1 || n > agentReqWindowMaxMin {
+		inv.setErr("usage", "bad_window", "`--window-min` 只收 1..1440 的整数分钟")
+		fmt.Fprintf(stderr, "%s: `--window-min` 只收 **1..1440** 的整数分钟（实得 %q）⇒ 退码 2（不猜默认）\n", progName, raw)
+		return 0, exitUsage
+	}
+	return n, exitOK
+}
+
+// agentReqFacts —— 两列的真值 ＋ 一行口径（✗ 未知不留空串、✗ 取不到不落 0）。
+type agentReqFacts struct {
+	Recent string // 最近 N 分钟请求数（数字文本，或 `未知`）
+	Source string // 当前请求来源（主机名 / IP / `无（在飞 0）` / `未知`）
+	Why    string // 口径与缺席原因（stderr 一行；两列各说各的）
+}
+
+// agentRequestFacts 取「最近 N 分钟请求数」「当前请求来源」（**一次只读探测** · 零副作用）。
+//
+// 三态分明（✗ 不许压成两态）：
+//
+//	· **真值**：子端回了 `recent_requests` / `request_source` ⇒ 照报（数字与来源逐字）。
+//	· **真的没有**：子端回 200 且 `active_requests=0`、又没有来源键 ⇒ 来源报 `无（在飞 0）`
+//	  —— 这是**读数**（此刻确实没人在打），不是「未知」。
+//	· **未知**：打不到 / 回非 200 / 回据不是对象 / 该键缺席 ⇒ 报 `未知` ＋ 原因。
+//	  打不到时**绝不回落**主控快照里的 `active_requests`：那是上一次心跳的残影，落成 0 就是假数
+//	  （正是本缺口要防的「0 被当成真的没请求」）。
+func agentRequestFacts(machine string, windowMin int) agentReqFacts {
+	unknown := func(why string) agentReqFacts {
+		return agentReqFacts{Recent: agentReqUnknown, Source: agentReqUnknown, Why: why}
+	}
+	// ★ 静默档拿地址：拿不到地址只是「这两列未知」，✗ 不许把名册噪声甩进 stderr
+	// （名册缺机器名是别的命令的退码 2 事由，不是 show 的）。
+	addrs, _, rc := agentFleetAddrs(io.Discard)
+	if rc != exitOK {
+		return unknown("名册 `" + agentFleetAddrFileRel + "` 读不到（或 `fleet:` 段为空）⇒ 打不到子端")
+	}
+	a, ok := addrs[machine]
+	if !ok {
+		return unknown("名册 `" + agentFleetAddrFileRel + "` 的 `fleet:` 段没有 " + machine + " 的地址 ⇒ 打不到子端")
+	}
+	path := "/status?window_s=" + strconv.Itoa(windowMin*60)
+	status, body, err := agentChildDo(a, http.MethodGet, path, "", agentReqProbeTimeout)
+	if err != nil {
+		return unknown("子端 " + agentChildBase(a) + " 打不到（" + err.Error() + "）⇒ 两列未知")
+	}
+	if status != http.StatusOK {
+		return unknown(fmt.Sprintf("子端 %s%s 回 HTTP %d（不是 200）⇒ 两列未知", agentChildBase(a), path, status))
+	}
+	var st jsonObj
+	if err := json.Unmarshal([]byte(body), &st); err != nil {
+		return unknown("子端 " + path + " 回据不是 JSON 对象（形状认不出）⇒ 两列未知")
+	}
+	keys := make([]string, 0, len(st))
+	for k := range st {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	f := agentReqFacts{}
+	reasons := make([]string, 0, 2)
+
+	// ── 最近 N 分钟请求数 ──
+	if v, okNum := numOf(st["recent_requests"]); okNum {
+		f.Recent = strconv.Itoa(int(v))
+	} else {
+		f.Recent = agentReqUnknown
+		reasons = append(reasons, "子端 /status 无 `recent_requests`（窗口计数）键 ⇒ 该格未知；"+
+			"真值须子端新增：窗口内 `/infer` 命中数")
+	}
+
+	// ── 当前请求来源 ──
+	switch v := st["request_source"].(type) {
+	case string:
+		f.Source = strings.TrimSpace(v)
+	case map[string]any:
+		for _, k := range []string{"host", "ip", "name"} {
+			if s := strings.TrimSpace(cell(v[k])); s != "" {
+				f.Source = s
+				break
+			}
+		}
+	}
+	if f.Source == "" {
+		// 子端没报来源：只有在「它自己说此刻 0 个在飞」时才能把「没人在打」当答案。
+		if ar, okNum := numOf(st["active_requests"]); okNum && ar == 0 {
+			f.Source = "无（在飞 0）"
+		} else {
+			f.Source = agentReqUnknown
+			reasons = append(reasons, "子端 /status 无 `request_source`（对端）键 ⇒ 该格未知；"+
+				"真值须子端新增：`/infer` 记对端地址")
+		}
+	}
+	f.Why = fmt.Sprintf("窗口 %d 分钟 · 子端 %s%s 现读键：%s",
+		windowMin, agentChildBase(a), path, strings.Join(keys, " · "))
+	if len(reasons) > 0 {
+		f.Why += " ｜ " + strings.Join(reasons, "；")
+	}
+	return f
+}
+
 // cmdAgentShow —— `zerg agent show <机>`：一台机的逐字段现状（投影 `/api/fleet/status`）。
+//
+// 本缺口（`GAP-20261010-16` · want③）在此面**只增不改**：载荷 18 格逐字不动，尾部追加
+// `recent_requests` / `request_source` 两列（人面、行式面、`--json` 三面同一字段集）。
 func cmdAgentShow(inv *invocation, stdout, stderr io.Writer) int {
 	if len(inv.args) == 0 {
 		fmt.Fprintf(stderr, "%s: `agent show` 要一台机器名（`zerg agent ls` 看名册）\n", progName)
@@ -87,22 +263,28 @@ func cmdAgentShow(inv *invocation, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 	machine := inv.args[0]
+	// 位置参数与 `--window-min` 先判（零副作用 · 一个请求都不发）。
+	windowMin, rc := agentReqWindow(inv, stderr)
+	if rc != exitOK {
+		return rc
+	}
 	o, rc := fleetMachine(inv, machine, stderr)
 	if rc != exitOK {
 		return rc
 	}
-	fields := []string{"machine", "healthy", "code_version", "code_sha", "origin_sha", "same_origin", "cpu_pct", "gpu_pct",
-		"mem_available_gb", "mem_total_gb", "models", "model", "backend_state", "active_requests", "gpu_used_gb", "backend_rss_gb", "gpu_temp_c", "last_seen", "recent_requests"}
-	row := project(o, fields)
+	row := project(o, agentShowPayloadFields)
 	row["machine"] = machine
 	// GPU 两格的「不可得示 n/a」= 单一真源助手（`agent ls` / `agent show` 同一口径）——
 	// ✗ 不把 macOS 缺席的 `gpu_pct` 印成空串、✗ 不把 `vram_known=false` 的哨兵 0 当显存真值
 	// （GAP-20260925-34 剩面①②）。
 	agentMarkUnknownGPU(o, row)
-	// 「命令有什么能力」不另造词汇：字段名逐字取自载荷（§4.3 U2）。
-	return listCmd(inv, stdout, stderr, []string{"machine", "healthy", "code_version", "code_sha", "origin_sha", "same_origin",
-		"cpu_pct", "gpu_pct", "mem_available_gb", "mem_total_gb", "models", "model", "backend_state", "active_requests", "gpu_used_gb", "backend_rss_gb", "gpu_temp_c", "last_seen", "recent_requests"},
-		[]map[string]string{row})
+	// 两列的真值来源 = 子端 `/status`（三态：真值 / 真的没有 / 未知；见 agentRequestFacts）。
+	facts := agentRequestFacts(machine, windowMin)
+	row["recent_requests"] = facts.Recent
+	row["request_source"] = facts.Source
+	fmt.Fprintf(stderr, "%s: agent show %s · 请求口径 —— %s\n", progName, machine, facts.Why)
+	// 「命令有什么能力」不另造词汇：字段名逐字取自载荷（§4.3 U2）；人面/行式面同一列序。
+	return listCmd(inv, stdout, stderr, agentShowDisplay, []map[string]string{row})
 }
 
 // cmdAgentModels —— `zerg agent models <机>`：该机上可用的模型（投影 `/api/fleet/models` 里 host 命中的那些）。
