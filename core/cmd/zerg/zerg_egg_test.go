@@ -748,7 +748,7 @@ func TestZergEggMediaPathFourStates(t *testing.T) {
 		// ★ 第五行 = v2 布局（段表化 ＋ 引擎段在尾）—— ✗ 与前四行混行（前四行契约读数一字不动）
 		"self-test（卵 v2 布局）通过（6 态 ＋ 2 负控）",
 		// ★ 第六行 = 引擎闭包 · sysroot（`--engine-dir` ＋ 缺件即拒）—— ✗ 与前五行混行
-		"self-test（引擎闭包 · sysroot）通过（4 态 ＋ 3 负控）",
+		"self-test（引擎闭包 · sysroot）通过（5 态 ＋ 3 负控）",
 	} {
 		if !strings.Contains(so.String(), frag) {
 			t.Fatalf("--self-test 缺行 %q：%q", frag, so.String())
@@ -905,5 +905,93 @@ func TestZergEggEngineClosureSysroot(t *testing.T) {
 	}
 	if !strings.Contains(errS, "只对 `pack` 有效") {
 		t.Fatalf("态④ 报话没点名原因：%q", errS)
+	}
+}
+
+// ---- ⑦ ★ GAP-20261018-14：声明要 GPU 的蛋缺 dlopen 层 ROCm 运行时件（COMGR）⇒ 打蛋即具名拒 ----
+
+// TestZergEggEngineClosureGPU 走**真命令面**（`zergEggGateMain` 的 pack）钉住这条牙：
+//
+//	① 引擎里有 HIP 运行时（`libamdhip64.so.7`）、蛋里没有 `libamd_comgr.so.3` ⇒ pack 必须失败，
+//	   且**逐字点名** `libamd_comgr.so.3`（DT_NEEDED 面在这一态里全命中 —— 只有 dlopen 面判据能判红）；
+//	② 把 COMGR（连同它 NEEDED 的 `libLLVM.so.21.1`）补进引擎目录 ⇒ pack 成功（证判据不是「见 GPU 恒红」）；
+//	③ 纯 CPU 蛋（无 HIP 运行时、无 rocblas 目录）⇒ 不要求 COMGR（不误伤）。
+//
+// 病灶真身（edge-node 真跑 2026-10-18）：设备节点与 /sys 全好、闭包自检「全命中 ✓」，而空根里逐字
+// `no ROCm-capable device is detected` —— 缺的就是 dt-needed 面看不见的 COMGR。
+func TestZergEggEngineClosureGPU(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src")
+	gpu := filepath.Join(dir, "hip", "bin")
+	cpu := filepath.Join(dir, "cpu", "bin")
+	for _, d := range []string{src, gpu, cpu} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write := func(p string, b []byte, mode os.FileMode) {
+		t.Helper()
+		if err := os.WriteFile(p, b, mode); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(p, mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(filepath.Join(src, "recipe.json"), []byte("{\"n_gpu_layers\": 99}\n"), 0o644)
+	write(filepath.Join(src, "weights.gguf"), []byte("GGUF-fake\n"), 0o644)
+
+	// GPU 引擎：exe NEEDED 里有 HIP 运行时；HIP 自己 NEEDED 里**没有** COMGR（真件就是 dlopen 拿它）。
+	write(filepath.Join(gpu, "llama-server"), zegSynthELF([]string{
+		zegClosureHIPPrefix + ".7", zegClosureLibc, zegClosureLibm,
+	}), 0o755)
+	write(filepath.Join(gpu, zegClosureHIPPrefix+".7"), zegSynthELF([]string{zegClosureLibc}), 0o755)
+	write(filepath.Join(gpu, zegClosureLibc), []byte("synth-libc"), 0o755)
+	write(filepath.Join(gpu, zegClosureLibm), []byte("synth-libm"), 0o755)
+	write(filepath.Join(gpu, "ld-linux-x86-64.so.2"), []byte("synth-loader"), 0o755)
+
+	// 纯 CPU 引擎：同名 exe 但不碰 HIP（负控③）。
+	write(filepath.Join(cpu, "llama-server"), zegSynthELF([]string{zegClosureLibc, zegClosureLibm}), 0o755)
+	write(filepath.Join(cpu, zegClosureLibc), []byte("synth-libc"), 0o755)
+	write(filepath.Join(cpu, zegClosureLibm), []byte("synth-libm"), 0o755)
+	write(filepath.Join(cpu, "ld-linux-x86-64.so.2"), []byte("synth-loader"), 0o755)
+
+	run := func(argv ...string) (int, string, string) {
+		var so, se strings.Builder
+		rc := zergEggGateMain(&so, &se, argv)
+		return rc, so.String(), se.String()
+	}
+
+	// ① 缺 COMGR ⇒ 红且逐字点名（并说清 dlopen 面这条判据）
+	eggBad := filepath.Join(dir, "gpu-bad.egg")
+	rc, out, errS := run("pack", src, eggBad, "--engine-dir", gpu)
+	if rc == exitOK {
+		t.Fatalf("① 声明要 GPU 却缺 COMGR 竟打成了蛋：%q", out)
+	}
+	if !strings.Contains(errS, "缺 `"+zegClosureComgrName+"`") {
+		t.Fatalf("① 报话没点名 %s：%q", zegClosureComgrName, errS)
+	}
+	if !strings.Contains(errS, "dlopen") {
+		t.Fatalf("① 报话没点明「dlopen 面看不见它」（否则下一个人还会去查 DT_NEEDED）：%q", errS)
+	}
+	if _, serr := os.Stat(eggBad); serr == nil {
+		t.Fatalf("① 失败档竟留下了半截蛋 %s", eggBad)
+	}
+
+	// ② 补上 COMGR ＋ libLLVM ⇒ 绿
+	write(filepath.Join(gpu, zegClosureComgrName), zegSynthELF([]string{"libLLVM.so.21.1", zegClosureLibc}), 0o755)
+	write(filepath.Join(gpu, "libLLVM.so.21.1"), zegSynthELF([]string{zegClosureLibc}), 0o755)
+	rc, out, errS = run("pack", src, filepath.Join(dir, "gpu-ok.egg"), "--engine-dir", gpu)
+	if rc != exitOK {
+		t.Fatalf("② 补上 COMGR 后仍打不成蛋 rc=%d out=%q err=%q", rc, out, errS)
+	}
+	if !strings.Contains(out, "全命中 ✓") {
+		t.Fatalf("② 过档读数缺「全命中 ✓」：%q", out)
+	}
+
+	// ③ 纯 CPU 蛋 ⇒ 不要求 COMGR（同一条判据不误伤）
+	rc, out, errS = run("pack", src, filepath.Join(dir, "cpu.egg"), "--engine-dir", cpu)
+	if rc != exitOK {
+		t.Fatalf("③ 纯 CPU 蛋被要求 COMGR（误伤）rc=%d out=%q err=%q", rc, out, errS)
 	}
 }

@@ -51,6 +51,7 @@ package hatch
 import (
 	"fmt"
 	"log"
+	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -248,6 +249,117 @@ func (s Spec) Validate() error {
 		return fmt.Errorf("实测档案不可用，拒孵（§8.4 标定铁律）：%w", err)
 	}
 	return nil
+}
+
+// ── 蛋内 GPU 运行时闭包（GAP-20261018-14）───────────────────────────────────────
+
+// 病灶（edge-node 真跑 2026-10-18 · 空根 · `llama-server --list-devices`）逐字：
+//
+//	ggml_cuda_init: failed to initialize ROCm: no ROCm-capable device is detected
+//
+// 而**同一枚二进制在宿主上同一时刻**看得到 `ROCm0: Radeon 8060S Graphics`。设备那一面**不是**原因：
+// 空间内 `/dev/kfd` 能开成 O_RDWR、`/sys/class/kfd/kfd/topology/nodes/{0,1}` 可读、整棵 `/dev` 绑进来
+// 也不改善。真因在**库层** —— HIP 用 `dlopen("libamd_comgr.so.3")` 加载 COMGR，而它**不在任何
+// DT_NEEDED 面**（打蛋端的闭包自检因此看不见它）⇒ 蛋里没有 ⇒ rocclr 建不出 Device：
+//
+//	comgrctx.cpp: Failed to load COMGR library.
+//	rocdevice.cpp: Code object manager initialization failed for HSA device gfx1151 (PCI ID 1586)
+//	rocdevice.cpp: Error creating new instance of Device
+//	hip_device_runtime.cpp: hipGetDeviceCount: Returned hipErrorNoDevice
+//
+// ⇒ 这里把它变成**孵化前**的具名拒孵：蛋里声明了 GPU（有 rocBLAS 数据目录或 HIP 运行时）却缺
+// dlopen 层那几件时，直接说清缺什么 / 为什么 / 怎么补，✗ 不留到运行时报一句「no device」——
+// 那句话既不点名件、也不指向库层（本单定位它就花掉一整轮：报了 no device，而设备节点与 /sys 全好）。
+const eggGPUHIPPrefix = "libamdhip64.so"
+
+// eggGPURuntimeRoots —— 蛋声明要 GPU 时**必须**在蛋内的 dlopen 层根件（按前缀认，链段也算）。
+//
+// 三件的分工：`libamd_comgr.so`／`libLLVM.so` 是 **dlopen 面**（DT_NEEDED 面完全看不见，缺了就是
+// `no ROCm-capable device` 那句）；`libhsa-runtime64.so` 是 HIP 的 NEEDED（缺了会在装载期 127，更响一点，
+// 但同样属于「声明要 GPU 却没带运行时件」）⇒ 一并当成拒孵条件。
+// 只列**根**：它们的 NEEDED 闭包（`libffi` / `libedit` / `libbsd` / `libtinfo` / `libxml2` / `libmd` /
+// `libhsakmt` / `libdrm*`）由打蛋端的闭包自检逐件核（`zegClosureAudit` 对蛋里每个动态件都查 NEEDED）⇒ 这边不复制那张表。
+var eggGPURuntimeRoots = []string{"libamd_comgr.so", "libLLVM.so", "libhsa-runtime64.so"}
+
+// CheckEggGPUClosure 孵化前的 GPU 运行时自检：蛋声明要 GPU ⇒ 蛋内必须带 dlopen 层的 ROCm 运行时件。
+//
+// 非蛋模式（EggRoot 为空）不归本检查管：那时库来自宿主 `/usr`，天然齐。
+// 返回 nil = 没声明 GPU，或声明了且件齐；返回错误 = **具名拒孵**（✗ 不静默降级成「先跑起来再说」）。
+func CheckEggGPUClosure(s Spec) error {
+	if s.EggRoot == "" {
+		return nil
+	}
+	engine := filepath.Join(s.EggRoot, eggEngineSubdir)
+	gpu, names, err := eggScanGPUDecl(engine)
+	if err != nil {
+		return fmt.Errorf("蛋 %s：读不了蛋内引擎树 %s（%v）——拒孵（声明要 GPU 与否判不出来，不猜）",
+			s.EggID, engine, err)
+	}
+	if !gpu {
+		return nil
+	}
+	var missing []string
+	for _, root := range eggGPURuntimeRoots {
+		if !eggHasNamePrefix(names, root) {
+			missing = append(missing, root+".*")
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	return fmt.Errorf("蛋 %s 声明要 GPU（蛋内有 rocBLAS 数据目录或 HIP 运行时），但蛋内缺 ROCm 运行时件 %s —— 拒孵："+
+		"HIP 用 **dlopen** 加载它们（`DT_NEEDED` 面看不见）⇒ 缺了照样起得来、一初始化就逐字报 "+
+		"`Failed to load COMGR library.` → `Error creating new instance of Device` → "+
+		"`hipGetDeviceCount: hipErrorNoDevice`，引擎只报一句 `no ROCm-capable device is detected`"+
+		"（GAP-20261018-14 · edge-node 真跑：设备节点与 /sys 全好，缺的是库）。"+
+		"⇒ 把这几件连同它们的 DT_NEEDED 闭包（libffi/libedit/libbsd/libtinfo/libxml2/libmd）并进蛋内引擎库目录"+
+		"（`--engine-dir` 收进来的那一层，如 `engine/lib`）后重打",
+		s.EggID, strings.Join(missing, "、"))
+}
+
+// eggScanGPUDecl 扫蛋内引擎树，回答两件事：**要不要 GPU**（有 `rocblas/` 子目录或有 HIP 运行时）
+// 与**蛋里都有哪些基名**（供 `eggGPURuntimeRoots` 判在不在）。
+//
+// 为什么按「蛋里真有 GPU 运行时的证据」判，而不是按 `Spec.Devices`：`Devices` 缺省就含
+// `/dev/kfd`（每枚卵都有）⇒ 拿它判会把纯 CPU 蛋一并要求 COMGR，那属于误伤。
+func eggScanGPUDecl(engineRoot string) (bool, []string, error) {
+	if st, err := os.Stat(filepath.Join(engineRoot, "rocblas")); err == nil && st.IsDir() {
+		// rocBLAS 的数据目录在 ⇒ 这枚蛋要 GPU（它是 rocBLAS 的 kernel 库，纯 CPU 蛋不会收它）。
+		gpu := true
+		names, nerr := eggEngineBaseNames(engineRoot)
+		return gpu, names, nerr
+	}
+	names, err := eggEngineBaseNames(engineRoot)
+	if err != nil {
+		return false, nil, err
+	}
+	return eggHasNamePrefix(names, eggGPUHIPPrefix), names, nil
+}
+
+// eggEngineBaseNames 列出蛋内引擎树的全部基名（只在 `<EggRoot>/engine` 下走，深度由打包端决定）。
+func eggEngineBaseNames(engineRoot string) ([]string, error) {
+	var names []string
+	err := filepath.Walk(engineRoot, func(_ string, info os.FileInfo, werr error) error {
+		if werr != nil {
+			return werr
+		}
+		if info.IsDir() {
+			return nil
+		}
+		names = append(names, info.Name())
+		return nil
+	})
+	return names, err
+}
+
+// eggHasNamePrefix 蛋内基名里有没有以 `prefix` 打头的一件（= 该 soname 家族在蛋内）。
+func eggHasNamePrefix(names []string, prefix string) bool {
+	for _, n := range names {
+		if strings.HasPrefix(n, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // validateBinds 逐条校验额外绑定清单（形式 `<host>:<space>`）。

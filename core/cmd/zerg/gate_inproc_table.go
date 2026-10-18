@@ -38,6 +38,7 @@ var gateCheckGoEntry = map[string]func(stdout, stderr io.Writer, argv []string) 
 	"check-cli-contract":                    cliContractGateMain,
 	"check-cli-ownership":                   checkCliOwnershipGateMain,
 	"check-compat-manifest":                 compatManifestGateMain,
+	"check-contract-describes-truth":        checkContractDescribesTruthGateMain,
 	"check-contract-registry":               contractRegistryGateMain,
 	"check-contract-version-diff":           cvdMain,
 	"check-curl-timeout":                    checkCurlTimeoutGateMain,

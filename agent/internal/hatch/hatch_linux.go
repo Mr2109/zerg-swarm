@@ -95,6 +95,12 @@ var realUnitCmdRunner UnitCmdRunner = func(timeout time.Duration, name string, a
 // 2026-09-19 ③：走 PrepareHatchUnit —— 先定点清理同名单元（stop + reset-failed，幂等）再起单元。
 func (h Hatcher) Hatch(ctx context.Context, spec Spec) (string, error) {
 	unit := UnitName(spec.EggID)
+	// 孵化前自检（GAP-20261018-14）：蛋声明要 GPU 却缺 dlopen 层的 ROCm 运行时件 ⇒ **具名拒孵**。
+	// 放在起单元之前：这类缺件在运行期的报话是 `no ROCm-capable device is detected`（既不点名件、
+	// 也不指向库层），比「当场说缺 libamd_comgr.so.3」贵一整个排查轮。
+	if gerr := CheckEggGPUClosure(spec); gerr != nil {
+		return unit, gerr
+	}
 	argv, err := PrepareHatchUnit(unit, spec, realUnitCmdRunner)
 	if err != nil {
 		return unit, err

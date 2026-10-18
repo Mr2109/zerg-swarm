@@ -58,7 +58,37 @@ const (
 	zegClosureMuslPrefix = "ld-musl"
 	// zegClosureFromMax —— 缺件报话里最多点几个「谁需要它」（其余折成「等 N 段」）。
 	zegClosureFromMax = 3
+	// zegClosureHIPPrefix —— AMD HIP 运行时的基名前缀：出现它即「这枚蛋声明要 GPU」。
+	zegClosureHIPPrefix = "libamdhip64.so"
+	// zegClosureRocblasSeg —— 另一条「要 GPU」的判据：收进了 rocBLAS 的数据目录（`engine/rocblas/…`）。
+	zegClosureRocblasSeg = zegEngineSegRoot + "/rocblas/"
+	// zegClosureComgrName —— HIP 在 **dlopen 面**加载的 COMGR（★ 这是 DT_NEEDED 面的盲区）。
+	zegClosureComgrName = "libamd_comgr.so.3"
 )
+
+// zegClosureComgrNames —— COMGR 的 soname 一族（按前缀认：`.so.3` / `.so.2` / `.so` 任一在即可）。
+var zegClosureComgrNames = []string{"libamd_comgr.so.3", "libamd_comgr.so.2", "libamd_comgr.so"}
+
+// zegClosureComgrWhy —— 「缺 COMGR」这条的判据说明（★ 保留 edge-node 真跑的四级报错链，逐字）。
+//
+// 为什么必须单列一条：COMGR **不在任何 DT_NEEDED 面**（HIP 用 `dlopen("libamd_comgr.so.3")` 拿它），
+// 而本检此前只看 DT_NEEDED ⇒ 一枚「闭包全命中 ✓」的蛋到空根里照样认不到 GPU：
+//
+//	comgrctx.cpp: Failed to load COMGR library.
+//	rocdevice.cpp: Code object manager initialization failed for HSA device gfx1151 (PCI ID 1586)
+//	rocdevice.cpp: Error creating new instance of Device
+//	hip_device_runtime.cpp: hipGetDeviceCount: Returned hipErrorNoDevice
+//	⇒ 引擎只报一句 `ggml_cuda_init: failed to initialize ROCm: no ROCm-capable device is detected`
+//
+// 此时设备那一面全是好的（`/dev/kfd` 能开 O_RDWR、`/sys/class/kfd/kfd/topology/nodes` 可读）——
+// 报话把人往设备/权限上引，实际缺的是库。故这里**在打蛋这一步**就具名拒掉。
+const zegClosureComgrWhy = "HIP 用 **dlopen** 加载 COMGR（`DT_NEEDED` 面看不见它），而 rocclr 建 Device 必须先有它：" +
+	"缺 ⇒ 空根里 `Failed to load COMGR library.` → `Code object manager initialization failed` → " +
+	"`Error creating new instance of Device` → `hipGetDeviceCount: hipErrorNoDevice` ⇒ 引擎只报一句 " +
+	"`ggml_cuda_init: failed to initialize ROCm: no ROCm-capable device is detected`（edge-node 真跑 2026-10-18）；" +
+	"治法：把提供它的目录**并进引擎库目录**后重打 —— 它的 DT_NEEDED 闭包一并要带" +
+	"（`libLLVM.so.21.*` · `libffi.so.8` · `libedit.so.2` · `libbsd.so.0` · `libtinfo.so.6` · `libxml2.so.16` · `libmd.so.0`；" +
+	"本检会逐件核这些 NEEDED，缺哪件就点名哪件）"
 
 // ---- 收引擎目录 -------------------------------------------------------------------------------
 
@@ -280,7 +310,8 @@ func (r *zegClosureReport) zegClosureFailure() error {
 		}
 		fmt.Fprintf(&b, "  ✗ 缺 `%s` —— 被 %s%s 需要（DT_NEEDED）", m.Name, strings.Join(froms, "、"), more)
 	}
-	b.WriteString("\n⇒ 补齐后重打（`--engine-dir` 可给多次；**dlopen 的数据目录也必须显式交进来** —— 本检只看 DT_NEEDED）")
+	b.WriteString("\n⇒ 补齐后重打（`--engine-dir` 可给多次；**dlopen 的数据目录也必须显式交进来**）。" +
+		"\n   本检判两面：蛋里每个动态件的 DT_NEEDED 全命中 ＋ 声明要 GPU 时 dlopen 层的 ROCm 运行时（COMGR）在蛋内")
 	return errors.New(b.String())
 }
 
@@ -356,6 +387,11 @@ func zegClosureAudit(entries []*zegEntry) (*zegClosureReport, error) {
 		}
 		addMissing(n, "", froms[n])
 	}
+	// ③b dlopen 面的 ROCm 运行时（GAP-20261018-14）：DT_NEEDED 面**永远看不见**它。
+	//    判据只在「这枚蛋声明要 GPU」时生效（否则不误伤纯 CPU 蛋）。
+	if zegClosureDeclaresGPU(entries) && !zegClosureHasAnyName(present, zegClosureComgrNames) {
+		addMissing(zegClosureComgrName, zegClosureComgrWhy, nil)
+	}
 	if rep.Dynamic > 0 {
 		// ① loader 本体（按前缀认：`ld-linux-x86-64.so.2` 一族）
 		loader := ""
@@ -391,6 +427,35 @@ func zegClosureAudit(entries []*zegEntry) (*zegClosureReport, error) {
 		sort.SliceStable(rep.Missing, func(i, j int) bool { return rep.Missing[i].Name < rep.Missing[j].Name })
 	}
 	return rep, nil
+}
+
+// zegClosureDeclaresGPU —— 「这枚蛋声明要 GPU」的判据（两条，任一命中即算）：
+//
+//	① 引擎树里出现 HIP 运行时（`libamdhip64.so*`）⇒ 引擎要经 ROCm 走 GPU；
+//	② 收进了 rocBLAS 的数据目录（`engine/rocblas/…`）⇒ 同上（那是 rocBLAS 的 kernel 库）。
+//
+// 为什么按「声明」而不是按「设备清单」判：`Devices` 缺省就含 `/dev/kfd`（每枚卵都有），拿它判
+// 会把纯 CPU 蛋也算成要 GPU ⇒ 白白要求 COMGR。这里只认**蛋里真有 GPU 运行时的证据**。
+func zegClosureDeclaresGPU(entries []*zegEntry) bool {
+	for _, e := range entries {
+		if strings.HasPrefix(filepath.Base(e.Path), zegClosureHIPPrefix) {
+			return true
+		}
+		if strings.Contains(e.Path, zegClosureRocblasSeg) {
+			return true
+		}
+	}
+	return false
+}
+
+// zegClosureHasAnyName —— 蛋内（按基名）是否已有 `names` 里任意一件（链段也算：链名就是 soname）。
+func zegClosureHasAnyName(present map[string]string, names []string) bool {
+	for _, n := range names {
+		if _, ok := present[n]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 // zegClosureGate —— pack 侧的唯一调用点：审计 ⇒ 缺件即返回具名错误（✗ 不写半截蛋）。
@@ -476,11 +541,12 @@ func zegSynthELF(needed []string) []byte {
 // ---- 自检（六格 ＋ 两枚负控 · 真造件、真走 pack 入口）------------------------------------------
 
 // zegClosureSelfTestLastLine —— 自检**末行**（逐字对拍用；★ 不含运行期变量）。
-const zegClosureSelfTestLastLine = "self-test（引擎闭包 · sysroot）通过（4 态 ＋ 3 负控）：" +
+const zegClosureSelfTestLastLine = "self-test（引擎闭包 · sysroot）通过（5 态 ＋ 3 负控）：" +
 	"① 完整闭包 ⇒ 绿（NEEDED 全命中 ＋ loader/libc/libm 在）· " +
 	"② 抽掉一个 NEEDED 件 ⇒ 红且逐字点名它 · " +
 	"③ 抽掉 loader ⇒ 红且点名 ld-linux* · " +
 	"④ 非 ELF 树（静态/纯文本）⇒ 不要求三件（不误伤）· " +
+	"⑤ 声明要 GPU（HIP 运行时）却缺 COMGR ⇒ 红且逐字点名 libamd_comgr.so.3（dlopen 面，DT_NEEDED 看不见）· " +
 	"负控① 同一份缺件树走**不审计**的 v1 `zegPack` ⇒ 打包成功（＝红来自本检）· " +
 	"负控② 两个同名基名的 `--engine-dir` ⇒ 拒且点名撞名路径 · " +
 	"负控③ 归档字节里没有 DT_NEEDED ⇒ 不算动态件（=判据真读 ELF，不是看扩展名）"
@@ -595,6 +661,38 @@ func zegClosureSelfTest(stdout, stderr io.Writer) int {
 	}
 	if _, _, perr5 := zegPackV2(tree5, filepath.Join(t, "fakeso.egg"), 4096, "2000-01-01T00:00:00Z"); perr5 != nil {
 		return zegClosureSelfFail(stderr, fmt.Errorf("负控③ 非 ELF 的 .so 被当成动态件了：%v", perr5))
+	}
+
+	// 态⑤ 声明要 GPU（HIP 运行时在蛋里）却缺 COMGR ⇒ 红且逐字点名它；补上 COMGR（连同它 NEEDED 的
+	// libLLVM）⇒ 绿。★ 这是 GAP-20261018-14 的牙：DT_NEEDED 面在这一态里**全命中**，
+	// 只有 dlopen 面那一条判据能把它判红。
+	gpuTree, terr := mkTree("gpu-nocomgr", false, true)
+	if terr != nil {
+		return zegClosureSelfFail(stderr, terr)
+	}
+	gpuNeeded := []string{zegClosureLibc, zegClosureLibm, zegClosureHIPPrefix + ".7"}
+	if err := os.WriteFile(filepath.Join(gpuTree, "llama-server"), zegSynthELF(gpuNeeded), 0o755); err != nil {
+		return zegClosureSelfFail(stderr, err)
+	}
+	if err := os.WriteFile(filepath.Join(gpuTree, zegClosureHIPPrefix+".7"), zegSynthELF([]string{zegClosureLibc}), 0o755); err != nil {
+		return zegClosureSelfFail(stderr, err)
+	}
+	_, _, pErr := zegPackV2(gpuTree, filepath.Join(t, "gpu-nocomgr.egg"), 4096, "2000-01-01T00:00:00Z")
+	if pErr == nil {
+		return zegClosureSelfFail(stderr, fmt.Errorf("态⑤ 声明要 GPU 却缺 COMGR 竟打成了蛋（dlopen 面判据无牙）"))
+	}
+	if !strings.Contains(pErr.Error(), "缺 `"+zegClosureComgrName+"`") {
+		return zegClosureSelfFail(stderr, fmt.Errorf("态⑤ 报话没点名 %s：%v", zegClosureComgrName, pErr))
+	}
+	// 补上 COMGR ＋ 它 NEEDED 的 libLLVM ⇒ 绿（证这条判据不是「见 GPU 就恒红」）
+	if err := os.WriteFile(filepath.Join(gpuTree, zegClosureComgrName), zegSynthELF([]string{"libLLVM.so.21.1", zegClosureLibc}), 0o755); err != nil {
+		return zegClosureSelfFail(stderr, err)
+	}
+	if err := os.WriteFile(filepath.Join(gpuTree, "libLLVM.so.21.1"), zegSynthELF([]string{zegClosureLibc}), 0o755); err != nil {
+		return zegClosureSelfFail(stderr, err)
+	}
+	if _, _, pErr2 := zegPackV2(gpuTree, filepath.Join(t, "gpu-ok.egg"), 4096, "2000-01-01T00:00:00Z"); pErr2 != nil {
+		return zegClosureSelfFail(stderr, fmt.Errorf("态⑤ 补上 COMGR 后仍打不成蛋（判据过严/误伤）：%v", pErr2))
 	}
 
 	// 负控② 两个同名基名的 engine 目录 ⇒ 拒且点名撞名路径

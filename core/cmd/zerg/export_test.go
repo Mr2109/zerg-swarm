@@ -1556,8 +1556,34 @@ func ImpactDelBlockForTest(root, rel string, runTools bool) string {
 	return b.String()
 }
 
-// ImpactDelBlindKeysForTest 五类盲区的固定五格（顺序即报告顺序）。
-func ImpactDelBlindKeysForTest() []string { return append([]string{}, impactDelBlindKeys...) }
+// ImpactDelBlindKeysForTest 五类盲区的类别格名与顺序 —— **从契约件现读**（判据自己也不许抄名单：
+// 手抄一份在测件里，测件就会为「代码与测试两份手抄一致」背书，而与真源仍可能漂）。
+// root 给空 ⇒ 用本仓根。
+func ImpactDelBlindKeysForTest(root string) []string {
+	if root == "" {
+		root = repoRoot()
+	}
+	b, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(impactDelContractRel)))
+	if err != nil {
+		return nil
+	}
+	keys, why := impactDelBlindKeysOf(b)
+	if why != "" {
+		return nil
+	}
+	return keys
+}
+
+// ImpactDelBlindKeysOfForTest 从**给定契约件字节**现读类别格名（负控夹具用：抹节 / 只剩注记格）。
+func ImpactDelBlindKeysOfForTest(raw []byte) ([]string, string) { return impactDelBlindKeysOf(raw) }
+
+// ContractDescribesTruthMainForTest 门 `check-contract-describes-truth` 的入口（argv 不含程序名）。
+// 返回 (rc, stdout+stderr 合并文本)。
+func ContractDescribesTruthMainForTest(argv []string) (int, string) {
+	var out strings.Builder
+	rc := checkContractDescribesTruthGateMain(&out, &out, argv)
+	return rc, out.String()
+}
 
 // ImpactGoFileSymbolsForTest 一个 `.go` 件的**顶层符号名**（分类器判据要拿它当全集）。
 func ImpactGoFileSymbolsForTest(root, rel string) []string {

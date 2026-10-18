@@ -7,6 +7,7 @@ package hatch
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -1413,5 +1414,64 @@ func TestEnclosureReport_StringCarriesPID(t *testing.T) {
 	var zero EnclosureReport
 	if !strings.Contains(zero.String(), "pid=未知") {
 		t.Errorf("没记 pid 的报告要如实写「未知」，不许写成 pid=0 这种像真 pid 的东西，实得 %q", zero.String())
+	}
+}
+
+// ---- GAP-20261018-14：蛋声明要 GPU ⇒ 缺 dlopen 层的 ROCm 运行时件即**具名拒孵** ----------------
+
+// TestCheckEggGPUClosure 四格：非蛋模式不管 · 纯 CPU 蛋不管 · 要 GPU 缺 COMGR ⇒ 点名拒 · 件齐 ⇒ 过。
+//
+// 为什么这四格必须成对：只测「缺件会拒」能过，但把判据写成「凡蛋必查」也能过（那就误伤了纯 CPU 蛋）。
+func TestCheckEggGPUClosure(t *testing.T) {
+	mk := func(t *testing.T, files []string) string {
+		t.Helper()
+		root := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(root, eggEngineSubdir, "lib"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		for _, f := range files {
+			p := filepath.Join(root, eggEngineSubdir, f)
+			if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(p, []byte("x"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return root
+	}
+	spec := func(root string) Spec { return Spec{EggID: "e", EggRoot: root} }
+
+	// ① 非蛋模式（EggRoot 空）⇒ 不管
+	if err := CheckEggGPUClosure(Spec{EggID: "e"}); err != nil {
+		t.Fatalf("① 非蛋模式不该被本检查拦：%v", err)
+	}
+	// ② 纯 CPU 蛋（无 HIP、无 rocblas）⇒ 不管（不误伤）
+	if err := CheckEggGPUClosure(spec(mk(t, []string{"lib/libc.so.6", "bin/llama-server"}))); err != nil {
+		t.Fatalf("② 纯 CPU 蛋被要求 COMGR（误伤）：%v", err)
+	}
+	// ③ 要 GPU（HIP 运行时在）却缺 COMGR ⇒ 拒，且**逐字点名**它
+	gpuNoComgr := mk(t, []string{"lib/" + eggGPUHIPPrefix + ".7", "lib/libc.so.6", "bin/llama-server"})
+	err := CheckEggGPUClosure(spec(gpuNoComgr))
+	if err == nil {
+		t.Fatal("③ 缺 COMGR 竟放行了（判据无牙）")
+	}
+	for _, frag := range []string{"libamd_comgr.so", "libLLVM.so", "libhsa-runtime64.so", "拒孵", "dlopen"} {
+		if !strings.Contains(err.Error(), frag) {
+			t.Fatalf("③ 报话缺 %q（要点名缺件、说清 dlopen 面、明说拒孵）：%v", frag, err)
+		}
+	}
+	// ④ 件齐 ⇒ 过
+	ok := mk(t, []string{
+		"lib/" + eggGPUHIPPrefix + ".7", "lib/libamd_comgr.so.3.0.0", "lib/libamd_comgr.so.3",
+		"lib/libLLVM.so.21.1", "lib/libhsa-runtime64.so.1.18.0", "bin/llama-server",
+	})
+	if err := CheckEggGPUClosure(spec(ok)); err != nil {
+		t.Fatalf("④ 件齐仍被拒：%v", err)
+	}
+	// ⑤ 另一条「要 GPU」的判据：只收了 rocBLAS 数据目录（无 HIP 运行时）也照样要求 COMGR
+	rocOnly := mk(t, []string{"rocblas/5.1.0/library/a.hsaco", "bin/llama-server"})
+	if err := CheckEggGPUClosure(spec(rocOnly)); err == nil {
+		t.Fatal("⑤ 有 rocblas 目录却缺 COMGR 竟放行了")
 	}
 }

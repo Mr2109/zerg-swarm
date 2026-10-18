@@ -26,13 +26,18 @@ import (
 	zerg "github.com/Mr2109/zerg-swarm/core/cmd/zerg"
 )
 
-// judgeDelBlind 判「五类盲区」那一行成不成形（判据①）：五个键都要在，且要写明「缺一不出结论」。
+// judgeDelBlind 判「五类盲区」那一行成不成形（判据①）：**契约件现读的每一格**都要在，
+// 且要写明「缺一不出结论」。★ 格名**一律从契约件现读**（本件不抄名单 —— 手抄一份在测件里，
+// 测件就只会为「代码与测试两份手抄一致」背书）。
 // 负控：抹掉任意一格 ⇒ 必须报错。
-func judgeDelBlind(block string) error {
+func judgeDelBlind(block string, keys []string) error {
 	if !strings.Contains(block, "缺一不出结论") {
 		return errStr("五类盲区那一行没写「缺一不出结论」（判据①）")
 	}
-	for _, k := range zerg.ImpactDelBlindKeysForTest() {
+	if len(keys) == 0 {
+		return errStr("准备态不对：契约件现读的类别格名是 0 格")
+	}
+	for _, k := range keys {
 		if !strings.Contains(block, k+"=") {
 			return errStr("五类盲区缺一格：" + k)
 		}
@@ -44,20 +49,31 @@ func judgeDelBlind(block string) error {
 func TestImpactDel_BlindSpotsAlwaysFive(t *testing.T) {
 	root := repoRootFromCLI(t)
 	blk := zerg.ImpactDelBlockForTest(root, "core/cmd/zerg/main.go", false)
-	if err := judgeDelBlind(blk); err != nil {
+	keys := zerg.ImpactDelBlindKeysForTest(root)
+	if err := judgeDelBlind(blk, keys); err != nil {
 		t.Errorf("判据① 破：%v\n%s", err, blk)
 	}
-	// 负控：抹掉「序列化」那一格 ⇒ 必须报错（证明这一格有牙）。
-	if err := judgeDelBlind(strings.ReplaceAll(blk, "序列化=", "（抹掉）=")); err == nil {
-		t.Error("负控①失败：抹掉一格盲区竟判过（缺一却不报 = 这一格没牙）")
+	// 负控：抹掉**契约件现读的末一格** ⇒ 必须报错（证明每一格都有牙；不写死是哪个词）。
+	last := keys[len(keys)-1]
+	if err := judgeDelBlind(strings.ReplaceAll(blk, last+"=", "（抹掉）="), keys); err == nil {
+		t.Errorf("负控①失败：抹掉 `%s` 那一格盲区竟判过（缺一却不报 = 这一格没牙）", last)
 	}
-	// 负控（契约件层面）：五类盲区少一格 ⇒ 契约读口必须报「缺一不出结论」。
+	// 负控（契约件层面）：格名只从契约件读 —— 抹掉整节 / 只剩注记格 ⇒ 读口必须给「不给结论」的理由。
 	raw, err := zerg.ImpactDelContractBytesForTest()
 	if err != nil {
 		t.Fatalf("读契约件失败：%v", err)
 	}
-	if !strings.Contains(string(raw), "\"序列化\"") {
-		t.Error("判据① 破：契约件里没有「序列化」这一格")
+	if got := zerg.ImpactDelBlindKeysForTest(root); len(got) != len(keys) || len(got) == 0 {
+		t.Errorf("判据① 破：契约件现读的类别格名不稳（%d ⟷ %d）", len(got), len(keys))
+	}
+	if _, why := zerg.ImpactDelBlindKeysOfForTest([]byte(`{"schema":"zerg/impact-del/1"}`)); why == "" {
+		t.Error("负控①失败：契约件里没有 `五类盲区` 这一节，读口竟给了结论（fail-closed 破了）")
+	}
+	if _, why := zerg.ImpactDelBlindKeysOfForTest([]byte(`{"五类盲区":{"口径":"只有注记格"}}`)); why == "" {
+		t.Error("负控①失败：`五类盲区` 只剩注记格（类别 0 格），读口竟给了结论（静默空名单）")
+	}
+	if _, why := zerg.ImpactDelBlindKeysOfForTest(raw); why != "" {
+		t.Errorf("正控①失败：真契约件竟读不出类别格名（%s）", why)
 	}
 }
 

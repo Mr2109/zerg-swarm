@@ -8,7 +8,8 @@
 // 本件**只做**这半（`R18` / `R21` 未拍 ⇒ 一个字都不碰）：
 //
 //	① 「**面内未见引用**」**候选**清单（恒带「候选」措辞 · **不许读成「可删」**）；
-//	② **五类盲区字段**（反射 / 注册表 / 配置串 / 序列化 / 外部 API · **缺一不出结论**）；
+//	② **五类盲区字段**（格名 / 格数 / 顺序**只从契约件 `五类盲区` 现读** —— 本件里**不写第二份名单**
+//	   · 读不到就**不给结论**（fail-closed · ✗ 不静默当空名单）· **缺一不出结论**）；
 //	③ **两件可找回证据**（被删对象 `sha256` + 一条找回路径 · **缺一不出**）；
 //	④ **「整件搬出」与「符号级删」分行报**（`R37`：`git --diff-filter` 的 A/D/M 当分类器）；
 //	⑤ **零**自动化删除****（无第二条路径 · 本件里没有任何删除动作）；
@@ -43,8 +44,56 @@ const impactDelContractRel = "core/internal/contract/impact-del.json"
 // impactDelSchema —— 契约件形状号（不认 ⇒ 不给结论、不猜口径）。
 const impactDelSchema = "zerg/impact-del/1"
 
-// impactDelBlindKeys —— 五类盲区的**固定五格**（顺序即报告顺序；缺一 ⇒ 不出结论）。
-var impactDelBlindKeys = []string{"反射", "注册表", "配置串", "序列化", "外部API"}
+// impactDelBlindMetaKeys —— 契约件 `五类盲区` 里的**注记格**（不是类别格）：只此一格，
+// 且它**写在契约件里**（本件只认这一个「不是类别」的格名 —— 类别格名一个都不抄）。
+//
+//	★ 为什么必须有这一格：`五类盲区` 对象里除类别外还有一格 `口径` 写整节口径。它若被当成
+//	  类别，报告里会多出一格 `口径=…`；它若被漏掉判据，就会把整节误判成「少一格」。
+var impactDelBlindMetaKeys = map[string]bool{"口径": true}
+
+// impactDelBlindKeysOf —— 从**契约件原文**现读 `五类盲区` 的类别格名，**顺序 = 契约件里的键序**
+// （⇒ 报告顺序与从前手抄那五格的顺序逐字相同 · `encoding/json` 的 map 无序，故这里走 token 流）。
+//
+//	返回 why≠"" ⇒ **不给结论**（fail-closed）：契约件里没有 `五类盲区` / 不是对象 / 一格类别都没有。
+//	★ 这就是「不另写第二份名单」的落地：真源加一格，本件自动多报一格；减一格则在下面「缺一不出」处露头。
+func impactDelBlindKeysOf(raw []byte) (keys []string, why string) {
+	dec := json.NewDecoder(strings.NewReader(string(raw)))
+	var top map[string]json.RawMessage
+	if err := dec.Decode(&top); err != nil {
+		return nil, "契约件解不开（" + err.Error() + "）"
+	}
+	blk, ok := top["五类盲区"]
+	if !ok {
+		return nil, "契约件里没有 `五类盲区` 这一节 ⇒ 类别名单无从现读（缺一不出结论）"
+	}
+	bd := json.NewDecoder(strings.NewReader(string(blk)))
+	tok, err := bd.Token()
+	if err != nil {
+		return nil, "契约件 `五类盲区` 读不成对象（" + err.Error() + "）"
+	}
+	if d, ok := tok.(json.Delim); !ok || d != '{' {
+		return nil, "契约件 `五类盲区` 不是对象 ⇒ 取不到类别格名（缺一不出结论）"
+	}
+	for bd.More() {
+		kt, err := bd.Token()
+		if err != nil {
+			return nil, "契约件 `五类盲区` 的键读不出来（" + err.Error() + "）"
+		}
+		k, _ := kt.(string)
+		var skip json.RawMessage
+		if err := bd.Decode(&skip); err != nil {
+			return nil, "契约件 `五类盲区`.`" + k + "` 的值读不出来（" + err.Error() + "）"
+		}
+		if impactDelBlindMetaKeys[k] {
+			continue
+		}
+		keys = append(keys, k)
+	}
+	if len(keys) == 0 {
+		return nil, "契约件 `五类盲区` 里一格类别都没有 ⇒ 不给结论（✗ 不静默当空名单）"
+	}
+	return keys, ""
+}
 
 // impactDelContract —— 契约件（字段名与契约件键一一对应）。
 type impactDelContract struct {
@@ -65,8 +114,10 @@ type impactDelContract struct {
 		Never map[string]string `json:"不进删面"`
 	} `json:"两器"`
 	Blind map[string]string `json:"五类盲区"`
-	Proof map[string]string `json:"两件可找回证据"`
-	Class struct {
+	// BlindKeys —— `五类盲区` 的**类别格名与顺序**（从契约件原文现读 · 本件不抄名单）。
+	BlindKeys []string          `json:"-"`
+	Proof     map[string]string `json:"两件可找回证据"`
+	Class     struct {
 		Bin   string `json:"件"`
 		Tiers string `json:"两档"`
 		Known string `json:"在册实测"`
@@ -95,7 +146,12 @@ func impactDelContractOf(root string) (impactDelContract, string) {
 	if c.Schema != impactDelSchema {
 		return c, fmt.Sprintf("形状号不认（`schema`=%q ≠ %q ⇒ 不给结论）", c.Schema, impactDelSchema)
 	}
-	for _, k := range impactDelBlindKeys {
+	keys, why := impactDelBlindKeysOf(b)
+	if why != "" {
+		return c, why
+	}
+	c.BlindKeys = keys
+	for _, k := range c.BlindKeys {
 		if _, ok := c.Blind[k]; !ok {
 			return c, fmt.Sprintf("五类盲区少一格（`%s`）⇒ **缺一不出结论**（判据①）", k)
 		}
@@ -287,7 +343,7 @@ func emitImpactDelBlock(w io.Writer, root string, tgt *impactTarget, layout impa
 	}
 	// 五类盲区（**恒带五格** ⇒ 缺一不出结论的那一半就落在这里）。
 	fmt.Fprintf(w, "  五类盲区（**恒带字段 · 缺一不出结论** · 判据①）：")
-	for _, k := range impactDelBlindKeys {
+	for _, k := range c.BlindKeys {
 		fmt.Fprintf(w, " %s=%s；", k, c.Blind[k])
 	}
 	fmt.Fprintf(w, "\n")
