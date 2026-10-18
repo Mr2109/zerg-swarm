@@ -81,6 +81,39 @@ type InferResult struct {
 	// 收尾原因：上游 chat completions 的 choices[].finish_reason 原值（length/tool_calls/stop…）；
 	// 本结构只承载原值（上游不给就留空），"空 ⇒ stop" 的兜底在消费侧（api/chat_handlers.go）。
 	Finish string `json:"finish_reason,omitempty"`
+	// ── 「谁在应答」五格（缺口 GAP-20261019-01）────────────────────────────────
+	// 来源 = 子端 `/infer` 的响应头 X-Zerg-Served-*（经网关透传；流式由 CopySSE 单独抄）。
+	// 纪律与 Geometry 同：**缺席就留空，不编造**（取不到 = 如实缺席）。
+	ServedModel  string `json:"served_model,omitempty"`
+	ServedHost   string `json:"served_host,omitempty"`
+	ServedPort   string `json:"served_port,omitempty"`
+	ServedPid    string `json:"served_pid,omitempty"`
+	ServedPinned string `json:"pinned,omitempty"`
+}
+
+// servedIdentity 「谁在应答」五格的原样读数（全是字符串：端口/pid 也照上游原值抄，不解析、不猜）。
+type servedIdentity struct {
+	Model, Host, Port, Pid, Pinned string
+}
+
+// servedFromHeader 从响应头抄五格（任一格缺席 ⇒ 该格空串）。
+func servedFromHeader(h http.Header) servedIdentity {
+	return servedIdentity{
+		Model:  h.Get("X-Zerg-Served-Model"),
+		Host:   h.Get("X-Zerg-Served-Host"),
+		Port:   h.Get("X-Zerg-Served-Port"),
+		Pid:    h.Get("X-Zerg-Served-Pid"),
+		Pinned: h.Get("X-Zerg-Served-Pinned"),
+	}
+}
+
+// applyServed 把五格写进结果（nil 安全；逐格都写 —— 让上游缺席时结果里也是空）。
+func (r *InferResult) applyServed(si servedIdentity) {
+	if r == nil {
+		return
+	}
+	r.ServedModel, r.ServedHost, r.ServedPort, r.ServedPid, r.ServedPinned =
+		si.Model, si.Host, si.Port, si.Pid, si.Pinned
 }
 
 // sessionIDKey — 批次B(2026-09-10): 对话 session_id 经 ctx 透传给推理层
@@ -177,6 +210,7 @@ func (c *ChatInfer) Infer(ctx context.Context, model string, sysPrompt string, m
 		return nil, fmt.Errorf("chat: 调网关失败: %w", err)
 	}
 	defer resp.Body.Close()
+	served := servedFromHeader(resp.Header) // ★ GAP-20261019-01：谁在应答（响应头）
 
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
@@ -191,6 +225,7 @@ func (c *ChatInfer) Infer(ctx context.Context, model string, sysPrompt string, m
 		fmt.Printf("[chat:infer] status=%d raw_len=%d raw_head=%s\n", resp.StatusCode, len(raw), truncateArgs(string(raw), 200))
 	}
 	res, perr := parseChatResult(raw, face)
+	res.applyServed(served)
 	// T1.4 批量几何：非流式响应体里同样抄一份（拿不到 ⇒ 不设 ⇒ 事件流里字段缺席，绝不编造）。
 	// ⚠ 响应被截断（node-a 截断容错路径）时 JSON 不完整 ⇒ 解析不出几何 ⇒ 缺席（宁缺不编）。
 	if res != nil {
@@ -295,6 +330,9 @@ func (c *ChatInfer) InferStream(ctx context.Context, model string, sysPrompt str
 
 	// 解析 chat SSE 流（data: {...delta...}——D2 流式 tool_calls 完整 JSON）
 	res := &InferResult{}
+	// ★ GAP-20261019-01：流式的「谁在应答」在**响应头**里（网关 CopySSE 已单独抄这五格）；
+	//   同时它也会出现在 api 层的 `done` 帧（给只读 SSE 的客户端）。
+	res.applyServed(servedFromHeader(resp.Header))
 	// T1.4 批量几何：llama.cpp 把 timings/usage/system_fingerprint 放在**末块**（实测），
 	// 这里只留**最后一条**"像几何"的块，流结束后统一解析（不逐块解析：省成本 + 只认最终几何）。
 	var geomTail []byte

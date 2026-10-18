@@ -170,6 +170,10 @@ type Manager struct {
 	residencyQuietUntil time.Time // 巡检节流（最短间隔见 residencyPatrolMin）
 	residencyLoadWarned bool      // 读失败/坏件只记一次日志
 	residencySaveWarned bool      // 写失败只记一次日志
+	// defaultModel 本机默认模型身份（缺口 GAP-20261019-01）。构造时**只定一次**（此后只读，无锁）：
+	// 来源优先级 = env `ZERG_DEFAULT_MODEL`（点名且名册里真有）> 注册表单条 `default: true` > 空。
+	// 空 = 本机无默认模型 ⇒ 不上钉、不拒装，行为与改动前逐字一致。
+	defaultModel string
 }
 
 // defaultReapInterval 是后台 TTL 回收循环的扫描间隔（只决定"多久查一次"，不是 TTL 本身）。
@@ -183,6 +187,7 @@ func NewManager(reg *registry.Registry, machine string) *Manager {
 		loading:        make(map[string]*loadWaiter),
 		registry:       reg,
 		machine:        machine,
+		defaultModel:   resolveDefaultModelName(reg),
 		maxResident:    resolveMaxResident(),
 		idleTTL:        resolveIdleTTL(),
 		eggMaxOverride: make(map[string]time.Duration),
@@ -224,6 +229,18 @@ func (m *Manager) eggMaxOverrideFor(model string) time.Duration {
 // - 模型正在加载（其他请求已触发）→ 等待同一加载槽（请求合并）
 // - 不在驻留列表 → 加载新进程；驻留数超上限 → LRU 卸载
 func (m *Manager) Start(modelName string) (map[string]interface{}, error) {
+	// ★ 缺口 GAP-20261019-01（禁止挤 · fail-closed）：任何会驱逐「钉住的默认模型」的装载
+	//   都在**所有入口的共同收口**这里被拒。八条入口（/load、/infer 自动装载、队列重校验、
+	//   网关冷孵、CLI / MCP / UI …）全汇到本函数 ⇒ 一处判定即全覆盖，不必逐个入口打补丁。
+	//   拒绝语逐字点名「会驱逐谁 / 拒装谁」并带 pin 剩余秒数；总闸 `ZERG_DEFAULT_PIN=off`
+	//   一处关停（判定与上钉都看它）。
+	if rej := m.defaultPinConflict(modelName); rej != nil {
+		return rej, nil
+	}
+	// 默认模型「装载成功那一刻」自动上钉（幂等；未就绪/不是默认模型 ⇒ 内部直接返回）。
+	// 用 defer 是因为 Start 有多条 return（复用 / 合并等待 / 真加载），三路都要覆盖。
+	defer m.ensureDefaultPin(modelName)
+
 	// ⚠ 这里**不许**持 m.mu（2026-09-15 第一枚卵真机实测缺陷 1：自锁死）：
 	// 本函数第一件事就是 m.RequestModel，而它自己会 m.mu.Lock()（p2_lifecycle.go RequestModel）
 	// ——sync.Mutex 不可重入 ⇒ 持锁再调它 = 当场死锁：第一次 /load 就卡死，且同一把锁被
@@ -597,13 +614,13 @@ func (m *Manager) Stop() map[string]interface{} {
 	defer m.mu.Unlock()
 
 	for name, sp := range m.procs {
-		// 批 2：孵化路径的卵没有本端进程句柄（sp.proc 恒 nil）⇒ 凭 sp.Unit 非空判定它需要收卵。
-		// 开关关时 sp.Unit 恒空（没有任何代码写它）⇒ 判据与原来逐字等价。
-		if (sp.proc != nil && sp.proc.ProcessState == nil) || sp.Unit != "" {
-			log.Printf("[backend] 停止进程: model=%s", name)
-			m.stopSubproc(sp)
-		}
-		delete(m.procs, name)
+		log.Printf("[backend] 停止进程: model=%s", name)
+		// ★ 缺口 GAP-20261019-01：全卸（agent 退出）以前只 stop+delete —— 驻留账本里那条
+		//   还挂着 loaded ⇒ 下一次巡检把它误判成 vanished「进程静默消失」。
+		//   走唯一的收口 evictSubprocLocked：停进程 + 摘账 + **记 released（why 带 requester）**。
+		//   ★ 这里**不**跳 pin：Stop() 是 agent 退出的最后一手（不放手会漏引擎占卡）。
+		//   运维面「/unload 不带 models」走的是 Manager.Unload（那条路会跳 pin）。
+		m.evictSubprocLocked(name, sp, "全卸（Stop() · requester=agentd 退出）")
 	}
 	return okResponse("", "", 0)
 }

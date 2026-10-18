@@ -17,6 +17,11 @@ import (
 
 // 工具循环上限（防失控——对话是交流——不是任务）
 // MaxToolRounds — 工具循环最大轮数（P4-37 3→10——多步任务需多轮工具——Hermes agent loop 无硬上限）
+//
+// ★ GAP-20261018-23：这个 10 是**默认值**，不是上限。实测节奏是「一轮一条命令」
+// （code find / code show / dev proposal new / dev edit 各占一轮），一条标准修复链要 7-8 轮 ⇒
+// 10 轮装不下「看清问题 → 立提案 → 落补丁 → 跑验证」。运维可用 `ZERG_MAX_ROUNDS=<正整数>`
+// 调整本机预算（解析点：loopcore.ResolveRoundBudget；不设 ⇒ 与改前逐字同）。
 const MaxToolRounds = 10
 
 // ChatToolsWorkDir — 对话工具工作目录（唯一常量——2026-09-05 统一: 非流式 /tmp/zerg-chat/tools

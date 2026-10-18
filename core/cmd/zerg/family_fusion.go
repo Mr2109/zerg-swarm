@@ -189,7 +189,11 @@ func planHost() string {
 // ── ① `zerg ask` ───────────────────────────────────────────────────────────────
 
 // askFields —— `--json` 面的全部字段（K1：机器面先定）。
-var askFields = []string{"model", "host", "backend", "matched", "capabilities", "registry_id", "reply", "dry_run"}
+// ★ GAP-20261019-01：served_* / pinned = 「真正回答的是谁」的五格（来自子端响应头
+// X-Zerg-Served-*，经网关透传）。`model/host` 是**路由选中**的那一条，served_* 是**实际应答**
+// 的那一枚 —— 两者可能不同（默认模型被挤掉时正是这样），调用方必须能分辨。
+var askFields = []string{"model", "host", "backend", "matched", "capabilities", "registry_id", "reply", "dry_run",
+	"served_model", "served_host", "served_port", "served_pid", "pinned"}
 
 // askRoute —— 一条候选路线（能力筛之后剩下的一行）。
 type askRoute struct {
@@ -332,13 +336,24 @@ func cmdAsk(inv *invocation, stdout, stderr io.Writer) int {
 	}
 
 	// 3) 真问一次（这就是 `task submit` 的对偶：**不进队列**、没有 worktree、没有复查模型）
-	reply, rerr := askInfer(best, prompt, inv)
+	reply, served, rerr := askInfer(best, prompt, inv)
 	if rerr != nil {
 		inv.setErr("failed", "inference_failed", rerr.Error())
 		fmt.Fprintf(stderr, "%s: 推理失败：%v\n", progName, rerr)
 		return exitFail
 	}
 	row["reply"] = reply
+	// ★ GAP-20261019-01：把「谁在应答」写进机器面（--json）与人面的 stderr 一行。
+	//   正文不动（stdout 仍然只有成稿）；取不到就留空（✗ 不编造）。
+	row["served_model"] = served.Model
+	row["served_host"] = served.Host
+	row["served_port"] = served.Port
+	row["served_pid"] = served.Pid
+	row["pinned"] = served.Pinned
+	if served.Model != "" {
+		fmt.Fprintf(stderr, "served: %s@%s:%s pid=%s pinned=%s\n",
+			served.Model, served.Host, served.Port, served.Pid, orDash(served.Pinned))
+	}
 	if inv.jsonGiven {
 		if rc := requireFields(inv, stderr); rc != exitOK {
 			return rc
@@ -559,8 +574,28 @@ func askPinned(inv *invocation) bool {
 	return strings.TrimSpace(inv.modelWant) != "" || len(inv.nodes) > 0
 }
 
+// askServed 「谁在应答」五格（缺口 GAP-20261019-01）——从**网关响应头**原样抄。
+//
+// 为什么要它：`model`/`host` 只是**路由选中**的那一条；真正吐字的那一枚在子端驻留表里，
+// 两者可能不同（默认模型被另一个装载请求挤掉时正是如此，而正文看起来完全正常）。
+// 取不到 ⇒ 五格空串（缺席 = 如实缺席，绝不拿路由值顶替）。
+type askServed struct {
+	Model, Host, Port, Pid, Pinned string
+}
+
+// askServedFromHeader 从网关响应头抄「谁在应答」五格（纯函数，便于单测；缺席 ⇒ 空串）。
+func askServedFromHeader(h http.Header) askServed {
+	return askServed{
+		Model:  h.Get("X-Zerg-Served-Model"),
+		Host:   h.Get("X-Zerg-Served-Host"),
+		Port:   h.Get("X-Zerg-Served-Port"),
+		Pid:    h.Get("X-Zerg-Served-Pid"),
+		Pinned: h.Get("X-Zerg-Served-Pinned"),
+	}
+}
+
 // askInfer 真问一次（经**网关**，不直连引擎、不持端口 —— §十八.1 铁律 Ⅰ）。
-func askInfer(r askRoute, prompt string, inv *invocation) (string, error) {
+func askInfer(r askRoute, prompt string, inv *invocation) (string, askServed, error) {
 	body := map[string]any{
 		"model":    r.Model,
 		"messages": []map[string]string{{"role": "user", "content": prompt}},
@@ -569,7 +604,7 @@ func askInfer(r askRoute, prompt string, inv *invocation) (string, error) {
 	hc := &http.Client{Timeout: 120 * time.Second}
 	req, err := http.NewRequest(http.MethodPost, statepath.GatewayBaseURL()+"/v1/chat/completions", bytes.NewReader(b))
 	if err != nil {
-		return "", err
+		return "", askServed{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	// 令牌从真源取（env ZERG_TOKEN > ~/.zerg/token —— 全命令面唯一入口 credentials.go resolveToken），
@@ -577,9 +612,11 @@ func askInfer(r askRoute, prompt string, inv *invocation) (string, error) {
 	req.Header.Set("X-Auth-Token", resolveToken())
 	resp, err := hc.Do(req)
 	if err != nil {
-		return "", err
+		return "", askServed{}, err
 	}
 	defer resp.Body.Close()
+	// ★ GAP-20261019-01：谁在应答（子端 → 网关 → 本命令，非流式由 CopyResponse 全量复制头）。
+	served := askServedFromHeader(resp.Header)
 	raw, _ := io.ReadAll(resp.Body)
 	var parsed struct {
 		Choices []struct {
@@ -589,12 +626,12 @@ func askInfer(r askRoute, prompt string, inv *invocation) (string, error) {
 		} `json:"choices"`
 	}
 	if err := json.Unmarshal(raw, &parsed); err != nil {
-		return "", fmt.Errorf("网关返回不是可解析的 chat 响应（HTTP %d）", resp.StatusCode)
+		return "", served, fmt.Errorf("网关返回不是可解析的 chat 响应（HTTP %d）", resp.StatusCode)
 	}
 	if len(parsed.Choices) == 0 {
-		return "", fmt.Errorf("网关返回里没有 choices（HTTP %d）", resp.StatusCode)
+		return "", served, fmt.Errorf("网关返回里没有 choices（HTTP %d）", resp.StatusCode)
 	}
-	return parsed.Choices[0].Message.Content, nil
+	return parsed.Choices[0].Message.Content, served, nil
 }
 
 // ── ② `zerg plan` ──────────────────────────────────────────────────────────────

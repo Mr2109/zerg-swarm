@@ -61,7 +61,11 @@ func TestHandleUnload_Targeted(t *testing.T) {
 	}
 }
 
-// 无体（老客户端/运维路径）：沿用旧语义——全卸，响应形状与旧实现一致（无 stopped 字段）。
+// 无体（老客户端/运维路径）：仍是「全卸」这一语义，但**钉住的默认模型必须留下**
+// （缺口 GAP-20261019-01 负控：不得静默停掉被保护的默认模型）。
+//
+// 响应形状随之与定向档同形（stopped/skipped/reasons）：理由是「全卸也会跳项」，
+// 跳了谁、为什么，调用方与运维必须看得见 —— 静默才是缺陷。
 func TestHandleUnload_NoBodyKeepsLegacySemantics(t *testing.T) {
 	s := unloadServer()
 	code, out := postUnload(t, s, "tok", "")
@@ -71,8 +75,12 @@ func TestHandleUnload_NoBodyKeepsLegacySemantics(t *testing.T) {
 	if out["ok"] != true {
 		t.Fatalf("全卸响应应 ok=true，实得 %+v", out)
 	}
-	if _, hasStopped := out["stopped"]; hasStopped {
-		t.Fatalf("无体 = 旧语义（Stop 全部），不该带定向字段，实得 %+v", out)
+	// 本夹具没有驻留项 ⇒ 两栏都空；关键是「跳项必须报出来」，而不是形状回到旧实现。
+	if _, hasStopped := out["stopped"]; !hasStopped {
+		t.Fatalf("全卸必须报出 stopped（可为空）—— 否则跳过的项无从分辨，实得 %+v", out)
+	}
+	if _, hasSkipped := out["skipped"]; !hasSkipped {
+		t.Fatalf("全卸必须报出 skipped（可为空），实得 %+v", out)
 	}
 }
 

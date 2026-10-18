@@ -32,6 +32,7 @@ import (
 	"github.com/Mr2109/zerg-swarm/agent/internal/monitor"
 	"github.com/Mr2109/zerg-swarm/agent/internal/registry"
 	"github.com/Mr2109/zerg-swarm/agent/internal/startup"
+	"github.com/Mr2109/zerg-swarm/agent/internal/version"
 )
 
 // Server 子端 Agent HTTP 服务器。
@@ -251,6 +252,17 @@ func (s *Server) handleInfer(w http.ResponseWriter, r *http.Request) {
 		// 乙-2：出队/开始执行之后、写响应之前，把排队时长回给上游
 		// （响应头写了就冻结 ⇒ 必须在这里设 ✗ 不能放 defer）。排队 ≠ 推理，是两笔账。
 		w.Header().Set("X-Zerg-Queued-Ms", strconv.FormatInt(time.Since(inferT0).Milliseconds(), 10))
+		// ★ 缺口 GAP-20261019-01（可分辨面）：「谁在应答」的五格。
+		//   取值一律来自 `Manager.ServedInfo` = 本端**实际驻留的那一枚**（不由请求的 model 推断、
+		//   不由路由表推断）。✗ 不放正文、✗ 不改 stdout 的「正文即结果」契约。
+		//   必须在 WriteHeader 之前（头写了就冻结 —— 与上一行 X-Zerg-Queued-Ms 同一课）。
+		if si, ok := s.agent.backends.ServedInfo(req.model); ok {
+			w.Header().Set("X-Zerg-Served-Model", si.Model)
+			w.Header().Set("X-Zerg-Served-Host", si.Host)
+			w.Header().Set("X-Zerg-Served-Port", strconv.Itoa(si.Port))
+			w.Header().Set("X-Zerg-Served-Pid", strconv.Itoa(si.Pid))
+			w.Header().Set("X-Zerg-Served-Pinned", si.PinnedHeaderValue())
+		}
 		// 写响应头
 		for k, vals := range res.headers {
 			for _, v := range vals {
@@ -384,10 +396,19 @@ func (s *Server) handleInferRequest(req inferReq) {
 			if result != nil {
 				status = responseStatus(result, status)
 			}
-			req.resultCh <- inferResult{
-				status: status,
-				body:   []byte(fmt.Sprintf(`{"error":"%s"}`, "load failed")),
+			// ★ 缺口 GAP-20261019-01：自动装载被拒时**如实转达拒因**（code/message/pinned）。
+			//   此前这里一律写死 `{"error":"load failed"}` ⇒ 「被钉住的默认模型挡住」与
+			//   「内存不够」「名册没有这枚」在调用方看来一模一样（拒因被吞掉，等于没法分辨）。
+			payload := map[string]interface{}{"error": "load failed"}
+			if result != nil {
+				for _, k := range []string{"code", "message", "error", "pinned", "pin_remain_s", "requester"} {
+					if v, ok := result[k]; ok && v != nil && v != "" {
+						payload[k] = v
+					}
+				}
 			}
+			body, _ := json.Marshal(payload)
+			req.resultCh <- inferResult{status: status, body: body}
 			return
 		}
 	}
@@ -668,6 +689,13 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	activeReqs := s.agent.activeReqs
 	s.agent.mu.Unlock()
 
+	// ★ 缺口 `GAP-20261018-20`（身份自报半）：子端在 `/status` 里报**自己这一件**的身份。
+	//   换件正门 `zerg agent deploy` 靠它核对「盘上换上的就是正在跑的那件」（`code_digest` =
+	//   自身可执行件 sha256 前 16 位）与「跑的是哪笔提交」（`code_sha`）。
+	//   旧 `/status` 一格身份都没有 ⇒ 换完只能等下一次心跳、再由主控面间接看，运维面判不了。
+	//   ★ 三格一律**如实**（取不到即空串/unknown，✗ 不编、✗ 不拿别格顶上）。
+	self := version.ReadSelf()
+
 	// 构建快照
 	snap := map[string]interface{}{
 		"machine":          s.agent.machine,
@@ -683,6 +711,12 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		// B4 v2：CPU/GPU 使用率（主控监看展示）
 		"cpu_pct": s.agent.sampler.CpuPct(),
 		"gpu_pct": s.agent.sampler.GpuPct(),
+		// 身份四格（GAP-20261018-20）：code_sha / code_version 与心跳同源（`version.ReadSelf`），
+		// code_digest 是**内容身份**（换件核对用它，心跳那一路主控今天还不收）。
+		"code_version":    self.Version,
+		"code_sha":        self.Commit,
+		"code_build_time": self.BuildTime,
+		"code_digest":     self.Digest,
 	}
 
 	writeJSON(w, http.StatusOK, snap)

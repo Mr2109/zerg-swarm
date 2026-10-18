@@ -182,6 +182,8 @@ func (r *Runner) send() {
 //   - unmanaged[]：未托管但占着端口的进程（只读上报，不接管不杀）。
 //   - engines[]：引擎实时态（在算否/输出停滞/看门狗判词；有来源才出现）。
 func (r *Runner) buildBody() map[string]interface{} {
+	// 身份三格的真源（缺口 GAP-20261018-20）：本进程自己的二进制身份 —— 只读、进程内缓存一次。
+	self := version.ReadSelf()
 	body := map[string]interface{}{
 		"machine":          r.machine,
 		"backend_state":    r.backend.State(),
@@ -198,9 +200,20 @@ func (r *Runner) buildBody() map[string]interface{} {
 		// B4 v2：CPU/GPU 使用率（主控监看展示）
 		"cpu_pct": r.sampler.CpuPct(),
 		"gpu_pct": r.sampler.GpuPct(),
-		// L3 自动升级：子端自报代码身份（版本矩阵的数据来源）
-		"code_version": version.Version,
-		"code_sha":     version.Commit,
+		// L3 自动升级：子端自报代码身份（版本矩阵的数据来源）。
+		// ★ 缺口 `GAP-20261018-20`（身份同步半）：三格改从**正在跑的这一件二进制自己**读
+		//   （`version.ReadSelf`：嵌入 tags > VCS 戳 > ldflags 回落）—— 旧写法直接报
+		//   `version.Commit`（只在构建期 `-ldflags -X` 注入）⇒ 手搓构建上报 `unknown`，
+		//   而脏树两次构建报**同一个** `<sha>+dirty` ⇒ 换件前后 `code_sha` 逐字相同、
+		//   运维面判不出新件跑没跑。改后 `code_sha` 至少随「这一件」走。
+		"code_version":    self.Version,
+		"code_sha":        self.Commit,
+		"code_build_time": self.BuildTime,
+		// code_digest：自身可执行件 sha256 前 16 位（**内容身份**）—— 同提交的两份不同
+		// 二进制只有它能分开。★ 主控今天的 `HeartbeatRequest` **不收这一格**（`core/internal/api`
+		// 的结构体只取已知键）⇒ 它现在只对**直读子端 `/status`** 的换件核对有用，不进 `agent ls`；
+		// ✗ 不把「报了」当「主控存了」。
+		"code_digest": self.Digest,
 		// 同源判定（GAP-20261013-09 · 候选 c）：本机二进制**源提交** —— 构建期注入的
 		// `GitOrigin-RevId` trailer（镜像树）或 HEAD（私有树）。它与 code_sha 分属两套 git
 		// 命名空间（私有提交 ⟷ 镜像 tip），本格是主控拼「同源/混版/判不了」唯一的可比键。

@@ -204,7 +204,7 @@ type zergCmdFamily struct {
 // 序：动作数降序、同数按族名字母序（渲染时不再排序 —— 改表就照这个序插）。
 var zergCmdFamilies = []zergCmdFamily{
 	{"gap", 32},
-	{"agent", 20},
+	{"agent", 21},
 	{"gate", 18},
 	{"task", 13},
 	{"chat", 12},

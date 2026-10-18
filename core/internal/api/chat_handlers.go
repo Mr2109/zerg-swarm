@@ -405,7 +405,7 @@ func (h *ChatHandlers) ListMessages(w http.ResponseWriter, r *http.Request) {
 // （半截正文 · `max_rounds` 时被截断）。★ 两格**同源到底**：只补 `content` 不补 `reasoning` 会让
 // 「正文同源、思考仍取自拼串」—— 两个面各说一套，等于没修。
 func chatDonePayload(astID int64, title, msgContent, msgReasoning string, result *chat.InferResult) map[string]any {
-	return map[string]any{
+	payload := map[string]any{
 		"message_id":       astID,
 		"title":            title,
 		"content":          msgContent,
@@ -414,6 +414,22 @@ func chatDonePayload(astID int64, title, msgContent, msgReasoning string, result
 		"output_tokens":    result.OutputTokens,
 		"reasoning_tokens": result.ReasoningTokens,
 	}
+	// ★ 缺口 GAP-20261019-01：「谁在应答」五格。流式客户端**只看得到 SSE 帧**（网关的
+	//   CopySSE 不复制上游头，浏览器/桌面端也拿不到响应头）⇒ 这五格必须进 `done` 帧，
+	//   否则「回答来自哪枚模型、是不是钉住的默认模型」在流式面永远不可分辨。
+	//   缺席 = 不写这一格（✗ 不写空串充数、✗ 不编造）。
+	for k, v := range map[string]string{
+		"served_model": result.ServedModel,
+		"served_host":  result.ServedHost,
+		"served_port":  result.ServedPort,
+		"served_pid":   result.ServedPid,
+		"pinned":       result.ServedPinned,
+	} {
+		if strings.TrimSpace(v) != "" {
+			payload[k] = v
+		}
+	}
+	return payload
 }
 
 // isValidAnswerBody — 剥离后正文有效性检查（2026-09-05: 防「中文前英文推理剥离」误吞正文——

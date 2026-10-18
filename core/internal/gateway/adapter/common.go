@@ -63,6 +63,25 @@ func IsStreamResponse(resp *http.Response) bool {
 	return strings.Contains(ct, "text/event-stream") || strings.Contains(ct, "application/x-ndjson")
 }
 
+// ServedHeaderPrefix 是「谁在应答」五个响应头的公共前缀（缺口 GAP-20261019-01）。
+//
+// 子端在 /infer 的 WriteHeader 之前写这五格（`server.go`），非流式由 CopyResponse
+// 全量复制自然带出；**流式 CopySSE 原本只设 CT/Cache/Connection**（不复制上游头）
+// ⇒ 这五个头会在流式路径丢掉，靠本前缀单独挑出来复制。
+const ServedHeaderPrefix = "X-Zerg-Served-"
+
+// copyServedHeaders 只复制 X-Zerg-Served-* 五格（不动其它上游头 —— 流式响应头由本层自己设）。
+func copyServedHeaders(dst, src http.Header) {
+	for k, vv := range src {
+		if !strings.HasPrefix(http.CanonicalHeaderKey(k), ServedHeaderPrefix) {
+			continue
+		}
+		for _, v := range vv {
+			dst.Add(k, v)
+		}
+	}
+}
+
 // CopyResponse 原样复制响应体（状态码 + 头 + 体）。
 func CopyResponse(w http.ResponseWriter, resp *http.Response) {
 	for k, vv := range resp.Header {
@@ -85,6 +104,8 @@ func CopyResponse(w http.ResponseWriter, resp *http.Response) {
 // 导致上游 CRLF 被压成 LF，破坏 SSE 事件分隔（OpenClaw 等客户端解析失败）。
 // ReadBytes 保留原始行尾字节（\r\n 或 \n 原样透传）。
 func CopySSE(w http.ResponseWriter, resp *http.Response) {
+	// ★ 缺口 GAP-20261019-01：先抄「谁在应答」五格（必须在 WriteHeader 之前）。
+	copyServedHeaders(w.Header(), resp.Header)
 	// 设置 SSE 响应头
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")

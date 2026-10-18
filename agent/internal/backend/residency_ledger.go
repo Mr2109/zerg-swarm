@@ -243,10 +243,17 @@ type residencyLive struct {
 //
 // 返回巡检后的账本快照（定序）。★ 本函数**不启停任何进程**、**不重拉**、不删记录。
 func (m *Manager) PatrolResidency() []ResidencyRecord {
-	if m == nil || residencyDisabled() {
+	if m == nil {
 		return nil
 	}
 	now := time.Now()
+	// ★ 缺口 GAP-20261019-01（TTL 续期）：默认模型的 pin 在这里续 —— 复用本函数既有的
+	//   **2 秒级巡检**（`residencyPatrolMin` 的节流在下面），**不新起常驻 goroutine**。
+	//   位置在 ledgerDisabled 判定之前：账本关掉不等于保护停掉（保护另有总闸 ZERG_DEFAULT_PIN）。
+	m.renewDefaultPin(now)
+	if residencyDisabled() {
+		return nil
+	}
 	// ① 先在 `m.mu` 下摘「本端托管项」快照，**出锁后**再动账本：
 	//    锁序永远是 `m.mu → resMu`（`markResidencyReleased` 也从 `m.mu` 里进来，同序 ⇒ 不死锁）。
 	lives := m.residencyLiveSnapshot()

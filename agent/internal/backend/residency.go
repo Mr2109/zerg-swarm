@@ -500,8 +500,20 @@ func (m *Manager) evictSubprocLocked(name string, sp *subproc, why string) float
 //
 // 未托管的进程根本不在这里（procs 只装我们自己 spawn 的进程）——红线②。
 func (m *Manager) Unload(models []string) map[string]interface{} {
+	return m.UnloadBy(models, "agent /unload")
+}
+
+// UnloadBy 同 Unload，但**记下请求方**（缺口 GAP-20261019-01：账本 why 要能回答「谁按的」）。
+//
+// ★ 空清单（`/unload` 不带 models）**不再**走 Stop()：Stop 是全卸且不认保护，
+// 会让「运维按一下全卸」静默停掉钉住的默认模型（负控要求：这条不得静默发生）。
+// 这里改为「跳过 pin 未到期的项 + 逐项记原因」，并把 released 的 why 带上 requester。
+func (m *Manager) UnloadBy(models []string, requester string) map[string]interface{} {
+	if strings.TrimSpace(requester) == "" {
+		requester = "unknown"
+	}
 	if len(models) == 0 {
-		return m.Stop()
+		return m.unloadAllBy(requester)
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -525,12 +537,49 @@ func (m *Manager) Unload(models []string) map[string]interface{} {
 			reasons[name] = reason
 			continue
 		}
-		m.evictSubprocLocked(name, sp, "定向卸载")
+		m.evictSubprocLocked(name, sp, "定向卸载（requester="+requester+"）")
 		stopped = append(stopped, name)
 	}
 	sort.Strings(stopped)
 	sort.Strings(skipped)
 	log.Printf("[backend] 定向卸载: stopped=%v skipped=%v", stopped, skipped)
+	return map[string]interface{}{
+		"ok":      true,
+		"stopped": stopped,
+		"skipped": skipped,
+		"reasons": reasons,
+	}
+}
+
+// unloadAllBy 全卸（/unload 不带 models）——**钉住的不动**。
+//
+// 与 Stop() 的分工：
+//   - Stop() = agent 退出那一手（必须放手，否则引擎漏占卡），不跳 pin；
+//   - 本函数 = 运维面「全卸」，**跳 pin**（红线③的同一个口径：pin 未到期不驱逐）。
+//
+// 负控判据：钉住的默认模型在这条路上**必须留下**，且响应里逐项给原因（不静默）。
+func (m *Manager) unloadAllBy(requester string) map[string]interface{} {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	stopped := []string{}
+	skipped := []string{}
+	reasons := map[string]string{}
+	for name, sp := range m.procs {
+		if sp == nil {
+			continue
+		}
+		if pinned, remain := pinState(sp, time.Now()); pinned {
+			skipped = append(skipped, name)
+			reasons[name] = fmt.Sprintf("pin 未到期（余 %.0fs）—— 钉住的默认模型不随全卸停", remain)
+			continue
+		}
+		m.evictSubprocLocked(name, sp, "全卸（/unload 不带 models · requester="+requester+"）")
+		stopped = append(stopped, name)
+	}
+	sort.Strings(stopped)
+	sort.Strings(skipped)
+	log.Printf("[backend] 全卸: stopped=%v skipped=%v requester=%s", stopped, skipped, requester)
 	return map[string]interface{}{
 		"ok":      true,
 		"stopped": stopped,

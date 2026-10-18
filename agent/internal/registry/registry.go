@@ -9,6 +9,7 @@ package registry
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 
@@ -89,6 +90,15 @@ type ModelEntry struct {
 	KVDisk *KVDiskDecl `yaml:"kv_disk,omitempty"`
 	// name 这枚卵的名字（注册表键；load/Reload 时盖进条目，见 EggName）。
 	name string
+	// Default 本机「默认模型」标记（缺口 GAP-20261019-01）。
+	//
+	// 语义：这枚卵是该子端**默认对外服务**的模型；子端启动后由本标记认身份，
+	// 装载成功即自动上钉（带 TTL、由 2s 巡检续期），任何会驱逐它的装载请求一律
+	// fail-closed 拒绝并逐字点名（见 backend/default_pin.go）。
+	//
+	// 约束：**整表至多一枚**（多枚 ⇒ 注册表加载失败并点名——这是判据，不是约定）。
+	// 缺省（无任何条目带它）⇒ 不上钉，行为与改动前逐字一致（回滚只需撤掉这个键）。
+	Default bool `yaml:"default,omitempty"`
 	// Custom 存储任意额外字段（如 ssd、ssd_streaming_cache_experts 等）
 	Custom map[string]interface{} `yaml:",inline"`
 }
@@ -155,6 +165,9 @@ func (r *Registry) load() error {
 	if err := yaml.Unmarshal(data, &models); err != nil {
 		return fmt.Errorf("解析注册表 YAML: %w", err)
 	}
+	if err := validateSingleDefault(models); err != nil {
+		return err
+	}
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -184,6 +197,9 @@ func (r *Registry) Reload() error {
 	if err := yaml.Unmarshal(data, &models); err != nil {
 		return fmt.Errorf("解析注册表 YAML: %w", err)
 	}
+	if err := validateSingleDefault(models); err != nil {
+		return err
+	}
 
 	// 同 load：重载后卵名照样要盖进条目（否则热更新一轮 KV 盘目录就丢了卵名）。
 	for name, entry := range models {
@@ -212,6 +228,39 @@ func (r *Registry) Names() []string {
 		names = append(names, name)
 	}
 	return names
+}
+
+// validateSingleDefault 「默认模型」至多一枚（缺口 GAP-20261019-01 的判据面）。
+//
+// 为什么必须 fail-closed：两枚 default 会让「谁该被保护/谁该被拒」失去唯一答案，
+// 而这条语义是「装载被拒」的依据 ⇒ 宁可让注册表**拒绝加载并逐字点名**，也不猜一个。
+func validateSingleDefault(models map[string]*ModelEntry) error {
+	var names []string
+	for name, e := range models {
+		if e != nil && e.Default {
+			names = append(names, name)
+		}
+	}
+	if len(names) > 1 {
+		sort.Strings(names)
+		return fmt.Errorf("注册表声明了 %d 枚默认模型（%s）—— `default: true` 整表至多一枚", len(names), strings.Join(names, ", "))
+	}
+	return nil
+}
+
+// DefaultModel 返回声明为默认的模型名（无声明 ⇒ 空串 = 不上钉）。
+func (r *Registry) DefaultModel() string {
+	if r == nil {
+		return ""
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for name, e := range r.models {
+		if e != nil && e.Default {
+			return name
+		}
+	}
+	return ""
 }
 
 // List 返回所有已注册模型条目。

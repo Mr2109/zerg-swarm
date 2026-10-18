@@ -183,6 +183,8 @@ func copyResponseAsSSE(w http.ResponseWriter, resp *http.Response) {
 		return
 	}
 
+	// ★ 缺口 GAP-20261019-01：这条「非流式→转 SSE」的路也不复制上游头 ⇒ 单独抄五格。
+	copyServedHeaders(w.Header(), resp.Header)
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(resp.StatusCode)
