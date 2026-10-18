@@ -3738,3 +3738,282 @@ func cmdGapSetUnit(inv *invocation, stdout, stderr io.Writer) int {
 	gapReceiptPrint(stdout, msg)
 	return exitOK
 }
+
+// ── `gap set-want`（缺口 `GAP-20261008-07` · 2026-10-19）────────────────────────────────────
+//
+// 病（现读实测）：缺口账的 `want_family` / `want_action` 两格**没有任何 CLI 写面** ——
+// 同族五写面里 `set-state` 只改 `state` 那一维、`note` 只追加 `notes`、`set-unit` 改件面三键、
+// `judge set` 改判据两键、`assign` 走派单；**want 换方向只能手改盘上真源**（绕过审计 / 绕过账写锁 /
+// 绕过一切校验），改完也无人知道「谁在什么时候把想要的动作从 A 换成了 B」。
+//
+// 治法 = 本动作：**只改 want 三格**（`want_family` / `want_action` / `want_argv`），形制照同族
+// `gap set-unit`（那是「只改件面三键」的先例，逐条对齐、✗ 不另立一套纪律）：
+//
+//	① 写前判 = 同族唯一取值判据 `gapWantTargetWhy`（`family_gap.go`）：族名**闭集**
+//	   （命令树顶层族 ∪ 账内现用 want_family 原值）· 动作名**形态闭集**（单一 token）；越界 ⇒ 2 并**点名越界值**；
+//
+// ★ 旗标名取 `--want-family` / `--want-action`（**不取** `--family` / `--action`）：旗标注册表是
+// **唯一一张**（`main.go` 的 `valueFlagName` 一族）—— `--family` / `--action` 不在那张表里，真给会被
+// 解析器判「未知旗标」（本件实测：rc=2 `未知旗标 "--family"`）；要上户口就得改 `main.go`，而本单边界
+// 划到「✗ 不动 `main.go`」。取同族 `gap add` 已在用的那两枚 ⇒ 零新旗标、两处名字也对得上。
+//
+//	② `--dry-run` 恒 0（计划件走 stdout · 零副作用）；缺 `--yes` **fail-closed 2**（计划件走 stderr ·
+//	   判在**读真源之前** ⇒ 一行都不读、一行都不写）；
+//	③ 写前留痕：`--evidence` 必填，落成该条 `notes` 末尾一条注（`<时刻> · <谁>：改 want … 证据：…`），
+//	   与 `set-unit` / `judge set` 的「改账必留一句证据」同一条纪律；审计行由 `gapRewriteOne` **先**落
+//	   （`event=gap_ledger_written` + `gap_cmd=set-want` + 账件前后 sha256）⇒ 审计写不进就不写真源；
+//	④ 只走族内唯一收口 `gapRewriteOne`（锁内现读 → 只重写目标那一行 → 写后读回对拍）；
+//	⑤ 同 id 同族同动作（且未改 `--want-argv`）⇒ 「无变化」0（不写真源、不写审计、不落注）；
+//	⑥ `state` **一个字节不动**（改前改后现算对拍，破 ⇒ 退 1 不给结论）；收到 `--state` / `--text` ⇒ 2。
+
+// gapSetWantFields —— `--json <字段>` 的可取字段（写面与读面同一份口径）。
+var gapSetWantFields = []string{"id", "fp", "want_family", "want_action", "want_argv", "changed"}
+
+// gapSetWantNote —— 落进 `notes` 的改口径留痕（形态与 `gapSetUnitNote` 逐字同源）。
+// `--want-argv` 一并变动时把它也逐字记进去（argv 是 want 的一半，改了不记 = 留痕不全）。
+func gapSetWantNote(by, beforeFam, beforeAct string, beforeArgv []string, fam, act string, argv []string, evidence string) string {
+	s := fmt.Sprintf("%s · %s%s改 want: want_family: %s → %s · want_action: %s → %s · 证据：%s",
+		gapNow(), by, gapNoteSep,
+		orDash(beforeFam), fam, orDash(beforeAct), act, evidence)
+	if len(argv) > 0 {
+		s += fmt.Sprintf(" · want_argv: %s → %s", orDash(strings.Join(beforeArgv, " ")), strings.Join(argv, " "))
+	}
+	return s
+}
+
+// gapSetWantArgvText —— `--json` / 人面共用的 argv 显示串（空 ⇒ `-`）。
+func gapSetWantArgvText(argv []string) string {
+	if len(argv) == 0 {
+		return "-"
+	}
+	return strings.Join(argv, " ")
+}
+
+// gapSetWantRow —— `--json` 那一行的逐格取值。
+func gapSetWantRow(r gapRecord, changed string) map[string]string {
+	return map[string]string{
+		"id": r.ID, "fp": r.FP, "want_family": r.WantFam, "want_action": r.WantAct,
+		"want_argv": gapSetWantArgvText(r.WantArgv), "changed": changed,
+	}
+}
+
+// gapSetWantPlanBlock —— `set-want` 的计划件（`--dry-run` 走 stdout · 缺 `--yes` 走 stderr）。
+// `lines < 0` ⇒ 真源**未读**（缺 `--yes` 那一档：一个盘面动作都还没做）。形状照 `gapSetUnitPlanBlock`。
+func gapSetWantPlanBlock(w io.Writer, title, ledgerPath string, lines int, id, fp, fam, act, argvText, evidence string) {
+	fmt.Fprintf(w, "计划件（改 want 三格 · %s · 零副作用 —— 未改真源、未写审计）\n", title)
+	if lines < 0 {
+		fmt.Fprintf(w, "  真源     : %s（未读 —— 缺 `--yes` ⇒ 不执行）\n", ledgerPath)
+	} else {
+		fmt.Fprintf(w, "  真源     : %s（现有 %d 行）\n", ledgerPath, lines)
+	}
+	fmt.Fprintf(w, "  目标     : %s\n", id)
+	if fp != "" {
+		fmt.Fprintf(w, "  fp       : %s\n", fp)
+	}
+	fmt.Fprintf(w, "  要落的键（逐格）：\n")
+	fmt.Fprintf(w, "    want_family  : → %s\n", fam)
+	fmt.Fprintf(w, "    want_action  : → %s\n", act)
+	if argvText != "-" {
+		fmt.Fprintf(w, "    want_argv    : → %s\n", argvText)
+	}
+	fmt.Fprintf(w, "    state        : （本动作**不改**这一格）\n")
+	fmt.Fprintf(w, "    evidence     : %s（落成 `notes` 末尾一条注）\n", evidence)
+	fmt.Fprintf(w, "  审计     : 计划写一行 `event=%s` + `gap_cmd=set-want`（这一态**不写**）\n", gapEventName)
+}
+
+// cmdGapSetWant —— `zerg gap set-want <GAP id> --want-family <族> --want-action <动作> --evidence <一句话> …`。
+func cmdGapSetWant(inv *invocation, stdout, stderr io.Writer) int {
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
+	famWant := strings.TrimSpace(inv.flagVal("--want-family"))
+	actWant := strings.TrimSpace(inv.flagVal("--want-action"))
+	argvWant := inv.flagVals("--want-argv")
+	evidence := strings.TrimSpace(inv.flagVal("--evidence"))
+
+	// ① 用法面（在任何盘面动作之前 —— 与同族写面同一条位置）
+	if inv.jsonGiven && len(inv.fields) == 0 {
+		inv.setErr("usage", "json_fields_required", "--json 不给字段")
+		fmt.Fprintf(stderr, "%s: `--json` 要给逗号分隔的字段（本族口径 = 用法错 2）\n", progName)
+		fmt.Fprintf(stderr, "可选字段: %s\n", strings.Join(gapSetWantFields, ","))
+		return exitUsage
+	}
+	if len(inv.flagVals("--state")) > 0 {
+		v := strings.TrimSpace(inv.flagVal("--state"))
+		inv.setErr("usage", "state_not_in_shape", "--state 不在 set-want 的形状里")
+		fmt.Fprintf(stderr, "%s: `gap set-want` 不收 `--state %s` —— 本面**只改 want 三格、不改 `state`**\n", progName, v)
+		fmt.Fprintf(stderr, "  改态 : `zerg gap set-state <GAP id> --state <…> --evidence <…>`（人的口径）\n")
+		return exitUsage
+	}
+	if len(inv.flagVals("--text")) > 0 {
+		v := strings.TrimSpace(inv.flagVal("--text"))
+		inv.setErr("usage", "text_not_in_shape", "--text 不在 set-want 的形状里")
+		fmt.Fprintf(stderr, "%s: `gap set-want` 不收 `--text %s`（要写口径注 ⇒ `zerg gap note <GAP id> --text …`）\n", progName, v)
+		return exitUsage
+	}
+	missing := []string{}
+	if famWant == "" {
+		missing = append(missing, "--want-family")
+	}
+	if actWant == "" {
+		missing = append(missing, "--want-action")
+	}
+	if len(missing) > 0 {
+		inv.setErr("usage", "missing_required", "缺必填旗标")
+		fmt.Fprintf(stderr, "%s: `gap set-want` 缺必填旗标：%s\n", progName, strings.Join(missing, " · "))
+		fmt.Fprintf(stderr, "用法：zerg gap set-want <GAP id> --want-family <族> --want-action <动作> [--want-argv <段>…] --evidence <一句话> [--by <谁>] [--dry-run | --yes] [--json <字段>]\n")
+		return exitUsage
+	}
+	// ② 动作名的形态闭集（不依赖盘面 ⇒ 就先判，让「裸给 / 以 `-` 开头 / 整段散文」当场退 2）。
+	//    ★ 族名的闭集要「账内那一半」⇒ 在 ⑥ 读完真源后再判（这里是同一份判据的另一半）。
+	if why := gapWantActionShapeWhy(actWant); why != "" {
+		inv.setErr("usage", "bad_want_action", why)
+		fmt.Fprintf(stderr, "%s: `--want-action` 拒收 —— %s\n", progName, why)
+		fmt.Fprintf(stderr, "  本格收**一个**能力名/token（want 是「还没实现的能力」的名字）；整段诉求写 `--evidence`\n")
+		return exitUsage
+	}
+	if evidence == "" {
+		inv.setErr("usage", "missing_required", "缺 --evidence")
+		fmt.Fprintf(stderr, "%s: `gap set-want` 缺必填旗标：--evidence（**改口径必留一句证据** —— 与 `add` / `set-unit` 同一条纪律）\n", progName)
+		return exitUsage
+	}
+
+	// ③ 缺 `--yes`（且非 `--dry-run`）：fail-closed rc=2，计划件走 stderr（判在读真源之前）。
+	if !inv.dryRun && !inv.yes {
+		ids := gapIDsOf(inv)
+		id := "（未给：缺必填）"
+		if len(ids) == 1 {
+			id = ids[0]
+		}
+		gapSetWantPlanBlock(stderr, "缺 `--yes`（D2 档）", gapLedgerPath(), -1, id, "", famWant, actWant,
+			gapSetWantArgvText(argvWant), evidence)
+		fmt.Fprintf(stderr, "  未执行   : 缺 `--yes` ⇒ 不执行（fail-closed：从不提问）\n")
+		fmt.Fprintf(stderr, "  ⚠ `--yes` 是**命令行确认档**，不是 `approve` 件（不产生 `approver` / `approval` 两格）\n")
+		inv.setErr("usage", "yes_required", "缺 --yes")
+		return exitUsage
+	}
+
+	// ④ 读真源（`--dry-run` 与 `--yes` 都要它：读不到 ⇒ 8）
+	led, rc := gapReadLedgerOrDie(inv, stderr)
+	if rc != exitOK {
+		return rc
+	}
+
+	// ⑤ 点名（恰好一条 · 账内没有 ⇒ 2）
+	idx, rc := gapTargetOne(inv, led, stderr, "set-want")
+	if rc != exitOK {
+		return rc
+	}
+	r := led.Recs[idx]
+
+	// ⑥ 取值判据（**带账内那一半的完整闭集**）—— 越界 ⇒ 2 并点名越界值，真源一个字节未改。
+	if why := gapWantTargetWhy(famWant, actWant, gapWantFamilyClosed(&led)); why != "" {
+		inv.setErr("usage", "bad_want_target", why)
+		fmt.Fprintf(stderr, "%s: `gap set-want` 拒收 —— %s\n", progName, why)
+		fmt.Fprintf(stderr, "  真源     : %s（%d 行 · **本发一个字节未改**、审计一行未落）\n", orDash(led.Path), len(led.Lines))
+		return exitUsage
+	}
+
+	// ⑦ 幂等：同 id 同族同动作（且未给 `--want-argv` 或给的与账内逐字相同）⇒ 「无变化」0。
+	argvWantSet := len(argvWant) > 0
+	if r.WantFam == famWant && r.WantAct == actWant && (!argvWantSet || gapArgvEqual(r.WantArgv, argvWant)) {
+		inv.changed = boolPtr(false)
+		if inv.jsonGiven {
+			return selectJSON(stdout, stderr, inv, inv.path, inv.fields, gapSetWantRow(r, "false"))
+		}
+		fmt.Fprintf(stdout, "无变化 %s · want=%s %s（同 id 同族同动作 ⇒ 幂等命中：不写真源、不写审计）\n", r.ID, r.WantFam, r.WantAct)
+		return exitOK
+	}
+
+	// ⑧ `--dry-run`：只出计划件（stdout · rc=0 · 零副作用）
+	if inv.dryRun {
+		inv.changed = boolPtr(false)
+		would := r
+		would.WantFam, would.WantAct = famWant, actWant
+		if argvWantSet {
+			would.WantArgv = argvWant
+		}
+		if inv.jsonGiven {
+			return selectJSON(stdout, stderr, inv, inv.path, inv.fields, gapSetWantRow(would, "false"))
+		}
+		gapSetWantPlanBlock(stdout, "--dry-run", led.Path, len(led.Lines), r.ID, r.FP, famWant, actWant,
+			gapSetWantArgvText(would.WantArgv), evidence)
+		fmt.Fprintf(stdout, "  改前     : want_family=%s · want_action=%s · want_argv=%s\n",
+			orDash(r.WantFam), orDash(r.WantAct), gapSetWantArgvText(r.WantArgv))
+		fmt.Fprintf(stderr, "（--dry-run：只出计划件 · 零副作用 —— 未改真源、未写审计）\n")
+		return exitOK
+	}
+
+	// ⑨ 字段面前置判定（坏 `--json` 字段 ⇒ 真写之前就拒：真源一个字节不落、审计一行不落）
+	if rc := gapFrontJSONFields(inv, stderr, gapSetWantFields); rc != exitOK {
+		return rc
+	}
+
+	// ⑩ 真写：want 三格 + `notes` 末尾追加一条改口径留痕；`state` 逐字不动（改前改后现算对拍）。
+	beforeFam, beforeAct, beforeArgv := r.WantFam, r.WantAct, r.WantArgv
+	beforeState := r.State
+	r.WantFam, r.WantAct = famWant, actWant
+	if argvWantSet {
+		r.WantArgv = append([]string{}, argvWant...)
+	}
+	if !gapArgvEqual(r.WantArgv, beforeArgv) || r.WantFam != beforeFam || r.WantAct != beforeAct {
+		r.Notes = append(append([]string{}, r.Notes...),
+			gapSetWantNote(gapByOf(inv), beforeFam, beforeAct, beforeArgv, r.WantFam, r.WantAct, r.WantArgv, evidence))
+	}
+	if r.State != beforeState {
+		inv.setErr("failed", "state_mutated", "set-want 这一路改了 state")
+		fmt.Fprintf(stderr, "%s: 内部对拍破了：本面改了 `state`（%s → %s）⇒ 不给结论（退码 1）\n", progName, beforeState, r.State)
+		return exitFail
+	}
+	detail, wrc, msg := gapRewriteOne(inv, led, idx, r, "set-want", beforeState, beforeState)
+	if wrc != exitOK {
+		gapWriteFail(inv, stderr, detail, msg, "set-want")
+		return wrc
+	}
+	// ⑪ 写后读回自证：want 三格都在（读回对拍外再点一次名）
+	back, err := readGapLedger()
+	if err != nil {
+		inv.setErr("failed", "readback_failed", err.Error())
+		fmt.Fprintf(stderr, "%s: 写后读回真源失败（退码 1）：%v\n", progName, err)
+		return exitFail
+	}
+	bidx := gapFindIdx(back, r.ID)
+	if bidx < 0 || back.Recs[bidx].WantFam != famWant || back.Recs[bidx].WantAct != actWant ||
+		!gapArgvEqual(back.Recs[bidx].WantArgv, r.WantArgv) || back.Recs[bidx].State != beforeState {
+		inv.setErr("failed", "readback_mismatch", "写后读回与要写的不一致")
+		fmt.Fprintf(stderr, "%s: 写后读回不一致（退码 1）\n", progName)
+		return exitFail
+	}
+	inv.changed = boolPtr(true)
+	if inv.jsonGiven {
+		return selectJSON(stdout, stderr, inv, inv.path, inv.fields, gapSetWantRow(back.Recs[bidx], "true"))
+	}
+	fmt.Fprintf(stdout, "已改 want %s（真源 %d 行不变 · 只重写目标那一行 · 审计已落 1 行）\n", r.ID, len(led.Lines))
+	if back.Recs[bidx].WantFam != beforeFam {
+		fmt.Fprintf(stdout, "  want_family : %s → %s\n", orDash(beforeFam), back.Recs[bidx].WantFam)
+	}
+	fmt.Fprintf(stdout, "  want_action : %s → %s\n", orDash(beforeAct), back.Recs[bidx].WantAct)
+	if !gapArgvEqual(beforeArgv, back.Recs[bidx].WantArgv) {
+		fmt.Fprintf(stdout, "  want_argv   : %s → %s\n", gapSetWantArgvText(beforeArgv), gapSetWantArgvText(back.Recs[bidx].WantArgv))
+	}
+	if back.Recs[bidx].WantFam == beforeFam {
+		fmt.Fprintf(stdout, "  want_family : %s（逐字未动）\n", back.Recs[bidx].WantFam)
+	}
+	fmt.Fprintf(stdout, "  state       : %s（逐字未动）\n", back.Recs[bidx].State)
+	fmt.Fprintf(stdout, "  evidence    : %s（已落成 `notes` 末尾一条注）\n", evidence)
+	gapReceiptPrint(stdout, msg)
+	return exitOK
+}
+
+// gapArgvEqual —— 两串 argv 逐字相等（长度 + 每格 · 空与 nil 视同）。
+func gapArgvEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}

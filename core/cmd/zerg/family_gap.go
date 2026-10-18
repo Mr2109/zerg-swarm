@@ -54,6 +54,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	// ★ 批1 第一片：件面三键的「入库件清单」**只经既有 A1 出口**取（`gitpaths.List` · FaceTracked）；
 	// 本文件不另写一套 `git ls-files` 的 argv（族件已有该口子 ⇒ 复用，见 `gapTrackedFiles`）。
@@ -2447,8 +2448,174 @@ func gapAddNotesFromFlags(inv *invocation) ([]string, string) {
 	return texts, ""
 }
 
+// ── `--` 分隔符档（缺口 `GAP-20260926-27` · 2026-10-19）───────────────────────────────────────
+//
+// 病（现读实测）：解析器（`main.go` · `parseInvocation`）判取值旗标只看「下一个 token 是否以
+// `-` 开头」⇒ 以减号开头的值一律被判成「裸给（给过、值空）」，那个词自己又被当成旗标：
+//
+//	zerg gap add --symptom -一句症状 …  ⇒  rc=2 `未知旗标 "-一句症状"`
+//
+// 治法（**本件内**，✗ 不动 `main.go` 的解析器）：照仓内先例的 `--` 分隔符语义
+// （`fs run` 把 `--` 之后原样转给子命令）—— `<旗标> -- <值…>`：`--` 之后的位置参数
+// 就是该旗标的值。★ 判定只认「旗标名**紧邻** `--`」这一种写形；其余 argv 形态
+// （`--symptom=<值>` ／ `--symptom <普通值>` ／ 裸给且无 `--`）**一字不动** ⇒ 别的旗标解析不受影响。
+// ★ `--` 之后的 token **一律是值**（含 `--dry-run` 一类）⇒ 其余旗标要写在 `--` 之前。
+//
+// dashDashValues —— `name` 紧邻 `--` 时返回 `--` 之后的全部 token（第二值 = 是否命中）。
+func dashDashValues(inv *invocation, name string) ([]string, bool) {
+	for i := 0; i+1 < len(inv.orig); i++ {
+		if inv.orig[i] == name && inv.orig[i+1] == "--" {
+			return inv.orig[i+2:], true
+		}
+	}
+	return nil, false
+}
+
+// gapAddSymptomDashDashNote —— `--symptom -- <值>` 这一档的响亮注（✗ 静默）：解析器在
+// dispatch **之前**已按「裸形」为它打过一条「值按空收」的提醒（`main.go` · `GAP-20260928-151`），
+// 而本档**真收下了值** ⇒ 必须当场说明上一条不适用，否则人面自相矛盾。
+func gapAddSymptomDashDashNote(stderr io.Writer, n int) {
+	fmt.Fprintf(stderr, "%s: 注：本发走 `--` 分隔符档 ⇒ 上面那条「值按空收」的提醒**不适用**："+
+		"`--` 之后的 %d 个 token 已回填给 --symptom（以减号开头也收；其余旗标要写在 `--` 之前）\n",
+		progName, n)
+}
+
 func cmdGapAdd(inv *invocation, stdout, stderr io.Writer) int {
-	return gapAddApply(inv, stdout, stderr, gapAddInputFromFlags(inv))
+	in := gapAddInputFromFlags(inv)
+	// ★ 缺口 `GAP-20260926-27` 的真修点：`--symptom -- <以减号开头的值>`（`--` 分隔符档）。
+	if vals, ok := dashDashValues(inv, "--symptom"); ok {
+		if len(vals) != 1 {
+			inv.setErr("usage", "dash_dash_value_arity", "`--` 之后要给 --symptom 恰好一个值")
+			fmt.Fprintf(stderr, "%s: `--symptom -- <值>` 只收**一个**值（收到 %d 个）—— `--` 之后的 token 一律按 --symptom 的值收\n",
+				progName, len(vals))
+			fmt.Fprintf(stderr, "  要避免这层歧义就用等号形态：`--symptom=-一句症状`（减号开头同样收）\n")
+			return exitUsage
+		}
+		in.Symptom = strings.TrimSpace(vals[0])
+		gapAddSymptomDashDashNote(stderr, len(vals))
+	}
+	return gapAddApply(inv, stdout, stderr, in)
+}
+
+// ── want 目标（族名 / 动作名）的校验面（缺口 `GAP-20261008-07` · 2026-10-19）──────────────────
+//
+// 病（现读）：`want_family` / `want_action` 两格**只有 `gap note` 能改之外没有任何写面**，
+// 拍板换了方向（想要的动作变了）⇒ 只能手改盘上真源（`~/.zerg/state/zerg-cli-gaps.jsonl`），
+// 绕过审计、绕过锁、绕过一切校验。治法 = 新增写面 `gap set-want`（`family_gap_state.go:cmdGapSetWant`），
+// 本段是它（以及将来任何 want 写面）的**唯一**取值判据。
+//
+// 校验口径（逐条，✗ 不新立第二份名单）：
+//
+//	① 族名 —— **闭集**：命令树顶层族（现读 `catalog()` 第一段）∪ 账内现用 `want_family` 原值。
+//	   两个来源都是既有真源：前者 = `zerg help --json family` 那一份，后者 = 账本身。
+//	   为什么不只认命令树：账内现读 1494 条里有 789 条用的族名**不在**命令树里（`zerg` 214 条 ·
+//	   `命令面` 82 条 · `gate 命令族` 43 条 …，共 235 个不同值）—— want 在账里本就是「想要的域」，
+//	   不只等于 CLI 族名；只认命令树会把「改口径」这件事对那 789 条一概堵死。
+//	② 动作名 —— **形态闭集**：非空 · 不以 `-` 开头（会被解析器吃成旗标）· 不含空白（含换行/制表）·
+//	   ≤128 rune。为什么不是白名单：want 的定义就是「**还没实现**的能力」—— 现读 705 条「族名在命令树内」
+//	   的账行里，`want_action` 能在命令树里解析到的 **0 条**（`ls` / `export` / `show` 一类也解析不到，
+//	   因为族名与路径段未必同名）。按白名单判 ⇒ 每一条合法的新能力诉求都被拒，等于把本写面废掉。
+//	   ⇒ 动作只判「是不是一个干净的单一 token」（防的是手滑写进整段散文 / 以减号开头被吞）。
+//
+// ★ 为什么**不**回灌给 `gap add`：`gap add` 现读对这两格只判「非空」（本件实测），把它收紧成上面的
+// 闭集 ⇒ 账内现用的 235 个族名（`zerg` / `命令面` …）在新账里一律写不进 ⇒ 属**行为变更**、
+// 超出本单边界（本单只加一条写面）。「同一套校验」由本函数单点承载：将来的写面一律调它。
+
+// gapWantFamiliesFromTree —— 命令树顶层族（**现读** `catalog()` 第一段 · 去重 · 排序）。
+// ✗ 不手写族名表：手写必然与命令树漂（`zerg help --json family` 是同一份口径的机器面）。
+func gapWantFamiliesFromTree() []string {
+	seen := map[string]struct{}{}
+	out := []string{}
+	for _, c := range catalog() {
+		if len(c.path) == 0 {
+			continue
+		}
+		if _, ok := seen[c.path[0]]; ok {
+			continue
+		}
+		seen[c.path[0]] = struct{}{}
+		out = append(out, c.path[0])
+	}
+	sort.Strings(out)
+	return out
+}
+
+// gapWantFamilyClosed —— want 族名的**闭集**（命令树顶层族 ∪ 账内现用原值 · 排序去重）。
+// `led == nil` ⇒ 只有命令树那一半（`gap add` 那一档「还没读真源」时也能用）。
+func gapWantFamilyClosed(led *gapLedger) []string {
+	seen := map[string]struct{}{}
+	out := []string{}
+	add := func(v string) {
+		v = strings.TrimSpace(v)
+		if v == "" {
+			return
+		}
+		if _, ok := seen[v]; ok {
+			return
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+	for _, f := range gapWantFamiliesFromTree() {
+		add(f)
+	}
+	if led != nil {
+		for _, r := range led.Recs {
+			add(r.WantFam)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// gapWantClosedHint —— 越界时印的候选面：前 `n` 个逐字点名 + 「共 N 个」+ 现读取法（✗ 不静默截断）。
+func gapWantClosedHint(closed []string, n int) string {
+	if len(closed) <= n {
+		return gapClosedText(closed)
+	}
+	return fmt.Sprintf("%s …（共 %d 个 · 全量取法：`zerg help --json family`（命令树那一半）· `zerg gap ls --json want_family`（账内那一半））",
+		gapClosedText(closed[:n]), len(closed))
+}
+
+// gapWantActionShapeWhy —— 动作名的**形态闭集**判据（返空串 = 合法）。
+// 四条：非空 · 不以 `-` 开头 · 不含空白 · ≤128 rune（防整段散文进账把列撑爆）。
+func gapWantActionShapeWhy(act string) string {
+	if act == "" {
+		return "动作名为空"
+	}
+	if strings.HasPrefix(act, "-") {
+		return fmt.Sprintf("动作名 %q 以 `-` 开头（命令行上会被解析器当成旗标吞掉 ⇒ 账内该格会变成别的值）", act)
+	}
+	if i := strings.IndexFunc(act, unicode.IsSpace); i >= 0 {
+		return fmt.Sprintf("动作名 %q 含空白（第 %d 个字符）—— 本格收**一个**能力名/token，不收整段描述（整段描述请写 `--evidence` 或 `gap note`）", act, i+1)
+	}
+	if n := len([]rune(act)); n > 128 {
+		return fmt.Sprintf("动作名 %d rune 超过上限 128（%q…）—— 整段诉求请写 `--evidence`，本格只收能力名", n, string([]rune(act)[:16]))
+	}
+	if i := strings.IndexFunc(act, unicode.IsControl); i >= 0 {
+		return fmt.Sprintf("动作名含控制字符（第 %d 个字符）", i+1)
+	}
+	return ""
+}
+
+// gapWantTargetWhy —— want 目标（族 + 动作）的**唯一**校验入口（返空串 = 合法）。
+// 族名走闭集（`closed` 由调用方按手上的真源算好；nil ⇒ 现算命令树那一半），动作名走形态闭集。
+// 拒词一律**逐字点名越界值**（✗ 不写「参数不合法」这类不点名的空话）。
+func gapWantTargetWhy(fam, act string, closed []string) string {
+	if closed == nil {
+		closed = gapWantFamilyClosed(nil)
+	}
+	if fam == "" {
+		return "族名为空"
+	}
+	if !gapIn(closed, fam) {
+		return fmt.Sprintf("族名 %q 不在闭集里（闭集 = 命令树顶层族 ∪ 账内现用 want_family 原值）—— 候选取法：%s",
+			fam, gapWantClosedHint(closed, 24))
+	}
+	if why := gapWantActionShapeWhy(act); why != "" {
+		return why
+	}
+	return ""
 }
 
 // gapAddUsageConfirm —— `gap add` / `gap idea promote` **共用的「执行前判」单点**（★ `GAP-20260928-175`）。

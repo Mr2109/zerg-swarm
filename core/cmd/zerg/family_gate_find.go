@@ -59,9 +59,17 @@ var gateFindFields = []string{"name", "scope", "mode", "verdict", "cmd", "log", 
 	//   当「未点名」，同族纪律「读不到不许当健康」在**机器面**上无落点。
 	//   治法：**只加信息**（两格由 `gateFindStampUncertain` 一处算、逐行同值）—— 与 `hits`/`unique`
 	//   同规：不改退码（现 rc=0 有现有消费者）、不改前十一格的字节与顺序、不改任何既有函数行为。
-	"uncertain", "uncertain_lines"}
+	"uncertain", "uncertain_lines",
+	// ★ 治 GAP-20261015-08：登记态两格 —— `state`（该行的**登记态**：已登记 / 未登记 / 不给结论）
+	//   与 `not_collected`（**哪些没收集** · 未登记时点名那一件；已登记时为空）。
+	//   病（现读 · 逐字）：`zerg gate find … --json state` ⇒「未知字段 \"state\"」退 2，人面也只有
+	//   `wiring` 那一长串可自己推 ⇒ 「件在盘但没进步骤表」与「已进步骤表」在命令面上**判不出来**。
+	//   治法与同族 `hits`/`unique`/`uncertain` 同规：**只加信息**（不改退码、不改前十三格的字节与顺序），
+	//   两格由 `gateFindRegCell.render()` **一处**算 ⇒ 表路（TSV 末两列）与 `--json` 路都走 `listCmd`，
+	//   两面同源、不各写一份。
+	"state", "not_collected"}
 
-// gateFindDisplay —— 人面（默认 TSV）列 = 冻结十二格 + 两格人读补充（★ GAP-20260929-28：
+// gateFindDisplay —— 人面（默认 TSV）列 = 冻结十五格 + 两格人读补充（★ GAP-20260929-28：
 // 第五格形态 `command_kind` 与其真身 `command_resolved`）。★ **不进** `gateFindFields`
 // （那一份是文档/帮助导出面的冻结字段表 = `cmd.fields`）⇒ 不重生命令页、不改机器面字段集。
 // ★ 2.5.15-28c（用法串面开窗已落）：`command_kind` / `command_resolved`（连同 `--uncertain` 那张表的
@@ -119,7 +127,7 @@ func cmdGateFind(inv *invocation, stdout, stderr io.Writer, root, script string)
 			continue
 		}
 		logNote, _ := gateStepLogNote(root, d.Name)
-		rows = append(rows, map[string]string{
+		row := map[string]string{
 			"name":             d.Name,
 			"scope":            d.Scope,
 			"mode":             gateShowModeCell(d.Mode),
@@ -131,7 +139,11 @@ func cmdGateFind(inv *invocation, stdout, stderr io.Writer, root, script string)
 			"wiring":           gateWiringNote(root, d.Cmd, decls, unc),
 			"command_kind":     d.Kind,
 			"command_resolved": gateCmdResolvedCell(d),
-		})
+		}
+		// ★ GAP-20261015-08：登记态两格在这一行**定稿时**盖章（口径只一处：`gateFindRegCell.render()`）。
+		//   步骤行 ⇒ 本步在步骤表里有声明行 ⇒ 已登记（登记字段缺失的那一态见 `gateFindRegOfDecl`）。
+		gateFindStampReg(row, gateFindRegOfDecl(d))
+		rows = append(rows, row)
 	}
 
 	// ★ 门件面先自查：`scripts/gates/` **读不到 ⇒ 不给结论（退码 8）**，与「零命中」分家。
@@ -157,7 +169,7 @@ func cmdGateFind(inv *invocation, stdout, stderr io.Writer, root, script string)
 		if d, ok := gateFileDecl(rel, decls); ok {
 			mode := gateShowModeCell(d.Mode)
 			logNote, _ := gateStepLogNote(root, d.Name)
-			rows = append(rows, map[string]string{
+			row := map[string]string{
 				"name":             rel,
 				"scope":            d.Scope,
 				"mode":             mode,
@@ -169,10 +181,13 @@ func cmdGateFind(inv *invocation, stdout, stderr io.Writer, root, script string)
 				"wiring":           gateWiringNote(root, rel, decls, unc),
 				"command_kind":     d.Kind,
 				"command_resolved": gateCmdResolvedCell(d),
-			})
+			}
+			// ★ GAP-20261015-08：**被点名**的门件行 ⇒ 已登记（口径与步骤行同一个 `gateFindRegOfDecl`）。
+			gateFindStampReg(row, gateFindRegOfGateFile(rel, d, true, unc))
+			rows = append(rows, row)
 			continue
 		}
-		rows = append(rows, map[string]string{
+		row := map[string]string{
 			"name":             rel,
 			"scope":            "—",
 			"mode":             "—",
@@ -184,7 +199,11 @@ func cmdGateFind(inv *invocation, stdout, stderr io.Writer, root, script string)
 			"wiring":           gateWiringNote(root, rel, decls, unc),
 			"command_kind":     "—",
 			"command_resolved": "—（未点名 ⇒ 无命令串）",
-		})
+		}
+		// ★ GAP-20261015-08：**未点名**的门件行 ⇒ 未登记 + `not_collected` 点名这一件；
+		//   若件名只出现在**读不出的声明行**原文里 ⇒ 收没收判不了 ⇒ 不给结论（✗ 不静默当「未登记」）。
+		gateFindStampReg(row, gateFindRegOfGateFile(rel, gateStepDecl{}, false, unc))
+		rows = append(rows, row)
 	}
 
 	if len(rows) == 0 {
@@ -674,4 +693,112 @@ func gateRealGatesRoster(src, base string) (line int, class string, ok bool) {
 		}
 	}
 	return 0, "", false
+}
+
+// ── ★ 治 `GAP-20261015-08`：登记态两格（`state` / `not_collected`）────────────────────────
+//
+// 病（父代理 2026-10-19 现读 · 逐字）：
+//
+//	zerg gate find scripts/gates/check-help-shape --json state
+//	⇒ zerg: 未知字段 "state"（合法字段: name,scope,…,uncertain,uncertain_lines · 退 2）
+//
+// 即：这条命令能回答「这一步叫什么 / 步号几 / 跑什么 / 在哪接线」，但**登记态**那两件在本仓
+// 最要紧的读数在命令面上**没有落点**：
+//
+//	① **该步的登记态**（已登记 / 未登记 / 不给结论）—— 「件在盘但没进步骤表」与「已进步骤表」
+//	   在旧面上只能靠读 `wiring` 那一长串自己推（那是**接线面**的现读，不是登记态）；
+//	② **哪些没收集**（`not_collected`）—— 未登记的那一件到底是谁，旧面一个字都没有。
+//
+// 三态判据（★ ✗ 不许把「读不到」静默读成「已登记」）：
+//
+//	① **已登记**   ⇒ `state` = `已登记` · `not_collected` = **空**（该行在步骤表里有它的声明行）；
+//	② **未登记**   ⇒ `state` = `未登记` · `not_collected` = **点名**（未收集的那一件的基名）；
+//	③ **不给结论** ⇒ `state` 以 `不给结论` 起头并**带理由**（登记态的原始读数**缺失 / 不认** ——
+//	   该行的登记字段读不出，或件名只出现在**读不出的声明行**原文里 ⇒ 收没收判不了）。
+//	   这一态 `not_collected` **同样不许留空**（留空 = 静默主张「一件都没漏」，与「读不到不许当健康」相反）。
+//
+// 两格的**唯一**算法在本块（`gateFindRegCell.render`）：步骤行、被点名的门件行、未点名的门件行
+// 三条路都经 `gateFindStampReg` 盖章 ⇒ 表路（TSV 末两列）与 `--json` 路**逐字同源**（不各写一份）。
+const (
+	gateFindRegRegistered   = "已登记"
+	gateFindRegUnregistered = "未登记"
+	gateFindRegNoVerdict    = "不给结论"
+)
+
+// gateFindRegCell —— 一行登记态的**原始读数**（三值闭集 ＋ 空 = 该字段自身缺失）。
+//
+// ★ 为什么要一个「原始读数」结构而不是直接给中文串：三态的第三态要的是**判不了的理由**
+// （`Why`），而「已登记/未登记」两态不许带任何附带文案（机读侧按**逐字**等值判它）。
+// 把「读数」与「渲染」分开，第三态就**不可能**被静默折叠成「已登记」（那正是本缺口的病根）。
+type gateFindRegCell struct {
+	Raw          string // 已登记 / 未登记 / ""（该字段自身缺失 ⇒ 不给结论）
+	Why          string // 判不了时的一句话（另两态为空）
+	NotCollected string // 该行「没收集」的点名（空 = 没有）
+}
+
+// render —— 原始读数 ⇒ （`state`, `not_collected`）两格。**唯一**渲染处。
+func (c gateFindRegCell) render() (string, string) {
+	switch c.Raw {
+	case gateFindRegRegistered:
+		// ① 已登记 ⇒ not_collected **必须空**（没有「没收集」的件可说）。
+		return gateFindRegRegistered, ""
+	case gateFindRegUnregistered:
+		// ② 未登记 ⇒ 必须点名。点不出名 = 自相矛盾态 ⇒ 降成「不给结论」（✗ 不许给空表）。
+		if strings.TrimSpace(c.NotCollected) == "" {
+			cell := gateFindNoVerdictCell("未登记却点不出名 —— 判不了是哪些没收集")
+			return cell, cell
+		}
+		return gateFindRegUnregistered, c.NotCollected
+	}
+	// ③ 其余一切（含空串 = 该字段自身缺失）⇒ **不给结论** ＋ 理由。
+	why := strings.TrimSpace(c.Why)
+	if why == "" {
+		why = "登记态字段为空"
+	}
+	cell := gateFindNoVerdictCell(why)
+	return cell, cell
+}
+
+// gateFindNoVerdictCell —— 「不给结论」那一格的**唯一**拼法（带理由；与 `gateFindNoVerdict` 同源）。
+func gateFindNoVerdictCell(why string) string {
+	return fmt.Sprintf("%s（%s）", gateFindRegNoVerdict, why)
+}
+
+// gateFindStampReg —— 把登记态两格盖到该行上（步骤行 / 门件行三条路共用这一处）。
+func gateFindStampReg(row map[string]string, c gateFindRegCell) {
+	st, nc := c.render()
+	row["state"] = st
+	row["not_collected"] = nc
+}
+
+// gateFindRegOfDecl —— **已在步骤表里**的那一行（步骤行 / 被点名的门件行）的登记态。
+//
+// 判据＝这份声明自己带不带**登记字段**：步名与出处行是 `add_step` 的两枚必填格，
+// 缺任一 ⇒ 这一步在步骤表里「有没有它」**判不了** ⇒ 不给结论。
+// ★ 为什么不是「进得了 `decls` 就算已登记」：解析器对空步名照样收（`add_step` 的引号串允许空），
+// 而空步名的声明**不构成一条可引用的登记**（`gate show`/`gate explain` 都拿它当键用）——
+// 把它读成「已登记」正是「拿读不到当健康」。
+func gateFindRegOfDecl(d gateStepDecl) gateFindRegCell {
+	if strings.TrimSpace(d.Name) == "" || d.Line <= 0 {
+		return gateFindRegCell{Why: fmt.Sprintf(
+			"该步的登记字段缺失：步名 %q · 出处行 %d ⇒ 步骤表里「有没有它」判不了", d.Name, d.Line)}
+	}
+	return gateFindRegCell{Raw: gateFindRegRegistered}
+}
+
+// gateFindRegOfGateFile —— **门件行**（`scripts/gates/` 下的真件）的登记态。
+//
+//	named=true  ⇒ 该件由某一步的命令串点名（`gateFileDecl` 找到了）⇒ 走 `gateFindRegOfDecl`（已登记）；
+//	named=false 且件名只出现在**读不出的声明行**原文里 ⇒ **不给结论**（点没点名判不了 —— 与
+//	              `gateFindUnnamedVerdict` 同口径，✗ 不许报「未登记」）；
+//	named=false 且声明面根本没有它 ⇒ **未登记** ＋ `not_collected` 点名这一件。
+func gateFindRegOfGateFile(rel string, d gateStepDecl, named bool, unc []gateStepUncertain) gateFindRegCell {
+	if named {
+		return gateFindRegOfDecl(d)
+	}
+	if ls := uncertainLinesNaming(rel, unc); len(ls) > 0 {
+		return gateFindRegCell{Why: fmt.Sprintf(
+			"该件名出现在读不出的声明行 %s 原文里 ⇒ 收没收判不了", joinLines(ls))}
+	}
+	return gateFindRegCell{Raw: gateFindRegUnregistered, NotCollected: filepath.Base(rel)}
 }

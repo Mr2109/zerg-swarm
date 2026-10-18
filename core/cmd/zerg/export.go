@@ -27,6 +27,21 @@ import (
 //	                       退码 2（缺 `--yes`）——与 `zerg doc meta fill` 的写面同口径（缺口 `GAP-20260927-135`）；
 //	只读档（`--dry-run`）—— 同上但退码 0（显式只读）；
 //	写档（`--yes`）      —— 真写一件（`导出-命令面帮助-<YYYYMMDD>.md`），stdout 出落点路径。
+//
+// 导出件体检（缺口 `GAP-20261018-10` 的真缺口半 —— 2026-10-19）：
+//
+//	落点目录里**既有**的导出件（`导出-*.md`）若缺 frontmatter 六件套，本命令**逐件逐键点名**，
+//	✗ 不再默默放过（DEV-3069 只让生成器会写；历史件缺块时没人会知道，因为 `check-doc-meta` 的 M1
+//	默认 warn 不阻断）。判面只有一处、口径两档：
+//
+//	· 写档（真导出）—— 有不过关的件 ⇒ **退 1**（可判红）；体检取不到（目录读不了）⇒ 退 2（不给结论）。
+//	  红的是**目录里的历史件**，本趟导出物照写（红不是本趟写失败）。
+//	· 只读档 —— **只报不判**（退码不随它变）：`--dry-run` 的「退码 0」是**在册契约**
+//	  （`core/internal/contract/dryrun-semantics.json` 的 `help export` 条目逐字写着退码 0）⇒ ✗ 本命令不改它。
+//
+//	为什么不做成 `--check` 旗标：一枚新旗标要在 `main.go` 的解析面（`valueFlagName`/布尔 case）与
+//	命令树用法串两处同批登记（门73），而本单的改动面只有本件 ⇒ 判面落在**已有的写档**上，
+//	零新增旗标、零随动面。
 func cmdHelpExport(inv *invocation, stdout, stderr io.Writer) int {
 	at := time.Now()
 
@@ -81,6 +96,9 @@ func cmdHelpExport(inv *invocation, stdout, stderr io.Writer) int {
 			return exitFail
 		}
 	}
+	// ②b 导出件体检（缺口 `GAP-20261018-10` 的真缺口半）：落点目录里**既有**的导出件逐件量 frontmatter。
+	//   写档已经写完了本趟那件 ⇒ 本趟件也在体检面里（生成器一旦回归，会被自己的判据当场逮到）。
+	fmTotal, fmGaps, fmErr := exportScanArtifacts(outDir)
 	nCmd, nDanger := countCommands()
 	if !write && !inv.dryRun {
 		inv.setErr("usage", "missing_yes", "缺 --yes")
@@ -96,6 +114,11 @@ func cmdHelpExport(inv *invocation, stdout, stderr io.Writer) int {
 		if !write && !inv.dryRun {
 			return exitUsage
 		}
+		if write {
+			if rc := exportArtifactVerdict(stderr, outDir, fmTotal, fmGaps, fmErr); rc != exitOK {
+				return rc
+			}
+		}
 		return exitOK
 	}
 	if !write {
@@ -107,6 +130,12 @@ func cmdHelpExport(inv *invocation, stdout, stderr io.Writer) int {
 		}
 		fmt.Fprintf(stdout, "它若真写会落：%s（版本档案目录 `%s` · 生成时刻 %s）\n", path, facts.DocsVersion, facts.GeneratedAt)
 		helpExportList(stdout)
+		// 体检（只读档：**只报不判** —— 退码 0 是在册契约，见件头；报话走 stderr，stdout 面一字不动）。
+		if fmErr != nil {
+			fmt.Fprintf(stderr, "%s: 导出件体检取不到 —— %v（只读档只报不判；真要判，跑写档 `--yes`）\n", progName, fmErr)
+		} else {
+			exportReportArtifacts(stderr, outDir, fmTotal, fmGaps, false)
+		}
 		if inv.dryRun {
 			fmt.Fprintf(stderr, "干跑（零副作用）：命令 %d 条 · 危险动作 %d 条（已开放 %d · 未开放 %d）· **未写任何件** · 若真写落 %s\n",
 				nCmd, nDanger, dangerOpen(), nDanger-dangerOpen(), path)
@@ -120,6 +149,184 @@ func cmdHelpExport(inv *invocation, stdout, stderr io.Writer) int {
 	fmt.Fprintln(stdout, path) // stdout 只出结果：写哪儿了
 	fmt.Fprintf(stderr, "导出 %d 条命令（其中危险动作 %d 条 · 已开放 %d · 未开放 %d）→ %s（版本档案目录 %s · 生成时刻 %s）\n",
 		nCmd, nDanger, dangerOpen(), nDanger-dangerOpen(), path, facts.DocsVersion, facts.GeneratedAt)
+	// 写档的判面：目录里既有导出件缺 frontmatter ⇒ 退 1（逐件逐键已点名）；体检取不到 ⇒ 退 2（不给结论）。
+	return exportArtifactVerdict(stderr, outDir, fmTotal, fmGaps, fmErr)
+}
+
+// exportArtifactKeys —— 导出件的 frontmatter **六件套**（顺序即报话顺序）。
+// 判据来源：`scripts/gates/check-doc-meta.py` 的 M1/M2 —— 无 frontmatter 块 = M1（默认 warn），
+// 六件套缺键/值不符 = M2（fail）。本体检只认这一处口径，✗ 不自造第二套键名。
+var exportArtifactKeys = []string{"title", "type", "status", "source_of_truth", "owner", "updated_at"}
+
+// exportArtifactWant —— 六件套里**值固定**的三枚（生成器只产这三个值，另三枚的值随件变）。
+var exportArtifactWant = map[string]string{"type": "reference", "status": "historical", "owner": "Mr2109"}
+
+// exportArtifactGap —— 一件导出件的体检结论（一件一行；✗ 不聚合成「有 N 件不合规」了事）。
+type exportArtifactGap struct {
+	File    string   // 件名（不是全路径：报话从人的视角看得懂）
+	Missing []string // 缺的键（按 exportArtifactKeys 的序）
+	Wrong   []string // 值不符的键（形如 `status=current（应 historical）`）
+}
+
+func (g exportArtifactGap) bad() bool { return len(g.Missing) > 0 || len(g.Wrong) > 0 }
+
+// detail —— 一件的**逐键**点名：本体检的全部价值就在这里（笼统说「不合规」等于没说）。
+func (g exportArtifactGap) detail() string {
+	var parts []string
+	if len(g.Missing) > 0 {
+		parts = append(parts, "缺 "+strings.Join(g.Missing, " · "))
+	}
+	if len(g.Wrong) > 0 {
+		parts = append(parts, "值不符 "+strings.Join(g.Wrong, " · "))
+	}
+	return strings.Join(parts, " · ")
+}
+
+// exportArtifactFM —— 切出一件件的 frontmatter 键值。**严格子集**：只认顶层 `key: value` 单层标量，
+// 前 400 行内找闭合 `---`（与 `check-doc-meta` 的 M14 同向：认不出的写法**不拿好话糊过去** ⇒ 当没块）。
+// ✗ 不引 YAML 库：导出件是生成器产的固定形状，这里只要「顶层键及其标量值」这一层。
+func exportArtifactFM(text string) (map[string]string, bool) {
+	lines := strings.Split(text, "\n")
+	if len(lines) > 400 {
+		lines = lines[:400]
+	}
+	i := 0
+	for i < len(lines) && strings.TrimSpace(lines[i]) == "" {
+		i++
+	}
+	if i >= len(lines) || strings.TrimSpace(lines[i]) != "---" {
+		return nil, false
+	}
+	out := map[string]string{}
+	for i++; i < len(lines); i++ {
+		l := strings.TrimRight(lines[i], "\r")
+		if strings.TrimSpace(l) == "---" {
+			return out, true
+		}
+		if l == "" || strings.HasPrefix(l, " ") || strings.HasPrefix(l, "	") || strings.HasPrefix(l, "#") {
+			continue // 续行 / 空行 / 注释：本体检只认顶层键
+		}
+		k, v, ok := strings.Cut(l, ":")
+		if !ok {
+			continue
+		}
+		k = strings.TrimSpace(k)
+		if k == "" || strings.ContainsAny(k, " 	") {
+			continue
+		}
+		out[k] = exportArtifactScalar(v)
+	}
+	return nil, false
+}
+
+// exportArtifactScalar —— 标量归一：剥首尾空白 · 成对引号 · 行内注释（` #…`）。
+func exportArtifactScalar(v string) string {
+	v = strings.TrimSpace(v)
+	if len(v) >= 2 && (v[0] == '"' || v[0] == '\'') && v[len(v)-1] == v[0] {
+		return v[1 : len(v)-1]
+	}
+	if j := strings.Index(v, " #"); j >= 0 {
+		v = strings.TrimSpace(v[:j])
+	}
+	return v
+}
+
+// exportInspectArtifact —— 单件体检（File 由调用方填）。
+func exportInspectArtifact(p string) (exportArtifactGap, error) {
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return exportArtifactGap{}, err
+	}
+	var g exportArtifactGap
+	fm, ok := exportArtifactFM(string(b))
+	if !ok {
+		g.Missing = append(g.Missing, exportArtifactKeys...)
+		return g, nil
+	}
+	for _, k := range exportArtifactKeys {
+		v := fm[k]
+		if v == "" {
+			g.Missing = append(g.Missing, k)
+			continue
+		}
+		if want, fixed := exportArtifactWant[k]; fixed && v != want {
+			g.Wrong = append(g.Wrong, fmt.Sprintf("%s=%s（应 %s）", k, v, want))
+		}
+	}
+	return g, nil
+}
+
+// exportScanArtifacts —— 落点目录里逐件体检**导出件家族**（`导出-*.md`）：返回（导出件总件数, 不过关的清单, 错误）。
+// 只吃 `导出-` 前缀：版本档案目录里还躺着几百件别的文档（它们各有各的门），本体检**不越界**去判它们。
+func exportScanArtifacts(dir string) (int, []exportArtifactGap, error) {
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return 0, nil, err
+	}
+	names := make([]string, 0, len(ents))
+	for _, e := range ents {
+		n := e.Name()
+		if e.IsDir() || !strings.HasPrefix(n, "导出-") || !strings.HasSuffix(n, ".md") {
+			continue
+		}
+		names = append(names, n)
+	}
+	sort.Strings(names) // 件序按名字排：同一棵树的报话可复现
+	gaps := make([]exportArtifactGap, 0, len(names))
+	for _, n := range names {
+		g, err := exportInspectArtifact(filepath.Join(dir, n))
+		if err != nil {
+			return len(names), nil, fmt.Errorf("%s：%v", n, err)
+		}
+		g.File = n
+		if g.bad() {
+			gaps = append(gaps, g)
+		}
+	}
+	return len(names), gaps, nil
+}
+
+// exportReportArtifacts —— 体检报话：**逐件逐键**点名。
+//
+// 两档口径（verdict）：
+//
+//	verdict=true（写档 · 真导出）—— 红/绿都报：绿时留一行证据（「体检真跑过」），红时逐件点名。
+//	verdict=false（只读档）      —— 只报不判（退码不随它变），文案自己写明「只报不判」，
+//	                                免得读的人把它当判据。
+func exportReportArtifacts(w io.Writer, dir string, total int, gaps []exportArtifactGap, verdict bool) {
+	if verdict && len(gaps) > 0 {
+		fmt.Fprintf(w, "%s: 导出件体检 **红** —— %s 里 %d 件导出件，其中 %d 件过不了 check-doc-meta（frontmatter 六件套）：\n",
+			progName, dir, total, len(gaps))
+		for _, g := range gaps {
+			fmt.Fprintf(w, "  - %s：%s\n", g.File, g.detail())
+		}
+		fmt.Fprintf(w, "（本趟导出物已写出 —— 红的是**目录里既有的历史件**：逐件补齐上面点名的键、重跑即转绿。M1 默认 warn ⇒ 本命令在导出这一步补上可判信号）\n")
+		return
+	}
+	if verdict && len(gaps) == 0 {
+		fmt.Fprintf(w, "%s: 导出件体检 绿 —— %s 里 %d 件导出件的 frontmatter 六件套齐\n", progName, dir, total)
+		return
+	}
+	if len(gaps) == 0 {
+		return
+	}
+	fmt.Fprintf(w, "%s: 导出件体检（只读档 · **只报不判**，退码不随它变）—— %s 里 %d 件导出件，其中 %d 件缺 frontmatter / 值不符：\n",
+		progName, dir, total, len(gaps))
+	for _, g := range gaps {
+		fmt.Fprintf(w, "  - %s：%s\n", g.File, g.detail())
+	}
+}
+
+// exportArtifactVerdict —— 写档的判面（报话 + 退码）：0 = 绿 · 1 = 有件不过关（可判红）· 2 = 体检取不到（不给结论）。
+func exportArtifactVerdict(stderr io.Writer, dir string, total int, gaps []exportArtifactGap, err error) int {
+	if err != nil {
+		fmt.Fprintf(stderr, "%s: 导出件体检取不到 —— %v ⇒ **不给结论**（退 2；本趟导出物已写出）\n", progName, err)
+		return exitUsage
+	}
+	exportReportArtifacts(stderr, dir, total, gaps, true)
+	if len(gaps) > 0 {
+		return exitFail
+	}
 	return exitOK
 }
 

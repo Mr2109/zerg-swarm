@@ -52,6 +52,24 @@
 // `pathWithinDir`（✗ 不用 `strings.HasPrefix`），放行写进审计行两格（`sibling_repo` / `sibling_root` · 只增键）。
 // **不给旗标 ⇒ 两条旧闸逐字不动** ✗。
 //
+// ⑥（2026-10-19 · `GAP-20260928-91` · 本枚）**预检档（第三态）**：`--dry-run` 会出计划件却**跳过批准闸**
+// （验签与 scope 判定要到真写那一档才跑）⇒ 缺「只验人签批准件、不写件」的预检面。本枚补上它：
+//
+//	触发 = `--dry-run` ＋ `--confirm=<本机名>`（**不给 `--yes`** —— `--dry-run --yes` 同给已在上面的
+//	`dryRunYesConflict` 判成退 2，位置在本分档之前 ⇒ 两档不可能同时成立）。三态互斥（本命令**唯一**分档表）：
+//
+//	  ① 干跑档  `--dry-run`                     —— 出计划件：**不验**批准链（无件也退 0 · 只把判决打出来看）
+//	  ② 预检档  `--dry-run --confirm=<本机名>`   —— **只验**：批准链全跑（读件 · 验签 · 工具名 · scope）·
+//	                                              零写入 · 零审计 · **不读目标件** ⇒ 内容来源整档不评
+//	  ③ 真写档  `--confirm=<本机名> --yes`       —— 批准链 ＋ 资格闸 ＋ 审计先落盘 ＋ 写件
+//
+//	★ 为什么不开一枚新旗标（如 `--verify-approval`）：旗标名表（`main.go` 的 `valueFlagName`）与解析面
+//	  （`parseInvocation` 的逐条 `case`）是那两处的**唯一真源**，本单可动面只有本件 ⇒ 新旗标在解析面
+//	  一律「未知旗标 ⇒ 退 2」＝命令面不可用。故第三态复用两枚**既已登记、且互斥规则里本就成对**的旗标。
+//	★ 判据四态（`TestDevEdit_VerifyApprovalPrecheck`）：① 无批准件 ⇒ 退 2 且点名「无批准件」·
+//	  ② 有件但 scope 不含本件 ⇒ 退 2 且点名 · ③ 合格 ⇒ 退 0 且打出验签结论与命中工具 ·
+//	  ④ **三态（干跑 / 预检 / 真写拒执）下 `edit_audit.jsonl` 零新增行**（本档的核心承诺：不落审计）。
+//
 // 与既有条文的接缝（**不重复立项** ✗）：写面**不新立锁**（§九 M5：真源在持锁者）、**不新立退码**
 // （照 §4.1 K3 那张表）、**不改契约**；本件只是「改」这一环的**唯一入口**。
 package main
@@ -398,9 +416,18 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s: `--replace <件>` 与 `--replace-inline <JSON>` 是**同一种内容来源的两种给法** ⇒ 只许给一种（退码 2 · GAP-20261018-22）\n", progName)
 		return exitUsage
 	}
-	if (fromPath == "") == (replacePath == "" && replaceInline == "") {
+	// ★ GAP-20260928-91（本枚）：**预检档不读目标件** ⇒ 内容来源整档不评（给了也不评、不给也不拒 ——
+	//   预检要的只是「提案 ＋ 件名 ＋ 那枚批准件」）。但「`--from` 与 `--replace` 同给」这种**自相矛盾**
+	//   的组合仍拒（不当它是第三态的一部分）；`--force` 一类无关旗标不受影响。
+	if devEditPrecheckMode(inv) {
+		if fromPath != "" && (replacePath != "" || replaceInline != "") {
+			inv.setErr("usage", "bad_content_source", "`--from` 与 `--replace` 互斥")
+			fmt.Fprintf(stderr, "%s: **预检档**（`--dry-run --confirm=<本机名>`）不读目标件 ⇒ 内容来源整档不评，但 `--from` 与 `--replace` 仍**不许同给**（退码 2）\n", progName)
+			return exitUsage
+		}
+	} else if (fromPath == "") == (replacePath == "" && replaceInline == "") {
 		inv.setErr("usage", "bad_content_source", "内容来源要给且只给一种")
-		fmt.Fprintf(stderr, "%s: 内容来源**恰给一种**：`--from <件>`（整件替换）或 `--replace <件>` / `--replace-inline <JSON>`（逐格精确替换）\n", progName)
+		fmt.Fprintf(stderr, "%s: 内容来源**恰给一种**：`--from <件>`（整件替换）或 `--replace <件>` / `--replace-inline <JSON>`（逐格精确替换）；要「只验批准件、不写件」走**预检档**：`--dry-run --confirm=<本机名>`（第三态 · 零写入 · 零审计）\n", progName)
 		return exitUsage
 	}
 	// ★ GAP-20261009-10 修法①：`--base` 只与 `--replace` 合用（`--from` 是整件替换，用不上基线）。
@@ -539,6 +566,15 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 		inv.setErr("usage", "proposal_not_open", "提案已否决")
 		fmt.Fprintf(stderr, "%s: 提案 %s 的状态是 %q ⇒ 拒执（已否决的件不许照它改码）\n", progName, proposalID, prop.State)
 		return exitUsage
+	}
+
+	// ★★ GAP-20260928-91（本枚）**预检档（第三态）** —— 位置：提案闸 / 件路径闸 / 同级仓闸**之后**
+	//   （那三闸都是只读的「这一件到底能不能碰」判定，预检要跟着同一套口径），读目标件 / 算 after /
+	//   影响面 / 退点 / 审计**之前**（⇒ 本档物理上够不到写面：`outPath` 只用于打印，不读不写）。
+	//   互斥：与干跑档（无 `--confirm`）、真写档（`--confirm` ＋ `--yes`）三档两两不重叠；同给判定
+	//   （`--dry-run --yes`）在入口已退 2 ⇒ 本条只在「干跑 ＋ 确认值」这一格成立。
+	if devEditPrecheckMode(inv) {
+		return devEditPrecheck(stdout, stderr, inv, prop, proposalID, fileRel)
 	}
 
 	// ④ 算出「改完以后长什么样」+ 前后 sha256/字节数（不落盘的那一半）
@@ -1166,6 +1202,8 @@ func emitDevEditPlan(stdout, stderr io.Writer, row map[string]string, prop *prop
 	}
 	fmt.Fprintf(stdout, "  审计落点 : %s（一行一事件 · 追加只写 · **写不进审计就不改件**）\n", row["audit_path"])
 	fmt.Fprintf(stdout, "  批准件   : %s —— %s\n", row["approval_path"], row["approval"])
+	// ★ GAP-20260928-91：第三态的**人面入口**（干跑这一档不验批准链 ⇒ 要「只验不写」得再加 `--confirm`）。
+	fmt.Fprintf(stdout, "  预检档   : 只验批准件、不写件 ⇒ 本命令再加 `--confirm=<本机名>`（**第三态**：批准链全跑 · 零写入 · 审计零新增行）\n")
 	if g := row["approval_outside"]; g != "" {
 		fmt.Fprintf(stdout, "  批准面   : %s\n", g)
 	}
@@ -1210,6 +1248,111 @@ func emitDevEditPlan(stdout, stderr io.Writer, row map[string]string, prop *prop
 	return exitOK
 }
 
+// ── ⑥（`GAP-20260928-91`）预检档（第三态）：只验批准件、不写件 ──────────────────────────
+//
+// 触发面 = `--dry-run` ＋ `--confirm=<本机名>`（**不给 `--yes`**；同给已在入口 `dryRunYesConflict` 判 2）。
+// 它跑的是**与真写同一枚**批准链（`devEditLoadApproval` = 读件 ⇒ 验签 `verifyTicketState` ⇒ 工具名 ⇒
+// `approvalScopeCovers`），**不另写第二套判据**；差别只在「验完就停」：
+//
+//	· **不读目标件**（不取改前态、不算 after / diff / 影响面 / 退点）⇒ 内容来源（`--from` / `--replace` /
+//	  `--replace-inline` / `--base`）**整档不评**（给了也不评、不给也不拒）；
+//	· **零写入**（`outPath` 只用来打印，一个字节不碰）· **零审计**（不调 `appendEditAudit` ⇒
+//	  `edit_audit.jsonl` **零新增行** —— 本档的核心承诺）。
+//
+// 退码：合格 ⇒ 0（打出验签结论 ＋ 命中工具）· 不合格 ⇒ 2 且**逐字点名**是哪一档（无件 / scope 不含本件 /
+// 不算批准）· 确认值不匹配 ⇒ 2（与真写同一判据 `devEditHostAccept` —— 预检不写件，但值错了真写也过不去）。
+// 不新立退码（照 §4.1 K3 那张表）：全部落在既有的 2 / 0 两档。
+func devEditPrecheckMode(inv *invocation) bool {
+	return inv.dryRun && inv.confirmGiven && !inv.yes
+}
+
+func devEditPrecheck(stdout, stderr io.Writer, inv *invocation, prop *proposalRecord, proposalID, fileRel string) int {
+	fmt.Fprintf(stdout, "预检件（预检档 · `--dry-run --confirm=<本机名>` · **只验人签批准件** · 零写入零审计）\n")
+	fmt.Fprintf(stdout, "  动作     : %s dev edit —— 第三态：完整批准链跑一遍，验完就停（不读目标件、不落审计）\n", progName)
+	fmt.Fprintf(stdout, "  提案     : %s（状态 %s · 声明改件 %s）\n", prop.ID, prop.State, orDashList(prop.Files))
+	fmt.Fprintf(stdout, "  目标件   : %s（本档**只验不读** —— 不取改前态、不算 diff）\n", fileRel)
+	fmt.Fprintf(stdout, "  内容来源 : 本档不评（`--from` / `--replace` / `--base` 一律不适用 —— 预检只需要「提案 ＋ 件名 ＋ 批准件」）\n")
+
+	// ① D3 确认值：与真写**同一判据**（不另写第二套）。
+	if !devEditHostAccept(inv.confirm) {
+		inv.setErr("usage", "confirm_mismatch", "确认值不匹配本机名")
+		fmt.Fprintf(stderr, "%s: **预检档**：`--confirm` 给的是 %q，本机名是 %q ⇒ 真写这一档过不去（退码 2 · 本档仍未写任何件、未记审计）\n",
+			progName, inv.confirm, planHost())
+		return exitUsage
+	}
+	fmt.Fprintf(stdout, "  确认值   : %s（与本机名逐字相同 —— 真写那一档的 D3 值也对得上）\n", inv.confirm)
+
+	// ② 完整批准链（同一枚 `devEditLoadApproval`）：读件 ⇒ scope 命中 ⇒ 验签 ⇒ 工具名 ⇒ scope 覆盖。
+	appr := devEditLoadApproval(inv, fileRel)
+	fmt.Fprintf(stdout, "  批准件   : %s\n", appr.Path)
+	fmt.Fprintf(stdout, "  判决     : %s\n", appr.Judg)
+	toolHit := "（件里没有工具名 —— 判不了）"
+	switch {
+	case appr.Tool == "":
+		// 保持上面那句「判不了」（读不到不当没有）
+	case appr.Tool == appr.WantTool:
+		toolHit = fmt.Sprintf("对上（件批的是 %q ＝ 本命令要的 %q）", appr.Tool, appr.WantTool)
+	default:
+		toolHit = fmt.Sprintf("**不符**（件批的是 %q，本命令要 %q）", appr.Tool, appr.WantTool)
+	}
+	fmt.Fprintf(stdout, "  命中工具 : %s\n", toolHit)
+	if appr.Scope != "" {
+		fmt.Fprintf(stdout, "  scope    : %s（命中 = %s）\n", appr.Scope, appr.ScopeHit)
+	} else {
+		fmt.Fprintf(stdout, "  scope    : %s\n", appr.ScopeHit)
+	}
+
+	res := "verified"
+	if !appr.OK {
+		res = "refused"
+	}
+	row := map[string]string{
+		"proposal": proposalID, "file": fileRel, "mode": "verify", "result": res,
+		"approval": appr.Path, "approval_scope_hit": appr.ScopeHit, "approver": appr.Appr,
+	}
+	// ★ 字段面（与真写档同一枚探针口径 · `marshalObject` 缺键即 bad）：本档产不出的名字 ⇒ 验前拒，
+	//   **不是**静默略去（禁「要了这一格却什么也没给」）。
+	if inv.jsonGiven {
+		if _, bad := marshalObject(inv.fields, row); bad != "" {
+			fmt.Fprintf(stderr, "%s: 本档（预检）不产出字段 %q ⇒ **拒执**（未读目标件、未记审计 —— 这一档只产 approval / approver / approval_scope_hit 一类）\n", progName, bad)
+			inv.setErr("usage", "json_field_unknown:"+bad, fmt.Sprintf("未知字段 %q", bad))
+			return reportBadField(stderr, inv.path, bad)
+		}
+	}
+
+	if appr.OK {
+		fmt.Fprintf(stdout, "  预检结论 : **验过 · 可落** —— 批准链全过（读件 · 验签 · 工具名 · scope 覆盖本件）\n")
+		fmt.Fprintf(stdout, "  下一步   : 真写要 `--confirm=<本机名> --yes`（本档**不写**：目标件与审计都一个字节未动）\n")
+	} else {
+		why := "**批准件不算批准** —— " + appr.Judg
+		switch {
+		case !appr.Present:
+			why = "**无批准件** —— 真写会被拒（本档只验不写）：" + appr.Path
+		case appr.ScopeHit == "no":
+			why = fmt.Sprintf("**批准件 scope 不含本件** %s —— 真写会被拒（先扩 scope 重签）：%s", fileRel, appr.Judg)
+		}
+		inv.setErr("usage", "approval_required", "预检：批准链不过（"+appr.Judg+"）")
+		fmt.Fprintf(stdout, "  预检结论 : **不合格** —— %s\n", why)
+		fmt.Fprintf(stderr, "%s: **预检不过** —— %s\n", progName, why)
+		fmt.Fprintf(stderr, "%s:   批准件落点：%s\n", progName, appr.Path)
+		fmt.Fprintf(stderr, "%s:   下一步（**批准要人亲自在终端上敲**）：%s approve new --tool %s --scope %s --by <人名> --note <理由>\n",
+			progName, progName, devEditApprovalTool, fileRel)
+		fmt.Fprintf(stderr, "%s:   本档零副作用：目标件一个字节未动、审计未落（`edit_audit.jsonl` 零新增行）\n", progName)
+	}
+
+	if inv.jsonGiven {
+		if rc := selectJSON(stdout, stderr, inv, inv.path, inv.fields, row); rc != exitOK {
+			return rc
+		}
+	}
+	fmt.Fprintf(stderr, "%s: （预检档：只验批准件 · 零写入 · 未落审计 —— `edit_audit.jsonl` 零新增行；要真写就 `--confirm=%s --yes`）\n",
+		progName, planHost())
+	if !appr.OK {
+		return exitUsage
+	}
+	return exitOK
+}
+
 // ---- ③-a 人签批准件（与 `approve` 族同一套验签 · 不另立第二套）----
 
 // devEditApproval —— 一枚批准件的**判定结果**（人面一句话 + 机器面两个字段）。
@@ -1229,6 +1372,13 @@ type devEditApproval struct {
 	//   病灶（缺口逐字）：干跑档此前只有一句人话判决（`approval`），脚本切不出「范围命中没有」——
 	//   只能人读 `approval` 那句散文里有没有「范围」两字。
 	ScopeHit string
+	// ★ GAP-20260928-91（2026-10-19 本枚）：**命中工具**与 scope 原文 —— 预检档要把「这一枚件到底批的是
+	//   哪个工具、scope 原文是什么」直出来（缺口要的「打印验签结论与命中工具」）。三格都取自**同一趟**
+	//   读件（`devEditLoadApproval` 里 unmarshal 后立刻填）⇒ 不另开第二条读件 / 验签链 ✗；
+	//   `omitempty` 之外无副作用：既有判定（`OK` / `Judg` / `ScopeHit`）逐字不动。
+	Tool     string // 件里签的工具名（件读得动才有值）
+	Scope    string // 件里签的 scope 原文（同上）
+	WantTool string // 本命令要的工具名（`--approval-tool` 可覆盖 · 缺省 `dev_edit`）
 }
 
 // devEditApprovalTool —— 本命令向人要的那枚批准件的工具名（件名 = `<状态目录>/approvals/<工具名>.json`）。
@@ -1246,7 +1396,7 @@ func devEditLoadApproval(inv *invocation, fileRel string) devEditApproval {
 	if path == "" {
 		path = filepath.Join(approveDir(), wantTool+".json")
 	}
-	a := devEditApproval{Path: path, ScopeHit: "（无件 —— 判不了）"}
+	a := devEditApproval{Path: path, ScopeHit: "（无件 —— 判不了）", WantTool: wantTool}
 	b, err := os.ReadFile(path)
 	if err != nil {
 		a.Judg = "无件（真写要一枚人签批准件）"
@@ -1259,6 +1409,8 @@ func devEditLoadApproval(inv *invocation, fileRel string) devEditApproval {
 		a.ScopeHit = "（件读不动 —— 判不了）"
 		return a
 	}
+	// ★ GAP-20260928-91：命中工具 / scope 原文 —— 同一趟读件的产物（判不了就不填，不编）。
+	a.Tool, a.Scope = tk.Tool, tk.Scope
 	// ★ GAP-20260927-339：范围命中这一格在**验签之前**就能算（它只看 scope 与件名，与签名无关）；
 	//   件读得动 ⇒ 算出来（yes/no）；读不动 ⇒ 保持「判不了」。与真写闸同源（同一枚 `approvalScopeCovers`）。
 	if approvalScopeCovers(tk.Scope, fileRel) {

@@ -22,6 +22,7 @@ import (
 // mtSplitWant —— 真命令树里**机器对象**命令的期望机器目标名（逐条现读派生 · 本单改动面）。
 var mtSplitWant = map[string]string{
 	"agent bootstrap":  machineNodeName,
+	"agent deploy":     machineNodeName,
 	"agent load":       machineNodeName,
 	"agent reap":       machineNodeName,
 	"agent registry":   machineNodeName,

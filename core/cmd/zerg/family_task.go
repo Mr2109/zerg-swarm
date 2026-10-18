@@ -292,10 +292,43 @@ func taskSubmitEggMaxWarn(inv *invocation, stderr io.Writer) {
 		"（本趟 `wallclockGuard`），**任务/单卵时限**本版不生效（缺口 `GAP-20261010-09`）\n", progName, wallclockFlag)
 }
 
+// taskSubmitBindDashDashAcceptance —— `--acceptance -- <以减号开头的判据…>`（缺口 `GAP-20260926-31`）。
+//
+// 病（现读实测）：`zerg task submit --acceptance -某判据` ⇒ 解析器把 `-某判据` 当旗标 ⇒
+// rc=2 `未知旗标 "-某判据"`；而 `--acceptance -- -某判据`（旗标紧邻 `--`）在改前更坏 ——
+// `-某判据` 落进位置参数被**静默丢弃**、请求体出 `"acceptance":null`（rc=0 · 假绿）。
+//
+// 治法：与 `gap add --symptom` 同一份 `--` 分隔符语义（共用 `family_gap.go` 的 `dashDashValues`）——
+// `--` 之后的 token 全部回填给 `--acceptance`（可重复旗标 ⇒ 多个 token = 多条判据）。
+// 只认「旗标名紧邻 `--`」这一种写形；`--acceptance <普通值>` / `--acceptance=<值>` /
+// `--acceptance=`（显式空 ⇒ 三态里的 `null`）**一字不动**。
+func taskSubmitBindDashDashAcceptance(inv *invocation, stderr io.Writer) {
+	vals, ok := dashDashValues(inv, "--acceptance")
+	if !ok {
+		return
+	}
+	n := 0
+	for _, v := range vals {
+		if strings.TrimSpace(v) == "" {
+			continue
+		}
+		inv.acceptance = append(inv.acceptance, v)
+		n++
+	}
+	inv.acceptanceDeclared = true
+	if n > 0 {
+		fmt.Fprintf(stderr, "%s: 注：本发走 `--` 分隔符档 ⇒ 上面那条「值按空收」的提醒**不适用**："+
+			"`--` 之后的 %d 个 token 已回填给 --acceptance（以减号开头也收；其余旗标要写在 `--` 之前）\n",
+			progName, n)
+	}
+}
+
 func cmdTaskSubmit(inv *invocation, stdout, stderr io.Writer) int {
 	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
 		return rc
 	}
+	// ★ 缺口 `GAP-20260926-31` 的真修点（`--acceptance -- <值…>`）。
+	taskSubmitBindDashDashAcceptance(inv, stderr)
 	body, err := taskSubmitBody(inv)
 	if err != nil {
 		inv.setErr("usage", "bad_flag_value", err.Error())
