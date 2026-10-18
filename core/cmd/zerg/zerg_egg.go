@@ -1178,6 +1178,146 @@ func zegV2ParseIndex(f *os.File) (*zegIndex, error) {
 	return idx, nil
 }
 
+// zegRecipeWeightsDecl —— 蛋**自带的**机器可读权重声明（`recipe.json` 的可选面）。
+//
+// 为什么要有它（GAP-20261018-16 的「打蛋面」）：从蛋孵化时 `/models` 下的一切只从蛋内
+// `<egg>/models/` 取（backend 侧 `eggWeightSource`），所以**打蛋时**就该判「声明要的权重真收进蛋了吗」，
+// ✗ 不留到孵化器 spec 期甚至引擎装载期。打包端（本文件）**不认识名册**（它是纯文件工具）⇒
+// 声明只能来自源树自己带的 `recipe.json`：
+//
+//	{"weights": ["Qwen…-00001-of-00004.gguf", …], "require_models": true}
+//
+// ★ 无这两个键 ⇒ 不适用（返回 nil）：老蛋的 recipe 是自由文本（如 real10 的 `note`），
+// 行为**逐字不变**（零回归）。判据只认这两格，✗ 不从 note 里猜。
+type zegWeightsDecl struct {
+	Weights       []string `json:"weights"`
+	RequireModels bool     `json:"require_models"`
+}
+
+// zegWeightsDeclOf 从 recipe.json 的字节解析声明；文件缺失 ⇒ (nil, nil)；有但解析不了 ⇒ 具名报错。
+func zegWeightsDeclOf(b []byte, where string) (*zegWeightsDecl, error) {
+	if len(b) == 0 {
+		return nil, nil
+	}
+	var d zegWeightsDecl
+	if err := json.Unmarshal(b, &d); err != nil {
+		return nil, fmt.Errorf("%s：recipe.json 不是合法 JSON（%v）——拒打包/拒认（声明面读不出就不许当「没声明」）", where, err)
+	}
+	if len(d.Weights) == 0 && !d.RequireModels {
+		return nil, nil // 不适用（老蛋形态：自由文本 recipe）
+	}
+	for i, w := range d.Weights {
+		if strings.TrimSpace(w) == "" {
+			return nil, fmt.Errorf("%s：recipe.json 的 weights[%d] 是空串——拒（声明面自相矛盾）", where, i)
+		}
+	}
+	return &d, nil
+}
+
+// zegWeightsDeclCheck 声明的每一件在蛋里必须真有 `models/<基名>`；缺则**具名拒**（列出缺的基名）。
+//
+// hasModels —— 「蛋里有没有这一件」的判据由两个面各自给（打包面看源树/收进来的段；校验面看索引）。
+// ★ 判据只认 `models/<基名>`：蛋模式空间内落点就是 `/models/<基名>`，蛋里放在别处等于没带。
+func zegWeightsDeclCheck(d *zegWeightsDecl, hasModels func(name string) bool, hasModelsLayer bool, where string) error {
+	if d == nil {
+		return nil
+	}
+	if d.RequireModels && !hasModelsLayer {
+		return fmt.Errorf("%s：recipe.json 声明了 require_models，但蛋里**没有 models/ 这一层**——"+
+			"拒：从蛋孵化时 /models 下的一切只从蛋内取（✗ 不回落宿主，回落等于「原目录可删」不成立）", where)
+	}
+	var missing []string
+	for _, w := range d.Weights {
+		name := filepath.Base(strings.TrimSpace(w))
+		if name == "" || name == "." || name == ".." || name == string(filepath.Separator) {
+			return fmt.Errorf("%s：recipe.json 的 weights 项 %q 推不出基名——拒", where, w)
+		}
+		if !hasModels(name) {
+			missing = append(missing, "models/"+name)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("%s：recipe.json 声明要带 %d 件权重，但蛋里缺 %d 件：%s —— 拒："+
+			"从蛋孵化时空间内 /models/<基名> 的挂载源就是蛋内 models/<基名>（片组按原基名平铺）；"+
+			"缺件会被推到孵化期具名拒、或更晚的引擎装载期", where, len(d.Weights), len(missing), strings.Join(missing, "、"))
+	}
+	return nil
+}
+
+// zegWeightsDeclGateTree —— **打蛋面**：源树的 recipe.json 声明的权重必须真在收进来的段里。
+func zegWeightsDeclGateTree(src string, entries []*zegEntry) error {
+	p := filepath.Join(src, "recipe.json")
+	b, err := os.ReadFile(p)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // 源树没带 recipe.json ⇒ 无声明可判（不适用）
+		}
+		return fmt.Errorf("读 %s：%w —— 拒打包（声明面读不出就不许当「没声明」）", p, err)
+	}
+	d, derr := zegWeightsDeclOf(b, "打蛋面")
+	if derr != nil {
+		return derr
+	}
+	if d == nil {
+		return nil
+	}
+	inEgg := make(map[string]bool, len(entries))
+	layer := false
+	for _, e := range entries {
+		if e.LinkTarget != "" {
+			continue // 链段不算「带进蛋的件」
+		}
+		inEgg[e.Path] = true
+		if strings.HasPrefix(e.Path, "models/") {
+			layer = true
+		}
+	}
+	return zegWeightsDeclCheck(d, func(name string) bool { return inEgg["models/"+name] }, layer, "打蛋面")
+}
+
+// zegWeightsDeclGateEgg —— **校验面**（`cocoon verify`）：蛋内 recipe.json 声明的权重必须真在索引里。
+//
+// 索引是「壳」（缓存命中档不带 entries）时跳过并明说：没有条目就没有判据可言，此时**不给结论**
+// 比假绿好，但也不该把整枚蛋判红（缓存那半条已有它自己的判据）。
+func zegWeightsDeclGateEgg(eggPath string, ix *zegIndex) error {
+	if ix == nil || len(ix.Entries) == 0 {
+		return nil
+	}
+	have := make(map[string]*zegEntryJSON, len(ix.Entries))
+	layer := false
+	for i := range ix.Entries {
+		e := &ix.Entries[i]
+		if e.LinkTarget != "" {
+			continue
+		}
+		have[e.Path] = e
+		if strings.HasPrefix(e.Path, "models/") {
+			layer = true
+		}
+	}
+	rec, ok := have["recipe.json"]
+	if !ok {
+		return nil
+	}
+	f, err := os.Open(eggPath)
+	if err != nil {
+		return fmt.Errorf("校验面：读 %s：%w", eggPath, err)
+	}
+	defer f.Close()
+	if rec.Size <= 0 || rec.Size > 1<<20 {
+		return nil // recipe 异常大小 ⇒ 不在这里判（段长/越界已有其它判据）
+	}
+	buf := make([]byte, rec.Size)
+	if _, err := f.ReadAt(buf, rec.Off); err != nil {
+		return fmt.Errorf("校验面：读 recipe.json 段（off=%d size=%d）：%w", rec.Off, rec.Size, err)
+	}
+	d, derr := zegWeightsDeclOf(buf, "校验面")
+	if derr != nil {
+		return derr
+	}
+	return zegWeightsDeclCheck(d, func(name string) bool { _, ok := have["models/"+name]; return ok }, layer, "校验面")
+}
+
 // zegPackV2 —— **写端默认档**（命令面 `cocoon pack` 走它）：打一枚 v2 卵。
 // 写序照 ③：data/engine → fsync → table → fsync → header（槽 0 基线 gen0，槽 1 现行 gen1）→ fsync。
 //
@@ -1237,6 +1377,12 @@ func zegPackV2Tree(src, egg string, align int, now string, engineDirs, libDirs [
 			}
 			entries = append(entries, ee...)
 		}
+	}
+	// ★ GAP-20261018-16「打蛋面」自检：recipe.json 机器可读声明（`weights` / `require_models`）里
+	// 点名的权重，必须在**收进来的段**里真有 `models/<基名>` —— 缺则具名拒，且在写第一个字节之前。
+	// （老蛋的 recipe 是自由文本 ⇒ 本判据不适用，行为逐字不变。）
+	if werr := zegWeightsDeclGateTree(src, entries); werr != nil {
+		return nil, nil, werr
 	}
 	// ★ 闭包自检（本单核心）：缺件 ⇒ 具名拒，且**在落盘之前**（✗ 不产半截蛋）。
 	if _, gerr := zegClosureGate(entries); gerr != nil {
@@ -3186,6 +3332,13 @@ func zergEggGateMain(stdout, stderr io.Writer, argv []string) int {
 			for _, p := range res.Problems {
 				fmt.Fprintf(stdout, "   - %s\n", p)
 			}
+			return exitFail
+		}
+		// ★ GAP-20261018-16「校验面」自检：蛋内 recipe.json 声明的权重必须真在索引里
+		// （缺 ⇒ 具名拒；壳索引/无声明 ⇒ 不适用）。孵化器那条判据在 spec 期，这条更早一档：
+		// 蛋**离开打包机之前**就该是自包含的。
+		if derr := zegWeightsDeclGateEgg(a.a, res.Index); derr != nil {
+			fmt.Fprintf(stderr, "%s: %v\n", zegProg, derr)
 			return exitFail
 		}
 		suffix := ""

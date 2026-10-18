@@ -364,8 +364,13 @@ func TestGateCheckGoEntryTableComplete(t *testing.T) {
 	//
 	//	（check-contract-describes-truth · 见 core/cmd/zerg/check_contract_describes_truth.go ·
 	//	registry.json 每条 truth_shape 点名的键集 ⊇ 真源实读键集 · 1=漏列 8=读不到）⇒ 193→194。
-	if got := len(gateCheckGoEntry); got != 194 {
-		t.Fatalf("进程内 Go 表项数要 == 194，得到 %d", got)
+	// ★ 2026-10-18（缺口 GAP-20260927-35 · 本单）：命令面写盘点对拍判据入 inproc 表 +1
+	//
+	//	（check-write-inventory · 见 core/cmd/zerg/check_write_inventory.go · 真源
+	//	core/internal/contract/write-inventory.json 的「默认档是否写盘 ＋ 只读旗标名」与实践
+	//	沙箱对拍；0=一致 1=破承诺 8=判不了 · 在盘无同名 py 件 ⇒ 名解析走 inproc 兜底）⇒ 194→195。
+	if got := len(gateCheckGoEntry); got != 195 {
+		t.Fatalf("进程内 Go 表项数要 == 195，得到 %d", got)
 	}
 	// ★ 放宽（2026-10-07 退役批）：旧不变量「表键必在名录」⇒「表键 ⇒ 名录 **或** inproc 键 二者其一」。
 	//   退役件（py 已 `git rm`）只余 inproc 那一路（family_gate_check.go 的 inproc 兜底 ⇒ rc=0）；

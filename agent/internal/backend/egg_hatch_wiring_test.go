@@ -51,6 +51,10 @@ func eggFixture(t *testing.T) string {
 	file("libs/bin/libggml-hip.so.0")
 	dir("engine/rocblas/5.1.0/library")
 	file("engine/rocblas/5.1.0/library/TensileLibrary_gfx1100.hsaco")
+	// 蛋内权重（GAP-20261018-16）：从蛋孵化时 `/models` 下的一切都从这里取（基名与 eggEntry.File 同），
+	// 宿主上那个路径**不必存在** —— 这正是「原目录可删」的形状。
+	dir("models")
+	file("models/k2horizon-q4_k_m.gguf")
 	// 蛋内系统镜像里的 sh（GAP-20261018-12）：蛋模式不挂宿主 /usr ⇒ /bin 只能由蛋给，
 	// 而包装 exec 的入口就是它。夹具里是**普通可执行件**（真蛋里是真 sh）。
 	dir("sysroot/bin")

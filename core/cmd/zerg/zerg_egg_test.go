@@ -995,3 +995,107 @@ func TestZergEggEngineClosureGPU(t *testing.T) {
 		t.Fatalf("③ 纯 CPU 蛋被要求 COMGR（误伤）rc=%d out=%q err=%q", rc, out, errS)
 	}
 }
+
+// TestZergEggWeightsDeclGate —— GAP-20261018-16 的**打蛋/校验两面**自检。
+//
+// 口径（与 backend 侧 `eggWeightSource` 同源）：从蛋孵化时空间内 `/models/<基名>` 的挂载源
+// = 蛋内 `models/<基名>` ⇒ 蛋**离开打包机之前**就该是自包含的。声明只能来自源树自带的
+// `recipe.json`（打包端不认识名册）：
+//
+//	{"weights": ["<基名>", …], "require_models": true}
+//
+// 五态：① 声明齐且件齐 ⇒ 绿；② 声明了却缺件 ⇒ 具名拒（点名 models/<基名>）；③ require_models 而整层缺 ⇒ 具名拒；
+// ④ 无这两个键（真机 real10 的自由文本 recipe）⇒ 逐字不适用（零回归）；⑤ 校验面：索引里声明了却缺件 ⇒ 具名拒。
+func TestZergEggWeightsDeclGate(t *testing.T) {
+	mkTree := func(t *testing.T, recipe string, withModels bool) string {
+		t.Helper()
+		dir := t.TempDir()
+		src := filepath.Join(dir, "src")
+		if err := os.MkdirAll(src, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(src, "recipe.json"), []byte(recipe), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if withModels {
+			if err := os.MkdirAll(filepath.Join(src, "models"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(src, "models", "w1.gguf"), []byte("GGUF-w1"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return src
+	}
+	run := func(argv ...string) (int, string, string) {
+		var so, se strings.Builder
+		rc := zergEggGateMain(&so, &se, argv)
+		return rc, so.String(), se.String()
+	}
+
+	t.Run("① 声明齐且件齐 ⇒ 绿", func(t *testing.T) {
+		src := mkTree(t, `{"weights":["w1.gguf"]}`, true)
+		rc, out, errS := run("pack", src, filepath.Join(t.TempDir(), "a.egg"))
+		if rc != exitOK {
+			t.Fatalf("rc=%d out=%q err=%q", rc, out, errS)
+		}
+	})
+
+	t.Run("② 声明了却缺件 ⇒ 具名拒", func(t *testing.T) {
+		src := mkTree(t, `{"weights":["w1.gguf","w2.gguf"]}`, true)
+		egg := filepath.Join(t.TempDir(), "b.egg")
+		rc, out, errS := run("pack", src, egg)
+		if rc == exitOK {
+			t.Fatalf("缺件必须拒打包（out=%q）", out)
+		}
+		if !strings.Contains(errS, "打蛋面") || !strings.Contains(errS, "models/w2.gguf") {
+			t.Fatalf("拒的理由应点名打蛋面与缺的 models/w2.gguf，实得：%q / %q", out, errS)
+		}
+		if _, serr := os.Stat(egg); serr == nil {
+			t.Fatalf("拒打包不许留下半截蛋：%s", egg)
+		}
+	})
+
+	t.Run("③ require_models 而整层缺 ⇒ 具名拒", func(t *testing.T) {
+		src := mkTree(t, `{"require_models":true}`, false)
+		rc, _, errS := run("pack", src, filepath.Join(t.TempDir(), "c.egg"))
+		if rc == exitOK {
+			t.Fatal("声明了 require_models 却没有 models/ 层必须拒")
+		}
+		if !strings.Contains(errS, "没有 models/ 这一层") {
+			t.Fatalf("拒的理由应点名 models/ 整层缺失，实得 %q", errS)
+		}
+	})
+
+	t.Run("④ 无声明键（真机形态）⇒ 不适用、行为不变", func(t *testing.T) {
+		src := mkTree(t, `{"kind":"egg10-real","note":"weights=… 4 shards"}`, false)
+		rc, out, errS := run("pack", src, filepath.Join(t.TempDir(), "d.egg"))
+		if rc != exitOK {
+			t.Fatalf("自由文本 recipe 不该被新判据拦住：rc=%d out=%q err=%q", rc, out, errS)
+		}
+	})
+
+	t.Run("⑤ 校验面：索引声明了却缺件 ⇒ 具名拒", func(t *testing.T) {
+		dir := t.TempDir()
+		egg := filepath.Join(dir, "fake.egg")
+		rec := []byte(`{"weights":["w9.gguf"]}`)
+		if err := os.WriteFile(egg, rec, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		ix := &zegIndex{Entries: []zegEntryJSON{
+			{Path: "recipe.json", Off: 0, Size: int64(len(rec))},
+			{Path: "models/w1.gguf", Off: 0, Size: 0},
+		}}
+		err := zegWeightsDeclGateEgg(egg, ix)
+		if err == nil {
+			t.Fatal("校验面必须拒：声明了 w9.gguf 而索引里没有 models/w9.gguf")
+		}
+		if !strings.Contains(err.Error(), "校验面") || !strings.Contains(err.Error(), "models/w9.gguf") {
+			t.Fatalf("拒的理由应点名校验面与缺件，实得：%v", err)
+		}
+		// 壳索引（缓存命中档无 entries）⇒ 不给结论也不判红
+		if err := zegWeightsDeclGateEgg(egg, &zegIndex{}); err != nil {
+			t.Fatalf("壳索引不该判红：%v", err)
+		}
+	})
+}

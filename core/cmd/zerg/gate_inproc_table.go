@@ -168,6 +168,7 @@ var gateCheckGoEntry = map[string]func(stdout, stderr io.Writer, argv []string) 
 	"check-wired-scripts":                   checkWiredScriptsGateMain,
 	"check-write-authz":                     writeAuthzGateMain,
 	"check-write-face-gate":                 checkWriteFaceGateGateMain,
+	"check-write-inventory":                 checkWriteInventoryGateMain,
 	"check-writer-guard":                    checkWriterGuardGateMain,
 	"check-zero-side-effect":                checkZeroSideEffectGateMain,
 	"check-zh-en":                           checkZhEnGateMain,

@@ -444,14 +444,26 @@ func (m *Manager) doStart(modelName string, entry *registry.ModelEntry) (map[str
 	}
 
 	// 内存预算检查（T3 预检，借鉴 llama_cpp_router willModelFit）——fail-closed
-	if memRequired := entry.MemGB; memRequired > 0 {
+	//
+	// ★ 2026-10-18（蛋成默认 第 10 步）：需求值**先读实测档案**。§8.4 的口径逐字是「闸门与预算
+	//   一律读实测档案的数字；卵声明里的估值（entry.MemGB）只作填不出档案时的提醒」。此前这里
+	//   只读 entry.MemGB ⇒ 名册的 gate-val 故意报大（edge-node Qwen3.8-Flash-Next 写 105 GB ⇒
+	//   need = 105×1.1 = 115.5 GB），而该机 MemAvailable 只有 115.3 GB ⇒ 实测峰值 77.325 GB
+	//   （含 GTT）的卵在**双闸门本来能过**的情况下被这道预检挡死（逐字 507
+	//   「available: 115.3 GB, required: 115.5 GB」· edge-node 现读 2026-10-18）。
+	// 两支都 fail-closed：档案读得出（且 PeakMemGb>0）就用实测值；读不出才退回声明值。
+	memRequired, memNeedSrc := entry.MemGB, "声明 mem_gb"
+	if prof, perr := monitor.LoadEggProfile(monitor.EggProfilePath(strings.TrimSpace(entry.EggName()))); perr == nil && prof.PeakMemGb > 0 {
+		memRequired, memNeedSrc = prof.PeakMemGb, "实测档案 peak_mem_gb"
+	}
+	if memRequired > 0 {
 		avail := monitor.DefaultSampler.MemAvailableGb()
 		ok, have, need := m.ensureMemoryForLocked(memRequired, avail)
 		if !ok {
 			// 腾不出缺口 → 拒装（507 语义不变）：不许赌"应该能跑"。
 			return m.rejectInsufficientMemory(have, need), nil
 		}
-		log.Printf("[backend] 内存预算检查通过: avail=%.1fGB, required=%.1fGB", have, need)
+		log.Printf("[backend] 内存预算检查通过: avail=%.1fGB, required=%.1fGB（需求源=%s）", have, need, memNeedSrc)
 	}
 
 	// ── 批 2：开关开 ⇒ 先判实测档案、再过双闸门（§8.4 / §6.8.4「先判格式，再算账」）─────────

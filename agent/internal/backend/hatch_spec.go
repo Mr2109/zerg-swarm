@@ -176,6 +176,9 @@ func hatchSpecFor(entry *registry.ModelEntry, engineImpl string, port int, profi
 		spec.EggLoaderDir = egg.LoaderDir
 		spec.EggBinDir = egg.BinDir
 		spec.EnginePathInSpace = egg.EnginePath
+		// 蛋孵化时权重也来自蛋内 ⇒ 出证/日志里的「权重所在目录」跟着说实话
+		// （否则日志会印出**宿主旧路径**，「原目录可删」的证据面就不干净了，GAP-20261018-16）。
+		spec.WeightPath = egg.ModelsDir
 	} else {
 		hostEngine, herr := engineHostPath(entry, engineImpl)
 		if herr != nil {
@@ -186,7 +189,12 @@ func hatchSpecFor(entry *registry.ModelEntry, engineImpl string, port int, profi
 	}
 
 	// ④ 参数：与裸 exec 路径**同一份构造**（buildEngineArgv），再把宿主侧输入改写成空间内路径
-	rewrites, roBinds, err := spaceInputMappings(eggID, entry, hostWeightFile)
+	// 蛋孵化时挂载源整体换成蛋内副本（`<egg>/models/<基名>`）；宿主孵化时 eggModelsDir = "" ⇒ 逐字不变。
+	eggModelsDir := ""
+	if egg != nil {
+		eggModelsDir = egg.ModelsDir
+	}
+	rewrites, roBinds, err := spaceInputMappings(eggID, entry, hostWeightFile, eggModelsDir)
 	if err != nil {
 		return spec, err
 	}
@@ -237,9 +245,13 @@ func hatchSpecFor(entry *registry.ModelEntry, engineImpl string, port int, profi
 	// WeightFiles：落进 %s 的**声明文件**清单（宿主侧绝对路径），与上面逐文件绑定**同源**算出 ——
 	// 核验层拿它把判据从「结构形态」收紧到「正好是这几个文件、各自一条只读挂载」
 	// （2026-09-15 接线；此前核验只能验结构，挂了别的文件看不见）。基名撞车已在上游拒孵。
+	//
+	// ★ GAP-20261018-16：这一格必须是**绑定源**（蛋孵化时 = 蛋内副本），因为 hatch 侧的
+	//   validateWeightFiles 当契约核「落点上绑的宿主 == 声明里写的」；写声明路径会让孵化器
+	//   在 spec 验收期判红（而空间里其实挂对了）。蛋内副本同样是宿主上的绝对路径。
 	for _, rw := range rewrites {
 		if rw.space == spaceWeightsDir || strings.HasPrefix(rw.space, spaceWeightsDir+"/") {
-			spec.WeightFiles = append(spec.WeightFiles, rw.host)
+			spec.WeightFiles = append(spec.WeightFiles, rw.bindSrc())
 		}
 	}
 	if len(spec.WeightFiles) == 0 {
@@ -472,6 +484,7 @@ func engineLibMappings(eggID string, entry *registry.ModelEntry) ([]pathRewrite,
 //	★ 版本号**不写死**：蛋内 `<rocblas>/` 下必须**恰好一个**版本层，否则拒孵（见 eggRocblas）。
 type eggWiring struct {
 	Root           string        // 蛋展开目录（宿主）
+	ModelsDir      string        // 蛋内权重目录（宿主；`/models` 下的一切**只**从这里取，GAP-20261018-16）
 	LoaderDir      string        // 蛋内 loader 目录（宿主；落到空间 /lib64 与 /lib）
 	BinDir         string        // 蛋内 sysroot/bin（宿主；落到空间 /bin —— 里面那枚 sh 是包装 exec 的入口）
 	EnginePath     string        // 引擎在空间内的路径（/engine/<目录基名>/<可执行名>）
@@ -494,6 +507,14 @@ const (
 	// eggEngineSubdir / eggLibsSubdir —— 蛋展开目录下的两个约定子目录。
 	eggEngineSubdir = "engine"
 	eggLibsSubdir   = "libs"
+	// eggModelsSubdir —— 蛋内「权重（/models 下的一切）」的约定子目录（GAP-20261018-16）。
+	//
+	// 蛋孵化时**权重也走蛋内**：挂载源 = `<egg_dir>/models/<基名>`（不在蛋里就去 stat 宿主路径）。
+	// 片组同形：打包端把权重树原样收进「源目录/models/」，四片按**原基名**平铺 ⇒ 展开后是**普通文件**
+	// （不是蛋内偏移），与「挂宿主那件」同形 ⇒ mmap 语义不变、llama.cpp 不用改。
+	// 这条是「原目录可删」成立的前提：否则宿主权重目录一改名，spec 期就 502（实测逐字见
+	// `~/.zerg/state/zerg-蛋内权重-20261018.md`）。
+	eggModelsSubdir = "models"
 	// eggSysrootSubdir —— 蛋内「系统镜像」的约定子目录（`sysroot/lib` 与 `sysroot/bin` 同层）。
 	//
 	// `sysroot/bin` 提供空间里的 `/bin`：蛋模式**不挂宿主 `/usr`**（GAP-20261018-11）⇒ `/bin` 没有
@@ -599,6 +620,21 @@ func eggWiringFor(eggID string, entry *registry.ModelEntry, engineImpl string) (
 			eggID, eggSysrootSubdir, eggBinSubdir, eggBinShName, shSt.Mode())
 	}
 	w.BinDir = binDir
+
+	// ①c 蛋内 `/models` 的来源（`<root>/models`，GAP-20261018-16）
+	//
+	// 从蛋孵化时**权重也走蛋内**：空间里 `/models/<基名>` 的挂载源一律是 `<root>/models/<基名>`
+	// （逐件的存在性由 spaceInputMappings 用 eggWeightSource 核，缺哪件点哪件）。
+	// 这一层本身缺失 ⇒ 现在具名拒：否则「蛋声明了要权重却没有权重层」会被推到最后一件件的
+	// 具名拒上（信息更散），而打包端最该看的是**这一层没收进蛋**。
+	// ✗ 没有「蛋里没有就回落宿主」这一档：回落 = 原目录永远删不掉，而「原目录可删」正是本单目标。
+	modelsDir := filepath.Join(root, eggModelsSubdir)
+	if st, serr := os.Stat(modelsDir); serr != nil || !st.IsDir() {
+		return nil, fmt.Errorf("卵 %s：蛋里没有 %s/ 这一层（%v）——拒孵：从蛋孵化时空间内 %s 下的一切只从蛋内取"+
+			"（打包时把权重树收进「源目录/%s/」，片组按**原基名**平铺）；✗ 不退回宿主挂载",
+			eggID, eggModelsSubdir, serr, spaceWeightsDir, eggModelsSubdir)
+	}
+	w.ModelsDir = modelsDir
 
 	// ② 引擎可执行：在蛋里按**基名**找，必须唯一
 	exeBase, err := eggExeBase(entry, engineImpl)
@@ -863,8 +899,21 @@ func rewriteEnvValue(v string, rws []pathRewrite) string {
 // pathRewrite 一条「宿主侧输入 → 空间内路径」的改写（整 token / 整段精确匹配）。
 type pathRewrite struct {
 	host  string // 展开后的宿主路径
+	src   string // 挂载源；**只有从蛋孵化时才填**（= 蛋内副本 `<egg>/models/<基名>`），空 ⇒ 同 host
 	raw   string // 卵声明里的原样字符串（可能带 ~；参数/环境变量里出现的可能正是它）
 	space string // 空间内路径
+}
+
+// bindSrc 这条改写要**绑**的那件（宿主模式逐字 = host；蛋模式 = 蛋内副本）。
+//
+// 为什么把「改写的匹配键」与「绑定的源」分成两格：引擎参数里出现的永远是**声明里的宿主路径**
+// （`-m {file}` 由 buildEngineArgv 展开），而要被 mmap 的字节在蛋模式下来自蛋内副本 ——
+// 两者必须分开，否则要么改写匹配不到、要么绑的还是将被删掉的宿主件（GAP-20261018-16）。
+func (r pathRewrite) bindSrc() string {
+	if r.src != "" {
+		return r.src
+	}
+	return r.host
 }
 
 // matches 待改写的**整段/token**是不是这一条声明的宿主路径。两种写法任一相符即算：
@@ -910,18 +959,35 @@ func visionPath(entry *registry.ModelEntry) string {
 //   - **同一空间目录下基名撞车**（如权重与投影同名，或两个模板同名）⇒ 拒孵：逐文件挂载时后挂的
 //     会盖住先挂的，落点相同就等于「有一份静默不见了」；
 //   - 宿主路径里带 `:` ⇒ 拒孵（见 roBind：`:` 是 <host>:<space> 的分隔符，会被拆错落点）。
-func spaceInputMappings(eggID string, entry *registry.ModelEntry, hostWeightFile string) ([]pathRewrite, []string, error) {
+func spaceInputMappings(eggID string, entry *registry.ModelEntry, hostWeightFile, eggModelsDir string) ([]pathRewrite, []string, error) {
 	weightDir := filepath.Dir(hostWeightFile)
 	weightSpace := spaceWeightsDir + "/" + filepath.Base(hostWeightFile)
 
-	rewrites := []pathRewrite{{
-		host:  hostWeightFile,
-		raw:   strings.TrimSpace(entry.File),
-		space: weightSpace,
-	}}
+	// mkRewrite 一条输入的「改写 ＋ 挂载源」：
+	//
+	//	eggModelsDir == ""（宿主孵化）⇒ 逐字沿用：源 = host（非蛋模式一行分支都不走 ⇒ 零回归）；
+	//	eggModelsDir != ""（蛋孵化）  ⇒ 源 = `<egg>/models/<基名>`；没有就**具名拒孵**，
+	//	✗ 不静默回落宿主 —— 回落等于「原目录可删」是假象，而且失败会推到引擎装载期（§6.9）。
+	mkRewrite := func(host, raw, space, what string) (pathRewrite, error) {
+		rw := pathRewrite{host: host, raw: raw, space: space}
+		if eggModelsDir == "" {
+			return rw, nil
+		}
+		src, err := eggWeightSource(eggID, eggModelsDir, host, what)
+		if err != nil {
+			return pathRewrite{}, err
+		}
+		rw.src = src
+		return rw, nil
+	}
+	weightRW, err := mkRewrite(hostWeightFile, strings.TrimSpace(entry.File), weightSpace, "权重")
+	if err != nil {
+		return nil, nil, err
+	}
+	rewrites := []pathRewrite{weightRW}
 	// 空间内落点 → 声明来源（判「基名撞车」；同一个空间路径只能有一份来源）
 	claimed := map[string]string{weightSpace: "权重 " + entry.File}
-	weightBind, err := roBind(hostWeightFile, weightSpace)
+	weightBind, err := roBind(weightRW.bindSrc(), weightSpace)
 	if err != nil {
 		return nil, nil, fmt.Errorf("卵 %s：%w", eggID, err)
 	}
@@ -951,13 +1017,30 @@ func spaceInputMappings(eggID string, entry *registry.ModelEntry, hostWeightFile
 		shardHost := func(n int) string {
 			return filepath.Join(shardDir, fmt.Sprintf("%s-%05d-of-%05d.gguf", prefix, n, total))
 		}
+		// 缺片判据按**挂载源那一侧**算：蛋模式看蛋内 `<egg>/models/`（宿主同目录这时可能已被改名，
+		// 那正是本单要成立的形态），宿主模式看声明目录（逐字不变）。
+		shardSrcPath := func(n int) string {
+			if eggModelsDir == "" {
+				return shardHost(n)
+			}
+			return filepath.Join(eggModelsDir, filepath.Base(shardHost(n)))
+		}
+		spaceOfShard := func(n int) string {
+			return spaceWeightsDir + "/" + filepath.Base(shardHost(n))
+		}
 		var missing []string
 		for n := 1; n <= total; n++ {
-			if _, serr := os.Stat(shardHost(n)); serr != nil {
-				missing = append(missing, shardHost(n))
+			if _, serr := os.Stat(shardSrcPath(n)); serr != nil {
+				missing = append(missing, shardSrcPath(n))
 			}
 		}
 		if len(missing) > 0 {
+			if eggModelsDir != "" {
+				return nil, nil, fmt.Errorf("卵 %s：权重文件 %q 是同组 %d 片（组键 %q ＋ `-of-%05d.gguf`）中的一片，但**蛋内** %s 下缺 %d 片：%s —— "+
+					"拒孵：从蛋孵化时 %s 下的一切只从蛋内取（✗ 不回落宿主同目录）；引擎装载期会按命名式**自算全部片**"+
+					"（llama.cpp SPLIT_PATH_FORMAT），缺一片就 `failed to open GGUF file` ⇒ 打包时要把整组按原基名收进「源目录/%s/」",
+					eggID, base, total, prefix, total, eggModelsDir, len(missing), strings.Join(missing, "、"), spaceWeightsDir, eggModelsSubdir)
+			}
 			return nil, nil, fmt.Errorf("卵 %s：权重文件 %q 是同组 %d 片（组键 %q ＋ `-of-%05d.gguf`）中的一片，但同目录缺 %d 片：%s —— "+
 				"拒孵：引擎装载期会按命名式**自算全部片**（llama.cpp SPLIT_PATH_FORMAT），缺一片就 `failed to open GGUF file`；"+
 				"孵化器只照单挂文件，绝不替卵跳过或缺省缺失的片（§6.9）",
@@ -968,18 +1051,22 @@ func spaceInputMappings(eggID string, entry *registry.ModelEntry, hostWeightFile
 			if filepath.Clean(host) == filepath.Clean(hostWeightFile) {
 				continue // 第 1 片就是 entry.file 那一格（已绑、已声明）⇒ 不重复落绑定
 			}
-			space := spaceWeightsDir + "/" + filepath.Base(host)
+			space := spaceOfShard(n)
 			if prev, dup := claimed[space]; dup {
 				return nil, nil, fmt.Errorf("卵 %s：权重分片 %q 与 %s 的空间内落点都是 %q——拒孵：逐文件挂载时后挂的会盖住先挂的，"+
 					"落点撞车等于有一份静默不见了", eggID, host, prev, space)
 			}
 			claimed[space] = "权重分片 " + host
-			b, berr := roBind(host, space)
+			rw, rerr := mkRewrite(host, "", space, "权重分片")
+			if rerr != nil {
+				return nil, nil, rerr
+			}
+			b, berr := roBind(rw.bindSrc(), space)
 			if berr != nil {
 				return nil, nil, fmt.Errorf("卵 %s：%w", eggID, berr)
 			}
 			binds = append(binds, b)
-			rewrites = append(rewrites, pathRewrite{host: host, space: space})
+			rewrites = append(rewrites, rw)
 		}
 	}
 
@@ -991,17 +1078,30 @@ func spaceInputMappings(eggID string, entry *registry.ModelEntry, hostWeightFile
 				"落点撞车等于有一份静默不见了", eggID, entry.MMProj, prev, space)
 		}
 		claimed[space] = "视觉投影 " + entry.MMProj
-		b, err := roBind(host, space)
+		rw, err := mkRewrite(host, p, space, "视觉投影")
+		if err != nil {
+			return nil, nil, err
+		}
+		b, err := roBind(rw.bindSrc(), space)
 		if err != nil {
 			return nil, nil, fmt.Errorf("卵 %s：%w", eggID, err)
 		}
 		binds = append(binds, b)
-		rewrites = append(rewrites, pathRewrite{host: host, raw: p, space: space})
+		rewrites = append(rewrites, rw)
 	}
 
 	if p := strings.TrimSpace(entry.ChatTemplate); p != "" {
 		host := expandTilde(p)
-		if _, err := os.Stat(host); err == nil {
+		// 蛋模式：模板也是 `/models` 侧输入 ⇒ 同样只从蛋内取（缺则具名拒，见 mkRewrite）。
+		// 宿主模式：沿用「宿主上不存在就静默跳过」（适配器也只在存在时才发该参数）—— 逐字不变。
+		if eggModelsDir != "" {
+			if _, err := os.Stat(filepath.Join(eggModelsDir, filepath.Base(host))); err != nil {
+				return nil, nil, fmt.Errorf("卵 %s：聊天模板 %q 的蛋内副本 %s 读不到（%v）——拒孵：从蛋孵化时 %s 下的一切"+
+					"只从蛋内取（✗ 不静默跳过、✗ 不回落宿主）", eggID, entry.ChatTemplate,
+					filepath.Join(eggModelsDir, filepath.Base(host)), err, spaceWeightsDir)
+			}
+		}
+		if _, err := os.Stat(host); err == nil || eggModelsDir != "" {
 			space := spaceWeightsDir + "/" + filepath.Base(host)
 			if filepath.Dir(host) != weightDir {
 				space = spaceTemplatesDir + "/" + filepath.Base(host)
@@ -1011,12 +1111,16 @@ func spaceInputMappings(eggID string, entry *registry.ModelEntry, hostWeightFile
 					"落点撞车等于有一份静默不见了", eggID, entry.ChatTemplate, prev, space)
 			}
 			claimed[space] = "聊天模板 " + entry.ChatTemplate
-			b, err := roBind(host, space)
+			rw, err := mkRewrite(host, p, space, "聊天模板")
+			if err != nil {
+				return nil, nil, err
+			}
+			b, err := roBind(rw.bindSrc(), space)
 			if err != nil {
 				return nil, nil, fmt.Errorf("卵 %s：%w", eggID, err)
 			}
 			binds = append(binds, b)
-			rewrites = append(rewrites, pathRewrite{host: host, raw: p, space: space})
+			rewrites = append(rewrites, rw)
 		}
 	}
 	// 视觉编码器 vision（可选，ds4 家族）——与上面的 mmproj **同款**：逐文件只读绑进 /models/<基名>，
@@ -1032,14 +1136,50 @@ func spaceInputMappings(eggID string, entry *registry.ModelEntry, hostWeightFile
 				"落点撞车等于有一份静默不见了", eggID, p, prev, space)
 		}
 		claimed[space] = "视觉编码器 " + p
-		b, err := roBind(host, space)
+		rw, err := mkRewrite(host, p, space, "视觉编码器")
+		if err != nil {
+			return nil, nil, err
+		}
+		b, err := roBind(rw.bindSrc(), space)
 		if err != nil {
 			return nil, nil, fmt.Errorf("卵 %s：%w", eggID, err)
 		}
 		binds = append(binds, b)
-		rewrites = append(rewrites, pathRewrite{host: host, raw: p, space: space})
+		rewrites = append(rewrites, rw)
 	}
 	return rewrites, binds, nil
+}
+
+// eggWeightSource 蛋孵化时某个「/models 输入」的**挂载源** = 它在蛋内的副本
+// `<eggModelsDir>/<基名>`（GAP-20261018-16）。fail-closed：蛋里没有 ⇒ 具名拒孵。
+//
+// 判据顺序（写死，与单测两态一一对应）：
+//
+//	① 蛋内有这一件（普通文件）⇒ **用蛋内**（返回蛋内绝对路径）；
+//	② 蛋内没有 ⇒ **具名拒孵**，✗ 不静默回落宿主路径。
+//
+// 为什么②不许回落（这是本单的核心取舍）：卵声明里的 `file` 是**宿主路径**，而「从蛋孵化」的
+// 全部意义就是让那个宿主路径**可以被删/改名**。回落会让孵化**看起来成功**、实际挂的是即将消失的
+// 宿主件 —— 于是「原目录可删」变成假象，且失败点被推到运行期（引擎装载期 `failed to open GGUF file`，
+// 或更晚的 mmap 阶段），正是 §6.9 明令不许的形态。宁可 spec 期 0 秒拒、并点名缺的那一件。
+func eggWeightSource(eggID, eggModelsDir, hostFile, what string) (string, error) {
+	base := filepath.Base(filepath.Clean(hostFile))
+	if base == "" || base == "." || base == ".." || base == string(filepath.Separator) {
+		return "", fmt.Errorf("卵 %s：%s %q 推不出基名——拒孵（蛋内落点 %s/<基名> 定不下来）",
+			eggID, what, hostFile, eggModelsSubdir)
+	}
+	src := filepath.Join(eggModelsDir, base)
+	st, err := os.Stat(src)
+	if err != nil {
+		return "", fmt.Errorf("卵 %s：%s %q 的蛋内副本 %s 读不到（%v）——拒孵：从蛋孵化时 %s 下的一切只从蛋内取"+
+			"（打包时把该件按原基名收进「源目录/%s/」）；✗ 不静默回落到宿主路径 —— 回落等于「原目录可删」不成立，"+
+			"且失败会推到引擎装载期", eggID, what, hostFile, src, err, spaceWeightsDir, eggModelsSubdir)
+	}
+	if !st.Mode().IsRegular() {
+		return "", fmt.Errorf("卵 %s：蛋内副本 %s 不是普通文件（mode=%v）——拒孵：mmap 权重要的是普通文件"+
+			"（蛋内按偏移直读会被 llama.cpp 的 GGUF 魔数检查否掉）", eggID, src, st.Mode())
+	}
+	return src, nil
 }
 
 // rewriteArgsToSpace 把引擎参数里的宿主侧输入改写成空间内路径。

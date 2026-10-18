@@ -30,6 +30,7 @@ import (
 
 	"github.com/Mr2109/zerg-swarm/agent/internal/enclosure"
 	"github.com/Mr2109/zerg-swarm/agent/internal/hatch"
+	"github.com/Mr2109/zerg-swarm/agent/internal/monitor"
 	"github.com/Mr2109/zerg-swarm/agent/internal/registry"
 )
 
@@ -656,6 +657,10 @@ func hatchTestEntry(name string) *registry.ModelEntry {
 }
 
 func newHatchTestManager(fake *fakeHatcher) *Manager {
+	// 单测不跑 Sample() ⇒ memAvailableGb 恒 0；内存闸 fail-closed 会把「0 可用」
+	// 判成 507（孵化路径用例因此全被误红）。只给 hatch 用例注入足够大的可用值，
+	// ✗ 不放 newEvictTestManager：内存预检那组依赖小 avail 才有区分度。
+	monitor.DefaultSampler.SetMemAvailableForTest(64)
 	m := newEvictTestManager(1, map[string]*subproc{})
 	m.hatcher = fake
 	return m

@@ -90,6 +90,10 @@ func buildExpandFixture(t *testing.T) (src, engBin, engLib, libsBin string) {
 		gguf[i] = byte((i * 7) % 251)
 	}
 	write(filepath.Join(src, "model", "demo.gguf"), gguf, 0o644)
+	// 蛋内权重层（GAP-20261018-16）：`<来源>/models/<基名>` 就是从蛋孵化时 `/models` 的挂载源。
+	// 基名要与 eggEntry.File 一致（k2horizon-q4_k_m.gguf），否则本用例会在 spec 期被具名拒。
+	mk(filepath.Join(src, "models"))
+	write(filepath.Join(src, "models", "k2horizon-q4_k_m.gguf"), gguf, 0o644)
 	write(filepath.Join(src, "config.json"), []byte(`{"arch":"egg6"}`), 0o644)
 
 	// 蛋内系统镜像的 `/bin`（GAP-20261018-12）：蛋模式不挂宿主 `/usr` ⇒ 空间里的 `/bin` 没有任何

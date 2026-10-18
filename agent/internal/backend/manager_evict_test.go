@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Mr2109/zerg-swarm/agent/internal/monitor"
 	"github.com/Mr2109/zerg-swarm/agent/internal/registry"
 	"github.com/Mr2109/zerg-swarm/shared/resources"
 )
@@ -252,6 +253,9 @@ func TestEvict_LoadingNotEvicted(t *testing.T) {
 // ── 红线④：内存预检 fail-closed（腾不出缺口 → 507 拒装） ─────────────────────
 
 func TestMemoryPrecheck_FailClosed507(t *testing.T) {
+	// 本组依赖「小 avail」才有区分度；同包其它测试可能把全局采样器注入成大值
+	// （ensureMemoryForLocked 腾退不成时会重采样 DefaultSampler）⇒ 这里显式归零。
+	monitor.DefaultSampler.SetMemAvailableForTest(0)
 	// 反例：可用 1G，需要一个 86G 的模型，且唯一可腾退项被 pin 保护 → 腾不出 → 拒装
 	m := newEvictTestManager(1, map[string]*subproc{
 		"pinned": {model: "pinned", state: StateReady, entry: &registry.ModelEntry{MemGB: 20}, lastUsed: time.Now().Add(-time.Hour)},

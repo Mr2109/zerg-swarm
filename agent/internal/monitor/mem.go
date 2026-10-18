@@ -89,6 +89,15 @@ func (s *Sampler) MemAvailableGb() float64 {
 	return roundTo(s.memAvailableGb, 1)
 }
 
+// SetMemAvailableForTest 仅测试注入可用内存（GB）——生产路径不调用。
+// 单测不跑 Sample() ⇒ memAvailableGb 恒 0，而内存闸 fail-closed 会把「0 可用」
+// 判成 507，使与内存无关的用例被误红。
+func (s *Sampler) SetMemAvailableForTest(gb float64) {
+	s.mu.Lock()
+	s.memAvailableGb = gb
+	s.mu.Unlock()
+}
+
 // MemTotalGb 返回当前总内存（GB）。
 func (s *Sampler) MemTotalGb() float64 {
 	s.mu.RLock()

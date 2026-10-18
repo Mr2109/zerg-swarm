@@ -1379,6 +1379,20 @@
    "语义": "dryrun.v1",
    "零副作用判据": "`--dry-run` ⇒ 只打计划件（result=planned + path + after_sha256 + bytes）· 不建目录 · 不写件 · 不备份 · 不挪目录 · **不写审计**；缺 `--yes` ⇒ 2 + 零写；两旗标同给 ⇒ 2（writeGuardYes 先于任何盘面动作）",
    "备注": "门98 调用点粒度：writeGuardYes 在 cmdSkillNew/Edit/Rm 的**第一句**（设计稿 zerg-技能库设计稿-20261017.md §6.1 M2 段 · 提案 DEV-3028）"
+  },
+  {
+   "file": "core/cmd/zerg/check_write_inventory.go",
+   "类": "判据面：**字样引用**（不是干跑语义站点 —— `--dry-run` 在本件只作**被检文本**里的旗标名字面出现：命令 `usage` 串的只读旗标名、实现面源码的函数体文本；本判据自己**没有** `--dry-run` 档，`--emit` / `--no-probe` 才是它的两个档）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "本判据默认档**只读 ＋ 沙箱子进程**：读两份真源（`core/internal/contract/write-inventory.json`、`core/cmd/zerg/*.go`）＋ 在 `os.MkdirTemp` 造的沙箱里跑探针（`HOME` / `ZERG_STATE_DIR` / `TMPDIR` 三点指沙箱 ⇒ 探针写不到真仓、真状态目录），沙箱 `defer os.RemoveAll` 自回收；唯一的写面是 `--emit`（按现读 catalog 重生成写盘点真源 `write-inventory.json`，那是**它自己的生成器档**，不是干跑档）。✗ 不删 / 不推 / 不改 git 状态。",
+   "备注": "登记依据 = 门⑩ `R1 未登记件`（本单 `GAP-20260927-35` 落件即红：本判据要读 `usage` 里的只读旗标名 ⇒ 带 `--dry-run` 字面进扫描面）。命中是**被检文本的旗标名**，不是第五套语义 —— 同 `check_help_shape.go` 先例。"
+  },
+  {
+   "file": "core/cmd/zerg/check_write_inventory_test.go",
+   "类": "测试件（写盘点判据的**正控与成对负控**）：**字样引用**（`--dry-run` 只作被测声明的旗标名与断言文案出现，本件自身没有干跑档）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "测试件本身不写仓：夹具全部落在 `t.TempDir()`（沙箱真源件 ＋ `/bin/sh` 假二进制），探针的 `HOME` / `ZERG_STATE_DIR` / `TMPDIR` 都指临时树 ⇒ 一个字节不落真仓；不删 / 不推 / 不改 git 状态。",
+   "备注": "登记依据 = 门⑩ `R1 未登记件`（同批落件；它是同一套判据的**断言侧**，不另立语义 —— 同 `check_help_shape_test.go` 先例）。"
   }
  ]
 
