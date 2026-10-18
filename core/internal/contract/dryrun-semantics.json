@@ -1065,6 +1065,48 @@
    "备注": "登记依据 = 门⑩ `R1 未登记件`（`check-newcmd-followup` 面① 现读命中即红）。走既有的 `dryrun.v1` 一套语义（`--dry-run` ⇒ 计划件 + rc=0 · 缺 `--yes` ⇒ 计划件走 stderr + rc=2 · 零副作用），**不是第五套语义** —— 口径照同族写面先例 `core/cmd/zerg/family_model_put.go`。"
   },
   {
+   "file": "core/cmd/zerg/family_agent_deploy.go",
+   "类": "实现站点：`agent deploy <机> --file <本地件>` 的 D3 三态写门（`--dry-run` / 缺 `--confirm=<机>` / `--confirm=<机>`＋`--yes`）· 与 family_dev_reclaim.go / family_swap_core.go 同一套语义",
+   "语义": "dryrun.v1",
+   "零副作用判据": "`bin/zerg agent deploy <机> --file <本地件> --dry-run` ⇒ 退码 0 · stdout 只有计划件（`agentDeployPlan`：本地件名 / 远端落点 / 件 sha256 / 换前身份 / 三步动作）＋ stderr 一行「（--dry-run：只出计划件 · 零副作用 —— 未 ssh、未写盘、未重启、未写审计）」· **不发一个 ssh 请求、不写一个字节、不写审计**；缺 `--confirm` ⇒ rc=2 零写 · 缺 `--yes` ⇒ rc=2 零写 · `--confirm` 与目标不符 ⇒ rc=2 零写 · `--dry-run` 与 `--yes` 同给 ⇒ 共享判定 `dryRunYesConflict` 退 2（四档都判在真跑那一段之前）· 判据件 `core/cmd/zerg/family_agent_deploy_test.go` 现跑钉住（夹具落 `t.TempDir()` · ✗ 不碰真机/真仓）。",
+   "备注": "登记依据 = 门⑩ `R1 未登记件`（门78 `check-newcmd-followup` 面① 现读命中即红）。走既有的 `dryrun.v1` 一套语义（`--dry-run` ⇒ 计划件 ＋ rc=0 · 缺确认档 ⇒ rc=2 · 零副作用），**不是第五套语义** —— 口径照同族 D3 写面先例 `core/cmd/zerg/family_dev_reclaim.go` / `family_swap_core.go`。"
+  },
+  {
+   "file": "core/cmd/zerg/family_agent_deploy_test.go",
+   "类": "命令面测试件（`agent deploy` 的 D3 多态真跑对拍：缺 `--confirm` ⇒ 2 零写 / `--dry-run` ⇒ 0 出计划件且盘面零变化 / 真跑走函数级接缝核身份 / 身份不符与同 commit 异字节各判红 / 不合格件在任何 ssh 之前拒 / 用法面四档）—— 测试面，非语义站点",
+   "语义": "dryrun.v1",
+   "零副作用判据": "干跑那一态（`TestAgentDeploy_DryRunPrintsPlanAndTouchesNothing`）断言 rc=0、计划件在 stdout、且审计件与远端落点零变化；真跑档只走**函数级接缝**（`agentDeployReadArtifactFn` / `agentDeployTransferFn` / `agentDeployRestartFn` / `agentDeployProbeFn` / `agentDeployFleetSHAFn` 全为测试桩 ⇒ 绝不 ssh、绝不重启、绝不写远端）；夹具与审计路径落 `t.TempDir()`（仓外），本件自身不碰真机/真仓。",
+   "备注": "登记依据 = 门⑩ `R1 未登记件`（现跑命中即红）：命中是**调用 argv / 对拍夹具串**（多态串带干跑旗标字面），不是第五套语义 —— 同 `core/cmd/zerg/family_swap_core_test.go` 先例。"
+  },
+  {
+   "file": "core/cmd/zerg/cli_dev_edit_precheck_test.go",
+   "类": "命令面测试件（`dev edit` 预检档的 argv 对拍）—— 测试面，非语义站点",
+   "语义": "dryrun.v1",
+   "零副作用判据": "测试面：全部判据跑在合成夹具 / `t.TempDir()` 上，本件自身不写仓、不写状态目录、不 exec 真脚本；带干跑旗标那一态只断言 argv 与 stdout 形状。",
+   "备注": "登记依据 = 门⑩ `R1 未登记件`（现跑命中即红）：命中是**调用 argv / 夹具串**里的干跑旗标字面，不是第五套语义。★ 2026-10-19 他路在途件 · 本单代登记（面① 要求现盘全部登记）。"
+  },
+  {
+   "file": "core/cmd/zerg/cli_gap_task_dash_leading_value_test.go",
+   "类": "命令面测试件（`gap task` 的 `--` 后减号开头取值档）—— 测试面，非语义站点",
+   "语义": "dryrun.v1",
+   "零副作用判据": "测试面：全部判据跑在合成夹具 / `t.TempDir()` 上，本件自身不写仓、不写状态目录、不 exec 真脚本；带干跑旗标那一态只断言 argv 与 stdout 形状。",
+   "备注": "登记依据 = 门⑩ `R1 未登记件`（现跑命中即红）：命中是**调用 argv / 夹具串**里的干跑旗标字面，不是第五套语义。★ 2026-10-19 他路在途件 · 本单代登记（面① 要求现盘全部登记）。"
+  },
+  {
+   "file": "core/cmd/zerg/export_frontmatter_test.go",
+   "类": "命令面测试件（`export` frontmatter 面）—— 测试面，非语义站点",
+   "语义": "dryrun.v1",
+   "零副作用判据": "测试面：全部判据跑在合成夹具 / `t.TempDir()` 上，本件自身不写仓、不写状态目录、不 exec 真脚本；带干跑旗标那一态只断言 argv 与 stdout 形状。",
+   "备注": "登记依据 = 门⑩ `R1 未登记件`（现跑命中即红）：命中是**调用 argv / 夹具串**里的干跑旗标字面，不是第五套语义。★ 2026-10-19 他路在途件 · 本单代登记（面① 要求现盘全部登记）。"
+  },
+  {
+   "file": "core/cmd/zerg/family_gap_setwant_test.go",
+   "类": "命令面测试件（`gap set-want` 面）—— 测试面，非语义站点",
+   "语义": "dryrun.v1",
+   "零副作用判据": "测试面：判据跑在 `t.TempDir()` 合成状态目录上，本件不写仓、不 exec 真脚本；带干跑旗标那一态只断言 argv 与 stdout 形状。",
+   "备注": "登记依据 = 门⑩ `R1 未登记件`（现跑命中即红）：命中是**调用 argv / 夹具串**里的干跑旗标字面，不是第五套语义。★ 2026-10-19 他路在途件 · 本单代登记。"
+  },
+  {
    "file": "core/cmd/zerg/family_agent.go",
    "类": "实现站点：`agent forget <机>` 的 D2 三态写门（`--dry-run` / 缺 `--yes` / `--yes`）· 与 guard.go / family_model_put.go 同一套语义",
    "语义": "dryrun.v1",

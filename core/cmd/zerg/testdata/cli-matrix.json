@@ -11936,6 +11936,29 @@
    "want_rc": 2,
    "want_stdout_bytes": 0,
    "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "argv": [
+    "agent",
+    "deploy"
+   ],
+   "command": "agent deploy",
+   "id": "agent/deploy#缺机器名",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "`agent deploy` 的对象是某台**机**：位置参数与 `--node` 都没给 ⇒ 默认作用域（§十二 P-066）「群级只读 = 名册全集；其余 = exit 2」⇒ 退 2 · stdout 0 字节 · 一个 ssh 都不发。读数由现跑两遍派生（`zerg agent deploy` ⇒ rc=2 / 0 字节）。"
+  },
+  {
+   "argv": [
+    "agent",
+    "deploy",
+    "zz-matrix-probe"
+   ],
+   "command": "agent deploy",
+   "id": "agent/deploy#缺 --file",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "`--file <本地件>` 必给：缺 ⇒ 用法错 2（✗ 不猜一个件）· 判点在任何盘面/远端动作之前 ⇒ stdout 0 字节。读数由现跑两遍派生（`zerg agent deploy zz-matrix-probe` ⇒ rc=2 / 0 字节）。"
   }
  ],
  "tiers": {

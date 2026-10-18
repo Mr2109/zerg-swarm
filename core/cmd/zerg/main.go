@@ -1195,6 +1195,29 @@ func init() {
 			endpoint: "POST /api/fleet/forget",
 			run:      cmdAgentForget,
 		},
+		// ---- 缺口 `GAP-20261018-20`：`agent deploy`（子端换件的**命令面正门** · D3）----
+		// 病（逐字）：换件此前只能手搓 —— `scp` 直覆盖在跑的件 ⇒ `ETXTBSY`；
+		// `systemctl stop` ⇒ 要交互认证（AI 不敲提权命令）；`scp` 到 `.new` ＋ `mv -f` ＋ `restart`
+		// 才成，但换完 `agent ls` 的 `code_sha` 仍是旧值 ⇒ 运维面判不了远端跑哪版。
+		// 语义 = 落地 `.new` → 远端 sha256 对拍 → `mv -f` 换名 → **只 restart**（✗ stop · ✗ 提权）
+		// → 直读子端 `/status` 核对新件自报的 `code_sha` / `code_digest`（对不上 ⇒ 退 1）。
+		// ★ 新命令的随动面（cli-matrix must-fail 格 / cli-contract-baseline / help 面冻结读数 /
+		//   newcmd-paths-baseline / 换件这条 ssh 面的 §十五.4 例外格）见本单报告的「待随动」一节。
+		{
+			path:    []string{"agent", "deploy"},
+			machine: machineNodeName,
+			kind:    "AgentDeploy",
+			summary: "子端换件正门（D3 · 先落 `.new` → 远端 sha256 对拍 → `mv -f` 换 inode → 只重启 unit；✗ scp 直覆盖（ETXTBSY）· ✗ systemctl stop（要交互认证）· ✗ 提权）＋ 换完直读子端自报身份，`code_sha`/`code_digest` 对不上 ⇒ 退 1",
+			usage:   "zerg agent deploy <机器名> --file <本地件> [--dry-run | --confirm=<机器名> --yes] [--by <谁>] [--json <字段>]",
+			arity:   "any",
+			args:    []string{"机器名", "--file <本地件>"},
+			fields:  agentDeployFields,
+			danger: &dangerSpec{dangerD3, "机器名",
+				"换该子端的守护件并重启它（在跑任务被打断；旧件被 rename 覆盖、本命令不留回退件）",
+				"缺口 GAP-20261018-20 · 同族先例 agent restart（D3 · 远端 ssh 落 F-5 那一格）", true, dangerScopeRemote},
+			opened: true,
+			run:    cmdAgentDeploy,
+		},
 		{
 			path:    []string{"agent", "probe"},
 			kind:    "AgentProbe",
