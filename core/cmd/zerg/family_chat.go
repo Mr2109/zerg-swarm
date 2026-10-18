@@ -1249,10 +1249,20 @@ func chatAliasClean(raw string) (string, bool) {
 // chatAliasLock —— 拿别名表那把锁（`exclusive` ⇒ `LOCK_EX`；否则 `LOCK_SH`）。
 // 返回的句柄必须交给 `chatAliasUnlock`（✗ 不靠 GC：fd 不关 = 锁不放，同进程后续取锁会自锁）。
 func chatAliasLock(path string, exclusive bool) (*os.File, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	lockPath := path + ".lock"
+	if !exclusive {
+		// ★ GAP-20261018-17：只读档不建目录、不建锁文件 —— 锁件不存在即无了持锁，
+		// 直接返回 nil 走无锁读（chatAliasUnlock 有 if f == nil 兜底）。
+		if _, serr := os.Stat(lockPath); serr != nil {
+			if os.IsNotExist(serr) {
+				return nil, nil
+			}
+			return nil, serr
+		}
+	} else if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, err
 	}
-	f, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0o644)
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
 		return nil, err
 	}
