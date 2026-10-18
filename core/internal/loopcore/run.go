@@ -112,10 +112,9 @@ func Run(ctx context.Context, cfg Config, model, sysPrompt string, msgs []map[st
 		res.Content = AppendTerminalNote(res.Content,
 			TerminalNote(st, reason+"（"+ClaimFailureDetail(cc)+"；退出原因："+res.ExitKind+"）"))
 	}()
-	maxRounds := cfg.MaxRounds
-	if maxRounds <= 0 {
-		maxRounds = 10
-	}
+	// GAP-20261018-23：预算唯一解析点（Config.MaxRounds 是默认值，ZERG_MAX_ROUNDS 可覆盖；
+	// 不设那一格 ⇒ 与改前「≤0 ⇒ 10」逐字同）。
+	maxRounds := roundBudget(cfg.MaxRounds)
 	nowFn := d.Now
 	if nowFn == nil {
 		nowFn = time.Now
@@ -182,6 +181,8 @@ func Run(ctx context.Context, cfg Config, model, sysPrompt string, msgs []map[st
 	// 为什么放在这里（而不是等下一轮 loop 里剥）：这一程的**第一发请求**就可能带毒 ——
 	// 实测症状正是「同会话下一条任务一条命令都没跑」，模型自述「用户第一条消息即要求停手」。
 	msgs, _ = DropForcedAnswerHints(msgs)
+	// GAP-20261018-23：预算提示同属「只服务一发请求」的注入件 —— 历史里的残留一律剥净。
+	msgs, _ = DropRoundBudgetWarnHints(msgs)
 
 	// ── T5.5 每步快照（粒度 = 步：一轮收尾后的完整状态；步内不落盘）──
 	// 只在"过了前置门"之后接线：落败者/已完成者上面就返回了，一步都不写。
@@ -194,7 +195,8 @@ func Run(ctx context.Context, cfg Config, model, sysPrompt string, msgs []map[st
 			RunID: d.RunID, Session: d.Session, StepIndex: step, Round: step,
 			// GAP-20261018-06：快照里**不留**强制答题提示 —— 快照是「可续跑的会话历史」，
 			// 而那条提示只服务注入它的那一发请求。旧版把它一起落盘 ⇒ 续跑/下一程开局就带毒。
-			Messages: withoutForcedAnswerHints(msgs), Traces: res.Traces, ExitKind: exitKind,
+			// GAP-20261018-23：预算提示同一纪律（两类提示各自判定，合并剥法不改各自语义）。
+			Messages: withoutTransientHints(msgs), Traces: res.Traces, ExitKind: exitKind,
 			TotalTokens: res.Usage.TotalTokens, Model: model,
 		}
 		if _, err := d.Checkpoints.Save(st); err != nil {
@@ -251,6 +253,19 @@ func Run(ctx context.Context, cfg Config, model, sysPrompt string, msgs []map[st
 			break
 		}
 		compact()
+		// ── GAP-20261018-23：预算将尽 ⇒ **提前一轮**注入预算提示（不是最后一轮硬停）──
+		// 为什么提前：等到最后一轮才说「不要再调工具」，模型手里那一步常常刚开工（实测正是
+		// 「code find 做完就被要求收尾」）⇒ 提前一轮把「只剩两轮（含本轮）」告诉它，它才可能
+		// 把正在做的那一步做完、下一轮交结论。预算=1 时没有「提前一轮」可言 ⇒ 与改前逐字同。
+		// ★ 只进**这一发请求**（reqMsgs），不进 msgs：它不该出现在可续跑的会话历史里，
+		// 也不该改变历史条数（快照/续跑接续都有既有判据钉着）—— 与 GAP-20261017-13 的补轮同一手法。
+		reqMsgs := msgs
+		if lastRound-1 >= startRound && round == lastRound-1 {
+			reqMsgs = append(append([]map[string]any(nil), msgs...), roundBudgetWarnMsg())
+			emit("loop_hint", mustJSON(map[string]any{
+				"kind": "round_budget_warn", "remaining": lastRound - round + 1, "budget": maxRounds,
+			}))
+		}
 
 		// 单轮推理（RoundTimeout 限时——超时=引导收尾）
 		var roundCtx context.Context
@@ -265,7 +280,7 @@ func Run(ctx context.Context, cfg Config, model, sysPrompt string, msgs []map[st
 			deltaOnce = true
 			emit("delta", mustJSON(map[string]any{"type": deltaType, "text": text}))
 		}
-		result, err := d.callInfer(roundCtx, model, sysPrompt, msgs, sink, d.Tools)
+		result, err := d.callInfer(roundCtx, model, sysPrompt, reqMsgs, sink, d.Tools)
 		cancel()
 		if err != nil && isTimeout(err) {
 			res.ExitKind = "round_timeout"
@@ -280,7 +295,7 @@ func Run(ctx context.Context, cfg Config, model, sysPrompt string, msgs []map[st
 				for attempt := 1; attempt <= 2; attempt++ {
 					time.Sleep(2 * time.Second)
 					emit("retry", mustJSON(map[string]any{"attempt": attempt, "reason": "X" + "3 瞬时故障"}))
-					result, err = d.callInfer(ctx, model, sysPrompt, msgs, sink, d.Tools)
+					result, err = d.callInfer(ctx, model, sysPrompt, reqMsgs, sink, d.Tools) // 重试仍带这一发专属提示
 					if err == nil {
 						retried = true
 						break

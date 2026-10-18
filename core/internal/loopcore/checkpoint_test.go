@@ -193,8 +193,13 @@ func TestCheckpoint_ResumeStopsAtSameStepAfterKill(t *testing.T) {
 		t.Fatalf("续跑只应执行**新的一步**：实得 %d", stepsRun)
 	}
 	first := rec.firstMsgs()
-	if len(first) != 4 {
-		t.Fatalf("续跑的第一轮必须接到 4 条历史消息（不是从零开始）：实得 %d", len(first))
+	// GAP-20261018-23：续跑这一程的预算是 2 轮 ⇒ 第一轮正是「最后一轮的前一轮」，请求里会多带
+	// 一条**请求专属**的预算提示（不进 msgs / 不进快照，理由见 run.go 注入点）⇒ 4 条历史 ＋ 1 条提示。
+	if len(first) != 5 {
+		t.Fatalf("续跑的第一轮必须接到 4 条历史消息 ＋ 1 条预算提示（不是从零开始）：实得 %d", len(first))
+	}
+	if c, _ := first[4]["content"].(string); !strings.Contains(c, "【系统提示 · 轮数预算】") {
+		t.Fatalf("第 5 条应是请求专属的预算提示（续跑预算 2 轮 ⇒ 提前一轮）：%v", first[4])
 	}
 	if !strings.Contains(first[1]["content"].(string), "工具输出-read") {
 		t.Fatalf("历史里的工具回执必须原样接着：%v", first[1])
