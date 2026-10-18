@@ -87,6 +87,19 @@ type subproc struct {
 	// 缺口 GAP-20260926-01：真 argv 原先只进 stderr.log 的 spawn 行 ⇒ 命令面机读不到。
 	// 两条起法都在 spawn 前赋值（裸 exec / 孵化各一处）；未起成 / 未赋值 ⇒ 空 = 如实缺席（不编）。
 	engineArgv []string
+	// expand* —— 蛋展开的**中间态进度**（GAP-20261018-15）。
+	//
+	// 为什么挂在 subproc 上：`/eggs` 的状态快照只从 m.procs 出（同一把 m.mu）⇒ 进度与卵条目
+	// 天然同源同锁，不必再养一套「影子账本」。只在 `hatchStartLocked` 的**展开窗口**里非空，
+	// 展开结束（成功或失败）当刻清掉 —— 空 = 此刻不在展开（如实缺席，不报 0/0）。
+	//
+	// ★ 它只做观测：`state` 仍是 `loading`（状态机的词表不动），展开中间态另走 `expand.state`。
+	expandPhase     string
+	expandDone      int64
+	expandTotal     int64
+	expandSegsDone  int
+	expandSegsTotal int
+	expandStartedAt time.Time
 	// inflight 在飞引用计数（P2，设计 §7.7 修补 3）——「在飞」的唯一真源：
 	// 请求进入生成中 +1（acquireInflight）、完成/失败 −1（releaseInflight）。
 	// 卸载/切换判据一律取它；引擎 /slots 只作交叉校验，不作为条件。

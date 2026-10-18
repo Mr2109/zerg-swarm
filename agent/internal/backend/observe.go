@@ -138,6 +138,26 @@ type EggObservation struct {
 	// 是「四方不一致命令面」（GAP-20260926-04）**远程 side** 要读的子端本地真源。
 	// 缺席（空）= 本端从未为此卵声明 cmd（走默认命令）⇒ 如实缺席，不编。
 	Cmd string
+	// Expand 蛋展开的**中间态**（GAP-20261018-15）：nil = 此刻不在展开（如实缺席）。
+	//
+	// 为什么单独一格而不动 State：State 是状态机的词表（ready/loading/...），装载期的状态
+	// 仍是 loading；「展开到哪一步」是**装载内部的阶段**，另开一格既不搅状态机，又让只读面
+	// 在首次展开那几百秒里有真读数（而不是只看到 loading、然后被超时判红）。
+	Expand *ExpandObservation
+}
+
+// ExpandObservation 蛋展开的中间态读数（`/eggs` 的 `expand` 子对象 · GAP-20261018-15）。
+//
+// 真源 = `eggpkg.ExpandProgress`（`.expanding` 那枚件的正文）。字段名逐字对齐它，
+// ✗ 不在这里另造一套词（两套词必然漂移）。
+type ExpandObservation struct {
+	State         string `json:"state"` // 恒 `expanding`
+	BytesDone     int64  `json:"bytes_done"`
+	BytesTotal    int64  `json:"bytes_total"`
+	SegmentsDone  int    `json:"segments_done"`
+	SegmentsTotal int    `json:"segments_total"`
+	// StartedAt 展开开始时刻（RFC3339；拿不到 ⇒ 缺席，不编一个当前时刻）。
+	StartedAt string `json:"started_at,omitempty"`
 }
 
 // enginePIDOf 取一枚托管卵的引擎进程 pid（只读）：
@@ -214,6 +234,20 @@ func (m *Manager) EggObservations() []EggObservation {
 		}
 		// 单元名（孵化路径才有；裸 exec 路径如实空 —— 那是本端进程，不属任何单元）
 		o.Unit = sp.Unit
+		// 蛋展开中间态（GAP-20261018-15）：只有展开窗口里非空；空 ⇒ 缺席（不造 0/0 进度）。
+		if sp.expandPhase != "" {
+			eo := &ExpandObservation{
+				State:         sp.expandPhase,
+				BytesDone:     sp.expandDone,
+				BytesTotal:    sp.expandTotal,
+				SegmentsDone:  sp.expandSegsDone,
+				SegmentsTotal: sp.expandSegsTotal,
+			}
+			if !sp.expandStartedAt.IsZero() {
+				eo.StartedAt = sp.expandStartedAt.UTC().Format(time.RFC3339)
+			}
+			o.Expand = eo
+		}
 		if sp.state == StateIdleArmed {
 			// 与 IdleArmedRemainingS 同口径：阈值 − 距最后活动；已到期如实给 0
 			//（到期但巡检尚未收走的短暂窗口，不谎报为正值）。

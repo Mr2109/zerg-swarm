@@ -76,6 +76,13 @@ type servicesEgg struct {
 	// 「四方不一致命令面」（GAP-20260926-04）的远程 side 经本格读子端本地注册表。
 	// 空 = 本端从未声明（走默认命令）⇒ 缺席（omitempty），不编。
 	Cmd string `json:"cmd,omitempty"`
+	// Expand 蛋展开的中间态（GAP-20261018-15）：`state=expanding` ＋ 已展开字节/总字节。
+	// 缺席（omitempty）= 此刻不在展开（如实缺席，不编一个 0/0 的进度）。
+	//
+	// 为什么要它在 `/eggs` 上：首次展开实测 471 s，此前这 471 s 里只读面只有一个 `loading`、
+	// 没有任何进度 ⇒ 主控按「探不到」判超时红；有了这一格，判据才有依据
+	// （与 backend.EggObservation.Expand 同源，✗ 不另造字段名）。
+	Expand *backend.ExpandObservation `json:"expand,omitempty"`
 }
 
 // externalOccupant external_occupancy[] 条目：非引擎 GPU 使用者（§8.7 收窄口径）。
@@ -113,6 +120,7 @@ func eggEntries(obs []backend.EggObservation, attrib map[int]monitor.ProcAttrib,
 			Enclosure:         o.Enclosure,
 			Argv:              o.Argv,
 			Cmd:               o.Cmd,
+			Expand:            o.Expand,
 		}
 		if a, ok := attrib[o.PID]; ok {
 			e.GttGb = round1f(a.GttGb)

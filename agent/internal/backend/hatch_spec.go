@@ -137,6 +137,14 @@ var weightShardRe = regexp.MustCompile(`-([0-9]{5})-of-([0-9]{5})\.gguf$`)
 //
 // 任一必需信息拿不到 ⇒ 返回错误（调用方据此拒孵）；绝不返回「半份能跑的声明」。
 func hatchSpecFor(entry *registry.ModelEntry, engineImpl string, port int, profile monitor.EggProfile) (hatch.Spec, error) {
+	return hatchSpecForWithProgress(entry, engineImpl, port, profile, nil)
+}
+
+// hatchSpecForWithProgress 同 hatchSpecFor，外加一枚**展开进度回调**（GAP-20261018-15）。
+//
+// 回调只透给蛋展开那一段（`eggWiringForWithProgress` → `eggpkg.ExpandEggWithProgress`）；
+// 它不是蛋时（宿主挂载）一次都不会被调 —— 那条路逐字不变。
+func hatchSpecForWithProgress(entry *registry.ModelEntry, engineImpl string, port int, profile monitor.EggProfile, onExpand func(eggpkg.ExpandProgress)) (hatch.Spec, error) {
 	var spec hatch.Spec
 	if entry == nil {
 		return spec, fmt.Errorf("卵声明为空（注册表里没有条目）——拒孵：孵化器不替不存在的卵编一份声明")
@@ -167,7 +175,7 @@ func hatchSpecFor(entry *registry.ModelEntry, engineImpl string, port int, profi
 	// ③ 引擎：宿主路径 → 宿主目录（只读挂进 /engine）+ 空间内路径（/engine/<可执行名>）
 	// ③ 引擎：**从蛋孵化**时挂载源整体换成蛋展开目录（`<egg_dir>/engine` → `/engine`）；
 	//    不是从蛋孵化时照旧取宿主目录（逐字不变 —— 蛋相关分支一行都不走）。
-	egg, err := eggWiringFor(eggID, entry, engineImpl)
+	egg, err := eggWiringForWithProgress(eggID, entry, engineImpl, onExpand)
 	if err != nil {
 		return spec, err
 	}
@@ -537,6 +545,12 @@ const (
 // 其余任何「声明了却对不上」的形态都返回错误并**具名点名**（缺哪个目录 / 哪个可执行件 /
 // 哪个版本层），绝不退回宿主挂载 —— 静默换源是这类改动最坏的失败形态。
 func eggWiringFor(eggID string, entry *registry.ModelEntry, engineImpl string) (*eggWiring, error) {
+	return eggWiringForWithProgress(eggID, entry, engineImpl, nil)
+}
+
+// eggWiringForWithProgress 同 eggWiringFor，额外把展开进度回调透给 `ensureEggExpandedWithProgress`
+// （GAP-20261018-15）。其余判定逐字不变。
+func eggWiringForWithProgress(eggID string, entry *registry.ModelEntry, engineImpl string, onExpand func(eggpkg.ExpandProgress)) (*eggWiring, error) {
 	if entry == nil {
 		return nil, nil
 	}
@@ -547,7 +561,7 @@ func eggWiringFor(eggID string, entry *registry.ModelEntry, engineImpl string) (
 		return nil, nil
 	}
 	if eggFile != "" {
-		res, err := ensureEggExpanded(eggID, entry)
+		res, err := ensureEggExpandedWithProgress(eggID, entry, onExpand)
 		if err != nil {
 			return nil, err
 		}
@@ -1371,6 +1385,12 @@ func eggRootDir() (string, error) {
 // fail-closed：蛋件读不到 / 落点算不出 / 落点已存在且有内容 / 落点属于**另一代** / 段表
 // 任何一条穿越 —— 一律**具名**报错（✗ 不退回宿主挂载：静默换源是这类改动最坏的失败形态）。
 func ensureEggExpanded(eggID string, entry *registry.ModelEntry) (*eggpkg.ExpandResult, error) {
+	return ensureEggExpandedWithProgress(eggID, entry, nil)
+}
+
+// ensureEggExpandedWithProgress 同 ensureEggExpanded，额外把逐段进度回调透给展开器
+// （GAP-20261018-15：展开期间的 `expanding` ＋ 字节数由它一路报到 `/eggs`）。
+func ensureEggExpandedWithProgress(eggID string, entry *registry.ModelEntry, onExpand func(eggpkg.ExpandProgress)) (*eggpkg.ExpandResult, error) {
 	raw := strings.TrimSpace(eggCustomString(entry, eggKeyEggFile))
 	if raw == "" {
 		return nil, fmt.Errorf("卵 %s：蛋件路径为空 —— 拒孵（调到这里就说明上面判过它非空）", eggID)
@@ -1398,7 +1418,7 @@ func ensureEggExpanded(eggID string, entry *registry.ModelEntry) (*eggpkg.Expand
 			return nil, fmt.Errorf("卵 %s：蛋展开落点 %q 不是宿主绝对路径——拒孵（蛋展开目录必须能直接 stat）", eggID, dst)
 		}
 	}
-	res, err := eggpkg.ExpandEgg(eggFile, dst)
+	res, err := eggpkg.ExpandEggWithProgress(eggFile, dst, onExpand)
 	if err != nil {
 		return nil, fmt.Errorf("卵 %s：蛋展开失败（%s → %s）——拒孵：%w", eggID, eggFile, dst, err)
 	}

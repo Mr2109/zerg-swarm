@@ -72,9 +72,17 @@ const (
 	eggMaxSymlinkTarget = 4096
 	// eggMarkerComplete / eggMarkerFailed / eggMarkerExpanding —— 展开目录里的三枚标记件。
 	// ★ `.complete` 是「已完整」的唯一凭据；另两枚只说「这趟来过 / 失败过」，✗ 不充作完整凭据。
+	//
+	// ★ GAP-20261018-15：`.expanding` 同时是**进度面**（内容是一份 `ExpandProgress` JSON）。
+	// 它仍是单写者锁（O_EXCL 建），只是把「已展开多少」也写进同一枚件 —— 展开期间观测面
+	// 因此读得到 `expanding` ＋ 字节进度，而不必等 `.complete`（首次展开实测 471 s）。
 	eggMarkerComplete  = ".complete"
 	eggMarkerFailed    = ".failed"
 	eggMarkerExpanding = ".expanding"
+	// eggMarkerExpandingTmp —— 进度件的原子写临时名（rename 后即消失；目录判定里当标记件忽略）。
+	eggMarkerExpandingTmp = ".expanding.tmp"
+	// eggExpandStateExpanding —— 进度面里的中间态词（`/eggs` 的 `expand.state` 逐字用它）。
+	eggExpandStateExpanding = "expanding"
 	// eggReceiptVersion —— `.complete` 的 schema 主号（内容改了它才动）。
 	eggReceiptVersion = 1
 )
@@ -557,6 +565,58 @@ type eggFailedReceipt struct {
 //
 // 失败：回滚本次已落的件（本次建的根且已空 ⇒ 连根删掉；否则留 `.failed`），✗ 不留半截目录。
 func ExpandEgg(eggPath, dstDir string) (*ExpandResult, error) {
+	return ExpandEggWithProgress(eggPath, dstDir, nil)
+}
+
+// ExpandProgress —— 一次展开的**中间态快照**（GAP-20261018-15）。
+//
+// 为什么要它：首次展开一枚 113 GB 的蛋在 edge-node 实测 471 s，此前这 471 s 里外部**只能看到
+// 「一个字节都没写」，看不到「正在写、已写多少」** ⇒ 主控的装载判据没有依据，只能按超时
+// 判红。本结构是 `.expanding` 那枚件的正文，也是 `onProgress` 回调的形状：
+//
+//	State          —— 恒 `expanding`（进度面里的中间态词）
+//	SegmentsDone / SegmentsTotal —— 已落段数 / 段表总段数（含链段）
+//	BytesDone / BytesTotal       —— 已落字节 / 数据区总字节（＝各段 size 之和）
+//
+// ★ 它只是**观测**：不参与完整性判定（那只有 `.complete` 配）。读的人拿它算「还要多久 /
+// 是不是卡住了」，✗ 不许拿它当「已展开完」。
+type ExpandProgress struct {
+	State         string `json:"state"`
+	Egg           string `json:"egg"`
+	Dst           string `json:"dst"`
+	Gen           int64  `json:"gen"`
+	UUID          string `json:"uuid"`
+	SegmentsDone  int    `json:"segments_done"`
+	SegmentsTotal int    `json:"segments_total"`
+	BytesDone     int64  `json:"bytes_done"`
+	BytesTotal    int64  `json:"bytes_total"`
+	PID           int    `json:"pid"`
+	StartedAt     string `json:"started_at"`
+	UpdatedAt     string `json:"updated_at"`
+}
+
+// ReadExpandProgress 读一枚展开目录的进度（`.expanding` 的 JSON 正文）。
+//
+// 返回错误 = 这一目录此刻**不在展开中**（没有 `.expanding`）或那枚件读不懂（旧格式 / 空件）
+// ⇒ 调用方必须把它当「没有进度可报」，✗ 不许编一个 0/0 的进度出来。
+func ReadExpandProgress(dstDir string) (*ExpandProgress, error) {
+	p := filepath.Join(dstDir, eggMarkerExpanding)
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return nil, fmt.Errorf("展开进度件 %s 读不到（%v）——该目录此刻不在展开中", p, err)
+	}
+	var pr ExpandProgress
+	if err := json.Unmarshal(b, &pr); err != nil {
+		return nil, fmt.Errorf("展开进度件 %s 不是合法 JSON（%v）——不按它报进度", p, err)
+	}
+	return &pr, nil
+}
+
+// ExpandEggWithProgress 同 `ExpandEgg`，外加一枚**逐段进度回调**（nil = 不要进度）。
+//
+// 回调在每落成一段之后被调一次（同一 goroutine 内），入参是**累计**快照；同时 `.expanding`
+// 里也写入同一份 JSON ⇒ 别进程（观测面 / CLI）读盘也能拿到同样的读数。
+func ExpandEggWithProgress(eggPath, dstDir string, onProgress func(ExpandProgress)) (*ExpandResult, error) {
 	if strings.TrimSpace(eggPath) == "" {
 		return nil, fmt.Errorf("卵件路径为空 —— 拒（无蛋可展开）")
 	}
@@ -599,7 +659,21 @@ func ExpandEgg(eggPath, dstDir string) (*ExpandResult, error) {
 		return res, nil
 	}
 	// 单写者：`.expanding` 用 O_EXCL 建；已存在 ⇒ 另一趟在跑（✗ 两路同写 = 段级互相覆盖）。
+	// ★ GAP-20261018-15：这枚件同时是**进度面**（正文 = ExpandProgress JSON）。建它的那一刻
+	// 就写进「0 / 总字节」的起点 —— 外部从第一个字节起就能看到 `expanding`，而不是一片空白。
 	expandMark := filepath.Join(dst, eggMarkerExpanding)
+	prog := ExpandProgress{
+		State:         eggExpandStateExpanding,
+		Egg:           eggPath,
+		Dst:           dst,
+		Gen:           ix.Gen,
+		UUID:          ix.UUID,
+		SegmentsTotal: len(ix.Entries),
+		BytesTotal:    ix.DataBytes,
+		PID:           os.Getpid(),
+		StartedAt:     time.Now().UTC().Format(time.RFC3339),
+	}
+	prog.UpdatedAt = prog.StartedAt
 	mf, merr := os.OpenFile(expandMark, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
 	if merr != nil {
 		// 崩在半路的那枚标记里记着 pid：确认没有那个进程在跑之后删掉它再重试即可。
@@ -609,8 +683,9 @@ func ExpandEgg(eggPath, dstDir string) (*ExpandResult, error) {
 		return nil, fmt.Errorf("展开标记 %s 建不出来（= 另一趟展开正在跑，或上一趟崩在半路没清锁）：%w —— 拒；"+
 			"确认没有展开进程在跑之后，删掉该文件再重试（✗ 不替别人清锁：清了就回到两路同写）", expandMark, merr)
 	}
-	fmt.Fprintf(mf, "egg=%s\ngen=%d\nuuid=%s\ntable_sha256=%s\npid=%d\n",
-		eggPath, ix.Gen, ix.UUID, ix.TableSHA, os.Getpid())
+	if body, jerr := json.Marshal(&prog); jerr == nil {
+		_, _ = mf.Write(body)
+	}
 	mf.Close()
 
 	// ★ 从这一刻起才是「本次写面」：任何失败都要回滚本次落的件（✗ 不留半截目录）。
@@ -622,7 +697,19 @@ func ExpandEgg(eggPath, dstDir string) (*ExpandResult, error) {
 	}
 
 	// ---- ② 逐段落盘（先普通文件、再符号链接：链的父目录那时都已就位）----
-	if err := eggLandSegments(eggPath, dst, ix, res); err != nil {
+	// 每落成一段：先把累计进度写进 `.expanding`（别进程读盘可见），再回调（同进程观测面可见）。
+	landed := func(seg EggSegment) {
+		if !seg.IsSymlink() {
+			prog.BytesDone += seg.Size
+		}
+		prog.SegmentsDone++
+		prog.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+		_ = eggWriteExpandProgress(expandMark, prog)
+		if onProgress != nil {
+			onProgress(prog)
+		}
+	}
+	if err := eggLandSegments(eggPath, dst, ix, res, landed); err != nil {
 		return fail(err)
 	}
 
@@ -674,7 +761,7 @@ func eggPrepareDir(dst string) (created bool, err error) {
 	var others []string
 	for _, de := range des {
 		switch de.Name() {
-		case eggMarkerComplete, eggMarkerFailed, eggMarkerExpanding:
+		case eggMarkerComplete, eggMarkerFailed, eggMarkerExpanding, eggMarkerExpandingTmp:
 			continue
 		}
 		others = append(others, de.Name())
@@ -723,7 +810,8 @@ func eggCheckComplete(dst string, ix *EggIndex) (*eggReceipt, error) {
 }
 
 // eggLandSegments —— 逐段落盘并复核 sha256。普通文件在前（先建父目录），链段在最后。
-func eggLandSegments(eggPath, dst string, ix *EggIndex, res *ExpandResult) error {
+// `landed` 在每落成一段之后被调一次（nil = 不报进度）；它只做观测，✗ 不改落盘语义。
+func eggLandSegments(eggPath, dst string, ix *EggIndex, res *ExpandResult, landed func(EggSegment)) error {
 	f, err := os.Open(eggPath)
 	if err != nil {
 		return fmt.Errorf("卵重新打开失败：%w", err)
@@ -754,6 +842,9 @@ func eggLandSegments(eggPath, dst string, ix *EggIndex, res *ExpandResult) error
 			return lerr
 		}
 		res.Files++
+		if landed != nil {
+			landed(e)
+		}
 	}
 	for _, e := range links {
 		tgt, terr := eggJoin(dst, e.Path)
@@ -775,6 +866,9 @@ func eggLandSegments(eggPath, dst string, ix *EggIndex, res *ExpandResult) error
 			return fmt.Errorf("建符号链接 %s → %q 失败：%w", tgt, e.LinkTarget, serr)
 		}
 		res.Symlinks++
+		if landed != nil {
+			landed(e)
+		}
 	}
 	return nil
 }
@@ -858,14 +952,14 @@ func eggRollback(dst string, createdRoot bool, ix *EggIndex, cause error) error 
 	}
 	for _, de := range des {
 		switch de.Name() {
-		case eggMarkerComplete, eggMarkerFailed, eggMarkerExpanding:
+		case eggMarkerComplete, eggMarkerFailed, eggMarkerExpanding, eggMarkerExpandingTmp:
 			continue
 		}
 		if rerr := os.RemoveAll(filepath.Join(dst, de.Name())); rerr != nil && firstErr == nil {
 			firstErr = rerr
 		}
 	}
-	for _, n := range []string{eggMarkerExpanding, eggMarkerComplete} {
+	for _, n := range []string{eggMarkerExpandingTmp, eggMarkerExpanding, eggMarkerComplete} {
 		if rerr := os.Remove(filepath.Join(dst, n)); rerr != nil && !os.IsNotExist(rerr) && firstErr == nil {
 			firstErr = rerr
 		}
@@ -917,6 +1011,22 @@ func eggWriteJSONAtomic(p string, v interface{}) error {
 	}
 	if err := f.Close(); err != nil {
 		os.Remove(tmp)
+		return err
+	}
+	return os.Rename(tmp, p)
+}
+
+// eggWriteExpandProgress —— 原子写一份展开进度进 `.expanding`（临时名 → rename）。
+//
+// ★ 不做 fsync：这是**观测**，不是凭据 —— 进度丢一帧只影响「这一秒看到多少」，不影响完整性
+// （完整性只看 `.complete` 配）。同理失败一律由调用方忽略（✗ 不许因为写不了进度就失败整趟展开）。
+func eggWriteExpandProgress(p string, v ExpandProgress) error {
+	b, err := json.Marshal(&v)
+	if err != nil {
+		return err
+	}
+	tmp := filepath.Join(filepath.Dir(p), eggMarkerExpandingTmp)
+	if err := os.WriteFile(tmp, b, 0o644); err != nil {
 		return err
 	}
 	return os.Rename(tmp, p)

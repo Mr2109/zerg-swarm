@@ -32,6 +32,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Mr2109/zerg-swarm/agent/internal/eggpkg"
 	"github.com/Mr2109/zerg-swarm/agent/internal/enclosure"
 	"github.com/Mr2109/zerg-swarm/agent/internal/hatch"
 	"github.com/Mr2109/zerg-swarm/agent/internal/monitor"
@@ -89,6 +90,54 @@ func (m *Manager) hatcherImpl() hatcher {
 		return m.hatcher
 	}
 	return hatch.Hatcher{}
+}
+
+// hatchSpecBuild —— 「展开蛋 ＋ 把声明映射成孵化声明」这一步的**间接层**（GAP-20261018-15）。
+//
+// 生产恒指向 hatchSpecForWithProgress。单测把它换成可控的桩，用来证明「展开那一段 m.mu 是空的」——
+// 不去手动构造一枚真蛋（那要么太大、要么太慢，测不出锁的形态）。
+var hatchSpecBuild = hatchSpecForWithProgress
+
+// hatchRegLockedHook —— 单测用：在「重新取回锁、准备登记/起单元」那一刻被调用（生产恒 nil）。
+// 它的唯一用途是让测试在**持锁窗口**里跑一次 `TryLock`（必须失败）⇒ 与上面展开窗口（必须成功）
+// 合成「锁剖分两态」的证据。
+var hatchRegLockedHook func()
+
+// noteExpandProgress 把一帧展开进度记到该卵的条目上（GAP-20261018-15）。
+//
+// ★ 只在「展开窗口」里被调（那时 m.mu 已被让出）⇒ 本函数自己取锁、只更新那几个字段（极短）。
+// 期间该卵若已被收走（Stop / 淘汰 / 同名冲突），静默跳过 —— 进度是**观测**，不给装载路径添新失败面。
+func (m *Manager) noteExpandProgress(modelName string, sp *subproc, p eggpkg.ExpandProgress) {
+	if m == nil || sp == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if cur, ok := m.procs[modelName]; !ok || cur != sp {
+		return
+	}
+	sp.expandPhase = p.State
+	sp.expandDone = p.BytesDone
+	sp.expandTotal = p.BytesTotal
+	sp.expandSegsDone = p.SegmentsDone
+	sp.expandSegsTotal = p.SegmentsTotal
+	if sp.expandStartedAt.IsZero() {
+		sp.expandStartedAt = time.Now()
+	}
+}
+
+// clearExpandProgress 展开窗口结束（成功 / 失败 / 中止）⇒ 进度面回到「不在展开」（如实缺席）。
+// ★ 调用方必须已持 m.mu（它改的是 m.procs 里的同一枚 sp）。
+func clearExpandProgress(sp *subproc) {
+	if sp == nil {
+		return
+	}
+	sp.expandPhase = ""
+	sp.expandDone = 0
+	sp.expandTotal = 0
+	sp.expandSegsDone = 0
+	sp.expandSegsTotal = 0
+	sp.expandStartedAt = time.Time{}
 }
 
 // ── 双闸门与实测档案（§8.4 / §6.8.4「先判格式，再算账」）──────────────────────
@@ -210,8 +259,37 @@ func (m *Manager) hatchGateLocked(modelName string, entry *registry.ModelEntry) 
 // hatchStartLocked 孵化一枚卵：映射声明 → 起单元 → 既有就绪判据 → 核封闭性。
 // 与裸 exec 路径的分工：本函数只负责「起 / 等 / 核」，**收卵**在 stopSubproc / stopVictimProcess
 // （按 sp.Unit 分派）。调用方需持锁（端口与子进程状态都在同一临界区里定，与裸 exec 路径一致）。
+//
+// ★ GAP-20261018-15：**长耗时那一段（蛋展开 ＋ 声明映射）在锁外执行**。
+//
+//	首次展开一枚 113 GB 的蛋在 edge-node 实测 471 s；此前这一段整个跑在 m.mu 里 ⇒ 那 471 s 内
+//	`/eggs`、`/status`、心跳全部拿不到锁，主控的装载判据「探不到就按超时判红」——而模型其实
+//	是起得来的（复孵 38 s 那次就判绿）。现在的分工：
+//
+//	  ① 锁内：登记占位（sp / port / loading）—— 在 doStart 里，本函数进入前已完成；
+//	  ② 锁外：展开（逐段进度写进 sp.expand*，观测面读得到 expanding ＋ 字节数）＋ 声明映射；
+//	  ③ 锁内：核占位仍在（防装载期间被 Stop/淘汰收走）→ 校验 → 起单元 → 就绪判据 → 封闭性核验。
+//
+//	锁只包「登记 / 原子换入」那两小段 ⇒ 展开多慢都不会让只读面僵住。
 func (m *Manager) hatchStartLocked(modelName string, entry *registry.ModelEntry, sp *subproc, port int, profile monitor.EggProfile) (map[string]interface{}, error) {
-	spec, err := hatchSpecFor(entry, EngineImplOf(entry), port, profile)
+	// ── ② 锁外：展开 ＋ 声明映射（本函数唯一的长耗时段）──────────────────────────
+	// 展开进度逐段回来 ⇒ 记到 sp 上（自己的锁，极短），/eggs 的 `expand` 因此有真读数。
+	m.mu.Unlock()
+	spec, err := hatchSpecBuild(entry, EngineImplOf(entry), port, profile, func(p eggpkg.ExpandProgress) {
+		m.noteExpandProgress(modelName, sp, p)
+	})
+	m.mu.Lock()
+	if hatchRegLockedHook != nil {
+		hatchRegLockedHook() // 单测用：证明「登记/起单元这一段是持锁的」（生产恒 nil）
+	}
+	// 占位核验（缺陷 19 的同一精神）：展开那几百秒里，Stop / 五档淘汰 / 同名冲突都可能把这枚
+	// 占位收走；此时**绝不能**继续起单元 —— 否则又造一个没人记账的孤儿单元。
+	if cur, ok := m.procs[modelName]; !ok || cur != sp {
+		clearExpandProgress(sp)
+		log.Printf("[backend] 装载中止 %s：展开期间占位条目已被收走（stop/淘汰/同名冲突）⇒ 不起单元", modelName)
+		return errResponse(503, "load cancelled", "装载期间该卵的占位条目被收走（stop / 淘汰 / 同名冲突）—— 未起任何单元"), nil
+	}
+	clearExpandProgress(sp)
 	if err != nil {
 		log.Printf("[backend] ✗ 拒孵 %s：孵化声明映射不出来：%v", modelName, err)
 		sp.state = StateCrashed

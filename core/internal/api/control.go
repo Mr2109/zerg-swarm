@@ -5,12 +5,14 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -94,7 +96,24 @@ const (
 	loadTasksKept = 64
 	// loadDispatchTimeout —— 后台装载转发的超时：**必须 >= 子端装载截止（120s）+ 余量**，
 	//   否则又回到改前「主控先放弃（60s）、子端仍在装（120s）」的错配（本账父代理补记）。
-	loadDispatchTimeout = 300 * time.Second
+	//   ★ 它只定「前台转发窗」，**不**定「装载容忍多久」—— 见 loadHatchPatience*。
+	// loadDispatchTimeout 前台装载转发窗（300s）。
+	// loadHatchReconcileEvery 孵化期只读面轮询间隔（2s；子端 /eggs 是纯只读快照，压力可忽略）。
+	// loadHatchStallWindow 进度停滞判据（5m 内已展开字节没有增加 ⇒ 判失败）。
+	//
+	// ★ 这三枚是**可被单测收窄的时长**（生产路径不写它们；默认值就是上面注释里的数）：
+	//   判据要能在几秒内验完两态，而「把 5 分钟实跑一遍」不叫验收。
+	loadHatchPatienceDefault = 15 * time.Minute
+	// loadHatchPatienceMargin —— 跟调用方时限时的余量（让「就绪」比「调用方放弃」早一步落定）。
+	loadHatchPatienceMargin = 60 * time.Second
+	// loadHatchProbeTimeout —— 单次只读面探测的超时（/eggs 是纯快照，正常情况下毫秒级）。
+	loadHatchProbeTimeout = 10 * time.Second
+)
+
+var (
+	loadDispatchTimeout     = 300 * time.Second
+	loadHatchReconcileEvery = 2 * time.Second
+	loadHatchStallWindow    = 5 * time.Minute
 )
 
 // loadTaskRec —— 一枚装载任务（内部态 · `startedAt` 用 time.Time 好算 elapsed）。
@@ -108,6 +127,19 @@ type loadTaskRec struct {
 	backend    string
 	port       int
 	errMsg     string
+	// expand 孵化中期的进度读数（GAP-20261018-15）：非 nil ⇒ 这枚任务正处在「已超前台窗、
+	// 但只读面说它还在展开」那一段。nil = 不在展开（正常结算 / 从未展开）。
+	expand *loadExpandProgress
+}
+
+// loadExpandProgress 一枚任务在孵化期的进度读数（真源 = 子端 `/eggs` 的 `expand` 子对象）。
+type loadExpandProgress struct {
+	State         string  `json:"state"`
+	BytesDone     int64   `json:"bytes_done"`
+	BytesTotal    int64   `json:"bytes_total"`
+	SegmentsDone  int     `json:"segments_done"`
+	SegmentsTotal int     `json:"segments_total"`
+	ElapsedS      float64 `json:"elapsed_s"`
 }
 
 // loadTaskSeq —— 任务号序号（进程级原子计数，与纳秒时间一起保证唯一）。
@@ -148,6 +180,8 @@ func (h *ControlHandlers) finishLoadTask(id, phase, errMsg, backend string, port
 	t.backend = backend
 	t.port = port
 	t.finishedAt = time.Now()
+	// 结算后孵化进度不再有意义（它只描述「还没落定」那一段）⇒ 清掉，✗ 不让旧帧冒充现读。
+	t.expand = nil
 }
 
 // snapshotLoadTasks 只读快照（最近 loadTasksKept 枚 · 供 `GET /api/core/status`）。
@@ -184,6 +218,11 @@ func (h *ControlHandlers) snapshotLoadTasks() []map[string]interface{} {
 		}
 		if t.errMsg != "" {
 			row["error"] = t.errMsg
+		}
+		if t.expand != nil {
+			// 孵化进度的只读投影（GAP-20261018-15）：调用方据此区分「正在展开（还在动）」
+			// 与「卡住 / 超时」，而不是只看到一个 accepted。
+			row["expand"] = t.expand
 		}
 		out = append(out, row)
 	}
@@ -232,11 +271,54 @@ func loadAcceptedBody(machine, model, taskID string, started time.Time, subend m
 	return out
 }
 
+// loadHatchPatience —— 由调用方的 `egg_max_s`（CLI `--timeout` 的秒数）算「孵化容忍窗」。
+//
+// 口径：跟调用方给的时限走 + 60s 余量（让主控的「就绪」落定比调用方的「等不起」早一步）；
+// 没给 / 给坏了 ⇒ 兜底 `loadHatchPatienceDefault`（**不**因为读不懂就无限等 —— fail-closed 的方向
+// 是「有限」而不是「更久」）。
+func loadHatchPatience(eggMaxS string) time.Duration {
+	s := strings.TrimSpace(eggMaxS)
+	if s == "" {
+		return loadHatchPatienceDefault
+	}
+	sec, err := strconv.ParseFloat(s, 64)
+	if err != nil || sec <= 0 {
+		return loadHatchPatienceDefault
+	}
+	return time.Duration(sec*float64(time.Second)) + loadHatchPatienceMargin
+}
+
+// loadForwardTimedOut —— 判「这次转发失败是**超时**（不是拒连/拒装）」。
+//
+// ★ 只有超时才转孵化容忍档：连接被拒 / DNS 挂了 / 立刻回错，都是**真失败**，照旧判红
+// （那正是 GAP-20260925-44 负控要的形态）。
+func loadForwardTimedOut(err error) bool {
+	if err == nil {
+		return false
+	}
+	var te interface{ Timeout() bool }
+	if errors.As(err, &te) && te.Timeout() {
+		return true
+	}
+	s := err.Error()
+	return strings.Contains(s, "context deadline exceeded") || strings.Contains(s, "Client.Timeout")
+}
+
 // dispatchLoad —— 后台装载：把 `/load` 转发给子端，并把**真结果**结算进任务表（供只读面查）。
 // 它的整段都可能慢（冷装 >45s）⇒ 主控只在「短窗」内等它，超窗即走「已受理 + 任务号」那条路。
-func (h *ControlHandlers) dispatchLoad(node config.FleetNode, machine, model string, body []byte, taskID string) loadResult {
+//
+// ★ GAP-20261018-15：**转发超时不等于装载失败**。首次展开一枚 113 GB 的蛋在 edge-node 实测 471 s，
+// 而前台转发窗是 300 s ⇒ 旧行为在这里把任务判成 failed（模型其实起来了，复孵 38 s 那次判绿）。
+// 现在：超时 ⇒ 转「孵化容忍」档 —— 按子端只读面 `/eggs` 的 `expand` 进度继续核，就绪即 ok；
+// 只有「进度停滞」或「等满容忍窗仍未就绪」才 failed，且失败原因**可分辨**（不是笼统 failed）。
+func (h *ControlHandlers) dispatchLoad(node config.FleetNode, machine, model string, body []byte, taskID string, patience time.Duration) loadResult {
 	status, respBody, err := forwardToNodeTimeout(h.currentConfig().Auth.Token, node, "/load", body, loadDispatchTimeout)
 	r := loadResult{status: status, respBody: respBody, err: err}
+	if loadForwardTimedOut(err) {
+		phase, errMsg, backend, port := h.reconcileHatch(node, model, taskID, patience)
+		h.finishLoadTask(taskID, phase, errMsg, backend, port)
+		return loadResult{status: http.StatusOK}
+	}
 	phase, errMsg, backend, port := phaseOK, "", "", 0
 	switch {
 	case err != nil:
@@ -258,6 +340,160 @@ func (h *ControlHandlers) dispatchLoad(node config.FleetNode, machine, model str
 	}
 	h.finishLoadTask(taskID, phase, errMsg, backend, port)
 	return r
+}
+
+// ── 孵化容忍档（GAP-20261018-15）：超时之后按只读面继续核 ──────────────────────────────
+//
+// 判据链（每一步都取**真读数**，✗ 不靠「再等一会儿」）：
+//
+//	① 子端 `/eggs` 里该卵 `port > 0` 且 state ∈ {ready, idle_armed} ⇒ **就绪**（phase=ok）；
+//	② 有 `expand` 子对象 ⇒ 记进度（`load_tasks[].expand`），字节增了 ⇒ 判「还在动」，刷新停滞计时；
+//	③ 连续 `loadHatchStallWindow` 字节不增 ⇒ failed（「展开停滞」——与「探不到」分开）；
+//	④ 等满容忍窗仍未就绪 ⇒ failed，且把「实例已起 / 只在展开 / 只读面什么都没有」三种形态
+//	   分别写进 error 正文（调用方读得出来是哪一种）。
+
+// nodeEggState —— 一次 `/eggs` 探测里该卵的读数（只留判据要用的几格）。
+type nodeEggState struct {
+	State  string
+	Port   int
+	PID    int
+	Ready  bool
+	Expand *loadExpandProgress
+}
+
+// probeNodeEgg —— GET 子端 `/eggs`，取该模型那一枚的读数；没有该卵 ⇒ (nil, nil)。
+func (h *ControlHandlers) probeNodeEgg(node config.FleetNode, model string) (*nodeEggState, error) {
+	status, body, err := forwardToNodeMethod(h.currentConfig().Auth.Token, node, http.MethodGet, "/eggs", nil, loadHatchProbeTimeout)
+	if err != nil {
+		return nil, err
+	}
+	if status != http.StatusOK {
+		return nil, fmt.Errorf("子端 /eggs 回 http_%d", status)
+	}
+	var payload struct {
+		Eggs []struct {
+			EggID  string `json:"egg_id"`
+			Model  string `json:"model"`
+			State  string `json:"state"`
+			Port   int    `json:"port"`
+			PID    int    `json:"pid"`
+			Expand *struct {
+				State         string `json:"state"`
+				BytesDone     int64  `json:"bytes_done"`
+				BytesTotal    int64  `json:"bytes_total"`
+				SegmentsDone  int    `json:"segments_done"`
+				SegmentsTotal int    `json:"segments_total"`
+			} `json:"expand"`
+		} `json:"eggs"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, fmt.Errorf("子端 /eggs 的体解不动：%w", err)
+	}
+	for _, e := range payload.Eggs {
+		if e.EggID != model && e.Model != model {
+			continue
+		}
+		st := &nodeEggState{State: e.State, Port: e.Port, PID: e.PID}
+		// 就绪判据与子端同一口径：端口在听 **且** 状态机说 ready/idle_armed（空窗中的卵仍是活的）。
+		st.Ready = e.Port > 0 && (e.State == "ready" || e.State == "idle_armed")
+		if e.Expand != nil {
+			st.Expand = &loadExpandProgress{
+				State:         e.Expand.State,
+				BytesDone:     e.Expand.BytesDone,
+				BytesTotal:    e.Expand.BytesTotal,
+				SegmentsDone:  e.Expand.SegmentsDone,
+				SegmentsTotal: e.Expand.SegmentsTotal,
+			}
+		}
+		return st, nil
+	}
+	return nil, nil
+}
+
+// noteLoadExpand —— 把一帧展开进度记到任务上（只读面 `load_tasks[].expand`）。
+func (h *ControlHandlers) noteLoadExpand(taskID string, p loadExpandProgress) {
+	h.loadMu.Lock()
+	defer h.loadMu.Unlock()
+	if t := h.loadTasks[taskID]; t != nil {
+		cp := p
+		t.expand = &cp
+	}
+}
+
+// reconcileHatch —— 孵化容忍：按只读面核到就绪 / 停滞 / 等满上界。
+func (h *ControlHandlers) reconcileHatch(node config.FleetNode, model, taskID string, patience time.Duration) (phase, errMsg, backend string, port int) {
+	if patience <= 0 {
+		patience = loadHatchPatienceDefault
+	}
+	deadline := time.Now().Add(patience)
+	started := time.Now()
+	var last *loadExpandProgress
+	lastBytes := int64(-1)
+	lastAdvance := time.Now()
+	sawExpand := false
+	lastState := ""
+	lastPort, lastPID := 0, 0
+	var probeErrLast error
+	for {
+		if time.Now().After(deadline) {
+			switch {
+			case lastPort > 0 || lastPID > 0:
+				return phaseFailed, fmt.Sprintf("孵化超时（等满 %s）但**实例已起**（state=%s · port=%d · pid=%d）—— 就绪判据未过，✗ 不是「没起来」",
+					patience, orUnknown(lastState), lastPort, lastPID), "", lastPort
+			case last != nil:
+				return phaseFailed, fmt.Sprintf("孵化超时（等满 %s）：展开停在 %d/%d 字节（%d/%d 段）—— 实例未起",
+					patience, last.BytesDone, last.BytesTotal, last.SegmentsDone, last.SegmentsTotal), "", 0
+			default:
+				return phaseFailed, fmt.Sprintf("孵化超时（等满 %s）：子端只读面 `/eggs` 上既没有该卵的条目、也没有展开进度%s —— 实例未起",
+					patience, probeErrSuffix(probeErrLast)), "", 0
+			}
+		}
+		time.Sleep(loadHatchReconcileEvery)
+		st, perr := h.probeNodeEgg(node, model)
+		if perr != nil {
+			probeErrLast = perr
+			continue
+		}
+		probeErrLast = nil
+		if st == nil {
+			continue
+		}
+		lastState, lastPort, lastPID = st.State, st.Port, st.PID
+		if st.Ready {
+			return phaseOK, "", backend, st.Port
+		}
+		if st.Expand != nil {
+			sawExpand = true
+			cur := *st.Expand
+			cur.ElapsedS = time.Since(started).Seconds()
+			h.noteLoadExpand(taskID, cur)
+			last = &cur
+			if cur.BytesDone > lastBytes {
+				lastBytes = cur.BytesDone
+				lastAdvance = time.Now()
+			}
+		}
+		if sawExpand && time.Since(lastAdvance) > loadHatchStallWindow {
+			return phaseFailed, fmt.Sprintf("展开停滞：%s 内已展开字节没有增加（停在 %d/%d 字节 · %d/%d 段）—— 判失败（不是「探不到就超时」）",
+				loadHatchStallWindow, lastBytes, last.BytesTotal, last.SegmentsDone, last.SegmentsTotal), "", 0
+		}
+	}
+}
+
+// orUnknown —— 空串 ⇒ 「未知」（只用于人面报话，✗ 不参与判据）。
+func orUnknown(s string) string {
+	if s == "" {
+		return "未知"
+	}
+	return s
+}
+
+// probeErrSuffix —— 探测一直失败时把最后那个原因缀进报话（读得出来「为什么什么都没看到」）。
+func probeErrSuffix(err error) string {
+	if err == nil {
+		return ""
+	}
+	return fmt.Sprintf("（最后一次探测失败：%v）", err)
 }
 
 // LoadHandler 处理 POST /api/control/load
@@ -358,7 +594,9 @@ func (h *ControlHandlers) LoadHandler(w http.ResponseWriter, r *http.Request) {
 	// 后台装载（**保持异步**）：请求一受理即开跑；主控只在「短窗」内等一次**已可判定**的结果 ——
 	// 结果到了就当场据实回（成功补 accepted…；失败原样透传且**不**回 accepted ⇒ 负控）。
 	resCh := make(chan loadResult, 1)
-	go func() { resCh <- h.dispatchLoad(node, req.Machine, req.Model, body, taskID) }()
+	go func() {
+		resCh <- h.dispatchLoad(node, req.Machine, req.Model, body, taskID, loadHatchPatience(req.EggMaxS))
+	}()
 	var res loadResult
 	select {
 	case res = <-resCh:
@@ -450,12 +688,18 @@ func forwardToNode(token string, node config.FleetNode, path string, body []byte
 // forwardToNodeTimeout —— forwardToNode 的可配超时版（缺口 GAP-20260925-44：后台装载那条路
 // 要用 >= 子端装载截止（120s）的超时，不能再吃 60s 的默认档 —— 否则主控先放弃、子端仍在装）。
 func forwardToNodeTimeout(token string, node config.FleetNode, path string, body []byte, timeout time.Duration) (int, []byte, error) {
+	return forwardToNodeMethod(token, node, http.MethodPost, path, body, timeout)
+}
+
+// forwardToNodeMethod —— 同 forwardToNodeTimeout，但**方法可选**（GAP-20261018-15 的孵化期
+// 只读探测要 GET 子端 `/eggs`：只读面全是 GET，拿 POST 打会 405）。
+func forwardToNodeMethod(token string, node config.FleetNode, method, path string, body []byte, timeout time.Duration) (int, []byte, error) {
 	url := fmt.Sprintf("http://%s:%d%s", node.Host, node.Port, path)
 	var reader io.Reader
 	if body != nil {
 		reader = bytes.NewReader(body)
 	}
-	req, err := http.NewRequest(http.MethodPost, url, reader)
+	req, err := http.NewRequest(method, url, reader)
 	if err != nil {
 		return 0, nil, err
 	}
