@@ -253,11 +253,23 @@ func cmdDevProposalNew(inv *invocation, stdout, stderr io.Writer) int {
 		"--by", "--subject", "--subject-kind", "--egg-id", "--approver", "--approver-kind"); rc != exitOK {
 		return rc
 	}
+	// ★ GAP-20261018-21（2026-10-18）：退点件自动造。
+	//
+	// 病灶（对话里真撞 · 已亲核）：`dev proposal new` 强制 `--rollback` 为仓外整件路径且现读可得，
+	// 而模型唯一的工具面就是本 CLI —— `fs read` 只读、`fs write` 禁写仓外、`fs run` 首词白名单不含 `cp`
+	// ⇒ 模型造不出回滚件，也就立不了任何合规提案（本地卵真修缺口时卡在这一步，方案都对、就是过不去）。
+	// 解法：路径形退点在盘上读不到、但给了 `--file` 时，从 `--file` 的**盘上现态**造一份到
+	// `<状态目录>/rollback-keep/`（与 `keepRollbackSnapshot` 同一目录），并用新造件替换退点值。
+	rollbackValue := strings.TrimSpace(inv.flagVal("--rollback"))
+	if made, how := autofillRollback(rollbackValue, trimAll(inv.flagVals("--file"))); made != "" {
+		fmt.Fprintf(stderr, "%s: ★ 退点件已自动造：%s\n  理由：%s\n", progName, made, how)
+		rollbackValue = made
+	}
 	rec := proposalRecord{
 		Title:     strings.TrimSpace(inv.flagVal("--title")),
 		Target:    strings.TrimSpace(inv.flagVal("--target")),
 		Goal:      strings.TrimSpace(inv.flagVal("--goal")),
-		Rollback:  strings.TrimSpace(inv.flagVal("--rollback")),
+		Rollback:  rollbackValue,
 		Criterion: strings.TrimSpace(inv.flagVal("--criterion")),
 		// ★ GAP-20260928-161（方案甲 · 本枚）：前瞻判据档（本版**还跑不动**的命令形态 · 显式标前瞻）。
 		CriterionNew: strings.TrimSpace(inv.flagVal("--criterion-new")),
@@ -1746,6 +1758,47 @@ func declaredFilesWhy(files []string) string {
 		}
 	}
 	return ""
+}
+
+// autofillRollback —— 退点件自动造（缺口 `GAP-20261018-21` · 2026-10-18）。
+//
+// 只在两种条件下动手：① 退点是**路径形**（`rollbackKeepApplies` 同口径）；② 它在盘上**读不到**；
+// ③ 提案声明了 `--file` 且第一个件在盘上读得到。其余一律原样返回空串（不改退点、不造件）。
+// 造出来的件落 `<状态目录>/rollback-keep/auto-<基名>-<时间戳>`（与看管档同一目录 ⇒ `dev proposal show`
+// 的只读出口也读得到），内容 = 该件**当前盘上现态** ⇒ 正是「改前态」。
+func autofillRollback(rollback string, files []string) (string, string) {
+	v := strings.TrimSpace(rollback)
+	if !rollbackKeepApplies(v) || len(files) == 0 {
+		return "", ""
+	}
+	p := v
+	if !filepath.IsAbs(p) {
+		p = filepath.Join(repoRoot(), filepath.FromSlash(p))
+	}
+	if st, err := os.Stat(p); err == nil && st.Mode().IsRegular() {
+		return "", "" // 退点件本来就在盘 ⇒ 不动
+	}
+	src := filepath.Join(repoRoot(), filepath.FromSlash(files[0]))
+	srcSt, err := os.Stat(src)
+	if err != nil || !srcSt.Mode().IsRegular() {
+		return "", "" // 源件读不到 ⇒ 交回原判死逻辑，不在这里另造一套报话
+	}
+	data, rerr := os.ReadFile(src)
+	if rerr != nil {
+		return "", ""
+	}
+	dir, derr := rollbackKeepDir()
+	if derr != nil {
+		return "", ""
+	}
+	if merr := os.MkdirAll(dir, 0o755); merr != nil {
+		return "", ""
+	}
+	dst := filepath.Join(dir, "auto-"+filepath.Base(src)+"-"+time.Now().Format("20060102-150405"))
+	if werr := os.WriteFile(dst, data, 0o644); werr != nil {
+		return "", ""
+	}
+	return dst, fmt.Sprintf("`--rollback` 给的 %q 在盘上读不到，而本 CLI 没有 cp／fs 写不出仓外 ⇒ 按 `--file %s` 的盘上现态自动造了一份（%d 字节）", v, files[0], len(data))
 }
 
 // rollbackKeepDir —— 退点看管档的目录（**唯一真源**：写面落档、读面读档都走它 —— 两端不许各拼一份）。
