@@ -27,12 +27,15 @@ package chat
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Mr2109/zerg-swarm/core/internal/agent"
@@ -45,6 +48,42 @@ const ZergCmdToolName = "zerg"
 
 // ZergCmdWord — 命令首词口径（逐字比对——✗ 不收 zerg.exe / ZERG / ./zerg）
 const ZergCmdWord = "zerg"
+
+// ★ GAP-20261018-25（2026-10-18 · P0）：**执行凭据**。
+//
+// 病灶（实测 · 已亲核）：本地卵在 chat 会话里编造了完整的假回执 —— 提案号、rc=0、
+// after_sha256、hunk 数四处全假，格式与真回执一模一样；而 chat 路径没有任何回执核验
+// （loopcore 侧有，见 GAP-20261018-01 的 output_claims_verify）。
+// 解法：每次工具执行发一枚短凭据 `x-<8hex>`，随输出头一起回给模型；回答里引用
+// rc / sha / 字节数 / hunk 时**必须带上它**，否则按未取证处理（见 chat_exec_receipt.go）。
+var (
+	zergExecMu   sync.Mutex
+	zergExecSeen = map[string]bool{}
+)
+
+// zergNewExecID —— 发一枚执行凭据（8 位 hex）并记进本轮集合。
+func zergNewExecID() string {
+	b := make([]byte, 4)
+	if _, err := rand.Read(b); err != nil {
+		return "x-00000000"
+	}
+	id := "x-" + hex.EncodeToString(b)
+	zergExecMu.Lock()
+	zergExecSeen[id] = true
+	zergExecMu.Unlock()
+	return id
+}
+
+// ZergExecSeenIDs —— 本轮已发凭据的快照（校验器只认这里出现过的 id）。
+func ZergExecSeenIDs() map[string]bool {
+	zergExecMu.Lock()
+	defer zergExecMu.Unlock()
+	out := make(map[string]bool, len(zergExecSeen))
+	for k := range zergExecSeen {
+		out[k] = true
+	}
+	return out
+}
 
 // zergCmdRefusalHead — 拒执文案（用户点名要逐字那句「对话只能用虫族命令」）
 const zergCmdRefusalHead = "rc=2 拒执：对话只能用虫族命令"
@@ -169,7 +208,7 @@ var zergCmdFamilies = []zergCmdFamily{
 	{"gate", 18},
 	{"task", 13},
 	{"chat", 12},
-	{"egg", 12},
+	{"egg", 13},
 	{"model", 11},
 	{"core", 10},
 	{"dev", 10},
@@ -435,8 +474,12 @@ func ChatZergCommand(args map[string]any, workDir string) (string, error) {
 			return "", fmt.Errorf("zerg 命令跑不起来（%s）：%w", bin, runErr)
 		}
 	}
+	execID := zergNewExecID()
 	var b strings.Builder
 	fmt.Fprintf(&b, "rc=%d\n", rc)
+	// ★ GAP-20261018-25：凭据行放在 rc 之后 —— 输出**必须以 rc=N 开头**是既有契约
+	// （TestChatZergToolRunsVersion 逐字断言），凭据只做增量、不抢首位。
+	fmt.Fprintf(&b, "[EXEC %s] 以上结果的凭据；引用 rc / sha256 / 字节数 / hunk 时请原样带上它，没带即视为未取证\n", execID)
 	b.WriteString("--- stdout ---\n")
 	b.WriteString(zergClip(stdout.String()))
 	if s := strings.TrimRight(stderr.String(), "\n"); s != "" {
