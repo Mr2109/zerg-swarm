@@ -316,6 +316,13 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 	fileRel := strings.TrimSpace(inv.flagVal("--file"))
 	fromPath := strings.TrimSpace(inv.flagVal("--from"))
 	replacePath := strings.TrimSpace(inv.flagVal("--replace"))
+	// ★ GAP-20261018-22（2026-10-18）：**内联补丁** `--replace-inline <JSON>`。
+	//
+	// 病灶（已亲核）：模型唯一工具面就是本 CLI —— `fs write` 明确「禁绝对路径出仓」，`fs run` 白名单
+	// 不含 cp/tee ⇒ 它造不出装着补丁 JSON 的临时件，于是 `--replace <件>` 这条路对模型**物理上走不通**
+	// （仓内写一枚临时件会把工作树弄脏，且 CLI 没有删件手段）。本旗标吃**内联 JSON 串**，落进程私有
+	// 临时件（`os.CreateTemp` 走 TMPDIR · 跑完即删）后复用 `applyReplacements` —— 判据一字不新立。
+	replaceInline := strings.TrimSpace(inv.flagVal("--replace-inline"))
 	// ★ GAP-20260928-136（本单）：**路径口径归一** —— 三条路径入参（`--file` / `--from` / `--replace`）
 	//   先过同一套口径 `devPathCanonical`：**仓内绝对**路径自动转成**仓内相对**（与提案面声明的形态同形
 	//   ⇒ 两侧可互换；仓外绝对不转 —— `--file` 仍是越界写 ⇒ 2，矩阵格 `dev/edit#--file 绝对路径（越界写）` 不变）。
@@ -365,9 +372,14 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s: `dev edit` 要一枚 `--file <仓内相对路径>`（可重复时逐次调用 —— 一次一个件，便于逐件对账）\n", progName)
 		return exitUsage
 	}
-	if (fromPath == "") == (replacePath == "") {
+	if replacePath != "" && replaceInline != "" {
+		inv.setErr("usage", "bad_content_source", "`--replace` 与 `--replace-inline` 互斥")
+		fmt.Fprintf(stderr, "%s: `--replace <件>` 与 `--replace-inline <JSON>` 是**同一种内容来源的两种给法** ⇒ 只许给一种（退码 2 · GAP-20261018-22）\n", progName)
+		return exitUsage
+	}
+	if (fromPath == "") == (replacePath == "" && replaceInline == "") {
 		inv.setErr("usage", "bad_content_source", "内容来源要给且只给一种")
-		fmt.Fprintf(stderr, "%s: 内容来源**恰给一种**：`--from <件>`（整件替换）或 `--replace <件>`（逐格精确替换）\n", progName)
+		fmt.Fprintf(stderr, "%s: 内容来源**恰给一种**：`--from <件>`（整件替换）或 `--replace <件>` / `--replace-inline <JSON>`（逐格精确替换）\n", progName)
 		return exitUsage
 	}
 	// ★ GAP-20261009-10 修法①：`--base` 只与 `--replace` 合用（`--from` 是整件替换，用不上基线）。
@@ -555,7 +567,27 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 	} else {
 		mode = "replace"
 		// ★ GAP-20260928-136：`--replace` 同口径（仓内相对 ⇒ 仓根）。
-		after, err = applyReplacements(before, devPathResolveFrom(root, replacePath))
+		patchRef := devPathResolveFrom(root, replacePath)
+		if replaceInline != "" {
+			// 内联 JSON ⇒ 落进程私有临时件（TMPDIR · 跑完即删），复用同一套逐格判据。
+			tmpf, terr := os.CreateTemp("", "zerg-inline-replace-*.json")
+			if terr != nil {
+				inv.setErr("usage", "replace_failed", terr.Error())
+				fmt.Fprintf(stderr, "%s: 落不了内联补丁的临时件：%v\n", progName, terr)
+				return exitUsage
+			}
+			if _, werr := tmpf.WriteString(replaceInline); werr != nil {
+				_ = tmpf.Close()
+				_ = os.Remove(tmpf.Name())
+				inv.setErr("usage", "replace_failed", werr.Error())
+				fmt.Fprintf(stderr, "%s: 写不进内联补丁的临时件：%v\n", progName, werr)
+				return exitUsage
+			}
+			_ = tmpf.Close()
+			patchRef = tmpf.Name()
+			defer func() { _ = os.Remove(patchRef) }()
+		}
+		after, err = applyReplacements(before, patchRef)
 		if err != nil {
 			inv.setErr("usage", "replace_failed", err.Error())
 			fmt.Fprintf(stderr, "%s: %v\n", progName, err)
