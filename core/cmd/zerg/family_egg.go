@@ -131,6 +131,25 @@ func cmdEggInfo(inv *invocation, stdout, stderr io.Writer) int {
 		eggUsageErr(inv, stderr, fmt.Sprintf("多给了位置参数 %q（本命令只收**至多一个**卵名）", inv.args[1]))
 		return exitUsage
 	}
+	name := ""
+	if len(inv.args) == 1 {
+		name = strings.TrimSpace(inv.args[0])
+	}
+	// ★ 案一（GAP-20261019-04）：**先判参数是不是盘上已存在的普通文件** ⇒ 转文件读面。
+	// 「同一实现」＝ 直接调 `zegCmdInfo`（它的调用链正是 `zerg cocoon info`：cmdCocoonEgg →
+	// zergEggGateMain(["info", …]) → zegCmdInfo）⇒ ✗ 不复制第二套读端。
+	// 判据只认「os.Stat 成功且 mode.IsRegular()」：目录 / 不存在 / 打不开 一律回落名册面（零回归）。
+	if name != "" {
+		if fi, serr := os.Stat(name); serr == nil && fi.Mode().IsRegular() {
+			if inv.jsonGiven {
+				// 文件读面只有人面读数（zegCmdInfo 不投影机器面）⇒ ✗ 静默吞 `--json`。
+				eggUsageErr(inv, stderr, "参数指向**文件**，而文件读面只有人面读数、没有 `--json` 机器面（要机器面：`"+progName+" egg verify <文件> --json <字段>`）")
+				return exitUsage
+			}
+			fmt.Fprintf(stderr, "%s: 参数指向盘上文件 ⇒ 按文件读（转 `zegCmdInfo`，与 `%s cocoon info` 同一实现；本次不走卵库名册）\n", progName, progName)
+			return zegCmdInfo(stdout, name)
+		}
+	}
 	root, src, rc := eggStoreRoot(inv, stderr)
 	if rc != exitOK {
 		return rc
@@ -138,10 +157,6 @@ func cmdEggInfo(inv *invocation, stdout, stderr io.Writer) int {
 	st, rc := eggStoreOpen(inv, stderr, root)
 	if rc != exitOK {
 		return rc
-	}
-	name := ""
-	if len(inv.args) == 1 {
-		name = strings.TrimSpace(inv.args[0])
 	}
 	if name == "" {
 		return eggInfoRoster(inv, stdout, stderr, st, root, src)

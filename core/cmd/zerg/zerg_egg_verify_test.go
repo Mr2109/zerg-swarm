@@ -245,8 +245,9 @@ func TestZergEggVerifyCacheFourStates(t *testing.T) {
 	if rc3 == exitOK {
 		t.Fatalf("改了一字节却判绿：%q", out3)
 	}
-	if !strings.Contains(out3, "sha256 不符") {
-		t.Fatalf("改字节没报 sha256 不符：%q", out3)
+	// ★ D7（GAP-20261015-25）：旧串 `sha256 不符` → 设计报话 `段内容 sha256 与索引不符（期望 …，实读 …）`。
+	if !strings.Contains(out3, "sha256 与索引不符") {
+		t.Fatalf("改字节没报 D7 设计报话（sha256 与索引不符）：%q", out3)
 	}
 	if !strings.Contains(out3, "未命中") {
 		t.Fatalf("缓存未被击穿（没报未命中）：%q", out3)

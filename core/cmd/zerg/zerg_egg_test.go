@@ -634,7 +634,8 @@ func TestZergEggMediaPathFourStates(t *testing.T) {
 			t.Fatalf("态③ %s 恶意路径竟放行", name)
 		}
 		ref, ok := perr.(*zegRefusal)
-		if !ok || ref.Tier != "D9" || !strings.Contains(ref.Msg, rule) {
+		// ★ D9（GAP-20261015-25）：规则名移进 `Detail`（报话逐字 ＝ 13 档表 D9 行）——「点名规则」口径不变。
+		if !ok || ref.Tier != "D9" || !strings.Contains(zegRefusalDetail(perr), rule) {
 			t.Fatalf("态③ %s 未点名 D9/%s：%v", name, rule, perr)
 		}
 		t.Logf("态③ %s ⇒ rc≠0 · %v", name, perr)

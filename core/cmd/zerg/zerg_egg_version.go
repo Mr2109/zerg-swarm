@@ -159,14 +159,53 @@ var zegAdditiveKeyExamples = []string{
 // 「同一键换语义」是**分类规则**本身的拒，不是那 13 档之一 ⇒ 单列一档，✗ 不塞进 D 号里充数。
 const zegTierSurface = "分类·同键换语义"
 
-// zegRefusal —— 读端拒（**点名档位** ＝ 能机检的那一格）。★ 本件**不携带退码**：退码仍由卵族命令面
-// 既有通道给（见件头「出厂声明」），13 档的**目标码**逐档落 `zegVersionTiers`。
+// zegRefusal —— 读端拒（**点名档位** ＝ 能机检的那一格）。
+//
+// ★ 退码面（`GAP-20261015-24` 落 D1/D4/D13；`GAP-20261015-25` 追加 D2/D9）：`Coded`/`Code` 两格只在
+// **13 档表里有码、且已把该档接到命令面**的档上置位 —— 码值**取自 `zegVersionTiers` 同一行**（单真源），
+// ✗ 不在调用点手抄。其余档仍走卵族命令面既有的 `exitFail`（=1）通道（本单 ✗ 不扩面改它们）。
+// `Detail` 是给人看的补充读数（实读 magic 的十六进制 / 非法 align 值 / `json.Unmarshal` 原生错），
+// **不进** `Msg`：`Msg` 必须逐字等于 13 档表的报话列（判据靠这一条才有牙）。
 type zegRefusal struct {
-	Tier string // 档位号（D1–D13 / D6a/D6b / zegTierSurface）
-	Msg  string // 报话（人面逐字）
+	Tier   string // 档位号（D1–D13 / D6a/D6b / zegTierSurface）
+	Msg    string // 报话（人面逐字 ＝ 13 档表 `Msg` 列）
+	Detail string // 细节读数（可空 · 与报话分两行打）
+	Code   int    // 退码（仅 `Coded` 为真时有效）
+	Coded  bool   // 本档是否已按 13 档表接上退码
 }
 
 func (r *zegRefusal) Error() string { return r.Msg }
+
+// zegTierRefuse —— 按 **13 档表同一行**造一条带码的读端拒：报话取 `Msg`（`args` 非空时按模板格式化），
+// 退码取 `Code`。★ 这就是「报话与退码都对齐设计表」的结构保证：改表即改行为，✗ 无需再同步第二处文案。
+func zegTierRefuse(tier, detail string, args ...any) *zegRefusal {
+	t, ok := zegTierOf(tier)
+	if !ok {
+		return &zegRefusal{Tier: tier, Msg: fmt.Sprintf("拒孵：13 档表里没有档位 %s（%s）", tier, detail),
+			Detail: detail, Code: exitUsage, Coded: true}
+	}
+	msg := t.Msg
+	if len(args) > 0 {
+		msg = fmt.Sprintf(t.Msg, args...)
+	}
+	return &zegRefusal{Tier: tier, Msg: msg, Detail: detail, Code: t.Code, Coded: true}
+}
+
+// zegRefusalDetail —— 取细节读数（非带细节的拒 ⇒ 空串）。
+func zegRefusalDetail(err error) string {
+	if r, ok := err.(*zegRefusal); ok {
+		return r.Detail
+	}
+	return ""
+}
+
+// zegRefusalExit —— 带码拒 ⇒ (码, true)；其余 ⇒ (0,false)（调用方回落既有 `exitFail` 通道）。
+func zegRefusalExit(err error) (int, bool) {
+	if r, ok := err.(*zegRefusal); ok && r.Coded {
+		return r.Code, true
+	}
+	return 0, false
+}
 
 // ---- 三 · 13 档报话 / 退码表（机检物 ② · 逐档「谁报 · 报什么 · 退码 · 依据」）------------------
 
@@ -186,25 +225,25 @@ type zegVersionTier struct {
 // ★ 用户 2026-10-15 已拍：**`D7`/`D8` 退码归 1**（`exitFail`），逐字落在下面两行。
 var zegVersionTiers = []zegVersionTier{
 	{Tier: "D1", Trigger: "前缀畸形：前 4B ≠ `ZEGG`，或前缀 < 32B",
-		Who: "读端统一入口 `zegParseIndex`（`zerg cocoon info|verify` 都走它）",
-		Msg: "拒孵：不是卵（magic 期望 ZEGG，实读十六进制）", Code: exitUsage,
+		Who: "读端统一入口 `zegParseIndex`（`zerg cocoon info|verify|xfer` 都走它）",
+		Msg: "拒孵：不是卵（magic 期望 ZEGG，实读 %s）", Code: exitUsage,
 		Basis: "§11.1 固定前缀；erofs「magic 不符 ⇒ 读者必须拒」",
-		Now:   "已实现：zerg_egg.go 前缀档报 `magic 不符（不是 ZEGG 文件）：b'…'` · 索引体档报 `magic 不符（不是 ZEGG 文件）`（报话与目标串不同）"},
+		Now:   "已实现（GAP-20261015-24）：前缀档与索引体档都经 `zegTierRefuse(\"D1\", …)` 出话（实读 4B 以十六进制填 `%s`）；退码走本行 `Code`＝2。改前：`magic 不符（不是 ZEGG 文件）：b'…'` / `文件太短，不足固定前缀 32 字节`，退码 1"},
 	{Tier: "D2", Trigger: "`version` 高于本机认知（**前向** · 含段表化 2 / 签名块世代 3）",
 		Who: "读端 `zegCompatGateMainVersion`（前缀 ＋ 索引体两处同源）",
 		Msg: "拒孵：卵格式 version 高于本机认知 —— 不按新格式猜着跑；请升级孵化器（或用卵内茧壁兜底）", Code: exitUsage,
 		Basis: "§11.5（签名块 v2 ＝ 主号 2 · 旧读端必拒；★ 2026-10-18 主号 2 转给段表化 ⇒ 签名块落 3）· §十九 #31 · 片5 F2；`compat/migrate.go` `ErrSchemaTooNew`",
-		Now:   "已实现（本件）：报话点名「前向拒」＋主号两枚 ＋ 签名块 v2 那条；改前只有一句 `格式版本不支持：%d`"},
+		Now:   "已实现（GAP-20261015-25）：前缀档与索引体档两条分支都经 `zegTierRefuse(\"D2\", …)` 出话 —— 报话**逐字** ＝ 本行 `Msg`；version 实读/本机主号/「签名块 v2 世代」那段进 `Detail` 行（✗ 不再拼进报话）；退码走本行 `Code`＝2。改前（GAP-20261015-24 只报未修）：`拒孵：卵格式 version=3 高于本机认知 2 —— 前向拒（★ 签名块 v2 世代…）[前缀]`，退码 1"},
 	{Tier: "D3", Trigger: "`version` 低于本端最低可读（**过旧**）／**卵声明 `min_readable` > 本端主号**",
 		Who: "读端 `zegCompatGateMinReadable`（★ 本件**新给牙**的那一格）",
 		Msg: "拒孵：卵 version 低于本机最低可读（过旧，迁移路径已退役）—— 改名或重打", Code: exitUsage,
 		Basis: "§16.5 · §十九 #30（`min_readable` **先给牙**）；★ 改前**永真无牙**（拄证见件头 · 片5 F1）",
 		Now:   "已实现（本件 · **新牙**）：改前无此分支（`min_readable` 一格都不判定）⇒ 改前该态放行"},
 	{Tier: "D4", Trigger: "`align` 非法：非 2 的幂 / < 4096 / 与段偏移不符",
-		Who: "读端 `zegParseIndex`（前缀档 `前缀里的 align 不合理` · 索引体档 `align 字段不合理`）",
+		Who: "读端 `zegParseIndex`（前缀档 / 索引体档 / v2 头槽档 —— 三处同一条 `zegTierRefuse`）",
 		Msg: "拒孵：align 不合法（须 2 的幂且 ≥4096）／段偏移未对齐", Code: exitUsage,
 		Basis: "§11.2 第 1、3 条；§10.8「读端只信文件里的 align」",
-		Now:   "已实现：`前缀里的 align 不合理：%d` / `align 字段不合理：%d`；段偏移未对齐只在 `zegVerify` 的 problems 面（非本档）"},
+		Now:   "已实现（GAP-20261015-24）：前缀档 `align 不合理` / 索引体档 `align 字段不合理` / v2 头槽档 `命中规则 v2_header_align_invalid` 三处都经 `zegTierRefuse(\"D4\", …)` 出话（非法值进 `Detail` 行）；退码走本行 `Code`＝2。★ 触发里的「与段偏移不符」子支仍只在 `zegVerify` 的 problems 面（报 `%s 偏移未对齐` 并退 1）—— 本单 ✗ 不改 problems 面（见账注）"},
 	{Tier: "D5", Trigger: "契约段缺**必需字段**（引擎入口/绑定/限额任一为 nil）",
 		Who: "孵化器（`agent/internal/enclosure/contract.go`）· 归 卵4",
 		Msg: "拒孵：契约段缺必需字段（缺项必拒，不默默取默认值）", Code: exitUsage,
@@ -220,21 +259,24 @@ var zegVersionTiers = []zegVersionTier{
 		Msg: "孵化继续：跳过未知段（已在卵档案登记）", Code: exitOK,
 		Basis: "OCI「MUST NOT error」；§十九 #5（登记面：卵档案 ＋ 观测面**双登记**）",
 		Now:   "半实现（本件）：读端**已收进审计面**（`zegSurfaceAudit.AdditiveEntryKeys`）且**不报错**；卵档案登记面归 卵4"},
+	// ★ D7 的报话在**改后**落成 `%s` 模板（`GAP-20261015-25`）：设计原文「期望 a，实读 b」里的 a/b 与 D1 的
+	// 「实读十六进制」同属**占位词**（见 GAP-20261015-24 对拍表 §五-④）⇒ 本仓填**整段 sha256 十六进制**：
+	// `%s`＝索引里的期望值、第二个 `%s`＝实读计算值。判据按「模板 ＋ 填值」逐字对，✗ 不按占位字面。
 	{Tier: "D7", Trigger: "逐段 `sha256` 与索引不符",
 		Who: "校验面 `zegvVerifyEntry` / `zegVerify`（`zerg cocoon verify`）",
-		Msg: "拒孵：段内容 sha256 与索引不符（期望 a，实读 b）", Code: exitFail,
+		Msg: "拒孵：段内容 sha256 与索引不符（期望 %s，实读 %s）", Code: exitFail,
 		Basis: "§9.5 判据 3；★ **用户 2026-10-15 拍定：归 1**（`§十九` #4 · 片5 推荐 1）",
-		Now:   "已实现：problems 串 `%s sha256 不符` ＋ 卵族命令面 `exitFail`（=1，与拍定一致）"},
+		Now:   "已实现（GAP-20261015-25）：单线程档 `zegVerify` 与并行档 `zegvVerifySeg` 共用 `zegSHAMismatchProblem`（真源 ＝ 本行 `Msg`），人面行 ＝ `段 path: ` ＋ 本行报话（填期望/实读两枚 sha256）；退码走本行 `Code`＝1（改前即 1 ⇒ 本单只对齐报话）。改前：`%s sha256 不符`"},
 	{Tier: "D8", Trigger: "签名不匹配 /（v2 起）签名缺失",
 		Who: "签名面（`§11.5` 预留槽 · 拄 cosign/Sigstore · 归 卵1④/卵5）",
 		Msg: "拒孵：签名校验失败（索引＋全部段的签名对不上）／v2 卵缺签名", Code: exitFail,
 		Basis: "§11.5 / §9.9；§9.11③ 改拄 cosign；★ **用户 2026-10-15 拍定：归 1**（`§十九` #4）",
 		Now:   "未实现（他面）：现读索引无签名块（GAP-20261015-14）· 本单只落「主号 2 ⇒ 旧读端必拒」那条规则"},
 	{Tier: "D9", Trigger: "`path` 非法：含 `..` / 绝对 / 盘符 / 空段 / NUL",
-		Who: "读端（现读**未实现**）· 打包端只挡符号链接",
+		Who: "读端 `zegAuditIndexEntries` → `zegRefusePath`（打包端 / 读端 / 重建端三处同表）；`zerg cocoon info|verify`",
 		Msg: "拒孵：段 path 非法（须规范化相对路径，禁绝对/盘符/空段/..）", Code: exitUsage,
 		Basis: "§11.2 第 5 条（现读只挡 `..` 且只在打包端）；§15.8 L26 · §十九 #26",
-		Now:   "已实现（卵1②）：读端 `zegParseIndex` 的逐段审计 `zegAuditIndexEntries` 逐条过 `zegPathRules`（12 条规则，命中 ⇒ 具名拒 D9 且点名规则）＋ `mode` 安全子集；打包端 `zegCollectEntries` 同表两道（路径串 ＋ `lstat` 特殊文件/硬链/mode）；重建端 `zegRebuildTarget` ＋ `zegOpenRebuildTarget`（O_NOFOLLOW|O_EXCL）加固第二可穿点"},
+		Now:   "已实现（GAP-20261015-25）：`zegRefusePath` 命中 12 条 `zegPathRules` 任一条 ⇒ `zegTierRefuse(\"D9\", …)` —— 报话**逐字** ＝ 本行 `Msg`；命中规则名 ＋ 依据 ＋ 实读路径进 `Detail` 行（✗ 不再拼进报话）；退码走本行 `Code`＝2。改前（GAP-20261015-24 只报未修）：`拒：段 path \"../x\"（须为规范化 NFC 相对路径） —— 命中规则 path_dotdot（…）`，退码 1。★ 借挂同一 D9 号的**非 path 规则**（`fs_mode_unsafe` / `fs_symlink_*` / `rebuild_*`）仍走旧形态（`zegRuleRefuse` · rc=1 · 见账注）"},
 	{Tier: "D10", Trigger: "卵本体**半成品**（临时名未 rename / 逐块校验未过）",
 		Who: "落地面（卵2 `core/internal/store/eggstore/`：同卷临时名 ＋ 完工标记）",
 		Msg: "拒孵：卵是未完工的半成品（缺完工标记）", Code: exitBlocked,
@@ -251,10 +293,10 @@ var zegVersionTiers = []zegVersionTier{
 		Basis: "§五之三；§15.3 L9 · `§十九` #32（V1 三段判：机器那份 ≥ `wall_min` 且同主号 ⇒ 用机器那份）",
 		Now:   "未实现（他面）：V1 三段判归 卵6④/卵4；本单只落版本面（`wall_min_version` 属**可加面**键 ⇒ 不动主号）"},
 	{Tier: "D13", Trigger: "索引 JSON 不可解析",
-		Who: "读端 `zegParseIndex`（结构化解码）＋ 本件 `zegAuditIndexSurface`（面审计档）",
+		Who: "读端 `zegParseIndex`（结构化解码前的面审计 `zegAuditIndexSurface` ＋ 解码本身）",
 		Msg: "拒孵：索引 JSON 不可解析；文件保持不动", Code: exitUsage,
 		Basis: "`wall/src/spec.rs`；`compat/migrate.go` 逐字「不静默丢状态」",
-		Now:   "已实现：`json.Unmarshal` 的原生错串（无名）· 本件的面审计档把它点名成 D13（报话与目标串不同）"},
+		Now:   "已实现（GAP-20261015-24）：`zegAuditIndexSurface` / `zegEggIntKey` / v1 解码三处都经 `zegTierRefuse(\"D13\", …)` 出话（原生错进 `Detail` 行，✗ 不再拼进报话）；退码走本行 `Code`＝2；读端只读不写 ⇒ 「文件保持不动」成立"},
 }
 
 // zegTierRequiredIDs —— 档位号闭集（**13 档**：D6 按必需/非必需**拆两行** ⇒ 14 个号）。
@@ -357,7 +399,7 @@ func zegAuditIndexSurface(body []byte) (zegSurfaceAudit, error) {
 	var audit zegSurfaceAudit
 	var top map[string]json.RawMessage
 	if err := json.Unmarshal(body, &top); err != nil {
-		return audit, &zegRefusal{Tier: "D13", Msg: fmt.Sprintf("拒孵：索引 JSON 不可解析（%v）；文件保持不动", err)}
+		return audit, zegTierRefuse("D13", err.Error())
 	}
 	if err := zegAuditKeySet(top, zegIndexKeySpecs, zegVersionSiteIndex, true, &audit); err != nil {
 		return audit, err
@@ -405,16 +447,21 @@ func zegAuditIndexSurface(body []byte) (zegSurfaceAudit, error) {
 
 // zegCompatGateMainVersion —— **主号闸**：前向拒（`version` 高于本端认知）＋ 过旧拒（低于本端最低可读）。
 // `site` ＝ 判在前缀 还是 索引体（读写同源两处 · 报话里点名便于定位）。
+//
+// ★ `GAP-20261015-25`（D2 两差 → 对齐）：前向拒的两条分支都走 `zegTierRefuse("D2", …)` ——
+// 报话**逐字** ＝ 13 档表 `Msg`（即设计表原文），版本实读/本机主号/「签名块 v2 世代」那段**读数**
+// 进 `Detail` 行（✗ 不再拼进报话）；退码取表内 `Code`＝2。
+// ★ D3（过旧 / `min_readable`）**未动** —— 该行设计表把两个互为反向的触发写在一格、只给了「过旧」
+// 那句报话（见账注：设计表自相矛盾 ⇒ 本单拒做），仍走既有 `exitFail`（1）通道。
 func zegCompatGateMainVersion(mainVer int, site string) error {
 	if mainVer == zegFormatVersionSigBlock {
-		return &zegRefusal{Tier: "D2", Msg: fmt.Sprintf(
-			"拒孵：卵格式 version=%d 高于本机认知 %d —— 前向拒（★ 签名块 v2 世代 ＝ 主号 ≥ %d（主号 2 是段表化）⇒ 旧读端**必拒**，✗ 不是忽略：忽略会把预留块当数据段读；§11.5 / §十九 #31）；请升级孵化器（或用卵内茧壁兜底）[%s]",
-			mainVer, zegFormatVer, zegFormatVersionSigBlock, site)}
+		return zegTierRefuse("D2", fmt.Sprintf(
+			"version=%d > 本机认知 %d；★ 签名块 v2 世代 ＝ 主号 ≥ %d（主号 2 是段表化）⇒ 旧读端必拒，✗ 不是忽略：忽略会把预留块当数据段读（§11.5 / §十九 #31）[%s]",
+			mainVer, zegFormatVer, zegFormatVersionSigBlock, site))
 	}
 	if mainVer > zegFormatVer {
-		return &zegRefusal{Tier: "D2", Msg: fmt.Sprintf(
-			"拒孵：卵格式 version=%d 高于本机认知 %d —— 前向拒：不按新格式猜着跑；请升级孵化器（或用卵内茧壁兜底）[%s]",
-			mainVer, zegFormatVer, site)}
+		return zegTierRefuse("D2", fmt.Sprintf(
+			"version=%d > 本机认知 %d（前向拒：不按新格式猜着跑）[%s]", mainVer, zegFormatVer, site))
 	}
 	if mainVer < zegMinReadableVersion {
 		return &zegRefusal{Tier: "D3", Msg: fmt.Sprintf(
@@ -453,7 +500,7 @@ func zegCompatGateLegacy(mainVer int) error {
 func zegEggIntKey(body []byte, key string) (int, bool, error) {
 	var top map[string]json.RawMessage
 	if err := json.Unmarshal(body, &top); err != nil {
-		return 0, false, &zegRefusal{Tier: "D13", Msg: fmt.Sprintf("拒孵：索引 JSON 不可解析（%v）", err)}
+		return 0, false, zegTierRefuse("D13", err.Error())
 	}
 	raw, has := top[key]
 	if !has {
@@ -695,8 +742,10 @@ func zegVersionSelfTest(stdout, stderr io.Writer) int {
 	if sigErr == nil {
 		return zegSelfFail(stderr, fmt.Errorf("态④ 主号 %d（签名块世代）竟被旧读端放行（✗ 必拒 · 不是忽略）", zegFormatVersionSigBlock))
 	}
-	if ref, ok := sigErr.(*zegRefusal); !ok || ref.Tier != "D2" || !strings.Contains(ref.Msg, "签名块 v2") {
-		return zegSelfFail(stderr, fmt.Errorf("态④ 拒了但没点名签名块 v2/D2：%v", sigErr))
+	// ★ D2（GAP-20261015-25）：报话逐字 ＝ 13 档表 `Msg`（不含细节）；「签名块 v2」那段读数落在 `Detail` 行
+	// ⇒ 判据点 `Detail`，✗ 不再点 `Msg`（否则「报话逐字」这条就被细节吃掉）。
+	if ref, ok := sigErr.(*zegRefusal); !ok || ref.Tier != "D2" || !strings.Contains(zegRefusalDetail(sigErr), "签名块 v2") {
+		return zegSelfFail(stderr, fmt.Errorf("态④ 拒了但没点名签名块 v2/D2（细节行）：%v", sigErr))
 	}
 
 	fmt.Fprintf(stdout, "self-test（卵6 版本与兼容）通过（4 态 ＋ 1 负控）：① 可加面未知段 ⇒ 照旧跑（不 error · 登记面收 %d 个顶层键 ＋ %d 个段键）· ② 同键换语义（align: number→string）⇒ 拒[%s] · ③ min_readable=%d > 本端 %d ⇒ 拒[D3] 且点名 min_readable · ④ 主号 %d 签名块 ⇒ 拒[D2] 且点名「签名块 v2」· 负控：同一输入走改前形态 ⇒ 放行（＝改前永真；两结论不同 ⇒ 哑化牙本格必红）\n",

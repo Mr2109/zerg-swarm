@@ -23,6 +23,8 @@
 //     `st_dev ＋ st_ino ＋ st_size ＋ st_mtime_ns ＋ sha256(前 32 B 固定前缀)`；
 //     ★ 本件另加固一条 `sha256(索引字节)`：片7 的 32 B 前缀只覆盖 `magic/version/align/index_len`，
 //     **挡不住「索引体被换」**（段表被换 ＝ 段边界被换），故把索引字节一并纳入复核束（读索引只 O(KB)）。
+//     ★★ `GAP-20261015-16`：再把**数据区首块与末块**（各 ≤ 1 MiB · offset+长度定点读）纳入复核束 ⇒
+//     「原地改数据段并复原 st_mtime_ns/size」不再能命中缓存。索引体由「未命中」改判**红**（同键换件）。
 //
 //  4. ★★ **命中档刻意不解析索引** —— 解析会把「前 32 B 复核」这条牙遮掉（改写 `magic` 会被解析器先拦下，
 //     于是那条牙在负控里显不出牙口）。命中档只比**字节摘要**，索引用缓存条目里的 `segments/align` 重建**空壳**。
@@ -50,9 +52,9 @@
 //
 // ---- 未覆盖面（如实列出 · ✗ 都属本单不碰的待拍面）--------------------------------------------
 //
-//	(a) **「只改数据段、头部不动」＋复原 mtime/size/inode 的换件** —— 复核束照样全中 ⇒ 缓存仍会命中
-//	    （＝片7 的 **W3**）。正解两条（叠加 fs-verity / 首末抽块复核）**各卡一个拍板**（特权 ＋ digest 口径）
-//	    ⇒ 本单 ✗ 不碰，只把 W3 记为残留面。
+//	(a) **「只改数据段中间块、头部不动」＋复原 mtime/size/inode 的换件** —— 复核束覆盖首末块后，
+//	    **中段**（首块/末块之间）的字节仍只有全量校验能抓（缓存命中档不跑全量）。正解仍是叠加
+//	    fs-verity 一类按块 Merkle 校验（Linux 特权面 · 待拍板）⇒ 本单 ✗ 不碰，只把它记为残留面。
 //	(b) **fs-verity**（Linux 读时按块 Merkle 校验）与**签名块**：均为待拍面。
 //	(c) 本件 **✗ 不接线进 `main.go`**（命令面沿用既有 `zerg cocoon verify` 转发壳）；`--workers` 是隐藏旋钮
 //	    （✗ 不进 `-h` 帮助面 ⇒ 不污染与 py 的逐字节对拍 —— 同 `--now` 的既有体例）。
@@ -78,7 +80,8 @@ import (
 
 const (
 	// zegvCacheVer —— 缓存条目格式版本（结构一变就 +1 ⇒ 旧条目自动未命中）。
-	zegvCacheVer = 1
+	// ★ v2（GAP-20261015-16）：复核束加「数据区首块/末块」两格摘要 ⇒ 旧条目一律未命中、由全量校验重建。
+	zegvCacheVer = 2
 	// zegvCacheEnv —— 缓存目录的环境旋钮（运行态面）。
 	zegvCacheEnv = "ZERG_EGG_VERIFY_CACHE"
 	// zegvCacheMark —— 命中缓存时**逐字**印的标记（任务单 卵3① 行逐字：「(缓存)」）。
@@ -91,6 +94,9 @@ const (
 	zegvKeyHexLen = 64
 	// zegvIdxMaxBytes —— 命中档读索引体时的**分配上界**（✗ 别按前缀里给的长度裸分配）。
 	zegvIdxMaxBytes = 64 << 20
+	// zegvBoundaryBlockBytes —— 复核束「首块/末块」的**定长**块字节数（GAP-20261015-16）：
+	// 命中档只做两次 offset+长度定点读（上界 2 × 本值），**✗ 不退化成整件哈希**。
+	zegvBoundaryBlockBytes = 1 << 20
 	// zegvRefGBps —— 单流**有效**吞吐的参考值（片7 实测口径：22 GB / 42.3 s ≈ 0.53 GB/s）。
 	// ★ 二用：① 探针拿不到读数时的兜底；② 探针读数的**上界**（`h = min(本机现测, 0.53)`）——
 	// 机器更慢 ⇒ 自动多开 worker；机器更快 ⇒ ✗ 不越过片7 口径（D 与探针都是现测的，✗ 无本机硬编码常数）。
@@ -196,6 +202,21 @@ func zegvHashSeg(f *os.File, pos, size int64, buf []byte) (string, bool) {
 	return hex.EncodeToString(h.Sum(nil)), false
 }
 
+// zegSHAMismatchProblem —— **D7 的问题串（唯一真源）**：单线程档（`zegVerify`）与并行档（`zegvVerifySeg`）
+// 都调它 ⇒ 「并行 ⟷ 单线程逐字节一致」由构造保证（✗ 两处各拼一句）。
+//
+// ★ `GAP-20261015-25`：报话取 13 档表 D7 行（`Msg` 是 `%s` 模板：期望＝索引里的 sha256、实读＝现算值）。
+// 行形状 ＝ `段 path: ` ＋ 报话 —— 路径前缀只是**定位**（同 `zerg-egg.py: ` 这个 prog 前缀的角色），
+// 报话本体逐字等于设计表；✗ 不把路径塞进报话（那会把设计串截成两种形状）。
+func zegSHAMismatchProblem(path, want, got string) string {
+	t, ok := zegTierOf("D7")
+	if !ok {
+		// 表被改坏 ⇒ 不退化成一句无名话（fail-closed：把档位名喊出来）
+		return fmt.Sprintf("%s: 拒孵：13 档表缺 D7 行", path)
+	}
+	return path + ": " + fmt.Sprintf(t.Msg, want, got)
+}
+
 // zegvVerifySeg —— 单段判据（**逐条**照 `zegVerify` 的内联档；✗ 别在这里加新判据 —— 加判据就要加不变量）。
 func zegvVerifySeg(f *os.File, e zegEntryJSON, align, sizeFile int64, buf []byte) []string {
 	var problems []string
@@ -212,7 +233,7 @@ func zegvVerifySeg(f *os.File, e zegEntryJSON, align, sizeFile int64, buf []byte
 		return problems
 	}
 	if got != e.SHA256 {
-		problems = append(problems, fmt.Sprintf("%s sha256 不符", e.Path))
+		problems = append(problems, zegSHAMismatchProblem(e.Path, e.SHA256, got))
 	}
 	return problems
 }
@@ -271,8 +292,15 @@ type zegvCacheEntry struct {
 	StMtimeNs   int64  `json:"st_mtime_ns"`
 	PrefixSHA   string `json:"prefix_sha256"`
 	IndexSHA    string `json:"index_sha256"`
-	Workers     int    `json:"workers"`
-	CheckedAt   string `json:"checked_at"`
+	// ★ GAP-20261015-16：数据区首块/末块的定点读计划与摘要（offset + 长度在条目里，命中档**不解析索引**）。
+	HeadOff   int64  `json:"head_off"`
+	HeadLen   int64  `json:"head_len"`
+	HeadSHA   string `json:"head_sha256"`
+	TailOff   int64  `json:"tail_off"`
+	TailLen   int64  `json:"tail_len"`
+	TailSHA   string `json:"tail_sha256"`
+	Workers   int    `json:"workers"`
+	CheckedAt string `json:"checked_at"`
 }
 
 // zegvPhys —— 从**同一个 fd** 现算的物理面（TOCTOU：`open`→`fstat`→`read` 同 fd）。
@@ -432,8 +460,77 @@ func zegvReadPhys(f *os.File, fi os.FileInfo) (zegvPhys, error) {
 	return p, nil
 }
 
+// zegvBlockPlan —— 复核束里「数据区首块/末块」的**定点读**计划（offset ＋ 长度）。
+// ★ 只存计划与摘要、不存全量段表：命中档按条目里的 offset 直接 `ReadAt`，**✗ 不解析索引**（保住前 32 B 那条牙）。
+type zegvBlockPlan struct {
+	Has     bool
+	HeadOff int64
+	HeadLen int64
+	TailOff int64
+	TailLen int64
+}
+
+// zegvBlockPlanFromEntries —— 由索引段算首末块：数据区 ＝ `[min(off), max(off+size))`（只算 `size > 0` 的段），
+// 首块取**起点**、末块取**末尾**，各 `min(1 MiB, 数据区长度)` 字节（数据区不足两块时首末块可重叠）。
+func zegvBlockPlanFromEntries(entries []zegEntryJSON) zegvBlockPlan {
+	var p zegvBlockPlan
+	start, end := int64(-1), int64(-1)
+	for _, e := range entries {
+		if e.Size <= 0 {
+			continue
+		}
+		if start < 0 || e.Off < start {
+			start = e.Off
+		}
+		if end < 0 || e.Off+e.Size > end {
+			end = e.Off + e.Size
+		}
+	}
+	if start < 0 || end <= start {
+		return p
+	}
+	n := int64(zegvBoundaryBlockBytes)
+	if total := end - start; n > total {
+		n = total
+	}
+	p.Has = true
+	p.HeadOff, p.HeadLen = start, n
+	p.TailOff, p.TailLen = end-n, n
+	return p
+}
+
+// zegvReadBlocks —— 按计划定点读首块/末块并算 sha256（**同一 fd** · 上界 2 × `zegvBoundaryBlockBytes`）。
+// ★ 计划当**不可信输入**判（条目 JSON 可被人改）：越界 / 超上界 ⇒ 报错（命中判定按「读不了」回退全量，✗ 不按它判绿）。
+func zegvReadBlocks(f *os.File, size int64, p zegvBlockPlan) (string, string, error) {
+	if !p.Has {
+		return "", "", nil
+	}
+	one := func(off, n int64) (string, error) {
+		if off < 0 || n < 0 || n > int64(zegvBoundaryBlockBytes) || off+n > size {
+			return "", fmt.Errorf("首末块计划不合理（off=%d len=%d size=%d）", off, n, size)
+		}
+		buf := make([]byte, n)
+		if _, err := f.ReadAt(buf, off); err != nil {
+			return "", err
+		}
+		sum := sha256.Sum256(buf)
+		return hex.EncodeToString(sum[:]), nil
+	}
+	h, err := one(p.HeadOff, p.HeadLen)
+	if err != nil {
+		return "", "", err
+	}
+	t, err := one(p.TailOff, p.TailLen)
+	if err != nil {
+		return "", "", err
+	}
+	return h, t, nil
+}
+
 // zegvCacheHitCheck —— 命中判定：复核束**全中**才算命中。
-// ★ fail-closed 一条：`st_dev/st_ino/st_size/st_mtime_ns` 四项全同、而**前 32 B 摘要变了** ⇒ 判红（见件头注 5）。
+// ★ 复核束 = st 四项 ＋ 前 32 B/8 KiB 头摘要 ＋ 索引体摘要 ＋ **数据区首块/末块摘要**（GAP-20261015-16）。
+// ★ fail-closed：`st_dev/st_ino/st_size/st_mtime_ns` 四项全同、而前缀/索引体/首块/末块任一摘要变了 ⇒ **判红**
+// （只可能是「原地改写 ＋ 复原时间戳」的同键换件 ⇒ ✗ 不当普通未命中放行）。
 func zegvCacheHitCheck(f *os.File, fi os.FileInfo, eggBase string, ent *zegvCacheEntry) (bool, string, string) {
 	p, err := zegvReadPhys(f, fi)
 	if err != nil {
@@ -453,7 +550,25 @@ func zegvCacheHitCheck(f *os.File, fi os.FileInfo, eggBase string, ent *zegvCach
 		return false, "", red
 	}
 	if p.IndexSHA != ent.IndexSHA {
-		return false, "索引字节变", ""
+		red := fmt.Sprintf("%s 校验缓存复核失败（同 st_dev/st_ino/st_size/st_mtime_ns 而索引体变 ⇒ 段表被换 / TOCTOU）", eggBase)
+		return false, "", red
+	}
+	plan := zegvBlockPlan{
+		Has:     ent.HeadLen > 0 || ent.TailLen > 0,
+		HeadOff: ent.HeadOff, HeadLen: ent.HeadLen,
+		TailOff: ent.TailOff, TailLen: ent.TailLen,
+	}
+	headSHA, tailSHA, berr := zegvReadBlocks(f, fi.Size(), plan)
+	if berr != nil {
+		return false, fmt.Sprintf("首末块读不了：%v", berr), ""
+	}
+	if headSHA != ent.HeadSHA {
+		red := fmt.Sprintf("%s 校验缓存复核失败（同 st_dev/st_ino/st_size/st_mtime_ns 而首块摘要变 ⇒ 数据段首块被改 / TOCTOU）", eggBase)
+		return false, "", red
+	}
+	if tailSHA != ent.TailSHA {
+		red := fmt.Sprintf("%s 校验缓存复核失败（同 st_dev/st_ino/st_size/st_mtime_ns 而末块摘要变 ⇒ 数据段末块被改 / TOCTOU）", eggBase)
+		return false, "", red
 	}
 	return true, "", ""
 }
@@ -601,6 +716,11 @@ func zegvVerifyEntry(stdout io.Writer, path, rebuildInto string, workers int) (z
 				return res, nil
 			}
 			if hit {
+				zegvNote(stdout, "命中（复核束全中：st_dev=%d st_ino=%d st_size=%d st_mtime_ns=%d · 前缀=%s · 索引体=%s · 首块=%s@%d+%d · 末块=%s@%d+%d）",
+					ent.StDev, ent.StIno, ent.StSize, ent.StMtimeNs,
+					zegvShort(ent.PrefixSHA), zegvShort(ent.IndexSHA),
+					zegvShort(ent.HeadSHA), ent.HeadOff, ent.HeadLen,
+					zegvShort(ent.TailSHA), ent.TailOff, ent.TailLen)
 				res.Index = zegvShellIndex(ent)
 				res.CacheHit = true
 				return res, nil
@@ -646,10 +766,14 @@ func zegvVerifyEntry(stdout io.Writer, path, rebuildInto string, workers int) (z
 	if useCache {
 		before, berr := zegvReadPhys(f, fi)
 		after, aerr := zegvReadPhys(f, fi)
+		// ★ 首末块也在「校验期间物理面变了就不落条目」的判面内（同一次校验的两端各定点读一次）。
+		plan := zegvBlockPlanFromEntries(idx.Entries)
+		bHead, bTail, bberr := zegvReadBlocks(f, fi.Size(), plan)
+		aHead, aTail, aaerr := zegvReadBlocks(f, fi.Size(), plan)
 		switch {
-		case berr != nil || aerr != nil:
+		case berr != nil || aerr != nil || bberr != nil || aaerr != nil:
 			zegvNote(stdout, "本次未落条目（复核束现算失败）")
-		case before != after:
+		case before != after || bHead != aHead || bTail != aTail:
 			zegvNote(stdout, "本次未落条目（校验期间物理面变了：st_mtime_ns/size/摘要不等）")
 		default:
 			ent := &zegvCacheEntry{
@@ -666,6 +790,12 @@ func zegvVerifyEntry(stdout io.Writer, path, rebuildInto string, workers int) (z
 				StMtimeNs:   before.StMtimeNs,
 				PrefixSHA:   before.PrefixSHA,
 				IndexSHA:    before.IndexSHA,
+				HeadOff:     plan.HeadOff,
+				HeadLen:     plan.HeadLen,
+				HeadSHA:     bHead,
+				TailOff:     plan.TailOff,
+				TailLen:     plan.TailLen,
+				TailSHA:     bTail,
 				Workers:     w,
 				CheckedAt:   time.Now().UTC().Format("2006-01-02T15:04:05") + "Z",
 			}

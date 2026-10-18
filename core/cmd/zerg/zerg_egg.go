@@ -455,10 +455,16 @@ func zegRuleRefuse(tier, rule, why, subject string) *zegRefusal {
 
 // zegRefusePath —— 按 `zegPathRules` 逐条判一条索引里的 `path`；命中 ⇒ **具名拒**（D9 · 点名规则）。
 // 返回 nil ⇒ 该段 `path` 合法。★ **打包端 / 读端 / 重建端三处都调它**（＝双向校验）。
+//
+// ★ `GAP-20261015-25`（D9「两差」→ 对齐）：报话取 13 档表 D9 行（＝设计原文，**逐字**），
+// 规则名/依据/实读路径进 `Detail` 行，退码取表内 `Code`＝2（改前：`拒：段 path … —— 命中规则 …`，rc=1）。
+// ★ 注意：本函数**只管 path 语义**；借挂 D9 号的 `fs_mode_unsafe` / `fs_symlink_*` / `rebuild_*`
+// 是另一类触发（不在设计 D9 的「含 `..` / 绝对 / 盘符 / 空段 / NUL」里）⇒ 仍走 `zegRuleRefuse`（rc=1）。
 func zegRefusePath(rel string) error {
 	for _, r := range zegPathRules {
 		if r.Bad(rel) {
-			return zegRuleRefuse("D9", r.Name, r.Why, fmt.Sprintf("段 path %q（须为规范化 NFC 相对路径）", rel))
+			return zegTierRefuse("D9", fmt.Sprintf("命中规则 %s（%s）：段 path %q（须为规范化 NFC 相对路径）",
+				r.Name, r.Why, rel))
 		}
 	}
 	return nil
@@ -1109,8 +1115,7 @@ func zegV2ParseIndex(f *os.File) (*zegIndex, error) {
 	}
 	size := fi.Size()
 	if slot.Align < zegMinAlign || !zegIsPow2(slot.Align) {
-		return nil, zegRuleRefuse("D4", "v2_header_align_invalid",
-			"头槽里的 align 不是 2 的幂或 < 4096（读端只信文件里记的 align）", "卵的头槽")
+		return nil, zegTierRefuse("D4", fmt.Sprintf("v2 头槽里的 align=%d（须 2 的幂且 ≥%d · 读端只信文件里记的 align）", slot.Align, zegMinAlign))
 	}
 	if slot.TableLen <= 0 || slot.TableLen > zegV2TableMaxBytes {
 		return nil, zegRuleRefuse("D1", "v2_table_len_invalid",
@@ -1139,16 +1144,17 @@ func zegV2ParseIndex(f *os.File) (*zegIndex, error) {
 	}
 	var raw zegIndexJSON
 	if err := json.Unmarshal(body, &raw); err != nil {
-		return nil, err
+		return nil, zegTierRefuse("D13", err.Error())
 	}
 	if raw.Magic != zegMagic {
-		return nil, fmt.Errorf("段表里的 magic 不符（不是 %s 文件）", zegMagic)
+		return nil, zegTierRefuse("D1", fmt.Sprintf("段表里的 magic=%q", raw.Magic),
+			hex.EncodeToString([]byte(raw.Magic)))
 	}
 	if raw.Version != zegV2LayoutVer {
 		return nil, fmt.Errorf("段表里的 version=%d ≠ %d（头与表不一致）", raw.Version, zegV2LayoutVer)
 	}
 	if raw.Align != slot.Align {
-		return nil, fmt.Errorf("段表里的 align=%d 与头槽 align=%d 不一致", raw.Align, slot.Align)
+		return nil, zegTierRefuse("D4", fmt.Sprintf("段表 align=%d ≠ 头槽 align=%d（同一条卵里两处 align 必须一致）", raw.Align, slot.Align))
 	}
 	idx := &zegIndex{
 		Magic:     raw.Magic,
@@ -1512,7 +1518,7 @@ func zegV2UpgradeEngine(egg, src, now string) (*zegV2UpgradeReport, error) {
 		return nil, fmt.Errorf("卵太短，读不满 8 字节头：%v", err)
 	}
 	if string(head[0:4]) != zegMagic {
-		return nil, fmt.Errorf("magic 不符（不是 %s 文件）", zegMagic)
+		return nil, zegTierRefuse("D1", "升引擎入口实读前 4B", hex.EncodeToString(head[0:4]))
 	}
 	if ver := binary.LittleEndian.Uint32(head[4:8]); ver != zegV2LayoutVer {
 		return nil, fmt.Errorf("升引擎只吃 v2 卵（本件 version=%d）—— v1 请先整件重打成 v2（✗ 按旧偏移原地改）", ver)
@@ -1833,13 +1839,20 @@ func zegParseIndex(path string) (*zegIndex, error) {
 	}
 	defer f.Close()
 	hdr := make([]byte, zegHeaderPrefix)
-	if _, err := io.ReadFull(f, hdr); err != nil {
-		return nil, fmt.Errorf("文件太短，不足固定前缀 %d 字节", zegHeaderPrefix)
+	if n, err := io.ReadFull(f, hdr); err != nil {
+		// ★ D1（GAP-20261015-24）：前缀不足 32B 也是「不是卵」那一档 —— 报话与退码都取 13 档表。
+		k := n
+		if k > 4 {
+			k = 4
+		}
+		return nil, zegTierRefuse("D1",
+			fmt.Sprintf("固定前缀不足 %d 字节（实读 %d 字节）：%v", zegHeaderPrefix, n, err),
+			hex.EncodeToString(hdr[:k]))
 	}
 	magic := hdr[0:4]
 	ver := int(binary.LittleEndian.Uint32(hdr[4:8]))
 	if string(magic) != zegMagic {
-		return nil, fmt.Errorf("magic 不符（不是 %s 文件）：%s", zegMagic, zegPyBytesRepr(magic))
+		return nil, zegTierRefuse("D1", fmt.Sprintf("前 4B 实读 %q", magic), hex.EncodeToString(magic))
 	}
 	// ★ 卵6：**主号闸**（前向拒 D2；过旧拒 D3）—— 两种布局共用同一道闸（✗ 各写一份）。
 	if err := zegCompatGateMainVersion(ver, zegVersionSitePrefix); err != nil {
@@ -1860,7 +1873,7 @@ func zegParseIndexV1(f *os.File, hdr []byte) (*zegIndex, error) {
 	align := int64(binary.LittleEndian.Uint64(hdr[8:16]))
 	n := int64(binary.LittleEndian.Uint64(hdr[16:24]))
 	if !zegIsPow2(align) || align < zegMinAlign {
-		return nil, fmt.Errorf("前缀里的 align 不合理：%d", align)
+		return nil, zegTierRefuse("D4", fmt.Sprintf("前缀里的 align=%d（须 2 的幂且 ≥%d）", align, zegMinAlign))
 	}
 	if !(n > 0 && n <= align-zegHeaderPrefix) {
 		return nil, fmt.Errorf("索引长度字段不合理：%d", n)
@@ -1877,17 +1890,18 @@ func zegParseIndexV1(f *os.File, hdr []byte) (*zegIndex, error) {
 	}
 	var raw zegIndexJSON
 	if err := json.Unmarshal(body, &raw); err != nil {
-		return nil, err
+		return nil, zegTierRefuse("D13", err.Error())
 	}
 	if raw.Magic != zegMagic {
-		return nil, fmt.Errorf("magic 不符（不是 %s 文件）", zegMagic)
+		return nil, zegTierRefuse("D1", fmt.Sprintf("索引体里的 magic=%q", raw.Magic),
+			hex.EncodeToString([]byte(raw.Magic)))
 	}
 	// ★ 前缀与索引体的主号必须**同一个**（v1 档 = 1）；✗ 别拿本端主号去比 —— 那是 v2 的号。
 	if raw.Version != zegFormatVerV1 {
 		return nil, fmt.Errorf("格式版本不支持：%d", raw.Version)
 	}
 	if !zegIsPow2(raw.Align) || raw.Align < zegMinAlign {
-		return nil, fmt.Errorf("align 字段不合理：%d", raw.Align)
+		return nil, zegTierRefuse("D4", fmt.Sprintf("索引体里的 align=%d（须 2 的幂且 ≥%d）", raw.Align, zegMinAlign))
 	}
 	idx := &zegIndex{
 		Magic:     raw.Magic,
@@ -2024,8 +2038,10 @@ func zegVerify(path, rebuildInto string) ([]string, *zegIndex, error) {
 			h.Write(buf[:m])
 			left -= int64(m)
 		}
-		if !truncated && hex.EncodeToString(h.Sum(nil)) != e.SHA256 {
-			problems = append(problems, fmt.Sprintf("%s sha256 不符", e.Path))
+		if !truncated {
+			if got := hex.EncodeToString(h.Sum(nil)); got != e.SHA256 {
+				problems = append(problems, zegSHAMismatchProblem(e.Path, e.SHA256, got))
+			}
 		}
 	}
 	if rebuildInto != "" {
@@ -2103,11 +2119,30 @@ func zegVerify(path, rebuildInto string) ([]string, *zegIndex, error) {
 
 // ---- 子命令：info ---------------------------------------------------------------------------
 
+// zegEggErrExit —— 读端错误 ↦ 卵族命令面退码：**带码拒**（`GAP-20261015-24` 的 D1/D4/D13 ＋
+// `GAP-20261015-25` 的 D2/D9，码取自 13 档表同一行）走表里的码；其余错误仍走既有 `exitFail`（=1）通道
+// （✗ 不扩面改其余档的退码 —— 例如 D7 的拍定码本来就是 1，D3/D5/D8/D10–D12 仍未接）。
+func zegEggErrExit(err error) int {
+	if code, ok := zegRefusalExit(err); ok {
+		return code
+	}
+	return exitFail
+}
+
+// zegEggErrLine —— 打一条读端错误：**报话一行**（逐字 ＝ 13 档表 `Msg` 列）＋ **细节一行**（有才打）。
+// ★ 两行分工是为了「报话可逐字对表」而诊断读数不丢：细节（实读字节 / 非法值 / 原生解码错）不进报话。
+func zegEggErrLine(w io.Writer, err error) {
+	fmt.Fprintf(w, "%s: %v\n", zegProg, err)
+	if d := zegRefusalDetail(err); d != "" {
+		fmt.Fprintf(w, "  细节：%s\n", d)
+	}
+}
+
 func zegCmdInfo(stdout io.Writer, path string) int {
 	idx, err := zegParseIndex(path)
 	if err != nil {
-		fmt.Fprintf(stdout, "%s: %v\n", zegProg, err)
-		return exitFail
+		zegEggErrLine(stdout, err)
+		return zegEggErrExit(err)
 	}
 	fi, _ := os.Stat(path)
 	fmt.Fprintf(stdout, "卵文件：%s\n", path)
@@ -2539,7 +2574,9 @@ func zegFormatSelfTest(stdout, stderr io.Writer) int {
 			return zegSelfFail(stderr, fmt.Errorf("态③ 恶意路径 %s（%q）竟被放行", name, badPath))
 		}
 		ref, ok := perr.(*zegRefusal)
-		if !ok || ref.Tier != "D9" || !strings.Contains(ref.Msg, rule) {
+		// ★ D9（GAP-20261015-25）：规则名从报话移进 `Detail`（报话逐字 ＝ 13 档表 D9 行）⇒ 判据点细节行，
+		// 但「拒执必须点名规则」这条口径不变。
+		if !ok || ref.Tier != "D9" || !strings.Contains(zegRefusalDetail(perr), rule) {
 			return zegSelfFail(stderr, fmt.Errorf("态③ %s 拒了但没点名 D9/规则 %s：%v", name, rule, perr))
 		}
 	}
@@ -3235,8 +3272,8 @@ func zergEggGateMain(stdout, stderr io.Writer, argv []string) int {
 			// ★ 升引擎只写尾部（设计稿 Q3 的核心）：证据面三条一起印 —— 写区间 / 前缀 sha / inode。
 			rep, uerr := zegV2UpgradeEngine(a.b, a.a, a.nowVal)
 			if uerr != nil {
-				fmt.Fprintf(stderr, "%s: %v\n", zegProg, uerr)
-				return exitFail
+				zegEggErrLine(stderr, uerr)
+				return zegEggErrExit(uerr)
 			}
 			if !rep.Changed {
 				fmt.Fprintf(stdout, "升引擎：无变化 ⇒ 不动（gen=%d 不增 · 零字节写）\n", rep.GenOld)
@@ -3305,13 +3342,13 @@ func zergEggGateMain(stdout, stderr io.Writer, argv []string) int {
 		}
 		wrote, n, err := zegXfer(stdout, a.a, a.b, a.chunkSize, false)
 		if err != nil {
-			fmt.Fprintf(stderr, "%s: %v\n", zegProg, err)
-			return exitFail
+			zegEggErrLine(stderr, err)
+			return zegEggErrExit(err)
 		}
 		probs, _, verr := zegVerify(a.b, "")
 		if verr != nil {
-			fmt.Fprintf(stderr, "%s: %v\n", zegProg, verr)
-			return exitFail
+			zegEggErrLine(stderr, verr)
+			return zegEggErrExit(verr)
 		}
 		if len(probs) > 0 {
 			fmt.Fprintf(stdout, "✗ 目标校验失败 %d 项：\n", len(probs))
@@ -3324,8 +3361,8 @@ func zergEggGateMain(stdout, stderr io.Writer, argv []string) int {
 		// 逐字节一致由 `TestZergEggVerifyParallelMatchesSingle` 钉着）。旧档 `zegVerify` 仍是行为真源。
 		res, err := zegvVerifyEntry(stdout, a.a, a.rebuildInto, a.workers)
 		if err != nil {
-			fmt.Fprintf(stderr, "%s: %v\n", zegProg, err)
-			return exitFail
+			zegEggErrLine(stderr, err)
+			return zegEggErrExit(err)
 		}
 		if len(res.Problems) > 0 {
 			fmt.Fprintf(stdout, "✗ 校验失败 %d 项：\n", len(res.Problems))
