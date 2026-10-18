@@ -2973,13 +2973,13 @@
    "path": "publish verify",
    "danger": "",
    "opened": false,
-   "default_writes": "unprobed",
+   "default_writes": false,
    "writes_where": [],
    "write_kind": "",
    "gated_by": [],
    "readonly_flag": "",
    "probe": "exempt",
-   "reason": "裸跑会做真活（重编/提交/启停/发网/跑门）⇒ 沙箱探针不可代表默认档",
+   "reason": "裸跑会做真活（跑两器/重编/发网面）⇒ 沙箱探针不可代表默认档；★ 写点已收口（GAP-20261018-18）：对拍工作区由 os.MkdirTemp 落 OS 临时目录（读 TMPDIR · 不再写死系统临时目录）且收口即回收（正常收口 defer ＋ Ctrl-C/SIGTERM 走 removeActiveMaterialized）⇒ 默认档零耐久件；显式 PARITY_BASE 是调用方点名的现场、保留不回收（两态对拍用同一只 BASE）；打断面照 CLI 全局契约：默认只退订不取消（在跑的子器可能自行重建输出目录）· 给 --cancel-on-interrupt 时收主树、孙进程仍可能逃逸 ⇒ 极端打断后 TMPDIR 内可能留一枚工作区（OS 临时区自清 · 不落 repo/state/docs/out）。牙 = TestPublishVerify_WorkspaceUnderTMPDIR / TestPublishVerify_NoHardcodedTempPath",
    "waiver": ""
   },
   {

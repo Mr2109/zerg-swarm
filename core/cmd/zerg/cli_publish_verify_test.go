@@ -7,6 +7,7 @@ package main
 
 import (
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -111,5 +112,81 @@ func TestPublishVerify_SelfNoContiguousPrivateName(t *testing.T) {
 		ppvLeakProbes[1] != "脑"+"（Hermes）" ||
 		ppvLeakProbes[2] != "脑"+"(Hermes)" {
 		t.Fatalf("ppvLeakProbes 三条探针与旧壳 -e 值不符：%#v", ppvLeakProbes)
+	}
+}
+
+// TestPublishVerify_WorkspaceUnderTMPDIR —— 缺口 `GAP-20261018-18` 的**回归牙**（默认档工作区落点）。
+//
+// 病灶：原实现把对拍工作区写死在系统临时目录（`/tmp/zerg-parity-<戳>`）、且该命令 `danger==nil`
+// ⇒ 危险档面与写盘点面**都看不见它会写盘**，跑一次就在盘上留一棵树（实测已积 26 棵）。
+//
+// 本用例钉三格（静态面负控在 `TestPublishVerify_NoHardcodedTempPath`）：
+//
+//	① 默认档（不给 `PARITY_BASE`）⇒ 自建工作区，落点在 `TMPDIR` 之内（✗ 不是写死路径）；
+//	② 收口**真回收**（走 `removeActiveMaterialized`，与 `Ctrl-C` 信号面同一条）；
+//	③ 收到 `PARITY_BASE` ⇒ 用它、且**不**自建（两态对拍要同一只 BASE）。
+func TestPublishVerify_WorkspaceUnderTMPDIR(t *testing.T) {
+	td := t.TempDir()
+	t.Setenv("TMPDIR", td)
+	t.Setenv("PARITY_BASE", "")
+	base, selfMade, err := ppvWorkspaceBase()
+	if err != nil {
+		t.Fatalf("默认档建工作区失败：%v", err)
+	}
+	if !selfMade {
+		t.Fatalf("默认档（无 PARITY_BASE）必须自建工作区（收口才会回收）")
+	}
+	if want := td + string(os.PathSeparator); !strings.HasPrefix(base, want) {
+		t.Fatalf("工作区不在 TMPDIR 内：base=%q 期望前缀 %q（写死临时目录的病复发）", base, want)
+	}
+	if st, err := os.Stat(base); err != nil || !st.IsDir() {
+		t.Fatalf("工作区该真建出来：%v", err)
+	}
+	// 收口：与生产档同一条（`defer removeActiveMaterialized()`）。
+	setActiveMatRoot(base)
+	removeActiveMaterialized()
+	if _, err := os.Stat(base); !os.IsNotExist(err) {
+		t.Fatalf("收口没回收工作区（盘上还留着 %s）：%v", base, err)
+	}
+}
+
+// TestPublishVerify_ParityBaseKept —— 显式 `PARITY_BASE` ⇒ 点名路径生效、**不**自建。
+// 这一格是上一条的**反向**：别把「默认档零残留」做成「把调用方点名的现场也删了」。
+func TestPublishVerify_ParityBaseKept(t *testing.T) {
+	td := t.TempDir()
+	want := filepath.Join(td, "named", "base")
+	t.Setenv("PARITY_BASE", want)
+	base, selfMade, err := ppvWorkspaceBase()
+	if err != nil {
+		t.Fatalf("PARITY_BASE 档建工作区失败：%v", err)
+	}
+	if selfMade {
+		t.Fatalf("给了 PARITY_BASE 就不许自建临时工作区（两态对拍要同一只 BASE）")
+	}
+	if base != want {
+		t.Fatalf("工作区应逐字等于 PARITY_BASE：got %q want %q", base, want)
+	}
+	if st, err := os.Stat(want); err != nil || !st.IsDir() {
+		t.Fatalf("PARITY_BASE 目录该建出来：%v", err)
+	}
+}
+
+// TestPublishVerify_NoHardcodedTempPath —— 静态面负控：真身件里✗ 不许再出现**写死的**临时路径字面。
+//
+// 牙在哪：把真身件里那行改回写死形（`"/tmp/…"`）⇒ 本用例当场 FAIL 并点名；同时正控确认落点
+// 仍是 `os.MkdirTemp("", ppvTempPrefix)`（⇒ 读 `TMPDIR`，不是写死路径）。
+func TestPublishVerify_NoHardcodedTempPath(t *testing.T) {
+	b, err := os.ReadFile("family_publish_verify_native.go")
+	if err != nil {
+		t.Skipf("从 cwd 读不到真身件（非包目录 cwd？）：%v", err)
+	}
+	src := string(b)
+	for _, lit := range []string{`"/tmp/`, `"/private/tmp/`} {
+		if strings.Contains(src, lit) {
+			t.Fatalf("真身件里仍有写死的临时路径字面 %q（GAP-20261018-18：应走 os.MkdirTemp / PARITY_BASE）", lit)
+		}
+	}
+	if !strings.Contains(src, `os.MkdirTemp("", ppvTempPrefix)`) {
+		t.Fatalf("真身件里找不到 TMPDIR 工作区落点 `os.MkdirTemp(\"\", ppvTempPrefix)`")
 	}
 }

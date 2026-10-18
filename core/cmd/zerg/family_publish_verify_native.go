@@ -6,6 +6,12 @@
 // 本笔把它的**编排**搬进 CLI 进程内，逐段与旧壳逐字对齐：
 //
 //	① 准备（仓根 / 件路径 / BASE 工作区 · 私有仓 HEAD 与 porcelain 基线）
+//
+// ★ 工作区落点（缺口 `GAP-20261018-18` · 原把它写死在系统临时目录且 `danger==nil` ⇒ 危险档面看不见它会写盘）：
+// 默认档用 `os.MkdirTemp("", ppvTempPrefix)` 落 **OS 临时目录**（读 `TMPDIR`），收口即整棵回收（正常收口走
+// `defer`；`Ctrl-C`/`SIGTERM` 走主信号面 `removeActiveMaterialized` —— `os.Exit` **不跑 defer**）；
+// 显式给 `PARITY_BASE` ⇒ 用调用方点名的路径、**不回收**（两态对拍要拿同一只 BASE 逐字比 · 现场归调用方）。
+//
 //	② 跑两器（旧 = 压平快照器 · 新 = 逐提交镜像器；都在**仓外** BASE 下 —— **不出网、不推送**）
 //	③ 两器产出树逐路径比对（路径集合 + blob sha + 模式）＋ 已知差异走显式契约（调 `parity-compare.py`）
 //	④ 过滤口径对账（白名单 / 排除项同源）＋ EXCLUDES 发布机制脚本自登记
@@ -322,6 +328,29 @@ print("  \u89c4\u5219\u8868\u81ea\u4f24\u7a7a\u64cd\u4f5c\uff08pattern == replac
 sys.exit(1 if noop else 0)
 `
 
+// ppvTempPrefix —— 对拍工作区**默认**前缀。落点 = `os.MkdirTemp("", …)` ⇒ `os.TempDir()`（读 `TMPDIR`），
+// ✗ 不写死系统临时目录（缺口 `GAP-20261018-18` 的病根）。
+const ppvTempPrefix = "zerg-parity-"
+
+// ppvWorkspaceBase —— 选对拍工作区根，并回「是不是本次自建（⇒ 收口必须回收）」。
+//
+// 两条路（★ 为什么要分开：`PARITY_BASE` 是**两态对拍**的公共 BASE —— `zerg publish verify` ⟷
+// `bash scripts/build/test-publish-parity.sh` 必须落在同一只目录上才比得了；那条路上的现场归调用方）：
+//
+//	· `PARITY_BASE` 给了 ⇒ 用它（建目录失败与原实现同：忽略错误，后面 `os.Create` 失败自会退 8）；
+//	· 没给 ⇒ `os.MkdirTemp("", ppvTempPrefix)`（读 `TMPDIR`）；建不出来 ⇒ 回错误，调用方 fail-closed 退 8。
+func ppvWorkspaceBase() (base string, selfMade bool, err error) {
+	if v := strings.TrimSpace(os.Getenv("PARITY_BASE")); v != "" {
+		_ = os.MkdirAll(v, 0o755)
+		return v, false, nil
+	}
+	d, err := os.MkdirTemp("", ppvTempPrefix)
+	if err != nil {
+		return "", false, err
+	}
+	return d, true, nil
+}
+
 // cmdPublishVerify —— `zerg publish verify`（拟名 · 待命令树登记）：两器产出一致性验收（**本地** · 不出网、不推送）。
 //
 // 本命令**无位置参数**；工作区旋钮与旧壳同名（`PARITY_BASE` / `SKIP_TOOLS`），保两态可逐字对拍。
@@ -342,13 +371,20 @@ func publishVerifyRun(stdout, stderr io.Writer) int {
 	contract := filepath.Join(root, "publish", "parity-contract.tsv")
 	allow := filepath.Join(root, "publish", "mirror-allow.txt")
 
-	base := strings.TrimSpace(os.Getenv("PARITY_BASE"))
-	if base == "" {
-		base = "/tmp/zerg-parity-" + time.Now().Format("20060102-150405")
+	base, selfMade, err := ppvWorkspaceBase()
+	if err != nil {
+		fmt.Fprintf(stderr, "%s: 对拍工作区建不出来（%v）⇒ 不给结论（fail-closed · 退码 8）\n", progName, err)
+		return exitBlocked
 	}
 	oldDir := filepath.Join(base, "old")
 	mirDir := filepath.Join(base, "mirror")
-	_ = os.MkdirAll(base, 0o755)
+	if selfMade {
+		// ★ 回收两路齐（缺口 `GAP-20261018-18`）：正常收口走本 defer；`Ctrl-C`/`SIGTERM` 走 `main.go`
+		// 信号处理器里的 `removeActiveMaterialized()`（`os.Exit` **不跑 defer** ⇒ 只在 defer 里删会漏）。
+		// 复用 repo commit 的「在飞的物化树」登记位：同一回收机制、同一幂等语义，✗ 不另造第二套。
+		setActiveMatRoot(base)
+		defer removeActiveMaterialized()
+	}
 	skipTools := os.Getenv("SKIP_TOOLS") == "1"
 
 	pass, fail := 0, 0
@@ -357,6 +393,10 @@ func publishVerifyRun(stdout, stderr io.Writer) int {
 	head1 := func(s string) { ppSay(stdout, s) }
 
 	fmt.Fprintf(stdout, "验收工作区: %s\n", base)
+	if selfMade {
+		// ★ 只在**默认档**多这一行：`PARITY_BASE` 档的输出与旧壳逐字同（两态对拍是三面逐字比）。
+		fmt.Fprintf(stdout, "  （临时工作区 · 收口即回收 —— 要保留现场给 `PARITY_BASE=<目录>`）\n")
+	}
 	fmt.Fprintf(stdout, "私有仓:     %s（只读）\n", root)
 	_, head0 := ppvGitOut(root, stderr, "rev-parse", "HEAD")
 	head0 = strings.TrimSpace(head0)
