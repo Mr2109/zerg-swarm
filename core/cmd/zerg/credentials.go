@@ -1,6 +1,8 @@
 // credentials.go —— 统一凭据来源（§九 M2 · 调研-M2 §4.1 `C1`–`C12`）。
 //
-// **一条链，唯一一个函数**（`C1`）：`env > file`（§十二 `P-006` 定案取**甲**）。
+// **一条链，唯一一个函数**（`C1`）：`env:ZERG_TOKEN > file:~/.zerg/token > 旧名（兼容·降级）`
+// （§十二 `P-006` 定案取**甲**；旧名降级见 GAP-20261017-02）。★ 解析逻辑不再由本件自备：
+// 它就是 `core/internal/config.ResolveAuthTokenWithSource`（与主控同一份 —— 收敛后才谈得上同源）。
 // 全命令面只有这一处读令牌（`client.go` 也走它）—— 三处各读一遍 = 三套优先级 = 事故温床。
 //
 // 五不进（`C2`/`C3`/`C4` · `K11`）：令牌**不进 `argv`** · **不进 URL** · **不入库** ·
@@ -13,43 +15,40 @@ package main
 
 import (
 	"io"
-	"os"
-	"path/filepath"
 	"strings"
+
+	"github.com/Mr2109/zerg-swarm/core/internal/config"
 )
 
+// TOKEN-CHAIN: ZERG_TOKEN > ~/.zerg/token > ZERG_AUTH_TOKEN > ZERG_API_TOKEN
+//
 // tokenSourceName —— 令牌取自哪一级（错误信息里点名「凭据来自哪一级」· §九 M20 `O5`）。
+// ★ 取值域真源 = `core/internal/config` 的 `TokenSource`（GAP-20261017-02/-04：CLI 不再自备
+// 第二套优先级）。`stdin:--token-stdin` 是 CLI 独有的**传输级**（不进 argv），不是真源级。
 type tokenSourceName string
 
 const (
-	tokenSourceEnv   tokenSourceName = "env:ZERG_TOKEN"
-	tokenSourceFile  tokenSourceName = "file:~/.zerg/token"
-	tokenSourceStdin tokenSourceName = "stdin:--token-stdin"
-	tokenSourceNone  tokenSourceName = "缺（未认证）"
+	tokenSourceEnv        tokenSourceName = tokenSourceName(config.TokenSourceEnv)
+	tokenSourceFile       tokenSourceName = tokenSourceName(config.TokenSourceFile)
+	tokenSourceLegacyAuth tokenSourceName = tokenSourceName(config.TokenSourceLegacyAuth)
+	tokenSourceLegacyAPI  tokenSourceName = tokenSourceName(config.TokenSourceLegacyAPI)
+	tokenSourceStdin      tokenSourceName = "stdin:--token-stdin"
+	tokenSourceNone       tokenSourceName = "缺（未认证）"
 )
 
-// credentialChain —— **优先级链唯一真源**（§十二 `P-006`：env > file）。
+// credentialChain —— **优先级链**：唯一字面量在 `config.TokenChain`（本件不抄第二份）。
 // 打印出来就是契约 §八 那一行的一部分（`zerg help credentials` 与 `zerg help config` 共用）。
-const credentialChain = "env:ZERG_TOKEN > file:~/.zerg/token（非交互另可 --token-stdin；**旗标不从命令行传值**）"
+var credentialChain = config.TokenChain + "（非交互另可 --token-stdin；**旗标不从命令行传值**）"
 
 // resolveCredentials 取令牌 + 它来自哪一级。**全命令面唯一入口**（`C1`）。
+// ★ 解析逻辑只有一份：`config.ResolveAuthTokenWithSource`（与主控同源）。
 func resolveCredentials() (string, tokenSourceName) {
-	if v := strings.TrimSpace(os.Getenv("ZERG_TOKEN")); v != "" {
-		return v, tokenSourceEnv
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", tokenSourceNone
-	}
-	b, err := os.ReadFile(filepath.Join(home, ".zerg", "token"))
-	if err != nil {
-		return "", tokenSourceNone
-	}
-	v := strings.TrimSpace(string(b))
+	v, src := config.ResolveAuthTokenWithSource()
 	if v == "" {
 		return "", tokenSourceNone
 	}
-	return v, tokenSourceFile
+	config.AnnounceLegacyTokenSource(src) // 旧名命中 ⇒ 出声一次（只报来源，✗ 不回显令牌）
+	return v, tokenSourceName(src)
 }
 
 // readTokenFromStdin —— `--token-stdin`（`C2`：非交互且**不把令牌写进命令行**）。

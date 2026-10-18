@@ -111,6 +111,9 @@ func NodeAddr(fleet map[string]FleetNode, host string) (string, int) {
 // AuthConfig 认证配置。
 type AuthConfig struct {
 	Token string `yaml:"token"`
+	// Source 令牌**来源标记**（env:ZERG_TOKEN / file:~/.zerg/token / 旧名 / yaml 兜底）——
+	// 只供报话与判据用，**永不含令牌值**；yaml:"-" ⇒ 不参与解析（GAP-20261017-04）。
+	Source string `yaml:"-"`
 }
 
 // FleetConfig 整个 fleet.yaml 的结构。
@@ -131,11 +134,17 @@ func LoadFleetConfig(path string) (*FleetConfig, error) {
 	if err != nil {
 		return nil, err
 	}
-	// 2026-09-11 A 批（库内零明文）：共享令牌不再依赖 fleet.yaml 里的明文——
-	// 解析顺序：环境变量 ZERG_AUTH_TOKEN / ZERG_API_TOKEN → ~/.zerg/token 文件。
-	// 两处都没有时保留 yaml 中的值（向后兼容），为空则由调用方（cmd/zerg-core）启动即报错。
-	if t := ResolveAuthToken(); t != "" {
+	// 2026-09-11 A 批（库内零明文）：共享令牌不再依赖 fleet.yaml 里的明文。
+	// GAP-20261017-02/-04 收敛：唯一链 = env:ZERG_TOKEN > file:~/.zerg/token > 旧名（兼容·降级）。
+	// 三路都空时保留 yaml 中的值（兜底兼容），为空则由调用方（cmd/zerg-core）启动即报错。
+	if t, src := ResolveAuthTokenWithSource(); t != "" {
 		cfg.Auth.Token = t
+		cfg.Auth.Source = string(src)
+		AnnounceLegacyTokenSource(src)
+	} else if cfg.Auth.Token != "" {
+		cfg.Auth.Source = string(TokenSourceConfig)
+	} else {
+		cfg.Auth.Source = string(TokenSourceMissing)
 	}
 	return cfg, nil
 }
@@ -143,10 +152,12 @@ func LoadFleetConfig(path string) (*FleetConfig, error) {
 // TokenFilePath 共享令牌文件路径（默认 ~/.zerg/token，单行）。
 //
 // 2026-09-11 A 批（库内零明文）约定：令牌绝不写进源码或仓库内配置。
-// 推荐三种提供方式（优先级从高到低）：
-//  1. 环境变量 ZERG_AUTH_TOKEN（兼容旧名 ZERG_API_TOKEN）
+// 唯一链（GAP-20261017-02 收敛 · 三处读取面同源）：
+//  1. 环境变量 ZERG_TOKEN（**首位**）
 //  2. 家目录文件 ~/.zerg/token（单行；仓库外，天然不入库）
-//  3. .env 文件 + `set -a; . ./.env; set +a`（见仓库根 .env.example）
+//  3. 兼容旧名 ZERG_AUTH_TOKEN / ZERG_API_TOKEN（降级为最后一级，**保留不删**）
+//
+// 另可用 .env 供给上述环境变量（`set -a; . ./.env; set +a`，见仓库根 .env.example）。
 func TokenFilePath() string {
 	if home, err := os.UserHomeDir(); err == nil {
 		return filepath.Join(home, ".zerg", "token")
@@ -154,22 +165,15 @@ func TokenFilePath() string {
 	return ""
 }
 
-// ResolveAuthToken 解析共享令牌：环境变量优先，其次 ~/.zerg/token 文件（首尾空白已去）。
+// ResolveAuthToken 解析共享令牌（首尾空白已去）：只取令牌值；来源见 ResolveAuthTokenWithSource。
 // 找不到返回空字符串——调用方必须显式处理（启动即报错并给指引），不得静默放行。
+// ★ 旧名命中时**出声一次**（只报来源，✗ 不回显令牌）。
 func ResolveAuthToken() string {
-	for _, k := range []string{"ZERG_AUTH_TOKEN", "ZERG_API_TOKEN"} {
-		if v := strings.TrimSpace(os.Getenv(k)); v != "" {
-			return v
-		}
+	v, src := ResolveAuthTokenWithSource()
+	if v != "" {
+		AnnounceLegacyTokenSource(src)
 	}
-	if p := TokenFilePath(); p != "" {
-		if b, err := os.ReadFile(p); err == nil {
-			if v := strings.TrimSpace(string(b)); v != "" {
-				return v
-			}
-		}
-	}
-	return ""
+	return v
 }
 
 // MaskToken 打日志用的令牌掩码（保留前 4 位与长度，绝不打印完整令牌）。

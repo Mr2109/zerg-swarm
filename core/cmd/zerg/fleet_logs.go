@@ -379,15 +379,10 @@ func flgLoadToken(tokenFile string, stderr io.Writer) (token string, rc int, don
 		}
 		return strings.TrimSpace(string(b)), 0, false
 	}
-	t := strings.TrimSpace(os.Getenv("ZERG_AUTH_TOKEN"))
-	if t == "" {
-		t = strings.TrimSpace(os.Getenv("ZERG_API_TOKEN"))
-	}
-	if t != "" {
+	// ★ GAP-20261017-02：这条旁链（旧名优先 · 文件殿后）已收敛到全命令面唯一入口
+	// `resolveCredentials`（env:ZERG_TOKEN > file:~/.zerg/token > 旧名兼容）—— 本处不再自读环境变量。
+	if t := resolveToken(); t != "" {
 		return t, 0, false
-	}
-	if b, err := os.ReadFile(flgExpandUser("~/.zerg/token")); err == nil {
-		return strings.TrimSpace(string(b)), 0, false
 	}
 	return "", 0, false
 }
