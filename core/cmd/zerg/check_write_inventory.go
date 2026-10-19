@@ -390,8 +390,25 @@ func wviProbeRun(bin, tmpRoot, seedState string, argv []string) (changed []strin
 			changed = append(changed, p+"（消失）")
 		}
 	}
+	// ★ GAP-20261018-19（续）：**沙箱 tmp/ 下的写不算「默认档写盘」**。探针把 TMPDIR 指向
+	// 沙箱的 tmp/，而被测命令（尤其 gate self-test 一类）会往 TMPDIR 拷源码跑 —— 那是临时碎料，
+	// 不是状态写。此前一律计入 ⇒ 同一命令同一台机时绿时红（实测：一次 0 破承诺，下一次
+	// 报『gate self-test 裸跑写了 17 件 tmp/cek*/core/cmd/zerg/*.go』）。
+	changed = wviDropSandboxTmp(changed)
 	sort.Strings(changed)
 	return changed, rerr, false
+}
+
+// wviDropSandboxTmp —— 去掉沙箱 `tmp/` 下的临时碎料（见上：TMPDIR 的写不算状态写）。
+func wviDropSandboxTmp(changed []string) []string {
+	out := changed[:0]
+	for _, p := range changed {
+		if strings.HasPrefix(p, "tmp/") {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
 }
 
 // wviEvaluate —— 判据本体（纯函数式：输入 = 真源 ＋ 命令面 ＋ 静态面 ＋ 探针面，输出 = 退码 ＋ 报告）。
