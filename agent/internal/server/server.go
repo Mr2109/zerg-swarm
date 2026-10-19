@@ -60,7 +60,11 @@ type Agent struct {
 
 	mu         sync.Mutex
 	activeReqs int
-	startedAt  time.Time
+	// reqWin 请求窗口记账（缺口 GAP-20261010-16 剩余面）：`/status` 的 recent_requests
+	// 与 request_source 两格取它。★ ✗ 不接管 activeReqs —— 那是「正被 worker 处理」的
+	// 执行期真值，两者在**同一处**增减但分账（改它一个字都不许）。
+	reqWin    *requestWindow
+	startedAt time.Time
 }
 
 // inferReq 推理请求项，包含 done channel 用于结果回传。
@@ -71,6 +75,9 @@ type inferReq struct {
 	forwardPath string
 	resultCh    chan inferResult
 	ctx         context.Context // v2.5.6 治本（2026-08-28——node-a 幽灵请求）: 客户端 context——断开自动取消后端请求——释放单槽
+	// source 这条请求的来源（缺口 GAP-20261010-16 剩余面）：`handleInfer` 进门时从
+	// `X-Forwarded-For` / `RemoteAddr` 取一次，执行期交给 `/status` 的 request_source 格。
+	source string
 	// startedCh 由 worker 在**出队开始执行**时非阻塞发一次；等待方据此把"排队期"与"执行期"分开：
 	// 排队期有可配上限（排队中没有任何可推进的证据可看 ⇒ 时间只能兜底），执行期**不设时长上限**、
 	// 活性一律交看门狗按证据判（输出 / 引擎自报进度 / 本单元 CPU 工时）。
@@ -95,6 +102,7 @@ func NewAgent(machine, token string, reg *registry.Registry, backends *backend.M
 		sampler:    monitor.DefaultSampler,
 		vitals:     monitor.NewVitalsRecorder(), // P4：/services 的全局 GTT 账来源（只读快照）
 		controller: ctrl,
+		reqWin:     newRequestWindow(), // GAP-20261010-16：窗口计数 ＋ 在飞来源（/status 两格）
 		startedAt:  time.Now(),
 	}
 }
@@ -165,6 +173,10 @@ func (s *Server) handleInfer(w http.ResponseWriter, r *http.Request) {
 	// 为什么放在响应头：对**流式与非流式都成立**（头在首字节前发出），上游一拿到就能算出排队时长。
 	// 语义：这是**子端侧的等待**（含解析、等槽位/在途请求）；排队 ≠ 推理 ⇒ 只用于观测，不进任何时限。
 	inferT0 := time.Now() // 乙-2：排队计时起点（进门即记）
+	// ★ 缺口 `GAP-20261010-16`（剩余面）：窗口计数的记账点在**进门处**（认证已过、还没读体）——
+	//   「最近 N 分钟请求数」的口径是**本端收到几次 `/infer`**，✗ 不是 active_requests
+	//   （后者只数正被 worker 处理的那一个；排队中的请求也算「最近有人打」）。
+	s.agent.reqWin.note()
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -220,6 +232,8 @@ func (s *Server) handleInfer(w http.ResponseWriter, r *http.Request) {
 		resultCh:    resultCh,
 		startedCh:   startedCh,
 		ctx:         r.Context(), // v2.5.6 治本: 客户端 context——断开取消后端请求——释放单槽
+		// GAP-20261010-16：在飞来源（`/status` 的 request_source 取它，执行期才有）。
+		source: requestSourceOf(r),
 	}
 	eta := estimateWaitETA(model)
 	if !s.agent.backends.WaitQPush(model, req, eta) {
@@ -373,7 +387,11 @@ func (s *Server) handleInferRequest(req inferReq) {
 	s.agent.mu.Lock()
 	s.agent.activeReqs++
 	s.agent.mu.Unlock()
+	// ★ 缺口 `GAP-20261010-16`（剩余面）：在飞来源与 activeReqs **同处**增减（同一个 defer）⇒
+	//   任一时刻「request_source 为空 ⟺ active_requests == 0」。✗ 不动上面那次计数（语义一字不改）。
+	reqWinID := s.agent.reqWin.enter(req.source)
 	defer func() {
+		s.agent.reqWin.leave(reqWinID)
 		s.agent.mu.Lock()
 		s.agent.activeReqs--
 		s.agent.mu.Unlock()
@@ -689,6 +707,24 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	activeReqs := s.agent.activeReqs
 	s.agent.mu.Unlock()
 
+	// ★ 缺口 `GAP-20261010-16`（剩余面）：两格 —— 窗口内 `/infer` 计数与在飞来源。
+	//   ★ 不带 `?window_s=` 时两格**也必须出现**（缺键 = 旧病复发：CLI 面又落「未知」）。
+	//   `?window_s=` 给了但读不出 / ≤0 / 超上限 ⇒ 400 明报拒收（✗ 静默回落默认）。
+	reqWin, winErr := requestWindowParam(r)
+	if winErr != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{
+			"error":   "bad window_s",
+			"message": winErr.Error(),
+		})
+		return
+	}
+	recentReqs, sources := s.agent.reqWin.snapshot(reqWin)
+	requestSource := strings.Join(sources, ",")
+	if requestSource == "" {
+		// 无在飞 ⇒ **明写「无」**（✗ 空串：CLI 侧会把空串读成「子端没报」= 未知）。
+		requestSource = requestSourceNone
+	}
+
 	// ★ 缺口 `GAP-20261018-20`（身份自报半）：子端在 `/status` 里报**自己这一件**的身份。
 	//   换件正门 `zerg agent deploy` 靠它核对「盘上换上的就是正在跑的那件」（`code_digest` =
 	//   自身可执行件 sha256 前 16 位）与「跑的是哪笔提交」（`code_sha`）。
@@ -706,8 +742,12 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"models":           s.agent.registry.Names(),
 		"uptime":           time.Since(s.agent.startedAt).Seconds(),
 		"active_requests":  activeReqs,
-		"healthy":          s.agent.backends.IsHealthy(),
-		"backend_state":    s.agent.backends.State(),
+		// 两格（GAP-20261010-16 剩余面）：**真值**，✗ 再也不是「未知」。
+		//   recent_requests = 窗口内收到的 `/infer` 次数；request_source = 在飞来源（无 ⇒ 「无」）。
+		"recent_requests": recentReqs,
+		"request_source":  requestSource,
+		"healthy":         s.agent.backends.IsHealthy(),
+		"backend_state":   s.agent.backends.State(),
 		// B4 v2：CPU/GPU 使用率（主控监看展示）
 		"cpu_pct": s.agent.sampler.CpuPct(),
 		"gpu_pct": s.agent.sampler.GpuPct(),
