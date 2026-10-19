@@ -641,6 +641,12 @@ func cmdChatSend(inv *invocation, stdout, stderr io.Writer) int {
 	if inv.jsonGiven && len(inv.fields) == 0 {
 		return requireFields(inv, stderr)
 	}
+	// ★ GAP-20261020-01：字段名非法必须在**动手之前**判掉（零副作用）。
+	if inv.jsonGiven {
+		if rc := validateSelected(inv, stderr, inv.path, inv.fields); rc != exitOK {
+			return rc
+		}
+	}
 	prompt, rc := chatPromptFromInv(inv, stderr)
 	if rc != exitOK {
 		return rc
@@ -1521,6 +1527,12 @@ var chatAskFields = []string{"alias", "session_id", "created_session", "message_
 func cmdChatAsk(inv *invocation, stdout, stderr io.Writer) int {
 	if inv.jsonGiven && len(inv.fields) == 0 {
 		return requireFields(inv, stderr) // K2 甲档（全族一致：给 --json 就得说字段）
+	}
+	// ★ GAP-20261020-01：同上 —— 别名登记/建会话之前先校验字段名。
+	if inv.jsonGiven {
+		if rc := validateSelected(inv, stderr, inv.path, inv.fields); rc != exitOK {
+			return rc
+		}
 	}
 	// ① 别名（「一条任务一条线」的锚）：✗ 不给 --as ⇒ 用法错 2。
 	//    ✗ 也不回落 `--last`：那会把两条线悄悄接到同一个会话上（正是别名要防的事）。

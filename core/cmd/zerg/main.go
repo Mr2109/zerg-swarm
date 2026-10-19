@@ -6310,6 +6310,34 @@ func emitEnvelopeWith(stdout io.Writer, cmd *command, itemsJSON string, count in
 		jstr(contractSchema), jstr(cmd.kind), itemsJSON, meta, warns, trunc, extra)
 }
 
+// validateSelected —— `--json` 字段名的**纯校验**（不产出、无副作用），与 emitSelected 同一口径。
+//
+// 为什么要单独一支（GAP-20261020-01）：`chat ask --json <非法字段>` 原先在**建会话/登记别名之后**
+// 才走到出口校验 ⇒ 退码虽是 2，状态目录却已多出 chat-aliases.json / chat-last.json / tool_events/。
+// 用法错必须是**零副作用**的 ⇒ 在动手之前先调这一支。
+func validateSelected(inv *invocation, stderr io.Writer, path []string, fields []string) int {
+	cmd := find(path)
+	if cmd == nil || len(cmd.fields) == 0 || len(fields) == 0 {
+		return exitOK
+	}
+	registered := make(map[string]bool, len(cmd.fields)+len(cmd.optFields))
+	for _, f := range cmd.fields {
+		registered[f] = true
+	}
+	// ★ 可选字段层（`cmd.optFields`）：登在**出口白名单**里、点得出来；但**不进** `cmd.fields`
+	//   （那一份是文档/帮助导出面的冻结字段表 —— 可选字段是只增的第二层，`approveOptionalFields` 即它）。
+	for _, f := range cmd.optFields {
+		registered[f] = true
+	}
+	for _, f := range fields {
+		if !registered[f] {
+			inv.setErr("usage", "json_field_unknown:"+f, fmt.Sprintf("未知字段 %q", f))
+			return reportBadField(stderr, path, f)
+		}
+	}
+	return exitOK
+}
+
 // emitSelected 是**全部** `--json` 出口的唯一实现：先按用户点名的字段（序即用户给的序）拼对象，
 // 再套包封。字段点错 ⇒ 退码 2 + 列全部合法字段（§九 M6 I5）。
 func emitSelected(stdout, stderr io.Writer, inv *invocation, path []string, fields []string, rows []map[string]string) int {
@@ -6324,22 +6352,8 @@ func emitSelected(stdout, stderr io.Writer, inv *invocation, path []string, fiel
 	//   ① 真未知字段（不在 `cmd.fields` 里，如 `cpu_pct`）⇒ 仍退 2（`reportBadField` 逐字同）；
 	//   ② 在册字段但**本行缺值** ⇒ 该键**整键略去**（✗ 绝不落 `0`/空串 —— 与 API 的 `omitempty` 同一条铁律）。
 	//   与同族既有前置校验（`family_impact.go` 的 `fieldListOf` 逐名核）同一条口径；无字段表的命令（如 `help`）不受影响。
-	if len(cmd.fields) > 0 {
-		registered := make(map[string]bool, len(cmd.fields)+len(cmd.optFields))
-		for _, f := range cmd.fields {
-			registered[f] = true
-		}
-		// ★ 可选字段层（`cmd.optFields`）：登在**出口白名单**里、点得出来；但**不进** `cmd.fields`
-		//   （那一份是文档/帮助导出面的冻结字段表 —— 可选字段是只增的第二层，`approveOptionalFields` 即它）。
-		for _, f := range cmd.optFields {
-			registered[f] = true
-		}
-		for _, f := range fields {
-			if !registered[f] {
-				inv.setErr("usage", "json_field_unknown:"+f, fmt.Sprintf("未知字段 %q", f))
-				return reportBadField(stderr, path, f)
-			}
-		}
+	if rc := validateSelected(inv, stderr, path, fields); rc != exitOK {
+		return rc
 	}
 	objs := make([]string, 0, len(rows))
 	for _, row := range rows {
