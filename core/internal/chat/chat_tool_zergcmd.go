@@ -502,7 +502,14 @@ func zergClip(s string) string {
 	if len(r) <= zergCmdOutLimit {
 		return s
 	}
-	return string(r[:zergCmdOutLimit]) + "\n…" + zergCmdClipNote(len(s), len(r))
+	// ★ GAP-20261019-10：提示**前置**。实测（2026-10-19 17:31 · 门登记核对）模型拿到 25168 字节
+	// 输出的前 8000 字符后，**没读尾部提示**，直接对残片下「四条都不在」的结论。
+	// ⇒ 把最要紧的一句放开头：这份结果不完整、不能拿来做计数或「有没有」的判断。
+	// 尾部原文提示**保留**（GAP-20261017-11 / GAP-20261018-09 的读面指引一字不动）。
+	return fmt.Sprintf("【⚠ 输出**不完整**：只有前 %d 字符 / 共 %d 字符（%d 字节）——"+
+		"**不能**用这份残片做「计数」或「有没有」的结论，要么换能按 id 精确取的子命令，要么收窄条件重跑】\n",
+		zergCmdOutLimit, len(r), len(s)) +
+		string(r[:zergCmdOutLimit]) + "\n…" + zergCmdClipNote(len(s), len(r))
 }
 
 // zergCmdClipNote — 截断提示（原样字节数 / 字符数 ＋ 「改用能按 id 精确取的子命令」）。

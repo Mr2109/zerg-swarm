@@ -442,6 +442,21 @@ func TestZergClipPointsToExactReadFace(t *testing.T) {
 	}
 	big := strings.Repeat("甲", zergCmdOutLimit+500)
 	got := zergClip(big)
+	// ★ GAP-20261019-10：提示必须**前置** —— 实测模型不读尾部，拿残片就下「有没有」的结论。
+	if !strings.HasPrefix(got, "【⚠ 输出**不完整**") {
+		t.Fatalf("截断提示没有前置（实得开头：%.80q）", got)
+	}
+	for _, want := range []string{"不能", "计数", "有没有"} {
+		rs := []rune(got)
+		n := 200
+		if len(rs) < n {
+			n = len(rs)
+		}
+		head := string(rs[:n])
+		if !strings.Contains(head, want) {
+			t.Errorf("前置提示缺 %q（实得开头：%.200q）", want, head)
+		}
+	}
 	for _, want := range []string{"输出已截断", "共 " + strconv.Itoa(len(big)) + " 字节", "gap show", "zerg help <族>"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("截断提示缺 %q（实得尾部：%.200q）", want, tailOf(got, 200))
