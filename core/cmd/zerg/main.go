@@ -377,6 +377,15 @@ func run(args []string, stdout, stderr io.Writer) int {
 	if inv.hasFlag("--window-min") && !usageDeclaresFlag(cmd, "--window-min") {
 		inv.unknown = append(inv.unknown, "--window-min")
 	}
+	// ★ 数据驱动收口（缺口 `GAP-20260928-13` · 2026-10-19）：`--confirm` 早在全族共用的
+	//   解析面上（`dev edit` / `agent deploy` 用）⇒ 不归本命令时会被**静默吞**。
+	//   反例（改前实测）：`zerg repo commit --confirm=x` 被吞后一路走到「要一枚 --message」。
+	//   ★ 只对 `repo commit` 收窄（不铺成全族）：别的命令有**自己的** `--confirm` 语义
+	//   （如「确认值不匹配目标」那条 block 见证），铺开会把它们的判词顶成「未知旗标」——
+	//   本轮实测踩过（TestAuthorityMapWitness 第 6 行当场红），故按路径精确生效。
+	if len(cmd.path) == 2 && cmd.path[0] == "repo" && cmd.path[1] == "commit" && inv.confirmGiven {
+		inv.unknown = append(inv.unknown, "--confirm")
+	}
 	// ★ 同一条数据驱动收口（缺口账 `GAP-20260928-172` · 2026-10-10 · 甲案）：`--force-recompute`
 	//   在解析面刚上户口（`parseInvocation` 专用 case）⇒ **全族共用**；若不在此收口，别族（usage
 	//   未列它的命令）真给它会从「未知旗标 2」退化成**静默吞**（硬约束⑤：既有命令的退码与输出

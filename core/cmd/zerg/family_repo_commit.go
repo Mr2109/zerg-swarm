@@ -46,6 +46,15 @@ var gitForbiddenStaging = []string{"-A", "--all", "-a", ".", "./", ":/", "*"}
 //	`--only` 模式（新增）：**点名单路径** ⇒ **不 add**（`git commit --only -F <件> -- <路径…>`）⇒
 //	  索引面非空是**常态**（别人的暂存件**只许多不许少**）⇒ 被排除件**逐条打印** ⇒ 对拍 + 审计。
 func cmdRepoCommit(inv *invocation, stdout, stderr io.Writer) int {
+	// ★ 缺口 GAP-20260928-13：未知旗标必须**在读业务旗标之前**具名拒。
+	// 反例（改前实测）：`zerg repo commit --confirm=x` 里的 `--confirm` 是 `dev edit` 的旗标，
+	// 本命令不认识；解析层把它记进 inv.unknown，但这儿没人看 ⇒ 静默吞掉，
+	// 一路走到下面报「要一枚 --message」，把调用方引到完全无关的错处。
+	if len(inv.unknown) > 0 {
+		fmt.Fprintf(stderr, "%s: `repo commit` 不认识旗标 `%s`（未知旗标）—— 本命令的旗标见 `zerg repo commit --help`\n",
+			progName, inv.unknown[0])
+		return exitUsage
+	}
 	files := trimAll(inv.flagVals("--file"))
 	only := trimAll(inv.flagVals("--only"))
 	removed := trimAll(inv.flagVals("--removed"))
