@@ -132,6 +132,19 @@
    "waiver": ""
   },
   {
+   "path": "agent deploy",
+   "danger": "D3",
+   "opened": true,
+   "default_writes": "unprobed",
+   "writes_where": [],
+   "write_kind": "",
+   "gated_by": [],
+   "readonly_flag": "--dry-run",
+   "probe": "exempt",
+   "reason": "新增命令：默认档写不写盘**未探**（沙箱代表不了默认档 ⇒ 先按豁免登记，等一次人工现读补 reason 与 default_writes）",
+   "waiver": ""
+  },
+  {
    "path": "agent engines",
    "danger": "",
    "opened": false,

@@ -362,6 +362,11 @@ func wviProbeRun(bin, tmpRoot, seedState string, argv []string) (changed []strin
 		"HOME="+filepath.Join(sb, "home"),
 		"ZERG_STATE_DIR="+filepath.Join(sb, "state"),
 		"TMPDIR="+filepath.Join(sb, "tmp"),
+		// ★ GAP-20261018-19：探针里跑的多是 python 门脚本；解释器会往 $HOME/Library/Caches/
+		// com.apple.python 写 .pyc —— 那是**解释器的**写，不是被测命令的写，却在快照里被记成
+		// 「声明默认档零写盘、裸跑却写了 50 件」（gate self-test / sandbox negctl / sandbox verify
+		// 三条同源误报）。关掉字节码落盘，判据只看被测命令自己写了什么。
+		"PYTHONDONTWRITEBYTECODE=1",
 	)
 	cmd.Env = env
 	var out, errb strings.Builder
