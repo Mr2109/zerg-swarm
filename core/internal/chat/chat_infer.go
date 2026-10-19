@@ -667,6 +667,42 @@ func parseToolArgs(raw string) map[string]any {
 // 格式1（Hermes JSON——官方）: <tool_call>{"name": "X", "arguments": {"k": "v"}}</tool_call>
 // 格式2（多对象并行——模型坏格式）: <tool_call>{"function": "X", "arguments": {...}}, {"name": "Y", ...}</tool_call>——括号平衡逐个提取
 // 格式3（旧模板——纯 XML）: <tool_call><function=NAME><parameter=KEY>VALUE</parameter></function></tool_call>
+// toolArgs —— 工具调用参数的宽容解码（★ 缺口 GAP-20261019-07）。
+//
+// 标准形态是对象 `"arguments": {"command": "…"}`；但本地卵实测会发**已拼好的命令串**：
+//
+//	<tool_call>{"name": "zerg", "arguments": "zerg code find 'x' --path y"}</tool_call>
+//
+// 以前字段类型是 `map[string]any` ⇒ 解码直接失败 ⇒ 整轮判 bad_format、任务一步不走。
+// 现在三态：① 对象 ⇒ 原样；② 字符串且本身是 JSON 对象 ⇒ 解析成对象；
+// ③ 字符串但不是 JSON ⇒ 按单工具面的语义包成 `{"command": <串>}`。
+type toolArgs map[string]any
+
+func (a *toolArgs) UnmarshalJSON(b []byte) error {
+	b = bytes.TrimSpace(b)
+	if len(b) > 0 && b[0] == '"' {
+		var s string
+		if err := json.Unmarshal(b, &s); err != nil {
+			return err
+		}
+		if t := strings.TrimSpace(s); strings.HasPrefix(t, "{") {
+			var m map[string]any
+			if err := json.Unmarshal([]byte(t), &m); err == nil {
+				*a = m
+				return nil
+			}
+		}
+		*a = map[string]any{"command": s}
+		return nil
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		return err
+	}
+	*a = m
+	return nil
+}
+
 func parseXMLToolCalls(content string) []agent.ToolCall {
 	var out []agent.ToolCall
 	reCall := regexp.MustCompile(`(?s)<tool_call>(.*?)</tool_call>`)
@@ -674,9 +710,9 @@ func parseXMLToolCalls(content string) []agent.ToolCall {
 		inner := strings.TrimSpace(m[1])
 		// 格式1: 单个 Hermes JSON 对象
 		var obj struct {
-			Name      string         `json:"name"`
-			Function  string         `json:"function"`
-			Arguments map[string]any `json:"arguments"`
+			Name      string   `json:"name"`
+			Function  string   `json:"function"`
+			Arguments toolArgs `json:"arguments"`
 		}
 		if err := json.Unmarshal([]byte(inner), &obj); err == nil && (obj.Name != "" || obj.Function != "") {
 			name := obj.Name
@@ -685,7 +721,7 @@ func parseXMLToolCalls(content string) []agent.ToolCall {
 			}
 			// 空 arguments 不跳过——无参数工具合法（task_list/fleet_status）——参数有效性由执行层判断
 			rawArgs, _ := json.Marshal(obj.Arguments)
-			out = append(out, agent.ToolCall{Name: name, Args: obj.Arguments, RawArgs: string(rawArgs), RawCall: m[0]})
+			out = append(out, agent.ToolCall{Name: name, Args: map[string]any(obj.Arguments), RawArgs: string(rawArgs), RawCall: m[0]})
 			continue
 		}
 		// 格式2: 多对象（逗号分隔/数组——括号平衡逐个提取）
@@ -694,9 +730,9 @@ func parseXMLToolCalls(content string) []agent.ToolCall {
 			parsedAny := false
 			for _, rawObj := range objs {
 				var o2 struct {
-					Name      string         `json:"name"`
-					Function  string         `json:"function"`
-					Arguments map[string]any `json:"arguments"`
+					Name      string   `json:"name"`
+					Function  string   `json:"function"`
+					Arguments toolArgs `json:"arguments"`
 				}
 				if err := json.Unmarshal([]byte(rawObj), &o2); err != nil {
 					continue
@@ -709,7 +745,7 @@ func parseXMLToolCalls(content string) []agent.ToolCall {
 					continue
 				}
 				rawArgs, _ := json.Marshal(o2.Arguments)
-				out = append(out, agent.ToolCall{Name: name, Args: o2.Arguments, RawArgs: string(rawArgs), RawCall: m[0]})
+				out = append(out, agent.ToolCall{Name: name, Args: map[string]any(o2.Arguments), RawArgs: string(rawArgs), RawCall: m[0]})
 				parsedAny = true
 			}
 			if parsedAny {
