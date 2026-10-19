@@ -149,7 +149,17 @@ func yamlInlineField(rest, key string) string {
 		if j := strings.IndexAny(v, ",}"); j >= 0 {
 			v = v[:j]
 		}
-		return strings.TrimSpace(v)
+		v = strings.TrimSpace(v)
+		// ★ GAP-20261019-12：YAML 行内映射的**引号是语法、不是取值**。本函数是手搓按行解析
+		// （不走 YAML 库），此前把 `prefix: "/Volumes/…/bin"` 的引号原样带出 ⇒ `agent deploy Mr2109`
+		// 拼出 `open "/Volumes/…/bin"/zerg-agentd.new: no such file or directory`（旧件一字节未动）。
+		// ⇒ 成对引号一律剥掉（单/双引号各认一对；不成对 ⇒ 原样，✗ 不猜）。
+		if len(v) >= 2 {
+			if (v[0] == '"' && v[len(v)-1] == '"') || (v[0] == '\'' && v[len(v)-1] == '\'') {
+				v = v[1 : len(v)-1]
+			}
+		}
+		return v
 	}
 }
 
