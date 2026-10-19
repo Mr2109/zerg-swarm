@@ -962,6 +962,23 @@ func codeShowResolveOne(inv *invocation, stderr io.Writer, root, target string, 
 		return nil, "", exitUsage
 	}
 	rel, spec := target[:colon], target[colon+1:]
+	// ★ 缺口 GAP-20261019-08（2026-10-19）：`件:起:止`（**双冒号**）必须具名纠形。
+	// 改前：LastIndex 取最后一个冒号 ⇒ `:起` 被留在件名里 ⇒ 报「件不在」——**错归因**，
+	// 调用方会去怀疑件名而不是写法。实测本地卵在同一个死循环里连烧三轮预算。
+	// 现在：认出「两个数字段」这种双冒号形态 ⇒ 退码 2 ＋ **给出可照抄的正确命令**。
+	if strings.Count(target, ":") >= 2 {
+		if i := strings.LastIndex(target[:colon], ":"); i > 0 {
+			a, b := target[i+1:colon], spec
+			if _, e1 := strconv.Atoi(a); e1 == nil {
+				if _, e2 := strconv.Atoi(b); e2 == nil {
+					inv.setErr("usage", "bad_target_range_form", "区间形态应为 件:起-止")
+					fmt.Fprintf(stderr, "%s: 区间形态是 `件:起-止`（连字符），你给的是 `件:起:止` ⇒ 照抄这条：\n"+
+						"  zerg code show %s:%s-%s\n", progName, target[:i], a, b)
+					return nil, "", exitUsage
+				}
+			}
+		}
+	}
 	// ★ **区间档**（缺口 `GAP-20260928-53` 的 ① · 2026-09-28）：`件:起-止` 一发读出起止之间的**每一行**
 	// （在册那条缺口的实测例逐字就是 `（:53-65 / :67-71）` 这一形态 —— 核一件的分区结构过去只能逐段读、
 	// 或退回 read_file）。

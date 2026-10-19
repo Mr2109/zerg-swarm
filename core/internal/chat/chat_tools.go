@@ -22,7 +22,12 @@ import (
 // （code find / code show / dev proposal new / dev edit 各占一轮），一条标准修复链要 7-8 轮 ⇒
 // 10 轮装不下「看清问题 → 立提案 → 落补丁 → 跑验证」。运维可用 `ZERG_MAX_ROUNDS=<正整数>`
 // 调整本机预算（解析点：loopcore.ResolveRoundBudget；不设 ⇒ 与改前逐字同）。
-const MaxToolRounds = 10
+//
+// ★ 2026-10-19（Mr2109 拍板）：默认 10 → 20。理由是实测数据 —— 本地卵做门73 面④ 时，
+// 10 轮里被「区间写法」死循环吃掉 3 轮、提案与落件各占 1 轮，到验证那步正好撞墙，
+// 交出「已完成的步 > 0」的降级结果（一个字没改）。上下文那头是 1M、根本没成为瓶颈，
+// 轮次才是真瓶颈 ⇒ 抬到 20，让一条标准链能跑完还有余量。
+const MaxToolRounds = 20
 
 // ChatToolsWorkDir — 对话工具工作目录（唯一常量——2026-09-05 统一: 非流式 /tmp/zerg-chat/tools
 // 与流式项目根曾分叉致路径行为不一致——两条循环路径共用此值）
