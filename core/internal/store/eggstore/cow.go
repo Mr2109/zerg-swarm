@@ -162,8 +162,8 @@ func (r CowResult) Line() string {
 //  2. clone 档失败时**分流**：`isFallbackErr` ⇒ 删掉半成品目标、退下一档；
 //     其余 errno ⇒ **上抛**（✗ 不许静默当拷贝）；
 //  3. 末档 `io.Copy` 仍是「先落临时名再换名」之外的**真拷贝**，失败即删目标（✗ 不留半件）。
-func CloneWholeFile(dst, src string, opt CowOptions) (CowResult, error) {
-	res := CowResult{Src: src, Dst: dst, Whole: true}
+func CloneWholeFile(dst, src string, opt CowOptions) (res CowResult, err error) {
+	res = CowResult{Src: src, Dst: dst, Whole: true}
 	now := opt.Now
 	if now == nil {
 		now = time.Now
@@ -234,8 +234,8 @@ func CloneWholeFile(dst, src string, opt CowOptions) (CowResult, error) {
 //   - **Linux**：`FICLONERANGE`（XFS/Btrfs）⇒ 与卵**共享块**、零字节拷贝；
 //   - **macOS**：`clonefile(2)` **一律整文件**、**无段级 reflink** ⇒ 段范围取用
 //     **必然落到 `io.Copy` 真拷贝**（同量级**秒**，**✗ 不是毫秒**）。
-func CloneSegment(dst, src string, r ByteRange, opt CowOptions) (CowResult, error) {
-	res := CowResult{Src: src, Dst: dst, Whole: false, Range: &r}
+func CloneSegment(dst, src string, r ByteRange, opt CowOptions) (res CowResult, err error) {
+	res = CowResult{Src: src, Dst: dst, Whole: false, Range: &r}
 	now := opt.Now
 	if now == nil {
 		now = time.Now
