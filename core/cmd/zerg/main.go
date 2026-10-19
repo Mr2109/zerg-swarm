@@ -2296,7 +2296,7 @@ func init() {
 			opened:  true,
 			kind:    "ResourcePin",
 			summary: "钉住资源（D2 写面 · --dry-run 零副作用 · 缺 --yes ⇒ 2）",
-			usage:   "zerg resource pin <资源 id> [--dry-run | --yes]",
+			usage:   "zerg resource pin <资源 id> --ttl <时长> [--dry-run | --yes]",
 			arity:   "any",
 			args:    []string{"资源 id"},
 			run:     cmdHazardWrite,

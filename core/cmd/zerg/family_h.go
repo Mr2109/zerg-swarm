@@ -375,7 +375,38 @@ func cmdHazardWrite(inv *invocation, stdout, stderr io.Writer) int {
 		target = inv.args[0]
 	}
 	body := map[string]any{}
-	if target != "" {
+	if (name == "resource pin" || name == "resource unpin") && target != "" {
+		// ★ GAP-20261019-06：主控的 /api/resources/{pin,unpin} 要 `host` ＋ `model` 两格
+		// （resources_pin.go 缺任一 ⇒ 400 MISSING_HOST / MISSING_MODEL），而命令面一直只发
+		// `{"id":"<模型>@<机>"}` ⇒ 这两条命令**写好就 100% 失败**。这里按 `@` 拆开再发；
+		// 不带 `@` 或机名为空 ⇒ 具名用法错（✗ 不猜 host）。
+		i := strings.LastIndex(target, "@")
+		if i <= 0 || i == len(target)-1 {
+			fmt.Fprintf(stderr, "%s: `%s` 要 `<模型>@<机>`（例：`Qwen3.8-Flash-Next@edge-node`）—— 你给的是 %q\n",
+				progName, name, target)
+			return exitUsage
+		}
+		body["model"] = target[:i]
+		body["host"] = target[i+1:]
+		// ★ GAP-20261019-06（第二处）：pin 必须带正 TTL —— 主控按拍板 Q5 硬拒无 TTL 的 pin
+		// （PIN_TTL_REQUIRED：无 TTL 的 pin 等同内存泄漏）。命令面此前既不列 `--ttl` 也不发
+		// `ttl_s` ⇒ `resource pin` 同样 100% 失败。这里读 `--ttl <时长>`（parseWallclock：
+		// `30m` / `1800` 两种写法都认）折成秒发出去；缺了 ⇒ 具名用法错，✗ 不替调用方猜默认值。
+		if name == "resource pin" {
+			// ★ `--ttl` 走**专用字段**（`inv.ttl` / `ttlGiven`），不在 kv 表里 —— 与 `--confirm`
+			// 同一种形态（见 main.go 的 invocation 注释）。用 flagVal 取会永远拿到空串。
+			if !inv.ttlGiven || strings.TrimSpace(inv.ttl) == "" {
+				fmt.Fprintf(stderr, "%s: `resource pin` 要 `--ttl <时长>`（例：`--ttl 30m` / `--ttl 1800`）\n", progName)
+				return exitUsage
+			}
+			d, err := parseWallclock(inv.ttl)
+			if err != nil {
+				fmt.Fprintf(stderr, "%s: `resource pin` 的 `--ttl` 读不出来：%v\n", progName, err)
+				return exitUsage
+			}
+			body["ttl_s"] = int(d.Seconds())
+		}
+	} else if target != "" {
 		body["id"] = target
 	}
 	if name == "gateway breakers" {
