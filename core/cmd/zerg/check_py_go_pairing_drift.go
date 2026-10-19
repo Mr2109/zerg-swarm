@@ -41,8 +41,8 @@ const (
 	pgpdProg = "check-py-go-pairing-drift.py"
 
 	pgpdInprocRel   = "core/cmd/zerg/gate_inproc_table.go"
-	pgpdGatesRel    = "scripts/gates"
-	pgpdRegistryRel = "scripts/gates/judge-registry.json"
+	pgpdGatesRel    = pathScriptsGates
+	pgpdRegistryRel = pathJudgeRegistry
 	pgpdRatchetRel  = "scripts/gates/py-go-pairing-drift.ratchet.json"
 
 	pgpdSchema       = "zerg/py-go-pairing-drift/v1"

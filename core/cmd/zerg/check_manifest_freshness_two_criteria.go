@@ -84,7 +84,7 @@ const (
 	cmfSynthSrcSHA  = "0000000000000000000000000000000000000000"
 	cmfSynthGenAt   = "2026-09-23T00:00:00Z"
 	cmfSynthMaxAge  = 720.0
-	cmfTruthRelPath = "scripts/gates/check-manifest-freshness.py"
+	cmfTruthRelPath = pathFreshnessPy
 	cmfSelfRelPath  = "scripts/gates/check-manifest-freshness-two-criteria.py"
 	// cmfRootMarkerRel —— 仓根上溯的**退役稳态**标记（B轨 · 2026-10-07 · 退件阻塞批次）。
 	// 原实现只认自指 py（`cmfSelfRelPath`）当仓根标记；该件退役（不在盘）后上溯落空、退回 cwd

@@ -112,7 +112,7 @@ import (
 
 const crrfProg = "check-replace-rule-fixtures.py"
 const crrfRulesRel = "publish/replace-rules.tsv"
-const crrfWhitelistRel = "publish/whitelist.txt"
+const crrfWhitelistRel = pathPublishWhitelist
 const crrfIsoPrefix = "!夹具"
 
 // crrfExemptMark —— 正向豁免标记（拍板落定-20261006 B2 · 开工单 A-09）：规则说明栏（第 3 格）

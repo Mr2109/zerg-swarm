@@ -99,7 +99,7 @@ const (
 	vrSubject          = "gate-face"
 	vrGateTableRel     = zergPrecommitGatesRel
 	vrRecordName       = "verdict_records.jsonl"
-	vrJudgeDirRel      = "scripts/gates"
+	vrJudgeDirRel      = pathScriptsGates
 	vrFixtureExemptMax = 4
 	vrProgName         = "check-verdict-record.py"
 	vrMeBase           = "check-verdict-record.py"

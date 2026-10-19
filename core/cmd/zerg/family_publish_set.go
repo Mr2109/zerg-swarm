@@ -274,8 +274,8 @@ func (c *publishChain) privateFaceHit(rel string) string {
 // ★ 本批把**私有面清单**（`publish/private-paths.txt`）也接进这条纪律：它解析不出 ⇒ 层 ⑦ 判不了
 // ⇒ 与上面同一条（一条都不出，而不是「当没命中」—— 「当没命中」正是私有面件直出公开面的那个病）。
 func publishSetLoadChain(root string) (*publishChain, string) {
-	wlRel := "publish/whitelist.txt"
-	shRel := "publish/excludes.txt"
+	wlRel := pathPublishWhitelist
+	shRel := pathPublishExcludes
 	libRel := pathMirrorLibPy
 	pfRel := "publish/private-paths.txt"
 

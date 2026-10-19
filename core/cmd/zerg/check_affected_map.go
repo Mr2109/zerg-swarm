@@ -144,10 +144,10 @@ const afmHelp = afmUsageHead + "\n" +
 const afmUsageLine = "用法：check-affected-map.py (--emit | --check [--map <件>] | --self-test)\n"
 
 const (
-	afmGates       = "scripts/gates"
+	afmGates       = pathScriptsGates
 	afmMapDefault  = afmGates + "/affected-map.json"
 	afmSrcStepTbl  = zergPrecommitGatesRel
-	afmSrcCoverage = "scripts/gates/gate-coverage.config.json"
+	afmSrcCoverage = pathGateCoverageCfg
 	afmSrcNewcmd   = "scripts/gates/newcmd-paths-baseline.json"
 )
 

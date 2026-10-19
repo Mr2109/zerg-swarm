@@ -59,7 +59,7 @@ const (
 	// cdtrGateName —— 判据名（`zerg gate check <名>` 的入口键 · 与 inproc 分发表同字）。
 	cdtrGateName = "check-contract-describes-truth"
 	// cdtrRegistryRel —— 契约登记表（本门的**唯一输入**）。
-	cdtrRegistryRel = "core/internal/contract/registry.json"
+	cdtrRegistryRel = pathContractRegistry
 	// cdtrSelfRel —— 本件（自指说明用）。
 	cdtrSelfRel = "core/cmd/zerg/check_contract_describes_truth.go"
 )

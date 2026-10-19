@@ -156,7 +156,7 @@ import (
 const clrlVersion = "1.0.0"
 
 // ── py 常量逐字 ──────────────────────────────────────────────────────────────────────
-const clrlScanDirRel = "scripts/gates" // py os.path.join("scripts", "gates")
+const clrlScanDirRel = pathScriptsGates // py os.path.join("scripts", "gates")
 
 var clrlScanExts = []string{".md", ".py", ".sh"} // py SCAN_EXTS
 

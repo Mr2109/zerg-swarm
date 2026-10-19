@@ -87,7 +87,7 @@ import (
 
 const (
 	mfpSelfRel  = "scripts/gates/check-manifest-freshness-profile.py"
-	mfpNeiRel   = "scripts/gates/check-manifest-freshness.py"
+	mfpNeiRel   = pathFreshnessPy
 	mfpSelfBase = "check-manifest-freshness-profile.py"
 )
 

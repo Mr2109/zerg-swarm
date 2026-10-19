@@ -37,7 +37,7 @@ const (
 	// cuplsKRef —— REF 键名（只在自检与报话里用；生产判定经 cuplsKeyRef）。
 	cuplsKRef = "ZERG_UPDATE_REF="
 	// cuplsRootAnchor —— 仓根锚（稳定件）。
-	cuplsRootAnchor = "core/internal/version/version.go"
+	cuplsRootAnchor = pathVersionGo
 )
 
 // cuplsKeyAnchor —— 本机步锚串。★ 用 `var`（✗ 不 const）以便测试件哑化留牙。

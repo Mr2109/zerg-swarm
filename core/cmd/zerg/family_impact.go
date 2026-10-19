@@ -88,7 +88,7 @@ const (
 var impactContractIDRe = regexp.MustCompile(`^[A-Za-z]-[a-z0-9]+$`)
 
 // impactRegistryRel —— 契约登记表（§二 第 ③ 层那条真源 · **只读**；本件不另抄一份 id 清单）。
-const impactRegistryRel = "core/internal/contract/registry.json"
+const impactRegistryRel = pathContractRegistry
 
 // impactTarget —— 解析出来的目标（`Raw` 是用户给的原样串，`Rel`/`ID` 按态各有一个）。
 type impactTarget struct {

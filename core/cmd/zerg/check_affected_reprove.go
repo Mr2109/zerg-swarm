@@ -69,7 +69,7 @@ import (
 )
 
 const (
-	carvGatesDirRel  = "scripts/gates"
+	carvGatesDirRel  = pathScriptsGates
 	carvPrecommitRel = zergPrecommitGatesRel
 	carvSelfRel      = "scripts/gates/check-affected-reprove.py"
 	carvSelfBase     = "check-affected-reprove.py"

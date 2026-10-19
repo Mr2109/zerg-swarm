@@ -498,7 +498,7 @@ func scriptRetireAppendToArray(text, key, elemRendered string) (string, error) {
 // `retire`（改登记 · 本处）→ 物理删件 → `gate check check-lang-freeze --emit`（重生成快照）。
 const (
 	// scriptRetireExcludesRel —— 行式排除表真源（B8 单一真源；唯一 Go 解析件 = `excludes_rules.go`）。
-	scriptRetireExcludesRel = "publish/excludes.txt"
+	scriptRetireExcludesRel = pathPublishExcludes
 	// scriptRetireLFKey / scriptRetireLFField —— 语言冻结快照（`clfSnapshotRel`）的数组键与对象字段。
 	scriptRetireLFKey   = "entries"
 	scriptRetireLFField = "path"

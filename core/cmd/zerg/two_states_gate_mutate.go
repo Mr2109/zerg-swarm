@@ -104,7 +104,7 @@ const tsmMutDriverRel = "scripts/gates/two-states-gate-mutate.py"
 // `zerg` 二进制、经 `gate check` 重入 ⇒ CLI 侧要解析仓根（锚 `core/internal/version/version.go`，见 root.go）
 // 且 `gate check` 要门禁最小入口（`scripts/gates/precommit-gates.sh` 自举件、缺即 rc=2）。两件只落**仓外
 // 夹具树**（`$TMPDIR`），真仓一字不动。
-const tsmFixVersionRel = "core/internal/version/version.go"
+const tsmFixVersionRel = pathVersionGo
 const tsmFixGateScriptRel = pathPrecommitGates
 const tsmFixVersionSrc = "package version\n"
 const tsmFixGateScriptSrc = "#!/bin/sh\nexit 0\n"

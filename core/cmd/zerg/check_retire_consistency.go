@@ -685,7 +685,7 @@ func crcSelfTest(stdout io.Writer) int {
 	_ = os.WriteFile(filepath.Join(base, filepath.FromSlash("publish/mirror-public-lib.py")),
 		[]byte("DROP_EXACT = {\n    \"scripts/x/GONE.py\",\n}\nDROP_PREFIX = (\n    \"scripts/x/\",\n)\n"), 0o644)
 	// ★ 九面夹具（切源 2026-10-08）：行式排除表真源（`publish/excludes.txt`）。
-	exclRel := "publish/excludes.txt"
+	exclRel := pathPublishExcludes
 	_ = os.WriteFile(filepath.Join(base, filepath.FromSlash(exclRel)),
 		[]byte("# c\nscripts/x/LIVE.py\n"), 0o644)
 	for rel, body := range map[string]string{

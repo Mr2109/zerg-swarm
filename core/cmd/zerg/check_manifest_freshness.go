@@ -72,7 +72,7 @@ const (
 var mfJSONFields = []string{}
 
 // mfSelfRel —— 由 cwd 上溯定位仓根用的标记（同族 py 的仓内相对路径）。
-const mfSelfRel = "scripts/gates/check-manifest-freshness.py"
+const mfSelfRel = pathFreshnessPy
 
 // mfRootMarkerRel —— 仓根上溯的**退役稳态**标记（B轨 · 2026-10-07 · 退件阻塞批次）。
 // 原实现只认自指 py（mfSelfRel）当仓根标记；该件退役（不在盘）后上溯落空 ⇒ 从非仓根 cwd

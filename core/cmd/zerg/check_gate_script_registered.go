@@ -82,8 +82,8 @@ import (
 
 // ── 常量（照 py 同名量逐字）────────────────────────────────────────────────
 const (
-	gsrGatesDir  = "scripts/gates" // py GATES_DIR = os.path.join("scripts","gates")
-	gsrMarksRel  = pathMarksTable  // py MARKS_REL = os.path.join("scripts","公开标记.tsv")
+	gsrGatesDir  = pathScriptsGates // py GATES_DIR = os.path.join("scripts","gates")
+	gsrMarksRel  = pathMarksTable   // py MARKS_REL = os.path.join("scripts","公开标记.tsv")
 	gsrProg      = "check-gate-script-registered.py"
 	gsrKindLbl   = "GateScriptRegistered"
 	gsrSchemaTag = "zerg/v1"

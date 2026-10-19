@@ -238,7 +238,7 @@ func csfJSONAny(v any) string {
 
 // ── ① judge-registry.json（纯 IO · 原生）─────────────────────────────────
 func csfProbeJudgeRegistry(root string) *csfFace {
-	rel := "scripts/gates/judge-registry.json"
+	rel := pathJudgeRegistry
 	f := csfNewFace(rel, "每件 sha256 缓存键（cache_key = sha256|tool_version）＋ count", csfRefresh["judge-registry"])
 	p := filepath.Join(root, filepath.FromSlash(rel))
 	raw, err := os.ReadFile(p)

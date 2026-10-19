@@ -94,8 +94,8 @@ import (
 // （`GAP-20260926-223` 账[3]）：排除面由旧 `scripts/build/publish-public.sh` 的 `EXCLUDES=( … )`
 // 改指行式新表 `publish/excludes.txt`。
 const (
-	crsWhitelistRel = "publish/whitelist.txt"
-	crsExcludesRel  = "publish/excludes.txt"
+	crsWhitelistRel = pathPublishWhitelist
+	crsExcludesRel  = pathPublishExcludes
 )
 
 // crsClaimHead —— 说明块起始句（现读逐字；找不到 ⇒ rc=2）。

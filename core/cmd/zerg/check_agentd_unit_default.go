@@ -39,7 +39,7 @@ const (
 	// caudRelDefault —— 缺省被判件（仓内相对）。
 	caudRelDefault = "scripts/svc/setup-zerg.sh"
 	// caudRootAnchor —— 仓根锚（稳定件）。
-	caudRootAnchor = "core/internal/version/version.go"
+	caudRootAnchor = pathVersionGo
 
 	// 断言用字面（逐字照 sh 的常量段 · 含 `${…}` 一律原样）。
 	caudKUnit        = "AGENTD_UNIT="

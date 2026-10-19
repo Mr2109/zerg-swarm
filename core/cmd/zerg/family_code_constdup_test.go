@@ -114,6 +114,15 @@ func TestCodeConstDupStandard(t *testing.T) {
 		"core/cmd/zerg",
 		"publish/mirror-public-lib.py",
 		"scripts/gates/precommit-gates.sh",
+		// 第二批（2026-10-20）
+		"scripts/gates",
+		"core/internal/version/version.go",
+		"scripts/gates/gate-coverage.config.json",
+		"publish/excludes.txt",
+		"scripts/gates/judge-registry.json",
+		"scripts/gates/check-manifest-freshness.py",
+		"publish/whitelist.txt",
+		"core/internal/contract/registry.json",
 	}
 	for _, v := range canonicalized {
 		for _, ln := range strings.Split(out, "\n") {

@@ -129,7 +129,7 @@ const (
 	gnrSelfRel     = "scripts/gates/check-newfile-registry.py"
 	gnrMarksRel    = pathMarksTable
 	gnrStepsRel    = zergPrecommitGatesRel
-	gnrCovRel      = "scripts/gates/gate-coverage.config.json"
+	gnrCovRel      = pathGateCoverageCfg
 	gnrCovJudgeRel = "scripts/gates/check-gate-coverage.py"
 	// ★ 面⑥「失败文案面」的判据件：门① `check-gate-coverage` 的 py 真身 **已于 2026-10-08 退役尾批
 	//   退场**（`1c6e461e` · py 既不在盘、也不在 HEAD）。⇒ py 缺席时**改由 Go 半承载**（面⑥ 读它的
@@ -140,11 +140,11 @@ const (
 	//   `scripts/` 下 ⇒ 挪到 `core/` 会让分母 6→5 而挂红）。★ 切源 2026-10-08：排除表真源移出
 	//   `scripts/build/`（`gnrScanLedgerFace` 只扫 `scripts/`）⇒ 分母 7→6，本行与测试件同批随动。
 	gnrCovJudgeGoRel = "core/cmd/zerg/check_gate_coverage.go"
-	gnrExcludesRel   = "publish/excludes.txt"
+	gnrExcludesRel   = pathPublishExcludes
 	gnrMirrorRel     = pathMirrorLibPy
 	// 面⑨ 真源：`.sh` 门面冻结清册在 real-gates.sh 里（与门65 真跑档那一面同源）
 	gnrShGatesRel = "scripts/gates/real-gates.sh"
-	gnrShGatesDir = "scripts/gates"
+	gnrShGatesDir = pathScriptsGates
 	gnrLedgerSib  = "Zerg-内部文档"
 	gnrStepMark   = "干跑"
 	gnrAddStep    = "add_step"

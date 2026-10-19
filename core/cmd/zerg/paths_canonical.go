@@ -22,4 +22,14 @@ const (
 	pathMirrorLibPy = "publish/mirror-public-lib.py"
 	// 提交门禁脚本（门表/封存/双态/MCP 多处引用）
 	pathPrecommitGates = "scripts/gates/precommit-gates.sh"
+
+	// 第二批（2026-10-20）：门脚本目录与几份登记件/清单件
+	pathScriptsGates     = "scripts/gates"
+	pathVersionGo        = "core/internal/version/version.go"
+	pathGateCoverageCfg  = "scripts/gates/gate-coverage.config.json"
+	pathPublishExcludes  = "publish/excludes.txt"
+	pathJudgeRegistry    = "scripts/gates/judge-registry.json"
+	pathFreshnessPy      = "scripts/gates/check-manifest-freshness.py"
+	pathPublishWhitelist = "publish/whitelist.txt"
+	pathContractRegistry = "core/internal/contract/registry.json"
 )

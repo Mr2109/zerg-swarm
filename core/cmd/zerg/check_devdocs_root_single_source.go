@@ -57,10 +57,10 @@ const (
 	cdrssRCfail  = 1
 	cdrssRCblock = 2
 
-	cdrssScanDirRel = pathCmdZergDir                     // 判据件目录（扫描面）
-	cdrssVersionRel = "core/internal/version/version.go" // 版号真源（单一来源）
-	cdrssDocSeg     = "项目文档"                             // 开发文档树段（真源版号目录的上一级）
-	cdrssDocsTree   = "Zerg-" + "docs"                   // 同级文档仓名（形态 C 用 · 由部件拼出 ⇒ 本件源码不出现连续字面）
+	cdrssScanDirRel = pathCmdZergDir   // 判据件目录（扫描面）
+	cdrssVersionRel = pathVersionGo    // 版号真源（单一来源）
+	cdrssDocSeg     = "项目文档"           // 开发文档树段（真源版号目录的上一级）
+	cdrssDocsTree   = "Zerg-" + "docs" // 同级文档仓名（形态 C 用 · 由部件拼出 ⇒ 本件源码不出现连续字面）
 )
 
 // cdrssGoVerConstRe —— 真源解析：`const Version = "2.5.14"` ⇒ 捕获 `2.5.14`。

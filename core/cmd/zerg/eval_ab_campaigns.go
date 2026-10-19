@@ -74,7 +74,7 @@ const (
 	// eabcDefaultRuns —— py `RUNS = int(os.environ.get("ZERG_AB_RUNS", "3"))` 的缺省串（逐字）。
 	eabcDefaultRuns = "3"
 	// eabcTargetRel —— py `TARGET`（无害靶子 · 只读件 · 仓内相对路径 · 仅作任务文案里的字面）。
-	eabcTargetRel = "core/internal/version/version.go"
+	eabcTargetRel = pathVersionGo
 	// eabcDefaultModel —— py `run_once(..., model="Qwen3.8-27B")` 的缺省（逐字）。
 	eabcDefaultModel = "Qwen3.8-27B"
 	// eabcPostTimeout / eabcGetTimeout —— py `post(timeout=1200)` / `get(timeout=60)`（逐字）。

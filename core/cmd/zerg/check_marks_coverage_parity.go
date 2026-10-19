@@ -49,10 +49,10 @@ import (
 
 const (
 	mkcpTableRel     = pathMarksTable
-	mkcpConfigRel    = "scripts/gates/gate-coverage.config.json"
-	mkcpExcludesRel  = "publish/excludes.txt"
+	mkcpConfigRel    = pathGateCoverageCfg
+	mkcpExcludesRel  = pathPublishExcludes
 	mkcpMirrorLibRel = pathMirrorLibPy
-	mkcpWhitelistRel = "publish/whitelist.txt"
+	mkcpWhitelistRel = pathPublishWhitelist
 	mkcpTop          = "" // 顶层 glob（`scripts/*.sh`）的「域」标记：顶层（无第二段）
 )
 

@@ -87,7 +87,7 @@ import (
 
 // ── 常量（照 py 同名量逐字）────────────────────────────────────────────────
 const (
-	rkuScanDirGates    = "scripts/gates"          // py SCAN_DIRS[0]
+	rkuScanDirGates    = pathScriptsGates         // py SCAN_DIRS[0]
 	rkuScanDirContract = "core/internal/contract" // py SCAN_DIRS[1]
 	rkuProg            = "check-registry-key-unique.py"
 	rkuHelpDesc        = "统一「登记键唯一性」只读门（GAP-20260926-175）" // py argparse description（含「只读」）

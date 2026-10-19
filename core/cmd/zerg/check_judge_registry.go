@@ -91,7 +91,7 @@ const (
 	jrSchema           = "judge-registry/1"
 	jrDecisionsSchema  = "judge-adoption/1"
 	jrRosterDir        = "scripts"
-	jrRegistryDefault  = "scripts/gates/judge-registry.json"
+	jrRegistryDefault  = pathJudgeRegistry
 	jrDecisionsDefault = "scripts/gates/judge-adoption.json"
 	jrGeneratedBy      = "zerg gate check check-judge-registry --emit"
 )

@@ -44,8 +44,8 @@ import (
 )
 
 const (
-	cvdRegistryRel = "core/internal/contract/registry.json"
-	cvdRootAnchor  = "core/internal/version/version.go"
+	cvdRegistryRel = pathContractRegistry
+	cvdRootAnchor  = pathVersionGo
 )
 
 var (
