@@ -165,11 +165,12 @@ var cdmExclDirs = []string{"node_modules", "target", "__pycache__", ".history", 
 // cdmExclPrefix —— py `EXCL_PREFIX`。
 var cdmExclPrefix = []string{".git/", "vendor/", "tools/ocr/venv/"}
 
-// cdmFrozenPrefix —— py `FROZEN_PREFIX`（仓内冻结区前缀）。
-var cdmFrozenPrefix = []string{"docs/项目文档/"}
+// cdmFrozenPrefix —— 仓内冻结区前缀。★ 真源在 `doc_zone_source.go`（GAP-20260926-35）：
+// 本门不再自带一份，否则会与 check-doc-name 各判一头（同一件两门结论相反）。
+var cdmFrozenPrefix = docFrozenRepoPrefix
 
-// cdmFrozenPrefixAlt —— py `FROZEN_PREFIX_ALT`（批3 后的仓外取源根 · 含 `..` 段）。
-var cdmFrozenPrefixAlt = []string{"../Zerg-内部文档/项目文档/"}
+// cdmFrozenPrefixAlt —— 仓外（Zerg-内部文档）侧冻结区前缀 · 含 `..` 段。★ 同源。
+var cdmFrozenPrefixAlt = docFrozenAltPrefix
 
 // cdmFormalItem —— py `FORMAL_PREFIX` 的一项（in = 仓内前缀 · alt = 仓外候选，空串 ⇒ None）。
 type cdmFormalItem struct {

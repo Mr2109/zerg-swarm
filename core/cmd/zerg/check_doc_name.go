@@ -1109,9 +1109,16 @@ func cdnPrintReport(w io.Writer, rep *cdnReport, maxExamples int) {
 	fmt.Fprintf(w, "扫描域：%d 个文件/目录（排除名单同《清单》§0）\n", rep.entries)
 	fmt.Fprintf(w, "  不合规 %d（冻结区 %d）· 告警 %d（冻结区 %d）\n",
 		rep.live["FAIL"], rep.frozen["FAIL"], rep.live["WARN"], rep.frozen["WARN"])
-	fmt.Fprintln(w, "  ★ 仓内冻结区：无 —— `docs/项目文档/` 已于 2026-09-26「批3」分家至仓外 "+
-		"`Zerg-内部文档/项目文档/`（仓内零命中 ⇒ 条目已删，处置同 2026-09-19 的 `docs/issues/`）"+
-		"⇒ 冻结计数恒 0/0（`--count-frozen` 机制保留）")
+	// ★ GAP-20260926-35：冻结区口径**只认真源** doc_zone_source.go，本门不再自己写死一句「无」——
+	//   否则真源日后加回一项，这里仍打印「无」，又是一门说冻结、一门说可改。
+	if len(docFrozenRepoPrefix) == 0 {
+		fmt.Fprintln(w, "  ★ 仓内冻结区：无 —— `docs/项目文档/` 已于 2026-09-26「批3」分家至仓外 "+
+			"`Zerg-内部文档/项目文档/`（仓内零命中 ⇒ 条目已删，处置同 2026-09-19 的 `docs/issues/`）"+
+			"⇒ 冻结计数恒 0/0（`--count-frozen` 机制保留）")
+	} else {
+		fmt.Fprintf(w, "  ★ 仓内冻结区：%s（真源 doc_zone_source.go）\n",
+			strings.Join(docFrozenRepoPrefix, " · "))
+	}
 	for _, r := range cdnRules {
 		n := rep.perRule[r.rid]
 		if n == 0 {
