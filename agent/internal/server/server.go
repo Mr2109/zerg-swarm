@@ -278,7 +278,15 @@ func (s *Server) handleInfer(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("X-Zerg-Served-Pinned", si.PinnedHeaderValue())
 		}
 		// 写响应头
+		// ★ GAP-20261019-09：**逐跳头（hop-by-hop）不许透传**。上游引擎回的
+		// `Transfer-Encoding: chunked` 一旦被 Add 进来，下面再 Set `Content-Length`
+		// ⇒ Go 每次请求都打「WriteHeader called with both Transfer-Encoding … and a
+		// Content-Length …」，且这类响应在网关/代理一侧可被截断（历史上 3902/4082
+		// 的截断正是这一族）。⇒ 白名单式跳过，其余照旧整表带。
 		for k, vals := range res.headers {
+			if isHopByHopHeader(k) {
+				continue
+			}
 			for _, v := range vals {
 				w.Header().Add(k, v)
 			}
