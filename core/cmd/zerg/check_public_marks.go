@@ -43,7 +43,7 @@ import (
 )
 
 const (
-	cpmTableRel  = "scripts/公开标记.tsv"
+	cpmTableRel  = pathMarksTable
 	cpmTop       = "顶层"
 	cpmProg      = "check-public-marks.py"
 	cpmTableCols = "文件\tpublic\t理由"

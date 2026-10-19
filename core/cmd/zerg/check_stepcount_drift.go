@@ -365,7 +365,7 @@ func scdArgErr(stderr io.Writer, msg string) int {
 
 // stepcountDriftGateMain —— 入口（= py `main()`）。
 func stepcountDriftGateMain(stdout, stderr io.Writer, argv []string) int {
-	scriptVal := "scripts/gates/precommit-gates.sh"
+	scriptVal := pathPrecommitGates
 	scriptSet := false
 	jsonOut := false
 	selfTest := false

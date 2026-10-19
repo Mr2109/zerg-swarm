@@ -63,7 +63,7 @@ import (
 const pgsProg = "preview-gate-steps.py"
 
 // pgsDefaultTarget —— py 第 58 行 `DEFAULT_TARGET`。
-const pgsDefaultTarget = "scripts/gates/precommit-gates.sh"
+const pgsDefaultTarget = pathPrecommitGates
 
 // pgsDefaultListCmd —— py 第 59 行 `DEFAULT_LIST_CMD`。
 var pgsDefaultListCmd = []string{"bash", "scripts/gates/precommit-gates.sh", "--list"}

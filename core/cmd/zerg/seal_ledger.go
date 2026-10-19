@@ -53,7 +53,7 @@ const (
 	// ★ 本处 ✗ 不再另写一份同值字面量（「同值异名常量并存」已并 · GAP-20261001-65）。
 	slgLedgerRel = sealLedgerDefaultRel
 	// slgGateScriptRel —— 门件（步表真源）。
-	slgGateScriptRel = "scripts/gates/precommit-gates.sh"
+	slgGateScriptRel = pathPrecommitGates
 	// slgBaselineName —— 档位链真源（仅打印其仓内相对路径）。
 	slgBaselineName = "wallclock-baseline.json"
 	// slgChainSeed —— 链式摘要种子（逐字照 py `CHAIN_SEED`）。

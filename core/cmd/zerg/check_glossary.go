@@ -104,7 +104,7 @@ import (
 	"unicode/utf8"
 )
 
-const chglMainRel = "core/cmd/zerg/main.go"
+const chglMainRel = pathCmdMainGo
 const chglGlossaryRel = "docs/术语表.tsv"
 
 const chglRCBlocked = 2

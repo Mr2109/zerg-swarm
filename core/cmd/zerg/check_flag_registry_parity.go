@@ -112,8 +112,8 @@ import (
 // ── 常量（与 py 逐条对齐 · 名字前缀 `frp` 防包内同名）──────────────────────────────
 const (
 	frpVersion = "1.2.0"
-	frpPKGRel  = "core/cmd/zerg"
-	frpMainRel = "core/cmd/zerg/main.go"
+	frpPKGRel  = pathCmdZergDir
+	frpMainRel = pathCmdMainGo
 )
 
 // frpRCS —— py `RCS`（逐字；含 3 个 `=`，供自检档⑨核）。

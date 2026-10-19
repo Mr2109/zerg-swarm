@@ -91,7 +91,7 @@ import (
 //	同包内 10 枚同值异名常量（afmSrcStepTbl / carvPrecommitRel / carvFixDriverRel / cecGatesRel /
 //	cgcGatesRel / cgpoScriptRel / mfRootMarkerRel / cmfRootMarkerRel / gnrStepsRel / vrGateTableRel）
 //	一律收敛到本枚 ⇒ 只此一处落字面，余处改引用（✗ 不再各自定义）。
-const zergPrecommitGatesRel = "scripts/gates/precommit-gates.sh"
+const zergPrecommitGatesRel = pathPrecommitGates
 
 // ── 常量（与 py 逐字同源）──────────────────────────────────────────────────────────────────
 const (

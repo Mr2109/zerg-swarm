@@ -55,7 +55,7 @@ import (
 
 // ── 常量（= py 件头常量 · 逐字）────────────────────────────────────────────────
 const (
-	cpfcFaceDir = "publish/docs"
+	cpfcFaceDir = pathPublishDocs
 	cpfcSelfRel = "scripts/gates/check-public-face-commands.py"
 )
 

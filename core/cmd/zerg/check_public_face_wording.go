@@ -40,7 +40,7 @@ import (
 
 const (
 	cpfwVersion = "check-public-face-wording.py v1.0.0"
-	cpfwDocsRel = "publish/docs"
+	cpfwDocsRel = pathPublishDocs
 	cpfwSelfRel = "scripts/gates/check-public-face-wording.py"
 )
 

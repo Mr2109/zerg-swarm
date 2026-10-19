@@ -43,7 +43,7 @@ const (
 	// mpPygCarryRel —— 承载件（生成物）仓内相对路径。
 	mpPygCarryRel = "core/cmd/zerg/family_mirror_public_pyblocks.go"
 	// mpPygSourceRel —— 真源（本生成器的唯一输入）仓内相对路径。
-	mpPygSourceRel = "publish/mirror-public-lib.py"
+	mpPygSourceRel = pathMirrorLibPy
 	// mpPygChunk —— b64 常量每行字符数（与承载件既有形态逐字一致 · 122）。
 	mpPygChunk = 122
 )

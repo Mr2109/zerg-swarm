@@ -89,7 +89,13 @@ func TestCodeConstDupParserNotRegexp(t *testing.T) {
 	}
 }
 
-// TestCodeConstDupStandard ———— ② 真仓标尺：4 枚已人工验过的常量，件:行逐条对。
+// TestCodeConstDupStandard ———— ② 真仓回归：**已收归单一真源的那个值，不许再以同值异名出现**。
+//
+// 原口径是「拿 4 枚真常量当标尺、按件:行逐条对」—— 但那些常量正是 GAP-20261001-69 要消灭的
+// 目标：本轮把 scripts/gates/precommit-gates.sh 的 5 个异名收归 paths_canonical.go 后，
+// 标尺本身消失 ⇒ 测试红。标尺钉在"待修的病灶"上，等于**修好反而红**。
+// ⇒ 改为**方向反转的回归**：这些值现在只许有一处字面量定义；若又被写散，本测试红。
+// 扫描器自身的正确性由上面那组合成夹具（aPath/bPath）负责，不依赖真仓数据。
 func TestCodeConstDupStandard(t *testing.T) {
 	root := repoRoot()
 	if root == "" {
@@ -100,31 +106,21 @@ func TestCodeConstDupStandard(t *testing.T) {
 	if rc != exitOK {
 		t.Fatalf("rc=%d（要 0）· stderr=%s", rc, errText)
 	}
-	const want = "scripts/gates/precommit-gates.sh"
-	// 标尺四枚（缺口 `GAP-20261001-69` 的现读点名面）：名 → 件:行。
-	ruler := map[string]string{
-		"zergPrecommitGatesRel": "core/cmd/zerg/check_verdict_record.go:94",
-		"gateScriptRel":         "core/cmd/zerg/gate.go:76",
-		"pgsDefaultTarget":      "core/cmd/zerg/preview_gate_steps.go:66",
-		"tsmFixGateScriptRel":   "core/cmd/zerg/two_states_gate_mutate.go:108",
+	// 已收归真源的 6 个值（paths_canonical.go）：不许再出现在同值异名表里。
+	canonicalized := []string{
+		"publish/docs",
+		"scripts/公开标记.tsv",
+		"core/cmd/zerg/main.go",
+		"core/cmd/zerg",
+		"publish/mirror-public-lib.py",
+		"scripts/gates/precommit-gates.sh",
 	}
-	var row string
-	for _, ln := range strings.Split(out, "\n") {
-		if strings.HasPrefix(ln, want+"\t") {
-			row = ln
+	for _, v := range canonicalized {
+		for _, ln := range strings.Split(out, "\n") {
+			if strings.HasPrefix(ln, v+"	") {
+				t.Fatalf("值 %q 又出现同值异名（应只留 paths_canonical.go 一处）：%q", v, ln)
+			}
 		}
-	}
-	if row == "" {
-		t.Fatalf("标尺值没命中：%s", want)
-	}
-	for name, site := range ruler {
-		if !strings.Contains(row, name+"@"+site) {
-			t.Fatalf("标尺常量 %s 没点到 %s（行面：%q）", name, site, row)
-		}
-	}
-	cols := strings.Split(row, "\t")
-	if len(cols) < 3 || cols[1] != "path" {
-		t.Fatalf("该组分类不是 path（值含 `/` ⇒ 必须 path）：%q", row)
 	}
 }
 

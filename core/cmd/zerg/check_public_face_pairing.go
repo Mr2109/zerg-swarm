@@ -44,7 +44,7 @@ import (
 
 const (
 	cpfpVersion         = "check-public-face-pairing.py v1.0（`T-12` 成对闸 · 2026-09-24 落件 · 接线 = 闸⑧ ⑧d）"
-	cpfpFaceDefault     = "publish/docs"
+	cpfpFaceDefault     = pathPublishDocs
 	cpfpZhSuffix        = ".zh-CN.md"
 	cpfpEnSuffix        = ".en.md"
 	cpfpReadmeZh        = "README.zh-CN.md"

@@ -62,7 +62,7 @@ import (
 
 const (
 	cpfsWallEntry     = "wall/"
-	cpfsMarksTableRel = "scripts/公开标记.tsv"
+	cpfsMarksTableRel = pathMarksTable
 	cpfsUnclosedTail  = "；;、，,：:"
 )
 

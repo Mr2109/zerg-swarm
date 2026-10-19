@@ -538,7 +538,7 @@ type pfStaleRow struct {
 // 返回 (rc, 输出, R8_STALE) —— `R8_STALE < 0` = 本跑**没打出**机读行（旧壳据此把 RC8b 记 2）。
 func pfDocsFreshness(face string) (int, string, int) {
 	var b strings.Builder
-	const DOCS = "publish/docs"
+	const DOCS = pathPublishDocs
 	docs := filepath.Join(face, DOCS)
 	skipSuffix := []string{"~", ".bak", ".orig", ".rej", ".swp", ".pyc", ".DS_Store"}
 	singleLang := []string{"publish/docs/design/"}

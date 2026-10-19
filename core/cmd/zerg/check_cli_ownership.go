@@ -83,7 +83,7 @@ const (
 
 	// ── 类 B（Go 真身件）取数面的常量 ──
 	// ccoGoDirRel —— Go 真身件所在目录（仓内相对 · ✗ 不写死任何件名）。
-	ccoGoDirRel = "core/cmd/zerg"
+	ccoGoDirRel = pathCmdZergDir
 	// ccoSuffixNative —— Go 真身件的**件名词缀**（本族约定：`family_*_native.go`）。
 	ccoSuffixNative = "_native.go"
 	// ccoSuffixTest —— 测试件后缀（✗ 不进判据面：测试里被调到 ≠ 命令面接上了）。

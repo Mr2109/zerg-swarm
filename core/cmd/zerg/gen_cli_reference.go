@@ -53,12 +53,12 @@ import (
 const (
 	gcrZHRel          = "docs/zh/参考-命令行.md"
 	gcrENRel          = "docs/en/参考-命令行.md"
-	gcrMainRel        = "core/cmd/zerg/main.go"
+	gcrMainRel        = pathCmdMainGo
 	gcrGenRel         = "core/cmd/zerg/gen_cli_reference.go"
 	gcrIdentPrefix    = "> 身份 / identity："
 	gcrMarkBegin      = "<!-- ===== 生成区 BEGIN"
 	gcrMarkEnd        = "<!-- ===== 生成区 END"
-	gcrPublishDocsRel = "publish/docs"
+	gcrPublishDocsRel = pathPublishDocs
 	gcrNoFields       = "（无机器面）"
 
 	gcrRCok      = 0

@@ -121,7 +121,7 @@ import (
 	"unicode"
 )
 
-const dcmdMainRel = "core/cmd/zerg/main.go"
+const dcmdMainRel = pathCmdMainGo
 const dcmdBaselineRel = "scripts/gates/doc-cmds-baseline.json"
 
 const dcmdRCOK = 0

@@ -48,10 +48,10 @@ import (
 )
 
 const (
-	mkcpTableRel     = "scripts/公开标记.tsv"
+	mkcpTableRel     = pathMarksTable
 	mkcpConfigRel    = "scripts/gates/gate-coverage.config.json"
 	mkcpExcludesRel  = "publish/excludes.txt"
-	mkcpMirrorLibRel = "publish/mirror-public-lib.py"
+	mkcpMirrorLibRel = pathMirrorLibPy
 	mkcpWhitelistRel = "publish/whitelist.txt"
 	mkcpTop          = "" // 顶层 glob（`scripts/*.sh`）的「域」标记：顶层（无第二段）
 )

@@ -72,7 +72,7 @@ import (
 
 const (
 	dycVersion = "0.3.0（已接线 · 门98 · tri-report 只报告 · 缺口 GAP-20260927-392/374/389 + GAP-20261014-66 调用点粒度/被守卫的助手件档）"
-	dycScanRel = "core/cmd/zerg"
+	dycScanRel = pathCmdZergDir
 	dycProg    = "check-dryrun-yes-conflict-coverage.py"
 	dycSchema  = "zerg/dryrun-yes-conflict-coverage/v1"
 	// 拆串：避免本件源码被自己扫成「应产者」（见件头声明 (b)）。

@@ -33,7 +33,7 @@ import (
 )
 
 const (
-	cpmtTableRel = "scripts/公开标记.tsv"
+	cpmtTableRel = pathMarksTable
 	cpmtProg     = "check-public-marks-tracked-parity.py"
 )
 

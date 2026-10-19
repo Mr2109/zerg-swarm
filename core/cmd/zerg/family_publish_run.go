@@ -96,7 +96,7 @@ func publishRunSkipBreakdown(m map[string]int) string {
 // 那条路本身**零写盘 / 零联网**（它不调 `MirrorRepo.init()`、无 push/ssh/curl 子进程 —— 真源自证）。
 // `why != ""` ⇒ **拿不到结论**（调用方按同族纪律退 8 · stdout 一行都不出）。
 func publishRunListOnly(root string) (*publishListOnly, string) {
-	libRel := "publish/mirror-public-lib.py"
+	libRel := pathMirrorLibPy
 	if _, err := os.Stat(filepath.Join(root, libRel)); err != nil {
 		return nil, fmt.Sprintf("真源只读预演脚本不在（%s）", libRel)
 	}

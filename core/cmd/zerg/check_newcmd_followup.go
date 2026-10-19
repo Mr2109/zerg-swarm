@@ -63,7 +63,7 @@ import (
 )
 
 // ── 常量（照 py 逐字；路径常量 = py 的 os.path.join 物化结果）──────────────────────
-const cnfMainRel = "core/cmd/zerg/main.go"
+const cnfMainRel = pathCmdMainGo
 
 var (
 	cnfMatrixRel        = cnfPyJoin("core", "cmd", "zerg", "testdata", "cli-matrix.json")

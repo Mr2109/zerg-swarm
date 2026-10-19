@@ -117,7 +117,7 @@ const (
 	cwfgBlockedCat0  = "BLOCKED —— catalog() 解析出 0 条（空域）⇒ rc=2 不给结论"
 	cwfgRegMissing   = "authority-map.json 缺「写面登记」表（非 list）"
 	// cwfgScopeRel —— 扫描面相对仓根（B 类读失败登记面用；与 cwfgRun 的 scopedir 同源）。
-	cwfgScopeRel = "core/cmd/zerg"
+	cwfgScopeRel = pathCmdZergDir
 )
 
 // cwfgReadFails —— B 类读失败登记面（扫描面里读不了的 *.go 件 · 逐件 相对路径 + err 正文）。

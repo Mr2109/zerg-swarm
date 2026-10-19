@@ -551,7 +551,7 @@ func csfJoinOrDash(xs []string) string {
 
 // ── ⑦ scripts/公开标记.tsv（纯 IO · 原生）───────────────────────────────
 func csfProbePublicMarks(root string) *csfFace {
-	rel := "scripts/公开标记.tsv"
+	rel := pathMarksTable
 	f := csfNewFace(rel, "门件（scripts/gates/*.py|*.sh 直下）⇕ 表第一列（门件未登记 ⇒ 门「悬空/漏登记」）", csfRefresh["public-marks"])
 	p := filepath.Join(root, filepath.FromSlash(rel))
 	raw, err := os.ReadFile(p)

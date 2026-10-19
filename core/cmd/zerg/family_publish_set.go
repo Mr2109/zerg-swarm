@@ -276,7 +276,7 @@ func (c *publishChain) privateFaceHit(rel string) string {
 func publishSetLoadChain(root string) (*publishChain, string) {
 	wlRel := "publish/whitelist.txt"
 	shRel := "publish/excludes.txt"
-	libRel := "publish/mirror-public-lib.py"
+	libRel := pathMirrorLibPy
 	pfRel := "publish/private-paths.txt"
 
 	wlLines, err := publishSetReadLines(filepath.Join(root, wlRel))

@@ -120,7 +120,7 @@ var twTableAnchors = []twAnchorDef{
 }
 
 // twRegistryRel —— W5 的第二豁免锚（登记表本体 · 首列点名）。
-const twRegistryRel = "scripts/公开标记.tsv"
+const twRegistryRel = pathMarksTable
 
 // twEntrySuffixes —— W5 扫描面后缀。
 var twEntrySuffixes = []string{".go", ".py", ".sh", ".md", ".tsv", ".json", ".txt", ".yml", ".yaml"}

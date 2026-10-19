@@ -56,7 +56,7 @@ import (
 
 const (
 	mpProg   = "mirror-public.sh"
-	mpLibRel = "publish/mirror-public-lib.py"
+	mpLibRel = pathMirrorLibPy
 
 	// mpRCNotFound —— shell 惯例退码 127（子命令 / python3 起不来）；127 属 internal
 	// 命名空间、不入命令面真源表（先例 GAP-20261002-08）。

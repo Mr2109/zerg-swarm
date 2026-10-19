@@ -66,7 +66,7 @@ import (
 
 const (
 	wviInventoryRel = "core/internal/contract/write-inventory.json"
-	wviPeerDirRel   = "core/cmd/zerg"
+	wviPeerDirRel   = pathCmdZergDir
 	wviProbeTimeout = 25 * time.Second
 	// wviRCLand / wviRCBreach / wviRCUnjudge —— 三档退码（与本仓判据同口径：0 绿 · 1 红 · 8 不给结论）。
 	wviRCLand    = 0

@@ -43,7 +43,7 @@ import (
 
 const (
 	cpfaVersion     = "check-public-face-anchor.py v1.0（`T-13` 漂移锚 · 2026-09-24 落件 · **未接线**）"
-	cpfaFaceDefault = "publish/docs"
+	cpfaFaceDefault = pathPublishDocs
 	cpfaZhSuffix    = ".zh-CN.md"
 	cpfaEnSuffix    = ".en.md"
 )

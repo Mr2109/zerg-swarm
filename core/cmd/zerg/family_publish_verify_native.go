@@ -302,7 +302,7 @@ ex = [e for e in ex if e]
 need = ["scripts/gates/check-hardcoded-private-paths.py", "scripts/build/publish-public.sh"]
 retired_py = "scripts/gates/check-history-secrets.py"
 retired_go = "core/cmd/zerg/check_history_secrets.go"
-mirror_lib = "publish/mirror-public-lib.py"
+mirror_lib = pathMirrorLibPy
 missing = [n for n in need if n not in ex]
 if retired_py in ex:
     missing.append(retired_py + "\uff08\u9000\u5f79\u4ef6\u4ecd\u5728 EXCLUDES \u2014\u2014 \u5e94\u4e0b\u67b6\uff09")

@@ -105,7 +105,7 @@ const tsmMutDriverRel = "scripts/gates/two-states-gate-mutate.py"
 // 且 `gate check` 要门禁最小入口（`scripts/gates/precommit-gates.sh` 自举件、缺即 rc=2）。两件只落**仓外
 // 夹具树**（`$TMPDIR`），真仓一字不动。
 const tsmFixVersionRel = "core/internal/version/version.go"
-const tsmFixGateScriptRel = "scripts/gates/precommit-gates.sh"
+const tsmFixGateScriptRel = pathPrecommitGates
 const tsmFixVersionSrc = "package version\n"
 const tsmFixGateScriptSrc = "#!/bin/sh\nexit 0\n"
 

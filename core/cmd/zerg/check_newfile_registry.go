@@ -127,7 +127,7 @@ import (
 // ── 常量（逐字照 py）───────────────────────────────────────────────────────
 const (
 	gnrSelfRel     = "scripts/gates/check-newfile-registry.py"
-	gnrMarksRel    = "scripts/公开标记.tsv"
+	gnrMarksRel    = pathMarksTable
 	gnrStepsRel    = zergPrecommitGatesRel
 	gnrCovRel      = "scripts/gates/gate-coverage.config.json"
 	gnrCovJudgeRel = "scripts/gates/check-gate-coverage.py"
@@ -141,7 +141,7 @@ const (
 	//   `scripts/build/`（`gnrScanLedgerFace` 只扫 `scripts/`）⇒ 分母 7→6，本行与测试件同批随动。
 	gnrCovJudgeGoRel = "core/cmd/zerg/check_gate_coverage.go"
 	gnrExcludesRel   = "publish/excludes.txt"
-	gnrMirrorRel     = "publish/mirror-public-lib.py"
+	gnrMirrorRel     = pathMirrorLibPy
 	// 面⑨ 真源：`.sh` 门面冻结清册在 real-gates.sh 里（与门65 真跑档那一面同源）
 	gnrShGatesRel = "scripts/gates/real-gates.sh"
 	gnrShGatesDir = "scripts/gates"

@@ -73,7 +73,7 @@ import (
 
 // gateScriptPath —— 自举件的路径**是条款的一部分**（§九 M11 `G1-e`）：搬家/改名 = 破坏自举，
 // 必须单独一次提交。故这里**只拼这一段常量**，别处不许再拼。
-const gateScriptRel = "scripts/gates/precommit-gates.sh"
+const gateScriptRel = pathPrecommitGates
 
 // gateLSRejectFlags —— 缺口 `GAP-20260927-53`（2026-10-04 · P1 仍缺 · 边界件本片收）：
 // `gate ls` 的**用法面**逐字是 `zerg gate ls`（`main.go` 登记 · **无旗标**），而脚本侧
