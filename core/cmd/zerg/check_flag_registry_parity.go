@@ -679,7 +679,13 @@ func frpValueForm(usage string, pos int) bool {
 type frpNoReader struct{ Path, Flag, Impl string }
 
 // frpGlobalOpts —— 由解析器/派发层代表**所有**命令消费的全局选项（面④ 不计 · 与 py 同名同集）。
-var frpGlobalOpts = map[string]bool{"--json": true, "--dry-run": true, "--yes": true, "--confirm": true, "--help": true}
+var frpGlobalOpts = map[string]bool{"--json": true, "--dry-run": true, "--yes": true, "--confirm": true, "--help": true, "--timeout": true}
+
+// frpGlobalOpts 的上表之外，`--timeout` 也是**全局派发层**消费的（`main.go` run() 里
+// `inv.hasFlag(wallclockFlag)` ⇒ parseWallclock ⇒ wallclockGuard），任何声明它的命令都由
+// 那一层上钟，处理函数**不需要**也不应该再读一遍。2026-10-19 起 `chat ask` / `chat send`
+// 的 usage 正式列出它（缺口：能力早就有、帮助面没写 ⇒ 调用方不知道有这个口子，只能干等着被
+// 服务端墙钟砍）。⇒ 准入表，否则面④ 会把「派发层统一消费」误判成「本命令缺读者」。
 
 // frpFlagField —— 旗标 → 结构体字段（读面经 `inv.<field>` 而不写字面时的替代口径 · 与 py 同表）。
 var frpFlagField = map[string]string{
