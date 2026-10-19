@@ -1185,6 +1185,11 @@ func gapLsQueryText(states []string, prio, impact, unit, module string) string {
 // `readback_sha16` 同一份 ⇒ 不再各读一次），另**加四格**做**外写自发现**：`snapshot_sha16`
 // （T0 快照 —— 我分析的那份账的身份）/ `snapshot_lines`（那份账的行数）/ `readback_sha16`（退出前重读）/
 // `external_write_detected`（两 sha16 是否不符）。✗ 只加格、✗ 不进退出码。
+// gapAxisScopeUnit —— 「同一件两条命令」共用的**口径名**（缺口 `GAP-20260928-168`）。
+// `gap show <件>` 的 `meta.axis_scope` 与 `gap ls --unit <件>` 的 `meta.axis_scope` **逐字同值** ⇒
+// 机检可直接断言「两命令说的是同一口径」，而不是靠人读文案。
+const gapAxisScopeUnit = "unit 精确等值"
+
 func gapLsMetaAdd(inv *invocation, states []string, prio, impact, unit, module string, total, hits int,
 	snapSHA16 string, snapLines int, readbackSHA16 string, extWrite bool) {
 	inv.metaAddJSON("total", strconv.Itoa(total))
@@ -1196,6 +1201,11 @@ func gapLsMetaAdd(inv *invocation, states []string, prio, impact, unit, module s
 	inv.metaAddJSON("snapshot_lines", strconv.Itoa(snapLines))
 	inv.metaAddStr("readback_sha16", readbackSHA16)
 	inv.metaAddJSON("external_write_detected", strconv.FormatBool(extWrite))
+	// ★ 本枚（缺口 `GAP-20260928-168`）：**只给收窄到件面时**标口径 —— 与 `gap show <件>` 的
+	//   `meta.axis_scope` 逐字同值（全量档 / 只给别的收窄旗标时不写这一格：那时没有「件轴」可言）。
+	if unit != "" {
+		inv.metaAddStr("axis_scope", gapAxisScopeUnit)
+	}
 }
 
 // markGapLsSelfReport —— `gap ls` 的**跑级截断自报**落到 `--json` 字段面（缺口 `GAP-20260928-163` · 本枚）。
@@ -1739,6 +1749,28 @@ func gapRecordFileText(r gapRecord) string {
 	return strings.Join(parts, "\n")
 }
 
+// gapRecordWantText —— 该条的 **want 面**（`want_family` + `want_action` + `want_argv` 的逐字拼接）。
+// 取值口与 `gap ls --json want` / `gap show --json want` 那一格**同源**（`gapWantText`）——
+// 缺口 `GAP-20260928-168` 收口时用它做「口径B」读数（**不含** symptom / handmade / notes 等正文格）。
+func gapRecordWantText(r gapRecord) string { return gapWantText(r) }
+
+// gapFileSel —— 件路径选择器的归一形态：去首尾空白 + 去尾斜杠。
+// 与 `gap ls --unit` 的尾斜杠归一（`strings.TrimRight(wantUnit, "/")`，见 `cmdGapLs`）**同一套**
+// ⇒ 两命令比同一个件时，不会因一个尾斜杠就分家（`gap show <件>/` 与 `gap ls --unit <件>/` 同数）。
+func gapFileSel(file string) string { return strings.TrimRight(strings.TrimSpace(file), "/") }
+
+// gapWantMentionsFile —— 「口径B」的判据：该条的 **want 面**逐字含**整路径**或**基名**。
+// 为什么连基名也算：want 是自由文本，账里点名件时常用基名（例 `…补进 main.go 的 set-state summary`）
+// ⇒ 只认整路径会把这类**真提到该件**的条漏掉（实测该件整路径 0 条 · 基名 10 条）。
+// ★ 只比 want 那三格（`gapWantText`）—— ✗ 不扫 symptom / notes（那是口径C 的事）。
+func gapWantMentionsFile(r gapRecord, sel, base string) bool {
+	w := gapRecordWantText(r)
+	if strings.Contains(w, sel) {
+		return true
+	}
+	return base != "" && base != sel && strings.Contains(w, base)
+}
+
 // gapInInt —— 小集合查重（与 `gapIn` 同形，只是元素是整数）。
 func gapInInt(list []int, v int) bool {
 	for _, x := range list {
@@ -1843,39 +1875,63 @@ func gapShowByFile(inv *invocation, led gapLedger, stdout, stderr io.Writer, fil
 	//   ① 轴面 = `unit` 键面**精确等值** N 条（与 `gap ls --unit <件>` 同口径）；
 	//   ② 逐字子串面 = 正文/判据/手搓/证据/注文里提过该件 M 条（N ⊆ M）。
 	//   人面按①列条目、把②的差额**如实印出来**（两个数都不删）；机器面逐字沿用②的全集（不动）。
+	// ★ 缺口 `GAP-20260928-168`（本枚 · 收口）：**三口径各自成数、各自标名**，不再「同件两数说不清」——
+	//   A = `unit` 键面精确等值（与 `gap ls --unit <件>` **同轴**；本面列条目就按这一轴，`items[]` 同集）；
+	//   B = `want` 面逐字含（`want_family`/`want_action`/`want_argv` · 只比 `--json want` 那一格）；
+	//   C = 全文子串（**整路径** · symptom/handmade/repro_cmd/verify_cmd/证据/注文 + want 面 ·
+	//       本面旧的「逐字子串面」，判据一字不动 ⇒ 同一个件的 C 读数与旧版逐字同值）。
+	//   ★ 两轴**真不同**（`A` 与 `B` 各有对方不命中的条）⇒ 既不把 show 砍成 ls，也不把 ls 砍成 show。
+	sel := gapFileSel(file)
 	rows, sub, hits, extra := []map[string]string{}, []gapRecord{}, []gapRecord{}, []gapRecord{}
 	linesOf := [][]int{}
+	wantN := 0
+	base := filepath.Base(sel)
 	for _, r := range led.Recs {
-		text := gapRecordFileText(r)
-		if !strings.Contains(text, file) {
-			continue
+		// B 面：逐条只比 want 那一格（与 A 面独立计 —— 不能拿 C 面反推）。
+		if gapWantMentionsFile(r, sel, base) {
+			wantN++
 		}
-		sub = append(sub, r)
-		if r.Unit == file {
+		text := gapRecordFileText(r)
+		inSub := strings.Contains(text, sel)
+		inUnit := r.Unit == sel
+		// ★ A 面与 C 面**各算各的**：`unit` 命中但正文没提该件的条也属 A（旧版因先过 C 面而漏掉这类）。
+		if inSub {
+			sub = append(sub, r)
+		}
+		if inUnit {
 			hits = append(hits, r)
-			linesOf = append(linesOf, gapLinesOf(text, file))
-		} else {
+			linesOf = append(linesOf, gapLinesOf(text, sel))
+		} else if inSub {
 			extra = append(extra, r)
 		}
-		if inv.jsonGiven {
+	}
+	// A 面的全集数（含 `unit` 命中但正文没提到该件、因而不进 C 面的条）—— 与上面 `hits` 同源。
+	axisN, axisOpen := gapAxisCounts(led.Recs, sel)
+	subN := len(sub)
+	if inv.jsonGiven {
+		for _, r := range hits {
 			rows = append(rows, gapShowRow(r))
 		}
-	}
-	if inv.jsonGiven {
-		// ★ 缺口 `GAP-20260928-173`：机器面补「轴面数 N / 未闭数 M」两格 —— `items[]` 仍是逐字
-		//   子串**全集**（不动）；两格把「轴面 / 其中未闭」摆出来，与 `gap status --by unit` 件桶
-		//   同源（信封原则：生效值必须回显 —— 省得读机器面的人自己去数 59 条里哪些仍缺）。
-		axisN, axisOpen := gapAxisCounts(led.Recs, file)
+		// ★ 缺口 `GAP-20260928-173`：机器面「轴面数 N / 未闭数 M」两格保留（与 `gap status --by unit`
+		//   件桶同源）；★ 本枚（`GAP-20260928-168`）再加两格 ＋ 一枚口径名，`items[]` 改成 **A 面同集**
+		//   （旧版是 C 面全集 ⇒ 与 `gap ls --unit` 两个数）。口径名两命令**逐字同值**（`axis_scope`），
+		//   ⇒ 「同一件两条命令不矛盾」可机检（`show.meta.axis == ls.meta.count` ＋ 两 `axis_scope` 相等）。
 		inv.metaAddJSON("axis", strconv.Itoa(axisN))
 		inv.metaAddJSON("axis_open", strconv.Itoa(axisOpen))
+		inv.metaAddJSON("axis_want", strconv.Itoa(wantN))
+		inv.metaAddJSON("axis_substring", strconv.Itoa(subN))
+		inv.metaAddStr("axis_scope", gapAxisScopeUnit)
+		inv.metaAddStr("axis_sel", sel)
 		return selectJSONList(stdout, stderr, inv, inv.path, inv.fields, rows)
 	}
 
-	fmt.Fprintf(stdout, "件: %s（在仓里 · 轴面 unit 精确等值 %d 条（另有 %d 条正文里提到但未归入该件））\n",
-		file, len(hits), len(extra))
-	fmt.Fprintf(stdout, "  ★ 口径：本面按 **`unit` 键面精确等值**反查（与 `gap ls --unit %s` 同口径）；第二个数 = 逐字子串面\n", file)
-	fmt.Fprintf(stdout, "    （正文/判据/手搓/证据/注文里提到该件、但 `unit` 不是它）—— 两个数**都列出、都不删**；账里没有「件」这一格\n")
-	if len(sub) == 0 {
+	fmt.Fprintf(stdout, "件: %s（在仓里）\n", file)
+	fmt.Fprintf(stdout, "  口径A `unit` 精确等值（与 `gap ls --unit %s` **同轴**）: %d 条（其中未闭 %d 条）\n",
+		sel, axisN, axisOpen)
+	fmt.Fprintf(stdout, "  口径B `want` 面逐字含（want_family/want_action/want_argv · 整路径或基名 · 即 `--json want` 那一格）: %d 条\n", wantN)
+	fmt.Fprintf(stdout, "  口径C 全文子串（**整路径** · symptom/handmade/repro_cmd/verify_cmd/证据/注文 + want 面）: %d 条\n", subN)
+	fmt.Fprintf(stdout, "  ★ 三个数**各自标口径**：本面列条目按 **A**（`items[]` 同集）；B/C 是附带读数，不改 A 的条目集。\n")
+	if len(hits) == 0 && len(extra) == 0 {
 		fmt.Fprintf(stdout, "  （该件上 0 条 —— 「没有」不是错：退码 0）\n")
 		fmt.Fprintf(stdout, "  注：条目若只写行号不写件、或写成别的相对路径，本面抓不到 —— 那是账的写法问题，不是本面判错\n")
 		return exitOK
