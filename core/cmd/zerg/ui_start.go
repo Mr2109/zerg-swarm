@@ -436,7 +436,7 @@ var sandboxProbeRoster = []struct{ Name, File string }{
 
 // 两态门禁与其负例（判据键排除在外的族动作 —— 真跑子进程）。
 const (
-	sandboxVerifyRel = "scripts/sandbox-probes/verify-two-states.py"
+	sandboxVerifyRel = pathVerifyTwoStatesProbe
 	sandboxNegctlRel = "scripts/sandbox-probes/negctl-two-states.sh"
 	// sandboxTestRelayRel —— `sandbox test relay` 的底层唯一实现（B5.1 主控镜像中继验收套件 ·
 	// 离线自足：全在 /tmp 沙箱 + 假 ssh 里跑 · 命令面只做入口 ＋ 转发，✗ 不重写它任何一段）。

@@ -40,7 +40,7 @@ const (
 	// pgpdProg —— argparse 的 prog 名（`os.path.basename(sys.argv[0])` · 硬占位）。
 	pgpdProg = "check-py-go-pairing-drift.py"
 
-	pgpdInprocRel   = "core/cmd/zerg/gate_inproc_table.go"
+	pgpdInprocRel   = pathGateInprocTableGo
 	pgpdGatesRel    = pathScriptsGates
 	pgpdRegistryRel = pathJudgeRegistry
 	pgpdRatchetRel  = "scripts/gates/py-go-pairing-drift.ratchet.json"

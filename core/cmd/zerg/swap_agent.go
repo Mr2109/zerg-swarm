@@ -52,7 +52,7 @@ import (
 
 // swapAgentScriptRel —— 子端换件脚本的仓内路径。★ 真搬后本件**不再 exec 它**（行为已内化）——
 // 保留常量只为 ① 报面/诊断指向人读件名 ② 测试用它定位「毒壳」落点（证「不再 exec」这条牙）。
-const swapAgentScriptRel = "scripts/build/zerg-swap-agent.sh"
+const swapAgentScriptRel = pathBuildSwapAgentSh
 
 // sagHR —— 脚本 `hr()` 的那条横线（46 × U+2500）。
 var sagHR = strings.Repeat("\u2500", 46)

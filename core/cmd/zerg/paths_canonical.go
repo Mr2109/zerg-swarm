@@ -32,4 +32,23 @@ const (
 	pathFreshnessPy      = "scripts/gates/check-manifest-freshness.py"
 	pathPublishWhitelist = "publish/whitelist.txt"
 	pathContractRegistry = "core/internal/contract/registry.json"
+
+	// 第三批（2026-10-20）：夹具/探针脚本与构建脚本（分拣后只收真路径常量）
+	pathVerifyTwoStatesProbe = "scripts/sandbox-probes/verify-two-states.py"
+	pathFreshnessProfilePy   = "scripts/gates/check-manifest-freshness-profile.py"
+	pathContractRegistryPy   = "scripts/gates/check-contract-registry.py"
+	pathBuildUpgradeSh       = "scripts/build/zerg-upgrade.sh"
+	pathBuildSwapCoreSh      = "scripts/build/zerg-swap-core.sh"
+	pathBuildSwapAgentSh     = "scripts/build/zerg-swap-agent.sh"
+	pathBuildPackReleaseSh   = "scripts/build/pack-release.sh"
+	pathBuildAllSh           = "scripts/build/build-all.sh"
+	pathPublishReplaceRules  = "publish/replace-rules.tsv"
+	pathGatewayFleet         = "gateway/fleet.yaml"
+	pathAdoptRetireJSON      = "core/internal/contract/adopt-retire.json"
+	pathCliMatrixJSON        = "core/cmd/zerg/testdata/cli-matrix.json"
+	pathGateInprocTableGo    = "core/cmd/zerg/gate_inproc_table.go"
+	pathCoreAddedGo          = "core/added.go"
+	pathWallDebugBin         = "wall/target/debug/zerg-wall"
+	pathPython3Exe           = "/usr/bin/python3"
+	pathArchiveMountDefault  = "/Volumes/ZERG-ARCHIVE"
 )

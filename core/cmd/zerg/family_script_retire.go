@@ -44,7 +44,7 @@ import (
 )
 
 // scriptRetireTruthRel —— 退场真源（**沿用** · 决-02：✗ 不另起第二真源）。
-const scriptRetireTruthRel = "core/internal/contract/adopt-retire.json"
+const scriptRetireTruthRel = pathAdoptRetireJSON
 
 // scriptRetireLedgerKey / scriptRetireExceptionKey —— 真源里的两块登记面（逐字照真源现有键名）。
 const scriptRetireLedgerKey = "retire_ledger"

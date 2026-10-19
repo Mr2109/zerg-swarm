@@ -111,7 +111,7 @@ import (
 // ── 常量与数据（逐字照 py）────────────────────────────────────────────────
 
 const crrfProg = "check-replace-rule-fixtures.py"
-const crrfRulesRel = "publish/replace-rules.tsv"
+const crrfRulesRel = pathPublishReplaceRules
 const crrfWhitelistRel = pathPublishWhitelist
 const crrfIsoPrefix = "!夹具"
 

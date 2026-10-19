@@ -65,7 +65,7 @@ const (
 	// 清单档旗标（与干跑旗标无关 ⇒ 可直写）。
 	prManifestOnly = "--manifest-only"
 	// shell 件与它委派的外部真身（展示/调用用）。
-	prScriptRel       = "scripts/build/pack-release.sh"
+	prScriptRel       = pathBuildPackReleaseSh
 	prMakeManifestRel = "scripts/evals/make-manifest.py"
 	// shell 惯例退码：外部件**起不来**（✗ ExitError ⇒ 命令找不到）—— 本件照搬 shell 的 `127`。
 	// ★ 属**底层壳件自有码空间**（✗ 不在命令面真源退码表 `core/cmd/zerg/exitcodes.go` 里 ⇒ ✗ 写裸数字，

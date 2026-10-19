@@ -796,9 +796,9 @@ var aglCleanFiles = []aglFixtureFile{
 }
 
 const (
-	aglBreakFile  = "core/added.go"
+	aglBreakFile  = pathCoreAddedGo
 	aglBreakLine  = "func bad() { log.Println(\"\u4efb\u52a1\uff1a\u6d3e\u5355\u5931\u8d25\") }\n"
-	aglBreakRel   = "core/added.go"
+	aglBreakRel   = pathCoreAddedGo
 	aglBreakBatch = "\u4efb\u52a1\u751f\u547d\u5468\u671f"
 	aglExtraLine  = "func extra() { log.Printf(\"\u542f\u52a8\uff1a\u6a2a\u5e45\u5df2\u5c31\u7eea\") }\n"
 	aglExtraLine2 = 9

@@ -123,6 +123,24 @@ func TestCodeConstDupStandard(t *testing.T) {
 		"scripts/gates/check-manifest-freshness.py",
 		"publish/whitelist.txt",
 		"core/internal/contract/registry.json",
+		// 第三批（2026-10-20）
+		"scripts/sandbox-probes/verify-two-states.py",
+		"scripts/gates/check-manifest-freshness-profile.py",
+		"scripts/gates/check-contract-registry.py",
+		"scripts/build/zerg-upgrade.sh",
+		"scripts/build/zerg-swap-core.sh",
+		"scripts/build/zerg-swap-agent.sh",
+		"scripts/build/pack-release.sh",
+		"scripts/build/build-all.sh",
+		"publish/replace-rules.tsv",
+		"gateway/fleet.yaml",
+		"core/internal/contract/adopt-retire.json",
+		"core/cmd/zerg/testdata/cli-matrix.json",
+		"core/cmd/zerg/gate_inproc_table.go",
+		"core/added.go",
+		"wall/target/debug/zerg-wall",
+		"/usr/bin/python3",
+		"/Volumes/ZERG-ARCHIVE",
 	}
 	for _, v := range canonicalized {
 		for _, ln := range strings.Split(out, "\n") {

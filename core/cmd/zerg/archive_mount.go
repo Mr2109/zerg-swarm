@@ -50,7 +50,7 @@ import (
 const archiveMountScriptRel = "scripts/svc/archive-mount.sh"
 
 const (
-	amDefaultMountpoint  = "/Volumes/ZERG-ARCHIVE"
+	amDefaultMountpoint  = pathArchiveMountDefault
 	amDefaultArchiveName = "Zerg-归档"
 	amDefaultDmgName     = "Zerg-归档-v2.5.10.dmg"
 

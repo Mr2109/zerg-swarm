@@ -81,10 +81,10 @@ const (
 	cecTableRel           = "core/cmd/zerg/exitcodes.go"
 	cecHelpRel            = "core/cmd/zerg/helptext.go"
 	cecGatesRel           = zergPrecommitGatesRel
-	cecSwapRel            = "scripts/build/zerg-swap-core.sh"
-	cecUpgradeRel         = "scripts/build/zerg-upgrade.sh"
-	cecPackReleaseRel     = "scripts/build/pack-release.sh"
-	cecBuildAllRel        = "scripts/build/build-all.sh"
+	cecSwapRel            = pathBuildSwapCoreSh
+	cecUpgradeRel         = pathBuildUpgradeSh
+	cecPackReleaseRel     = pathBuildPackReleaseSh
+	cecBuildAllRel        = pathBuildAllSh
 	cecSelfExemptBasename = "check-exit-codes.py"
 )
 

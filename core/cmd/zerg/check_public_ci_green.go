@@ -92,7 +92,7 @@ import (
 
 const (
 	cicgSelfRel        = "scripts/gates/check-public-ci-green.py"
-	cicgProfileGateRel = "scripts/gates/check-manifest-freshness-profile.py"
+	cicgProfileGateRel = pathFreshnessProfilePy
 	cicgCIDirNew       = ".github/workflows"
 	cicgProg           = "check-public-ci-green.py"
 )

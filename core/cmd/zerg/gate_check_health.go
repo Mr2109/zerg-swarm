@@ -100,7 +100,7 @@ const (
 	gchProg       = "gate-check-health.py"
 	gchGoShellRel = "core/cmd/zerg/family_gate_check.go"
 	// ★ 门80 扫描面（`GAP-20261001-75` 路A）：inproc 分发表件也须在扫描面内。
-	gchGoShellRelTbl = "core/cmd/zerg/gate_inproc_table.go"
+	gchGoShellRelTbl = pathGateInprocTableGo
 	gchRegistryRel   = pathJudgeRegistry
 	gchRosterDir     = "scripts"
 	gchModuleRel     = "scripts/gates/check-judge-registry.py"

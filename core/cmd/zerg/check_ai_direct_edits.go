@@ -124,7 +124,7 @@ import (
 // ── 与 py 逐条对齐的常量 / 正则（名字前缀 `ade` 防包内同名）────────────────────────
 
 // adeMatrixRel —— py `MATRIX_REL`（命令树投影相对仓根的路径）。
-const adeMatrixRel = "core/cmd/zerg/testdata/cli-matrix.json"
+const adeMatrixRel = pathCliMatrixJSON
 
 // adeLedgerRel —— py `LEDGER_REL`（件级账相对**状态目录**的件名）。
 const adeLedgerRel = "edit_audit.jsonl"

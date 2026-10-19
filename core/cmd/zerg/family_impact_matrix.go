@@ -36,7 +36,7 @@ import (
 )
 
 // impactMatrixRel —— 命令面契约矩阵真源（与 `affected-map.json` / `check-affected-map.py` C 面声明同名件）。
-const impactMatrixRel = "core/cmd/zerg/testdata/cli-matrix.json"
+const impactMatrixRel = pathCliMatrixJSON
 
 // impactMatrixCatalog —— 矩阵现读快照 + **两张反查表**（`command` → 格 id · argv 逐 token → 格 id）。
 //

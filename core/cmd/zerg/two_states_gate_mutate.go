@@ -85,13 +85,13 @@ const (
 )
 
 // tsmTargetRel —— py `TARGET`（:56 · `os.path.join("scripts","sandbox-probes","verify-two-states.py")`）。
-const tsmTargetRel = "scripts/sandbox-probes/verify-two-states.py"
+const tsmTargetRel = pathVerifyTwoStatesProbe
 
 // tsmWallRel —— py `os.path.relpath(WALL_BIN, ROOT)` 的读数（WALL_BIN = ROOT/wall/target/debug/zerg-wall）。
-const tsmWallRel = "wall/target/debug/zerg-wall"
+const tsmWallRel = pathWallDebugBin
 
 // tsmPython —— 钉死解释器（GAP-20261001-61）：py 用 `sys.executable`，对拍台对 py 一律用 /usr/bin/python3。
-const tsmPython = "/usr/bin/python3"
+const tsmPython = pathPython3Exe
 
 // tsmMutDriverRel —— py `_MUT_DRIVER_REL`（:294 · 自检把「本件」硬拷贝进夹具的落点）。py 的落点＝
 // `scripts/gates/two-states-gate-mutate.py`（`basename(SELF_PATH)` 带 `.py`）；Go 的「本件」是可执的 `zerg`
@@ -110,7 +110,7 @@ const tsmFixVersionSrc = "package version\n"
 const tsmFixGateScriptSrc = "#!/bin/sh\nexit 0\n"
 
 // tsmFixWallRel —— py `_FIX_WALL_REL`（:267）。
-const tsmFixWallRel = "wall/target/debug/zerg-wall"
+const tsmFixWallRel = pathWallDebugBin
 
 // tsmFixWallStub —— py `_FIX_WALL_STUB`（:268 · 哑茧壁件：本件只 `isfile` 它、自检不跑茧壁）。
 const tsmFixWallStub = "#!/bin/sh\nexit 0\n"

@@ -76,7 +76,7 @@ import (
 const pvSchema = "zerg-gate/1"
 const pvKind = "PrivatePathForms"
 
-const pvReplaceRules = "publish/replace-rules.tsv"
+const pvReplaceRules = pathPublishReplaceRules
 const pvRedactGo = "core/internal/obs/redact/redact.go"
 
 // pvWordingGo —— 公开面写作红线门的 Go 半（`scripts/gates/check-public-face-wording.py` 已退休、

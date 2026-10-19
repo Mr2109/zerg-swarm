@@ -33,7 +33,7 @@ const (
 	// cuplsProg —— 件名（报话前缀 · 与 sh 同名）。
 	cuplsProg = "check-upgrade-local-source.sh"
 	// cuplsRelDefault —— 缺省被判件（仓内相对）。
-	cuplsRelDefault = "scripts/build/zerg-upgrade.sh"
+	cuplsRelDefault = pathBuildUpgradeSh
 	// cuplsKRef —— REF 键名（只在自检与报话里用；生产判定经 cuplsKeyRef）。
 	cuplsKRef = "ZERG_UPDATE_REF="
 	// cuplsRootAnchor —— 仓根锚（稳定件）。

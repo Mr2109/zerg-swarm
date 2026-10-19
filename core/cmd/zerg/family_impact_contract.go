@@ -54,7 +54,7 @@ const impactContractCompatLevel = "未评（今天没有基线 · 设计 v1.6 �
 const impactContractCompatNote = "兼容级别**只许报、不许据此红绿任何一步**；红绿的唯一来源 = `change_class == \"B\"`（③ 层命中条的闭集字段）⇒ 本格改值**不改**任何一步的红绿，也**不改**退码"
 
 // impactContractRegistryGateRel —— `registry.json` 第 3 行自陈的那道门（`R43` 的**对象**）。
-const impactContractRegistryGateRel = "scripts/gates/check-contract-registry.py"
+const impactContractRegistryGateRel = pathContractRegistryPy
 
 // impactContractEntry —— 一条**目录项**（判据① 的四字段；四字段之外的东西本件不搬 —— 卡片四字段
 // 是 `what`/`why`/`how`/`red`，两个「四字段」不是同一个东西，别混）。

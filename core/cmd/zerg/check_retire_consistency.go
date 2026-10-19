@@ -32,7 +32,7 @@ import (
 const crcTool = "check-retire-consistency.py"
 const crcVersion = "v1.0.0"
 const crcGateName = "退件↔登记/排除面 一致性（retire_ledger 已退且不在盘者不得留悬空行）"
-const crcLedgerRel = "core/internal/contract/adopt-retire.json"
+const crcLedgerRel = pathAdoptRetireJSON
 
 const (
 	crcRCOK     = 0

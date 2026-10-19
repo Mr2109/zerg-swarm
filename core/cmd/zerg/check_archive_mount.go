@@ -112,7 +112,7 @@ optional arguments:
 
 const (
 	// camDefaultMountpoint —— 挂载点（三处硬编码同用这一个串 · 名字一动三处全穿）。
-	camDefaultMountpoint = "/Volumes/ZERG-ARCHIVE"
+	camDefaultMountpoint = pathArchiveMountDefault
 	// camDefaultArchiveName —— 原路径的**名字**（仓根同级的 `Zerg-归档`）。
 	camDefaultArchiveName = "Zerg-归档"
 	camDefaultSample      = "版次索引.md"

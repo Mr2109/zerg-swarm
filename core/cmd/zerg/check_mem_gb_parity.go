@@ -67,7 +67,7 @@ const (
 	mgpProg = "check-mem-gb-parity"
 
 	// mgpFleetRel —— 主控侧真源（仓内相对）。
-	mgpFleetRel = "gateway/fleet.yaml"
+	mgpFleetRel = pathGatewayFleet
 	// mgpDeployDirRel —— 子端启动声明件目录（本机机名 + 注册表落点的**唯一**取数面）。
 	mgpDeployDirRel = "deploy"
 	// mgpAgentPlistPre / mgpAgentPlistExt —— `com.zerg.agent-<机>.plist` 的件名形状。

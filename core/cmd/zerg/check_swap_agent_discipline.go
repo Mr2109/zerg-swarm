@@ -31,7 +31,7 @@ import (
 )
 
 // csadShellRel —— 纪律句的**旧落点**（原壳件 · 已退役 ⇒ 只作「两缀分离」的「件」那一缀）。
-const csadShellRel = "scripts/build/zerg-swap-agent.sh"
+const csadShellRel = pathBuildSwapAgentSh
 
 // csadGoHalfRel —— 纪律句的**当前落点**（Go 真搬件 · `zerg swap agent` 的 `usage` 正文）。
 const csadGoHalfRel = "core/cmd/zerg/swap_agent.go"

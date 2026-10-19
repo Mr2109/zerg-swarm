@@ -96,7 +96,7 @@ var (
 
 const ccrGoDeclConst = "impactContractRegistryGateRel"
 const ccrSchemaID = "zerg-contract-registry/1"
-const ccrSelfRel = "scripts/gates/check-contract-registry.py"
+const ccrSelfRel = pathContractRegistryPy
 
 var ccrRequiredEntryFields = []string{"id", "name", "truth", "truth_shape",
 	"version_field", "gate", "change_class", "change_note"}
@@ -789,7 +789,7 @@ func ccrSelfTest(stdout io.Writer, root string, rootOK bool) int {
 	// ⑪ 负控 · R9：自建**迷你根**（锚点 / 表 / 真源 / 门件 / Go 声明）——
 	//     真源顶层键有 alpha/beta，而只点名 `alpha` ⇒ beta 漏列 ⇒ rc=1。
 	//     ✗ 不复用调用方的 root（py 跑真仓、Go 单测跑合成仓 ⇒ 不 hermetic）。
-	gr := "scripts/gates/check-contract-registry.py"
+	gr := pathContractRegistryPy
 	if r9root, e := os.MkdirTemp("", "zerg-cr-r9-"); e == nil {
 		w := func(rel, body string) {
 			p := filepath.Join(r9root, rel)

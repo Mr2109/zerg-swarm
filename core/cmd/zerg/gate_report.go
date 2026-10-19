@@ -96,7 +96,7 @@ import (
 
 const (
 	grtProgName         = "gate-report.py"      //:193 prog=
-	grtPyInterp         = "/usr/bin/python3"    // ★ 钉死（≡ py 在 /usr/bin/python3 下的 sys.executable）
+	grtPyInterp         = pathPython3Exe        // ★ 钉死（≡ py 在 /usr/bin/python3 下的 sys.executable）
 	grtRegistryGate     = "check-dangling-refs" //:59
 	grtKeyNameGate      = "gate"
 	grtKeyNameRC        = "rc"

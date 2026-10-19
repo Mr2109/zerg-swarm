@@ -94,7 +94,7 @@ const bscHelpText = bscUsage +
 var bscLongOpts = []string{"--help", "--root", "--file", "--json", "--self-test"}
 
 // bscDefaultFile —— py `DEFAULT_FILE`。
-const bscDefaultFile = "scripts/build/build-all.sh"
+const bscDefaultFile = pathBuildAllSh
 
 // bscK1Knobs —— py `KNOBS`（三枚旋钮，顺序逐字）。
 var bscK1Knobs = []string{"ZERG_STATE_DIR", "ZERG_REPO", "ZERG_PROPOSAL_DIR"}

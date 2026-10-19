@@ -60,7 +60,7 @@ type agentAddr struct {
 }
 
 // agentFleetAddrFileRel —— 地址的现读落点（仓根相对 —— 不写死私有绝对路径）。
-const agentFleetAddrFileRel = "gateway/fleet.yaml"
+const agentFleetAddrFileRel = pathGatewayFleet
 
 // agentFleetAddrs 现读 `fleet:` 段 → 机器名 → 地址 + 机器名清单（排序）。
 //

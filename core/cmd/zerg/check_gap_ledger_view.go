@@ -2059,7 +2059,7 @@ func gapLedgerViewGateMain(stdout, stderr io.Writer, argv []string) int {
 	if selfTest {
 		python := os.Getenv("GLV_PYTHON")
 		if python == "" {
-			python = "/usr/bin/python3"
+			python = pathPython3Exe
 		}
 		return glvSelfTestRun(stdout, python, defaultRoot, exportBin)
 	}
