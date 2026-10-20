@@ -12019,6 +12019,78 @@
    "want_rc": 2,
    "want_stdout_bytes": 0,
    "why": "`--file <本地件>` 必给：缺 ⇒ 用法错 2（✗ 不猜一个件）· 判点在任何盘面/远端动作之前 ⇒ stdout 0 字节。读数由现跑两遍派生（`zerg agent deploy zz-matrix-probe` ⇒ rc=2 / 0 字节）。"
+  },
+  {
+   "id": "review#未知旗标",
+   "command": "review",
+   "argv": [
+    "review",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不读任何 issue 单（工作目录那枚也不碰）"
+  },
+  {
+   "id": "review#不认的契约主号",
+   "command": "review",
+   "argv": [
+    "review",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "不认的契约主号不许静默降级（§九 M6 · §十二 P-026）⇒ 执行前判 2"
+  },
+  {
+   "id": "review#缺位置参数",
+   "command": "review",
+   "argv": [
+    "review"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "源件 `len(os.Args) < 3` 那一档：`<workdir> <issue-id|list>` 必给 ⇒ 命令面按用法错 2（源件是 1，差异①）"
+  },
+  {
+   "id": "review#缺动作",
+   "command": "review",
+   "argv": [
+    "review",
+    "zz-matrix-probe-wd",
+    "T-1"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "源件 `approve or reject expected` 那一档：给 issue id 就必须给动作 ⇒ 用法错 2；判点在任何读盘之前（不存在的目录也判得到）"
+  },
+  {
+   "id": "review#未知动作",
+   "command": "review",
+   "argv": [
+    "review",
+    "zz-matrix-probe-wd",
+    "T-1",
+    "maybe"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "动作闭集 `approve|reject`（源件 `unknown action` 那一档）⇒ 执行前判 2 · 不读 issue、不碰 git"
+  },
+  {
+   "id": "review#多余位置参数",
+   "command": "review",
+   "argv": [
+    "review",
+    "zz-matrix-probe-wd",
+    "T-1",
+    "approve",
+    "extra"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "只收 `<workdir> <issue-id> [approve|reject]` 三段（源件把多余参数静默忽略 —— 差异②：命令面按 §4.1 K14 退 2）"
   }
  ],
  "tiers": {

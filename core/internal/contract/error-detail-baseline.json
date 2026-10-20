@@ -8,11 +8,11 @@
     "non_literal_read": "非字面量取空白规整化后的表达式文本"
   },
   "counts": {
-    "literals": 685,
-    "literal_sites": 1471,
+    "literals": 698,
+    "literal_sites": 1486,
     "non_literals": 14,
     "non_literal_sites": 87,
-    "sites_total": 1558
+    "sites_total": 1573
   },
   "literals": [
     {
@@ -1942,7 +1942,7 @@
         "core/cmd/zerg/family_gap_state.go:3303",
         "core/cmd/zerg/family_gap_state.go:3574",
         "core/cmd/zerg/family_gap_state.go:3836",
-        "core/cmd/zerg/main.go:6029"
+        "core/cmd/zerg/main.go:6047"
       ]
     },
     {
@@ -3738,6 +3738,86 @@
       ]
     },
     {
+      "value": "review_bad_action",
+      "sites": [
+        "core/cmd/zerg/family_review.go:136"
+      ]
+    },
+    {
+      "value": "review_extra_args",
+      "sites": [
+        "core/cmd/zerg/family_review.go:128"
+      ]
+    },
+    {
+      "value": "review_issue_unreadable",
+      "sites": [
+        "core/cmd/zerg/family_review.go:165"
+      ]
+    },
+    {
+      "value": "review_issue_unwritable",
+      "sites": [
+        "core/cmd/zerg/family_review.go:198",
+        "core/cmd/zerg/family_review.go:216"
+      ]
+    },
+    {
+      "value": "review_issues_dir_unreadable",
+      "sites": [
+        "core/cmd/zerg/family_review.go:237"
+      ]
+    },
+    {
+      "value": "review_list_takes_no_action",
+      "sites": [
+        "core/cmd/zerg/family_review.go:112"
+      ]
+    },
+    {
+      "value": "review_merge_failed",
+      "sites": [
+        "core/cmd/zerg/family_review.go:187"
+      ]
+    },
+    {
+      "value": "review_missing_action",
+      "sites": [
+        "core/cmd/zerg/family_review.go:122"
+      ]
+    },
+    {
+      "value": "review_missing_args",
+      "sites": [
+        "core/cmd/zerg/family_review.go:88"
+      ]
+    },
+    {
+      "value": "review_no_branch",
+      "sites": [
+        "core/cmd/zerg/family_review.go:182"
+      ]
+    },
+    {
+      "value": "review_not_waiting_review",
+      "sites": [
+        "core/cmd/zerg/family_review.go:174"
+      ]
+    },
+    {
+      "value": "review_repo_empty",
+      "sites": [
+        "core/cmd/zerg/family_review.go:101"
+      ]
+    },
+    {
+      "value": "review_transition_failed",
+      "sites": [
+        "core/cmd/zerg/family_review.go:193",
+        "core/cmd/zerg/family_review.go:211"
+      ]
+    },
+    {
       "value": "rollback_failed",
       "sites": [
         "core/cmd/zerg/family_agent_ops.go:845"
@@ -4957,7 +5037,7 @@
         "core/cmd/zerg/family_route.go:85",
         "core/cmd/zerg/family_trace.go:189",
         "core/cmd/zerg/gate.go:609",
-        "core/cmd/zerg/main.go:6412"
+        "core/cmd/zerg/main.go:6430"
       ]
     },
     {

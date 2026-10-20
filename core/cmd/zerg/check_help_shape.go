@@ -1184,8 +1184,15 @@ var chsBaseline = chsBaselineSet{
 	//   `help --all` 469 → 471 行 / 252062 → 252642 字节 · 裸 `help` 343 → 345 行 / 86551 → 87131 字节。
 	//   危险档面（`help dangerous` 128 行 / 49360 字节 · 116 条）与 `help config`（21 / 1748）**一分未变**：
 	//   `sched run` 起进程、不进危险表（理由在 main.go 那一格的注释里）⇒ 这是「没有顺手放宽」的反证。
-	"help --all":     {HasLines: true, Lines: 471, HasBytes: true, Bytes: 252642},
-	"help":           {HasLines: true, Lines: 345, HasBytes: true, Bytes: 87131, HasLast: true, Last: "      非交互用 `--token-stdin`；详见 `zerg help credentials`）。"},
+	// ★ 2026-10-20（本枚 · 批 B3：`review` 一条**新顶层 path** · 写面但零危险档 · 源件 `core/cmd/zerg-review`）：
+	//   `help --all` 与裸 `help` 各 **+2 行**（一条新命令的用法行 ＋ **新族 `review` 进族级段** ⇒ 族数 58 → 59）；
+	//   字节与行数由现跑 `zerg gate check check-help-shape --emit-baseline` 取数照抄（**禁手写** —— 件头纪律）：
+	//   `help --all` 471 → 473 行 / 252642 → 253157 字节 · 裸 `help` 345 → 347 行 / 87131 → 87636 字节。
+	//   危险档面（`help dangerous` 128 行 / 49360 字节 · 116 条）与 `help config`（21 / 1748）**一分未变**：
+	//   `review` 的确认动作落在**本机、调用者自己给的**工作目录/仓库上（理由在 main.go 那一格的注释里）⇒
+	//   不进危险表。这是「没有顺手放宽」的反证，不是省了没量。
+	"help --all":     {HasLines: true, Lines: 473, HasBytes: true, Bytes: 253157},
+	"help":           {HasLines: true, Lines: 347, HasBytes: true, Bytes: 87636, HasLast: true, Last: "      非交互用 `--token-stdin`；详见 `zerg help credentials`）。"},
 	"help dangerous": {HasLines: true, Lines: 128, HasBytes: true, Bytes: 49360, HasRows: true, Rows: 116, HasTail: true, Tail: "上表 116 条：**已开放 103 条**（确认档齐就真执行 —— 逐条见上行标记）；**未开放 13 条**（真跑一律**拒执**、退码 2 = 不给结论，只有 `--dry-run` 出计划件 = 退码 0）。"},
 	"help config":    {HasLines: true, Lines: 21, HasBytes: true, Bytes: 1748},
 }

@@ -4312,6 +4312,24 @@ func init() {
 			endpoint: "",
 			run:      cmdTrace,
 		},
+		// ---- 脑确认复查（批 B3 · 2026-10-20）：独立入口 `core/cmd/zerg-review` 归入命令面 ----
+		// 位置参数与旗标**逐字**保留源件（`<workdir> <issue-id|list> [approve|reject]` +
+		// 一枚 `-repo` ⇒ 命令面写作 `--repo`），只把 Go `flag` 的单横线写成双横线。
+		// **双轨期**：`core/cmd/zerg-review` 二进制一字不动（本族只加一条入口）。
+		// 实现在 `family_review.go`（件头逐条写清与源件的六处差异）。
+		// 写面（真 merge / 真丢分支 / 改 issue 状态）但**不进危险表**，理由与 `sched run` 那一格同：
+		// 它是操作者对**自己指定的**工作目录/仓库当场做的确认动作（源件本来就这么用），宿主是本机、
+		// 目标是命令行给的那个路径，✗ 无远端效应；再加 `--yes`/`--dry-run` 会改源件行为 ⇒ 双轨期不加。
+		{
+			path:     []string{"review"},
+			kind:     "Review",
+			summary:  "脑确认复查（C4 流程：`approve` 把分支 merge 回 main 并置 issue done · `reject` 丢分支并置 retry · `list` 列在等确认的单）",
+			usage:    "zerg review <workdir> <issue-id|list> [approve|reject] [--repo <路径>]",
+			arity:    "any",
+			args:     []string{"<workdir>", "<issue-id|list>", "[approve|reject]"},
+			endpoint: "",
+			run:      cmdReview,
+		},
 		// ---- L1 骨架（2026-10-08）：新族 `sandbox` / `wall` / `fleet` / `mcp` —— 只立族、不填业务 ----
 		// 依据：`~/.zerg/state/AlltoGo接线总图-20261008.md` §②「立族清单 = 新立 4 族」·
 		// `待拍清单-AlltoGo-20261008.md` P2（方案 A 立新族）/ P3（`zerg wall` 撞名 ⇒ 帮助主题改名腾出 `wall`）

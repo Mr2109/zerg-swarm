@@ -11,7 +11,7 @@
   "verify_command_drift": "cd core && go test ./cmd/zerg/ -run TestUnresolvedEvidenceAnchorsAreDriftImmune -count=1 -v",
   "rule_keep": "**拍板前 7 件一个都不许删**（`P13` 逐字）。本机检把这条落成断言：7 个入口目录 + 各自的 main.go 必须在盘上。",
   "rule_no_command": "归属未定者**不许立命令名**（判据③ 逐字「`zerg trace` 这类名字**先不立命令**」）⇒ 命令树里不许出现以这些段开头的命令路径。",
-  "forbidden_command_segments": ["compat", "review"],
+  "forbidden_command_segments": ["compat"],
   "entries": [
     {
       "id": "agent",
@@ -74,12 +74,14 @@
       "dir": "core/cmd/zerg-review",
       "main": "core/cmd/zerg-review/main.go",
       "bin": "zerg-review",
-      "who_calls": "**只到「未见」**：仓内检索只命中两处文档登记行（README + skills 总览），**零脚本、零守护件、零代码**起它",
+      "who_calls": "**文档两行**；★ 2026-10-20 批 B3：**已归入命令面** —— `zerg review <workdir> <issue-id|list> [approve|reject] [--repo <路径>]`（实现在 `core/cmd/zerg/family_review.go`，位置参数三段/动作闭集/`-repo`→`--repo`/状态门逐字搬自本入口）；双轨期 `core/cmd/zerg-review` 二进制一字不动",
       "callers": [
-        {"file": "README.md", "anchor": "| zerg-review | 复查工具（C4 流程——zerg-review approve） |", "line_hint": 32, "公开面对应件": "不进公开面 ⇒ 该证据只在私有面成立", "what": "文档：登记成「复查工具（C4 流程——zerg-review approve）」"},
-        {"file": "docs/skills/zerg-overview.md", "anchor": "| zerg-review | 复查工具（C4 流程——zerg-review approve） |", "line_hint": 60, "公开面对应件": "不进公开面 ⇒ 该证据只在私有面成立", "what": "文档：同一行（skills 总览）"}
+        {"file": "README.md", "anchor": "| zerg-review | 复查工具（C4 流程——zerg-review approve）· **已归入命令面**：`zerg review <workdir> <issue-id|list> [approve|reject]`（双轨期二进制仍在） |", "line_hint": 32, "公开面对应件": "不进公开面 ⇒ 该证据只在私有面成立", "what": "文档：登记成「复查工具（C4 流程——zerg-review approve）」＋ 命令面入口那一行"},
+        {"file": "docs/skills/zerg-overview.md", "anchor": "| zerg-review | 复查工具（C4 流程——zerg-review approve）· **已归入命令面**：`zerg review <workdir> <issue-id|list> [approve|reject]`（双轨期二进制仍在） |", "line_hint": 60, "公开面对应件": "不进公开面 ⇒ 该证据只在私有面成立", "what": "文档：同一行（skills 总览）"},
+        {"file": "core/cmd/zerg/main.go", "anchor": "path:     []string{\"review\"},", "line_hint": 4324, "公开面对应件": "core/cmd/zerg/main.go", "what": "**命令面登记行**（批 B3）：`zerg review` 进命令树 ⇒ 同一套 C4 复查逻辑有 CLI 入口"},
+        {"file": "core/cmd/zerg/family_review.go", "anchor": "func cmdReview(inv *invocation, stdout, stderr io.Writer) int {", "line_hint": 145, "公开面对应件": "core/cmd/zerg/family_review.go", "what": "**实现件**（批 B3）：源件 `main()` 的逐面搬（状态门 → approve/reject/list；git 逐参、无 shell）"}
       ],
-      "verdict": "待拍（P13：`U21` 的取证上限 —— 「未见调用面」≠「没有调用面」；仓外面未取证）"
+      "verdict": "**已归（2026-10-20 批 B3）**：归入命令面 `zerg review`（实现在 `core/cmd/zerg/family_review.go` · 位置参数三段与 `--repo` 逐字保留 · 动作闭集 `approve|reject`）；双轨期独立入口 `core/cmd/zerg-review` **不删、不改**（`P13` 的「拍板前不许删」照旧成立）。★ 本条从 `待拍` 改为 `已归` 依赖 Mr2109 对 B3 的拍板 —— 若归属另有安排，改回 `待拍` 并把 `review` 加回 `forbidden_command_segments`（判据③ 会当场点名 `review` 这一条）"
     },
     {
       "id": "scheduler",
