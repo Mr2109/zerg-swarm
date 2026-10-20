@@ -302,7 +302,7 @@ func TestUnresolvedEvidenceAnchorsAreDriftImmune(t *testing.T) {
 
 	// ── 负控②-a：单行锚被复制成两行（不唯一）⇒ 必红 + 错因逐字 + 点名命中行号
 	sb3 := newAnchorSandbox(t, repo, led)
-	const schedRow = "| zerg-scheduler | 调度器 |"
+	const schedRow = "| zerg-scheduler | 调度器 · **已归入命令面**：`zerg sched run`（双轨期二进制仍在） |"
 	rewriteSandboxFile(t, sb3, "README.md", schedRow, schedRow+"\n"+schedRow)
 	t.Logf("负控②-a：副本 %s 的 README.md 里把 `%s` 复制成两行（单行锚 ⇒ 不唯一）", sb3, schedRow)
 	v2 := judgeUnresolved(sb3, *led, nil)

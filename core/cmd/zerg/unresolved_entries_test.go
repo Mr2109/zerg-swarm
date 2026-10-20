@@ -20,10 +20,14 @@
 //		  unresolved_entries_anchor_drift_test.go）。
 //		② **拍板前 7 件一个都不许删**（`P13` 逐字）：7 个入口目录 + 各自的 main.go 必须在盘上。
 //		③ **归属未定者不许立命令名**（判据③ 逐字「`zerg trace` 这类名字**先不立命令**」）：
-//		  命令树里不许出现以 `compat` / `review` / `scheduler` / `trace` 开头的命令路径。
+//		  命令树里不许出现以 `compat` / `review` 开头的命令路径。
+//		  ★ 2026-10-20 批 B1：`trace` **已归入命令面**（`zerg trace`）⇒ 从本表摘除（台账
+//		  `forbidden_command_segments` 同步摘）；摘的前提是归属已拍，**不是**为了放行而放行。
+//		  ★ 2026-10-20 批 B2：`scheduler` **已归入命令面**（`zerg sched run`）⇒ 同样摘除；
+//		  注意摘的是「未定段 `scheduler`」，命令名的段是 `sched`（既有族，本来就不在禁列里）。
 //
 // 负控：判定口 `judgeUnresolved` 是三格判据的**唯一判定口**，负控直接喂它坏台账
-// （锚空 / 锚不存在 / 锚不唯一 / 证据件读不到 / 入口目录没了 / 命令树里冒出 `trace` / 空表）⇒ 每格都必须报错。
+// （锚空 / 锚不存在 / 锚不唯一 / 证据件读不到 / 入口目录没了 / 命令树里冒出未定段（`compat`）/ 空表）⇒ 每格都必须报错。
 // 另有一条**对偶正控**：锚对而行号提示写错 ⇒ **不判红**，但必须留下警告（否则「行号不再是判据」这句话没有机检）。
 package main_test
 
@@ -206,7 +210,7 @@ func judgeUnresolved(root string, led contract.UnresolvedLedger, cmdPaths []stri
 		seg := strings.SplitN(p, " ", 2)[0]
 		if forbidden[seg] {
 			v.Errs = append(v.Errs, fmt.Errorf("判据③ 破：命令树里有 `zerg %s …`（路径 %q）—— 归属未定（P13）前不许立命令名；"+
-				"`zerg trace` 这类名字只能先不立", seg, p))
+				"台账 `forbidden_command_segments` 里的段只能先不立", seg, p))
 		}
 	}
 	return v
@@ -477,7 +481,7 @@ func TestUnresolvedJudgeHasTeeth(t *testing.T) {
 	mustWrite(t, filepath.Join(root, "core/cmd/zerg-trace/main.go"), "package main\n")
 	mustWrite(t, filepath.Join(root, "README.md"), "第一行\n| zerg-trace | 追踪工具 |\n第三行\n")
 	good := contract.UnresolvedLedger{
-		ForbiddenCommandSegment: []string{"trace"},
+		ForbiddenCommandSegment: []string{"compat"},
 		Entries: []contract.UnresolvedEntry{{
 			ID: "trace", Dir: "core/cmd/zerg-trace", Main: "core/cmd/zerg-trace/main.go",
 			Bin: "zerg-trace", WhoCalls: "文档一行", Verdict: "待拍",
@@ -549,9 +553,9 @@ func TestUnresolvedJudgeHasTeeth(t *testing.T) {
 		t.Error("负控② 失败：入口目录被删没有被抓到（P13 逐字「拍板前一个都不许删」）")
 	}
 
-	// ③ 命令树里冒出未定名的命令
-	if v := judgeUnresolved(root, good, []string{"trace", "task ls"}); v.ok() {
-		t.Error("负控③ 失败：命令树里 `zerg trace` 没有被抓到")
+	// ③ 命令树里冒出未定名的命令（现读未定段之一：`compat`；`trace` 已于批 B1 归入命令面）
+	if v := judgeUnresolved(root, good, []string{"compat build", "task ls"}); v.ok() {
+		t.Error("负控③ 失败：命令树里 `zerg compat …` 没有被抓到")
 	}
 
 	// ④ 公开面对应件（§五 第四批）：缺件不许留空 · 分列判 · 声明式不判 —— 三格都要有牙

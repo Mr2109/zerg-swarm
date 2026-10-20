@@ -11660,6 +11660,66 @@
    "why": "给了 --json 不给字段 ⇒ 2 + stdout 0 字节（§4.1 K2 甲档 · 码**取自退码表** `usage`）"
   },
   {
+   "id": "trace#未知旗标",
+   "command": "trace",
+   "argv": [
+    "trace",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何日志目录"
+  },
+  {
+   "id": "trace#未知字段",
+   "command": "trace",
+   "argv": [
+    "trace",
+    "--json",
+    "bogus"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "有字段表的命令点错字段 ⇒ `reportBadField` 逐格点名合法字段（`summary,steps,metrics`）；用法类错误**不吐包封** ⇒ stdout 零字节（§4.1 K2 甲档口径）。★ 本命令的**裸** `--json` 是合法档（= 源件那份三段文档），故此处不用「不给字段」那一格"
+  },
+  {
+   "id": "sched/run#未知旗标",
+   "command": "sched run",
+   "argv": [
+    "sched",
+    "run",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何工作目录（常驻档一格都不起）"
+  },
+  {
+   "id": "sched/run#不认的契约主号",
+   "command": "sched run",
+   "argv": [
+    "sched",
+    "run",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "不认的契约主号不许静默降级（§九 M6 · §十二 P-026）⇒ 执行前判 2；★ 本格是**常驻档唯一能进矩阵的一档** —— 真跑那条一跑不返回（判据面在 go test 的 family_sched_run_test.go）"
+  },
+  {
+   "id": "sched/run#多余位置参数",
+   "command": "sched run",
+   "argv": [
+    "sched",
+    "run",
+    "extra"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "`arity: none` ⇒ 位置参数一律拒（工作目录只走 `--workdir`）；执行前判，stdout 零字节"
+  },
+  {
    "id": "chat/ask#未知旗标",
    "command": "chat ask",
    "argv": [

@@ -11,7 +11,7 @@
   "verify_command_drift": "cd core && go test ./cmd/zerg/ -run TestUnresolvedEvidenceAnchorsAreDriftImmune -count=1 -v",
   "rule_keep": "**拍板前 7 件一个都不许删**（`P13` 逐字）。本机检把这条落成断言：7 个入口目录 + 各自的 main.go 必须在盘上。",
   "rule_no_command": "归属未定者**不许立命令名**（判据③ 逐字「`zerg trace` 这类名字**先不立命令**」）⇒ 命令树里不许出现以这些段开头的命令路径。",
-  "forbidden_command_segments": ["compat", "review", "scheduler", "trace"],
+  "forbidden_command_segments": ["compat", "review"],
   "entries": [
     {
       "id": "agent",
@@ -86,25 +86,28 @@
       "dir": "core/cmd/zerg-scheduler",
       "main": "core/cmd/zerg-scheduler/main.go",
       "bin": "zerg-scheduler",
-      "who_calls": "**只到「未见」**：仓内检索只命中两处文档登记行，**零脚本、零守护件、零代码**起它",
+      "who_calls": "**文档两行**；★ 2026-10-20 批 B2：**已归入命令面** —— `zerg sched run [--workdir <目录>] [--container] [--agent-bin <路径>] [--dev] [--repo <路径>]`（实现在 `core/cmd/zerg/family_sched_run.go`，旗标五枚/启动文案/状态循环逐字搬自本入口）；双轨期 `core/cmd/zerg-scheduler` 二进制一字不动。★ 与同族 `sched show|pause|resume|set` 分家：那四条打控制面 `/api/sched*`（管在跑的那个），`run` 在本机起进程",
       "callers": [
-        {"file": "README.md", "anchor": "| zerg-scheduler | 调度器 |", "line_hint": 33, "公开面对应件": "不进公开面 ⇒ 该证据只在私有面成立", "what": "文档：登记成「调度器」"},
-        {"file": "docs/skills/zerg-overview.md", "anchor": "| zerg-scheduler | 调度器 |", "line_hint": 61, "公开面对应件": "不进公开面 ⇒ 该证据只在私有面成立", "what": "文档：同一行（skills 总览）"}
+        {"file": "README.md", "anchor": "| zerg-scheduler | 调度器 · **已归入命令面**：`zerg sched run`（双轨期二进制仍在） |", "line_hint": 33, "公开面对应件": "不进公开面 ⇒ 该证据只在私有面成立", "what": "文档：登记成「调度器」＋ 命令面入口那一行"},
+        {"file": "docs/skills/zerg-overview.md", "anchor": "| zerg-scheduler | 调度器 · **已归入命令面**：`zerg sched run`（双轨期二进制仍在） |", "line_hint": 61, "公开面对应件": "不进公开面 ⇒ 该证据只在私有面成立", "what": "文档：同一行（skills 总览）"},
+        {"file": "core/cmd/zerg/main.go", "anchor": "path:     []string{\"sched\", \"run\"},", "line_hint": 2837, "公开面对应件": "core/cmd/zerg/main.go", "what": "**命令面登记行**（批 B2）：`zerg sched run` 进命令树 ⇒ 同一套调度逻辑有 CLI 入口（`sched` 族既有四条控制面动作不动）"},
+        {"file": "core/cmd/zerg/family_sched_run.go", "anchor": "func cmdSchedRun(inv *invocation, stdout, stderr io.Writer) int {", "line_hint": 219, "公开面对应件": "core/cmd/zerg/family_sched_run.go", "what": "**实现件**（批 B2）：源件 `main()` 的逐面搬（工作目录解析 → 调度器两档 → 常驻轮询 → 优雅停）"}
       ],
-      "verdict": "待拍（P13；注意与 §7.1 `P8` 的 `zerg-scheduler` 归属有接缝 —— 那条落在 T-49）"
+      "verdict": "**已归（2026-10-20 批 B2）**：归入命令面 `zerg sched run`（实现在 `core/cmd/zerg/family_sched_run.go` · 旗标五枚逐字保留 · 常驻档）；双轨期独立入口 `core/cmd/zerg-scheduler` **不删、不改**（`P13` 的「拍板前不许删」照旧成立）。★ 本条从 `待拍` 改为 `已归` 依赖 Mr2109 对 B2 的拍板 —— 若归属另有安排，改回 `待拍` 并把 `scheduler` 加回 `forbidden_command_segments`（判据③ 会当场点名 `sched run` 这一条）"
     },
     {
       "id": "trace",
       "dir": "core/cmd/zerg-trace",
       "main": "core/cmd/zerg-trace/main.go",
       "bin": "zerg-trace",
-      "who_calls": "**只到「未见」**：仓内检索命中两处文档登记行 + 一处**代码注释**（子端系统指标的记录说明面说它与时间线视图联动分析瓶颈）—— 注释不是调用者",
+      "who_calls": "**文档两行 + 一处代码注释**（注释不是调用者）；★ 2026-10-20 批 B1：**已归入命令面** —— `zerg trace <logdir> [--live] [--json] [--step N] [--tokens] [--errors]`（实现在 `core/cmd/zerg/family_trace.go`，旗标/视图逐字搬自本入口）；双轨期 `core/cmd/zerg-trace` 二进制一字不动",
       "callers": [
-        {"file": "README.md", "anchor": "| zerg-trace | 追踪工具（events.jsonl 时间线——冷启动❄标记） |", "line_hint": 34, "公开面对应件": "不进公开面 ⇒ 该证据只在私有面成立", "what": "文档：登记成「追踪工具（events.jsonl 时间线——冷启动标记）」"},
-        {"file": "docs/skills/zerg-overview.md", "anchor": "| zerg-trace | 追踪工具（events.jsonl 时间线——冷启动❄标记） |", "line_hint": 62, "公开面对应件": "不进公开面 ⇒ 该证据只在私有面成立", "what": "文档：同一行（skills 总览）"},
+        {"file": "README.md", "anchor": "| zerg-trace | 追踪工具（events.jsonl 时间线——冷启动❄标记）· **已归入命令面**：`zerg trace <logdir>`（双轨期二进制仍在） |", "line_hint": 34, "公开面对应件": "不进公开面 ⇒ 该证据只在私有面成立", "what": "文档：登记成「追踪工具（events.jsonl 时间线——冷启动标记）」＋ 命令面入口那一行"},
+        {"file": "docs/skills/zerg-overview.md", "anchor": "| zerg-trace | 追踪工具（events.jsonl 时间线——冷启动❄标记）· **已归入命令面**：`zerg trace <logdir>`（双轨期二进制仍在） |", "line_hint": 62, "公开面对应件": "不进公开面 ⇒ 该证据只在私有面成立", "what": "文档：同一行（skills 总览）"},
+        {"file": "core/cmd/zerg/main.go", "anchor": "path:     []string{\"trace\"},", "line_hint": 4305, "公开面对应件": "core/cmd/zerg/main.go", "what": "**命令面登记行**（批 B1）：`zerg trace` 进命令树 ⇒ 同一套分析逻辑有 CLI 入口"},
         {"file": "core/internal/agent/sysmetrics.go", "anchor": "时间线视图联动分析瓶颈", "line_hint": 5, "公开面对应件": "core/internal/agent/sysmetrics.go", "what": "**注释**（不是调用）：说它与时间线视图联动"}
       ],
-      "verdict": "待拍（P13 逐字：`zerg trace` 这类名字**先不立命令** —— 归属未定）"
+      "verdict": "**已归（2026-10-20 批 B1）**：归入命令面 `zerg trace`（实现在 `core/cmd/zerg/family_trace.go` · 旗标五枚逐字保留 · `<logdir>` 必填）；双轨期独立入口 `core/cmd/zerg-trace` **不删、不改**（`P13` 的「拍板前不许删」照旧成立）。★ 本条从 `待拍` 改为 `已归` 依赖 Mr2109 对 B1 的拍板 —— 若归属另有安排，改回 `待拍` 并把 `trace` 加回 `forbidden_command_segments`（判据③ 会当场点名）"
     }
   ]
 }

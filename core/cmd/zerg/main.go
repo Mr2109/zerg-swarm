@@ -444,6 +444,17 @@ func run(args []string, stdout, stderr io.Writer) int {
 	if inv.hasFlag("--uncertain") && !usageDeclaresFlag(cmd, "--uncertain") {
 		inv.unknown = append(inv.unknown, "--uncertain")
 	}
+	// ★ 同一条数据驱动收口（批 B2 · 2026-10-20 · `zerg sched run` 归入命令面）：五枚旗标
+	//   （`--workdir` / `--container` / `--agent-bin` / `--dev` / `--repo`）在解析面刚上户口
+	//   （三枚 `valueFlagName` ＋ 两枚布尔 case）⇒ **全族共用**；若不在此收口，别族（usage 未列它的
+	//   命令）真给它们会从「未知旗标 2」退化成**静默吞**（硬约束⑤：既有命令的退码与输出一字不动）。
+	//   形状逐字照拄上面 `--uncertain` 那条：把不归本命令的那一枚**补回 `inv.unknown`** ⇒ 由下面
+	//   **同一条**判词 + 同一个退码 2 收口。`sched run` 的 usage 已列五枚 ⇒ 归它。
+	for _, f := range []string{"--workdir", "--container", "--agent-bin", "--dev", "--repo"} {
+		if inv.hasFlag(f) && !usageDeclaresFlag(cmd, f) {
+			inv.unknown = append(inv.unknown, f)
+		}
+	}
 	// ★ 同一条数据驱动收口（本单 · 缺口 GAP-20260928-139）：`--build-info` 在解析面刚上户口（布尔 case）⇒ **全族共用**；
 	//   若不在此收口，别族（usage 未列它的命令）真给它会从「未知旗标 2」退化成**静默吞**（硬约束⑤：既有命令的退码与输出一字不动）。
 	//   形状逐字照拄上面 `--literal-text` 那条：把不归本命令的那一枚补回 `inv.unknown` ⇒ 由下面**同一条**判词 + 同一个退码 2 收口。`version` 的 usage 已列它 ⇒ 归它。
@@ -2813,6 +2824,26 @@ func init() {
 			endpoint: "POST /api/sched/set?max=<N>",
 			run:      cmdSchedSetGuarded,
 		},
+		// ---- 批 B2（2026-10-20 · `zerg sched run`）：独立入口 `core/cmd/zerg-scheduler` 归入命令面 ----
+		// 源件 104 行 · 旗标五枚**逐字**保留（`--workdir` / `--container` / `--agent-bin` / `--dev` /
+		// `--repo`），只把 Go `flag` 的单横线写成双横线。★ 与上面四条的**分家**：`show|pause|resume|set`
+		// = 打控制面 `/api/sched*`（管**在跑的那个**）；本格 `run` = **在本机起进程**（源件语义）。
+		// **双轨期**：`core/cmd/zerg-scheduler` 二进制一字不动。实现在 `family_sched_run.go`
+		// （件头逐条写清与源件的四处差异 —— ✗ 不是 `family_sched.go`：那个名字已被 sched 写面确认门占着）。
+		// 写面（真派单：起 worker · 改任务单状态）但**不进危险档**，理由照源件口径写清：
+		// 它是「操作者当场在本机起的那个进程」（本来由 launchd/systemd 拉起），Ctrl-C/SIGTERM 即停
+		// ⇒ 本机可逆、无远端效应；与 `trace` 那格同一种「不进危险表」的判法。
+		{
+			path:     []string{"sched", "run"},
+			kind:     "SchedRun",
+			summary:  "在本机起一个调度器（**常驻档**：轮询任务单目录 → 按优先级派单 → 每 10s 报状态 → SIGINT/SIGTERM 优雅停；容器/开发两档照源件 `zerg-scheduler`）",
+			usage:    "zerg sched run [--workdir <目录>] [--container] [--agent-bin <路径>] [--dev] [--repo <路径>]",
+			arity:    "none",
+			args:     []string{"（不收位置参数：工作目录走 `--workdir`）"},
+			endpoint: "",
+			opened:   true,
+			run:      cmdSchedRun,
+		},
 		{
 			path:    []string{"agent", "unload"},
 			machine: machineNodeName,
@@ -4266,6 +4297,21 @@ func init() {
 			endpoint: "",
 			run:      cmdMetrics,
 		},
+		// ---- CA 全量追踪（批 B1 · 2026-10-20）：独立入口 `core/cmd/zerg-trace` 归入命令面 ----
+		// 旗标**逐字**保留源件那五枚（`--live` / `--json` / `--step` / `--tokens` / `--errors`），
+		// `<logdir>` 必填。**双轨期**：`core/cmd/zerg-trace` 二进制不动（本族只加一条入口）。
+		// 只读（`os.Open` / `os.Stat` 两件）⇒ 不写 `danger`（走默认「只读」幂等档）。
+		{
+			path:     []string{"trace"},
+			kind:     "Trace",
+			summary:  "CA 全量追踪（`events.jsonl` 时间线 · 每轮明细 · token 分析 · 错误清单 · 机器指标联动；只读）",
+			usage:    "zerg trace <logdir> [--live] [--json] [--step N] [--tokens] [--errors]",
+			arity:    "any",
+			args:     []string{"<logdir>（必填：含 `events.jsonl` 的日志目录；`sysmetrics.jsonl` 有则联动）"},
+			fields:   traceFields,
+			endpoint: "",
+			run:      cmdTrace,
+		},
 		// ---- L1 骨架（2026-10-08）：新族 `sandbox` / `wall` / `fleet` / `mcp` —— 只立族、不填业务 ----
 		// 依据：`~/.zerg/state/AlltoGo接线总图-20261008.md` §②「立族清单 = 新立 4 族」·
 		// `待拍清单-AlltoGo-20261008.md` P2（方案 A 立新族）/ P3（`zerg wall` 撞名 ⇒ 帮助主题改名腾出 `wall`）
@@ -5284,6 +5330,28 @@ func parseInvocation(args []string) (*invocation, error) {
 		//   （✗ 不许与兄弟合并成一串 `||`：门73 取数面按 `case a == "--x"` 逐条现读）。
 		case a == "--stream":
 			inv.kvSet(a, "true")
+		// ★ 批 B1（2026-10-20 · `zerg trace` 归入命令面）：三枚**布尔**旗标 ——
+		//   `--live`（实时尾随）/ `--tokens`（token 分析视图）/ `--errors`（错误清单视图）。
+		//   与 `--stream`/`--include-open` 同一种形态（写进 `inv.kv`（`kvSet`）⇒ `foreignFlag` 看得见）；
+		//   ★ **✗ 不进 `valueFlagName`**（那张表是取值旗标名表 · 门73 判据丙：布尔名登进去 ⇒ 形态判红）；
+		//   ★ 三枚**各写一条** `case`（✗ 不许合并成一串 `||`：门73 的取数面按 `case a == "--x"` 逐条现读，
+		//   合并时只读得到前者 ⇒ 后两枚被判「解析面不认」= 假红）。用法串与本处**必须同改**（门73）。
+		case a == "--live":
+			inv.kvSet(a, "true")
+		case a == "--tokens":
+			inv.kvSet(a, "true")
+		case a == "--errors":
+			inv.kvSet(a, "true")
+		// ★ 批 B2（2026-10-20 · `zerg sched run` 归入命令面）：两枚**布尔**旗标 ——
+		//   `--container`（容器模式 · CA 脱离沙箱）/ `--dev`（开发模式 · 容器内分支→commit→PR）。
+		//   与 `--live`/`--tokens` 同一种形态（写进 `inv.kv`（`kvSet`）⇒ `foreignFlag` 看得见）；
+		//   ★ **✗ 不进 `valueFlagName`**（那张表是取值旗标名表 · 门73 判据丙：布尔名登进去 ⇒ 形态判红）；
+		//   ★ 两枚**各写一条** `case`（✗ 不许合并成一串 `||`：门73 的取数面按 `case a == "--x"` 逐条现读）。
+		//   用法串与本处**必须同改**（门73）＋ dispatch 收口（见下 `--container`/`--dev` 那一排）。
+		case a == "--container":
+			inv.kvSet(a, "true")
+		case a == "--dev":
+			inv.kvSet(a, "true")
 		// `code find` 的**短形**上下文/归一旗标（缺口 `GAP-20260927-250/252` · 本枚）：
 		//   `-i`（大小写归一 · 布尔）· `-A<N>`/`--after <N>`（后文）· `-B<N>`/`--before <N>`（前文）·
 		//   `-C<N>`（前后各 N，POSIX grep 惯用 · 与缺口症状逐字 `-A2`/`-C1` 同形）。
@@ -5865,6 +5933,16 @@ func valueFlagName(a string) string {
 	//   （不归本命令的那一枚补回 `inv.unknown`，既有命令一字不动）。
 	switch a {
 	case "--max", "--poll-interval", "--max-retries", "--cooldown":
+		return a
+	}
+	// ★ 批 B2（2026-10-20 · `zerg sched run` 归入命令面）：三枚**取值**旗标 ——
+	//   `--workdir <目录>`（工作目录 · 源件 `-workdir` 的逐字保留）· `--agent-bin <路径>`
+	//   （容器模式挂载的 Linux zerg-agent）· `--repo <路径>`（DevMode 的开发仓库）。
+	// 与上面各排同一口径：值照收，语义在 `family_sched_run.go:schedRunParse` 里判。
+	// ★ 名字表是本仓「唯一真源」⇒ 不登记就一律退 2「未知旗标」= 新旗标等于不可用；
+	//   用法串与本表**必须同改**（门73）；配套 dispatch 收口（不归本命令的那一枚补回 `inv.unknown`）。
+	switch a {
+	case "--workdir", "--agent-bin", "--repo":
 		return a
 	}
 	return ""
