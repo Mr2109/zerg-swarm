@@ -70,6 +70,27 @@ type PIDReporter interface {
 	InstancePIDs(inst Instance) []int
 }
 
+// DetachedProbe — 可选面：**后台档**（ExecOpts.Detach）起的进程现在还在不在。
+//
+// ★ 为什么必须有这一面：后台档的 Exec 只报「进程已签出」，而 `cocoon open` 不许把
+// 「Start 没报错」当「服务在跑」（T3b 的假绿就是这么来的）。这一面给命令面一个
+// **可判活**的读数：活着 / 已退（带退出观测）。没有它，「验活」就只能靠猜。
+//
+// ★ 实现要求（两条都直接决定真假）：
+//
+//	① 僵尸不算活着：父进程还没 wait 掉的孩子在 /proc 里还在，但已经什么都不做了 ——
+//	   判活必须看进程状态（Linux `/proc/<pid>/stat` 的 state，Z/X 一律算死）。
+//	② 不是本进程起的 pid（`close` 场景 / CLI 早退场）只许按「/proc 在不在且非僵尸」答，
+//	   ✗ 不许猜退出码；拿不到真退出码时如实返回 RC=1 而不是 0（0 会被读成「正常完成」）。
+type DetachedProbe interface {
+	// DetachedStatus — 后台档进程 pid 的现读状态。
+	//
+	//	活着   ⇒ alive=true,  exited=false
+	//	已退   ⇒ alive=false, exited=true, res=退出观测（拿不到真退出码时 RC=1）
+	//	都不是 ⇒ 不可能（实现必须给一个确定的答案；拿不准按「已退」报）
+	DetachedStatus(pid int) (alive bool, exited bool, res ExecResult)
+}
+
 // HandleReaper — 可选面：**按盘上句柄**收尾（跨进程 `close` 的唯一入口）。
 //
 // ★ 与 Destroy 的分工：Destroy 认的是「我内存里记过这一号」，跨进程时那份记账不存在；
@@ -80,6 +101,30 @@ type HandleReaper interface {
 	// ReapPersisted — 收掉 inst 对应的 pid 树 + cgroup + 茧根。幂等（收过再收返回 nil）。
 	// 空 pids 且茧根不存在 ⇒ nil。
 	ReapPersisted(ctx context.Context, inst Instance, pids []int) error
+}
+
+// CocoonDirSetter — 可选面：「茧目录」接线口（命令面把一个宿主目录交给后端当落点父目录）。
+//
+// ★ 为什么单开门：落点（NsjailBackend.BaseDir）是**部署参数**，不是后端的身份，所以
+// 不进 Backend 五动作的签名；但命令面必须在 Provision 之前把它设上，否则
+// ① 后端的 overlay/upper/merged 与茧内 /tmp 无处可落 ⇒ 给了 rootfs 只能报错；
+// ② 实例根落不到茧目录里 ⇒ `close --purge` 删茧目录时收不掉这一层。
+//
+// ★ 语义（测试要打的三条）：
+//
+//	① 给的是**茧目录本身**（真源根下的 `<id>/`），不是它的父目录：后端自己的实例根是
+//	   `<该目录>/<后端签发的 id>`（见 NsjailBackend.Provision）⇒ 一座茧的全部产物
+//	   （upper / work / merged / tmp）都在这棵下面，删茧目录时一次收干净、也不碰兄弟茧。
+//	② 目录**必须已经存在**：调用方先建目录再传（本方法只校验，不建盘）。
+//	③ 空串 / 相对路径 / 不存在 / 不是目录 ⇒ 错。✗ 不许悄悄当成「没给」：那会让
+//	   「契约给了 rootfs」退回宿主根，正是本层要消灭的静默降级。
+type CocoonDirSetter interface {
+	// SetCocoonDir — 记下这座茧的宿主目录（幂等：同一个值设几次都一样）。
+	//
+	// ★ 形态限定（如实说）：这是「一个进程同时只管一座茧」的接法 —— 命令面是
+	// 一次一茧的一次性进程，所以够了。要在同一进程里**并发**开多座茧，就得把它改成
+	// Provision 的入参（每次调用带自己的茧目录），那是接口变更，本版未做。
+	SetCocoonDir(dir string) error
 }
 
 // Instance — 后端签发的不透明句柄。
@@ -125,6 +170,19 @@ type ExecOpts struct {
 	Timeout time.Duration
 	// TTY — 要不要分配伪终端（影响 stdout 的行缓冲与 ^C 语义）。
 	TTY bool
+	// Detach — **后台档**：起进程即返回，不等它退出（阻塞档 = 缺省）。
+	//
+	// ★ 存在理由（这条是「茧要活过 CLI」的唯一实现面）：`cocoon open` 是个一次性进程，
+	// 而它起的服务要一直活着。阻塞档里服务 spawn 在**它自己的 goroutine** 里，main 一返回
+	// 整棵进程树就被带走 —— 实测（T3b）三次真后端 open 全是 pid:0、无 logs/、无 nsjail 进程。
+	// 后台档让子进程**自成会话**（setsid：进程组号 == pid），CLI 退出后它被 init 收养、继续跑；
+	// 收尾由另一个进程的 `close` 按 meta 里的 pid 整组收（见 HandleReaper）。
+	//
+	// ★ 三条硬约束（实现方必须照做，否则等于换了个假绿）：
+	//  ① 必须要求 LogPath 非空：管道读端随起它的进程一起消失 ⇒ 服务下一次写 stdout 就 EPIPE；
+	//  ② 必须把**真进程 pid**放进 ExecResult.PID 并实现 DetachedProbe（命令面靠它验活）；
+	//  ③ 返回不表示「服务起来了」，只表示「进程已签出」——「真在」由调用方验（探活/就绪）。
+	Detach bool
 	// Stdin — 一次性喂给进程的输入；nil 表示立即 EOF（不挂管道等输入）。
 	Stdin []byte
 	// Env — 追加/覆盖的环境变量（不与 Spec.Env 冲突时由控制面合并后传入）。
@@ -150,6 +208,12 @@ func (o ExecOpts) Validate() error {
 	}
 	if o.LogPath != "" && !filepath.IsAbs(o.LogPath) {
 		return fmt.Errorf("cocoon: exec 日志落点必须是宿主绝对路径，得到 %q", o.LogPath)
+	}
+	// ★ 后台档必须落文件：管道读端属于起它的那个进程，那个进程一退服务下一次写就 EPIPE
+	// （见 ExecOpts.Detach 的硬约束①）。宁可在这里拒执，也不许静默退回管道。
+	if o.Detach && o.LogPath == "" {
+		return fmt.Errorf("cocoon: 后台档（Detach）必须给 LogPath —— 管道读端会随起进程一起消失，" +
+			"服务下一次写 stdout/stderr 就是 EPIPE（宁拒执不静默降级）")
 	}
 	for k := range o.Env {
 		if !specEnvKeyRe.MatchString(k) {
@@ -187,6 +251,11 @@ func RCSignaled(signum int) int { return RCSignalBase + signum }
 type ExecResult struct {
 	// RC — 真实退出码或系统化值（见上）。
 	RC int
+	// PID — 后端签出的进程 pid（**只有后台档**填；阻塞档为 0，因为进程已经退完了）。
+	//
+	// ★ 它进 meta（`pid` / `backend_pids`），是另一个进程的 `close` 能收干净的唯一依据。
+	// 后台档不填它 ⇒ 调用方拿不到「谁的进程」，只能报成功却什么都收不掉。
+	PID int
 	// Signal — 杀死进程的信号名；"" 表示不是被信号杀的。
 	Signal string
 	// Stdout / Stderr — 已收到的输出（超时也要保留，不许丢）。
@@ -358,6 +427,14 @@ type Capabilities struct {
 	Expose bool
 	// ExposeMechanism — 端口怎么露 / 为什么不露（false 时必须写清，空值等于「没说」）。
 	ExposeMechanism string
+	// Overlay — 能不能把「只读镜像根」变成「可写视图」（overlayfs：lower=rootfs 只读 ·
+	// upper 可写 · work 同盘）。
+	//
+	// ★ 与 Expose 同口径：false 时必须写清为什么（OverlayMechanism）。false 不等于
+	// 「不能换根」—— 换根（chroot）与可写层是两件事：只能 chroot 的后端仍可跑只读镜像。
+	Overlay bool
+	// OverlayMechanism — 怎么做 overlay / 为什么不做。
+	OverlayMechanism string
 }
 
 // Validate — 声明自检：平台/隔离本体/回收机制都必须写清（空值等于「没说」，
@@ -379,6 +456,9 @@ func (c Capabilities) Validate() error {
 	if !c.Expose && c.ExposeMechanism == "" {
 		return fmt.Errorf("cocoon: 后端能力（%s）Expose=false 但缺 ExposeMechanism（「不映射」与「忘了写」必须能分开）", c.Platform)
 	}
+	if !c.Overlay && c.OverlayMechanism == "" {
+		return fmt.Errorf("cocoon: 后端能力（%s）Overlay=false 但缺 OverlayMechanism（「不做可写层」与「忘了写」必须能分开）", c.Platform)
+	}
 	return nil
 }
 
@@ -398,6 +478,10 @@ var capabilitiesByPlatform = map[string]Capabilities{
 		// nsjail 只做 CLONE_NEWNET 隔离，不做 DNAT：茧内监听的端口本来就是宿主端口。
 		Expose:          false,
 		ExposeMechanism: "无 DNAT（茧与调用方同宿主网络栈：本后端有意共享宿主 netns ⇒ 茧内端口即宿主端口，直连 127.0.0.1:<inner>；代价是茧能出网，未接）",
+		// overlayfs：lower=镜像根（只读）· upper/work 落在茧目录（同盘）⇒ 茧内可写、
+		// 写进去的新文件全部可在 upper 里逐件看见（判据就靠这一条）。
+		Overlay:          true,
+		OverlayMechanism: "overlayfs（lower=rootfs 只读 · upper/work 在茧目录；upper 的盘必须支持叠层，tmpfs/ext4/xfs 可以，overlay-on-overlay 不行）",
 	},
 	PlatformDarwin: {
 		Platform:            PlatformDarwin,
@@ -412,6 +496,8 @@ var capabilitiesByPlatform = map[string]Capabilities{
 		CrossMountMechanism: "手动比 st_dev（无 NO_XDEV 等价物）",
 		Expose:              false,
 		ExposeMechanism:     "未接（VZ 后端未接：端口转发是 VZ 的活，本件不做）",
+		Overlay:             false,
+		OverlayMechanism:    "未接（VZ 后端未接：镜像根由 VM 自己的盘提供，宿主侧不做 overlay）",
 	},
 	PlatformWindows: {
 		Platform:            PlatformWindows,
@@ -426,6 +512,8 @@ var capabilitiesByPlatform = map[string]Capabilities{
 		CrossMountMechanism: "待补",
 		Expose:              false,
 		ExposeMechanism:     "未接（HCS 后端未接：HvSocket 转发是 HCS 的活，本件不做）",
+		Overlay:             false,
+		OverlayMechanism:    "未接（HCS 后端未接：分层由 HCS 自己的 layer 提供，宿主侧不做 overlay）",
 	},
 }
 

@@ -17,8 +17,14 @@
 //
 // ★ 撞硬约束（照实登记，不假装已做）：
 //
-//	Ⅰ. 未换 rootfs：本后端不做 --chroot，只做 namespace/cgroup 隔离；镜像面要靠上层
-//	   Mount 把根挂进来（镜像落盘/overlay 是另一件事，本件不接）。
+//	Ⅰ. 换根只认**给定目录**：`[茧].rootfs` 有值 ⇒ `--chroot <overlay 合并视图>`（lower=该目录
+//	   只读 · upper=<茧目录>/upper 可写）+ 最小只读面（/proc、/dev/{null,zero,urandom,random}、
+//	   系统面顶层目录）+ 可写 /tmp。**镜像拉取/解包（OCI）不在本件**：rootfs 目录得由调用方
+//	   先备好。缺省不给 rootfs ⇒ 维持既有档（chroot=宿主根，茧内跑宿主二进制）——这是**既有
+//	   档**，给了 rootfs 之后任何一步做不成都报错，不许退回它（见 nsjailRootfsPlanFor）。
+//	Ⅰc. 命令面（`cocoon open`）**已**把茧目录交给后端（`CocoonDirSetter.SetCocoonDir(<真源根>/<id>/)`
+//	   ⇒ 实例根 = 该目录下的 `<后端 id>/`，upper/work/merged/tmp 全在里面）；`close` 同样先设一遍
+//	   （跨进程时按盘上句柄收尾要靠它算茧根）。直接调后端（绕过命令面）时，调用方须自己设 BaseDir。
 //	Ⅰb. 网络两难：nsjail 缺省建**新** netns（茧断外网，但茧内回环只属于它 ⇒ 宿主与 broker
 //	   都够不着，端口面只能报「不可达」）；置 HostNetwork 位（命令面已置 true）共享宿主 netns
 //	   ⇒ 茧内端口即宿主端口（命令面要的就是这个），代价是**茧能出网** ——
@@ -85,6 +91,25 @@ func (b *NsjailBackend) Provision(ctx context.Context, spec *Spec) (Instance, er
 		if err := os.MkdirAll(st.root, nsjailRootMode); err != nil {
 			return Instance{}, fmt.Errorf("cocoon: nsjail 建茧根 %s 失败: %w", st.root, err)
 		}
+		// 建了目录之后的任何报错都要把它收掉：留一个空茧根，`ls` 会看见一个不存在的实例。
+		ok := false
+		defer func() {
+			if !ok {
+				_ = os.RemoveAll(st.root)
+			}
+		}()
+		// 换根面在 Provision 就定死（别等 Exec 才发现落点算不出来）：给了 [茧].rootfs 却没茧目录、
+		// 或者那个目录根本不在/不是目录，现在报比跑到一半报有用。
+		if _, err := nsjailRootfsPlanFor(spec, b.Chroot, st.root); err != nil {
+			return Instance{}, err
+		}
+		if _, err := nsjailCheckRootfs(spec); err != nil {
+			return Instance{}, err
+		}
+		ok = true
+	} else if _, err := nsjailRootfsPlanFor(spec, b.Chroot, ""); err != nil {
+		// 没配 BaseDir 但契约要 rootfs ⇒ 同一条红线（不许退回宿主根），只是没有目录可收。
+		return Instance{}, err
 	}
 
 	b.insts[id] = st
@@ -105,6 +130,13 @@ func (b *NsjailBackend) Provision(ctx context.Context, spec *Spec) (Instance, er
 // 表现为 RC=128+n、Signal=""。RC 已经把事实说清楚了，硬把 Signal 填成 SIGxxx 反而是在
 // 声称一个我们没观测到的信号。同理 rc=255 可能是「茧内命令退 255」也可能是 nsjail 自己
 // 报错，本层不区分（区分要靠 nsjail 的日志文案，那比错报更脆）。
+//
+// ★ 两条档（ExecOpts.Detach）：
+//
+//	阻塞档（缺省）—— 起、等、报退出观测。tests / 同步用法。
+//	后台档（Detach）—— setsid 起、收尸 goroutine 记账、立刻返回 {RC:0, PID:<nsjail pid>}。
+//	   stdout/stderr 必须落文件（Validate 已拒「后台档没日志」）；退出观测留给
+//	   DetachedStatus（命令面靠它验活、close 靠 meta 里的 pid 整组收）。
 func (b *NsjailBackend) Exec(ctx context.Context, inst Instance, argv []string, opts ExecOpts) (ExecResult, error) {
 	if err := opts.Validate(); err != nil {
 		return ExecResult{}, err
@@ -121,15 +153,33 @@ func (b *NsjailBackend) Exec(ctx context.Context, inst Instance, argv []string, 
 		return ExecResult{}, err
 	}
 
-	spec, mounts, err := b.execView(inst)
+	spec, mounts, instRoot, err := b.execView(inst)
 	if err != nil {
 		return ExecResult{}, err
 	}
-	// argv[0] 裸命令名 → 按茧内 PATH 解析成绝对路径（nsjail 直接 execve、不走 PATH，实测见
-	// nsjailResolveArgv0 的注释）。解析不了的形态在这里就拒，不留到 nsjail 退 255 才让人猜。
-	argv, err = nsjailResolveArgv0(argv, nsjailJailPATH(spec), b.Chroot)
+	// 根文件系统方案：给了 [茧].rootfs 就是真镜像根（overlay 合成），否则是既有档。
+	// ★ 方案算不出来就报错 —— 不退回宿主根（那正是本单要消灭的「茧里跑宿主二进制」）。
+	plan, err := nsjailRootfsPlanFor(spec, b.Chroot, instRoot)
 	if err != nil {
 		return ExecResult{}, err
+	}
+	// argv[0] 裸命令名 → 按**茧内** PATH 解析成绝对路径（nsjail 直接 execve、不走 PATH，
+	// 实测见 nsjailResolveArgv0 的注释）。茧内解析的结果也只在茧内有效，绝不拿宿主路径凑。
+	argv, err = nsjailResolveArgv0(argv, nsjailJailPATH(spec), plan.Chroot)
+	if err != nil {
+		return ExecResult{}, err
+	}
+	// 起进程前把根文件系统备好：overlay 挂不上就**报错**（宁红不假绿），不退回宿主根。
+	if plan.Overlay {
+		if err := nsjailOverlaySetup(plan); err != nil {
+			return ExecResult{}, err
+		}
+	}
+	if plan.IsJail() {
+		// bind mount 要求目标存在：/proc、/dev、/tmp 与设备文件都在这里补齐（缺的落进 upper）。
+		if err := nsjailEnsureJailDirs(plan); err != nil {
+			return ExecResult{}, err
+		}
 	}
 	// 快照一次挂载点：Exec 期间不再读可变字段（配置类字段本应在使用前定型）。
 	cgroupMount := b.CgroupMount
@@ -142,15 +192,24 @@ func (b *NsjailBackend) Exec(ctx context.Context, inst Instance, argv []string, 
 		return ExecResult{}, fmt.Errorf("cocoon: nsjail 后端不可用：找不到可执行文件 %q（%w）", path, err)
 	}
 
-	args := nsjailExecArgv(spec, mounts, b.Chroot, opts.Dir, argv)
+	args := nsjailExecArgvForPlan(spec, mounts, plan, opts.Dir, argv)
 	if b.HostNetwork {
 		// 共享宿主 netns（见字段注释）：茧内 127.0.0.1:<port> 就是宿主那一个端口。
 		args = nsjailWithHostNet(args)
 	}
 
 	cmd := exec.Command(path, args...)
-	// Setpgid ⇒ 子进程自成一组，组号 == 子进程 pid：杀 -pgid 就是杀「nsjail + 它拉起的整棵树」。
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// 进程组：两条档的共同目标是「组号 == 子进程 pid」，这样 kill(-pid) 就是杀整棵树。
+	//
+	//	阻塞档 Setpgid：子进程自成一组，但仍在**本进程的会话**里（前台语义，超时可整组叫停）。
+	//	后台档 Setsid：子进程自成**会话**（顺带自成进程组），与起它的 CLI 彻底脱钩 ——
+	//	  CLI 退出（含被 SIGHUP / 终端消失）都不再传到它，它被 init 收养后继续跑。
+	//	  ★ 这是「茧活过 CLI」的唯一手段：只 Setpgid 的话，CLI 一退整组仍会被会话清理带走。
+	if opts.Detach {
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	} else {
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	}
 	cmd.Env = nsjailEnv(spec, opts.Env)
 	if opts.Stdin != nil {
 		cmd.Stdin = bytes.NewReader(opts.Stdin)
@@ -179,6 +238,28 @@ func (b *NsjailBackend) Exec(ctx context.Context, inst Instance, argv []string, 
 	}
 	pid := cmd.Process.Pid
 	b.addPID(inst.ID, pid)
+
+	// ── 后台档：签出即返回，不等退出 ──────────────────────────────────
+	//
+	// ★ 这里**不 Wait**：Wait 会阻塞到进程结束，那就又变回「服务 spawn 在 CLI 的调用栈里」。
+	// 但完全不 Wait 也不行：子进程退出后没人回收 ⇒ 留一个僵尸（/proc 里有、实际已死），
+	// 判活就会把它当「在跑」。所以用一个 goroutine 收尸、把退出观测记进 detached 表。
+	if opts.Detach {
+		d := &nsjailDetach{done: make(chan struct{})}
+		b.trackDetached(pid, d)
+		go func() {
+			waitErr := cmd.Wait()
+			code, sig, werr := nsjailExitOf(waitErr)
+			if werr != nil {
+				// 解码不了（罕见）：按「非零退出」记，绝不记成「正常完成 0」。
+				code, sig = 1, 0
+			}
+			d.res, _ = nsjailResult(code, sig, false, nil, nil, time.Since(start).Milliseconds())
+			close(d.done)
+		}()
+		// RC=0 + PID：语义是「进程已签出」，不是「服务已就绪」（见 ExecOpts.Detach 硬约束③）。
+		return ExecResult{RC: 0, PID: pid, MS: time.Since(start).Milliseconds()}, nil
+	}
 
 	waitCh := make(chan error, 1)
 	go func() { waitCh <- cmd.Wait() }()
@@ -236,21 +317,73 @@ func (b *NsjailBackend) Exec(ctx context.Context, inst Instance, argv []string, 
 	// 否则每跑一次 exec 就在 /sys/fs/cgroup 攒一个目录。
 	_ = nsjailReapEmptyCgroups(cgroupMount)
 
-	exitCode, signum := 0, 0
-	if waitErr != nil {
-		var ee *exec.ExitError
-		if !errors.As(waitErr, &ee) {
-			return ExecResult{}, fmt.Errorf("cocoon: 等 nsjail 退出失败: %w", waitErr)
-		}
-		if ws, ok := ee.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
-			signum = int(ws.Signal())
-		} else {
-			exitCode = ee.ExitCode()
-		}
+	exitCode, signum, werr := nsjailExitOf(waitErr)
+	if werr != nil {
+		return ExecResult{}, werr
 	}
 
 	return nsjailResult(exitCode, signum, timedOut, stdout.Bytes(), stderr.Bytes(),
 		time.Since(start).Milliseconds())
+}
+
+// nsjailExitOf — cmd.Wait 的错 → (退出码, 信号号, 解码错误)。
+//
+// ★ 两条档共用一份口径（阻塞档与后台档的收尸），免得「后台档的退出码」长成另一套。
+// 被信号杀时报信号号、退出码报 0；正常退出报退出码、信号号报 0。
+func nsjailExitOf(waitErr error) (exitCode, signum int, err error) {
+	if waitErr == nil {
+		return 0, 0, nil
+	}
+	var ee *exec.ExitError
+	if !errors.As(waitErr, &ee) {
+		return 0, 0, fmt.Errorf("cocoon: 等 nsjail 退出失败: %w", waitErr)
+	}
+	if ws, ok := ee.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+		return 0, int(ws.Signal()), nil
+	}
+	return ee.ExitCode(), 0, nil
+}
+
+// trackDetached — 记下一个后台档进程的观测点（pid 复用极不可能，直接覆盖）。
+func (b *NsjailBackend) trackDetached(pid int, d *nsjailDetach) {
+	if pid <= 0 || d == nil {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.detached == nil {
+		b.detached = make(map[int]*nsjailDetach)
+	}
+	b.detached[pid] = d
+}
+
+// DetachedStatus — 实现 DetachedProbe：后台档进程现在还在不在。
+//
+// 两条路（顺序要紧）：
+//
+//	① 本进程起的（detached 表里有）⇒ 看收尸 goroutine 的退出观测。★ 这条路比 /proc 更准：
+//	   进程刚退、还没被 wait 掉时它在 /proc 里是僵尸，/proc 只能判「死了」而给不出退出码。
+//	② 不是本进程起的（`close` 是另一个进程 / CLI 早退场）⇒ 只能按 /proc 判（僵尸算死），
+//	   退出码拿不到 ⇒ 如实报 RC=1（✗ 不许猜 0，那会被读成「正常完成」）。
+func (b *NsjailBackend) DetachedStatus(pid int) (alive bool, exited bool, res ExecResult) {
+	if pid <= 0 {
+		return false, true, ExecResult{RC: 1}
+	}
+	b.mu.Lock()
+	d := b.detached[pid]
+	b.mu.Unlock()
+	if d != nil {
+		select {
+		case <-d.done:
+			return false, true, d.res
+		default:
+			return true, false, ExecResult{}
+		}
+	}
+	if nsjailPidRunning(pid) {
+		return true, false, ExecResult{}
+	}
+	return false, true, ExecResult{RC: 1}
 }
 
 // Mount — 记一次挂载（nsjail 的 --bindmount 只能在起进程时给，所以这里只登记）。
@@ -267,6 +400,12 @@ func (b *NsjailBackend) Mount(ctx context.Context, inst Instance, hostPath, inne
 	// 语义与我们想表达的完全不同 ⇒ 提前拒。
 	if !filepath.IsAbs(hostPath) || !filepath.IsAbs(innerPath) {
 		return fmt.Errorf("%w: 必须是绝对路径（host=%q inner=%q）", ErrBadMount, hostPath, innerPath)
+	}
+	// ★ `/` 不许整根挂：把宿主根挂成茧内 `/` 等于把「换根」这件事作废（隔离面只剩 namespace），
+	// 而调用方会以为自己挂了个数据盘。这条是承诺，不是建议 —— 真要整根，那就不该用茧。
+	if filepath.Clean(innerPath) == nsjailDefaultChroot {
+		return fmt.Errorf("%w: 不许把 %q 整根挂到茧内 \"/\"（隔离面等于没有；只许挂子目录）",
+			ErrBadMount, hostPath)
 	}
 
 	b.mu.Lock()
@@ -376,6 +515,13 @@ func (b *NsjailBackend) Destroy(ctx context.Context, inst Instance) error {
 	errs = append(errs, nsjailReapEmptyCgroups(b.CgroupMount)...)
 
 	// ③ 茧根：整棵删（这里只删后端自己造的目录，且不跟随符号链接——RemoveAll 遇链接只删链）。
+	// ★ 先卸 overlay 再删目录：挂着的合并视图底下删不动（EBUSY），且不卸就删等于
+	//   把「还挂着的挂载点」留成残留（下一次同名目录会被它遮住）。
+	if plan, perr := nsjailRootfsPlanFor(st.spec, b.Chroot, st.root); perr == nil && plan.Overlay {
+		if uerr := nsjailOverlayTeardown(plan); uerr != nil {
+			errs = append(errs, uerr)
+		}
+	}
 	if st.root != "" {
 		if err := os.RemoveAll(st.root); err != nil {
 			errs = append(errs, fmt.Errorf("cocoon: 删茧根 %s 失败: %w", st.root, err))
@@ -400,22 +546,22 @@ func (b *NsjailBackend) Capabilities() (Capabilities, error) {
 
 // ── 内部 ──────────────────────────────────────────────────────────────
 
-// execView — 取一次 exec 要用的快照（spec + 挂载表）。
+// execView — 取一次 exec 要用的快照（spec + 挂载表 + 茧目录）。
 //
 // 拷一份挂载表再放锁：Exec 可能跑很久，不能攥着锁等进程退出（Destroy/Mount 会被饿死）。
-func (b *NsjailBackend) execView(inst Instance) (*Spec, map[string]nsjailMount, error) {
+func (b *NsjailBackend) execView(inst Instance) (*Spec, map[string]nsjailMount, string, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	st, err := b.lookupLocked(inst)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, "", err
 	}
 	mounts := make(map[string]nsjailMount, len(st.mounts))
 	for k, v := range st.mounts {
 		mounts[k] = v
 	}
-	return st.spec, mounts, nil
+	return st.spec, mounts, st.root, nil
 }
 
 // lookupLocked — 按 ID + 后端名校验归属（不信任调用方拼出来的 Instance），并拒已销毁实例。
@@ -530,13 +676,17 @@ func (b *NsjailBackend) ReapPersisted(ctx context.Context, inst Instance, pids [
 		}
 		b.waitPidsGone(ctx, ours, grace)
 		for _, pid := range ours {
-			if nsjailPidAlive(pid) {
+			if nsjailPidRunning(pid) {
 				b.killTree(b.CgroupMount, pid, nil, syscall.SIGKILL)
 			}
 		}
 		b.waitPidsGone(ctx, ours, 2*time.Second)
 		for _, pid := range ours {
-			if nsjailPidAlive(pid) {
+			// ★ 判「还在」用 nsjailPidRunning（僵尸算死），不是 nsjailPidAlive：
+			//   后台档起的服务在 CLI 退场后被 init 收养，它被杀之后**可能**以僵尸形态留在
+			//   /proc 里等父进程回收（实测：容器里 pid 1 是 sleep，永不回收 ⇒ 僵尸长驻）。
+			//   僵尸不占端口、不跑代码，把它报成「收不干净」是错判（曾因此让 close 恒红）。
+			if nsjailPidRunning(pid) {
 				errs = append(errs, fmt.Errorf("cocoon: pid %d 在 SIGKILL 后仍在（收不干净，如实上报）", pid))
 			}
 		}
@@ -553,6 +703,11 @@ func (b *NsjailBackend) ReapPersisted(ctx context.Context, inst Instance, pids [
 	// 兜底：树已死 ⇒ 收空壳（跨进程时这份 pid 表是盘上那份，可能已经和 cgroup 名字对不上）。
 	errs = append(errs, nsjailReapEmptyCgroups(b.CgroupMount)...)
 	if inst.Root != "" {
+		// 跨进程收尾手里没有 spec ⇒ 只能按**固定的**目录布局找合并视图（`<茧根>/merged`）。
+		// 找不到挂载点就是没有（幂等），找到才卸；卸不掉如实报。
+		if uerr := nsjailOverlayTeardownAt(filepath.Join(inst.Root, nsjailMergedDirName)); uerr != nil {
+			errs = append(errs, uerr)
+		}
 		if rerr := b.reapRoot(inst.Root); rerr != nil {
 			errs = append(errs, rerr)
 		}
@@ -571,6 +726,9 @@ func (b *NsjailBackend) ReapPersisted(ctx context.Context, inst Instance, pids [
 }
 
 // waitPidsGone — 等到这些 pid 全没了或超时（ctx 到期也提前返回，不装死）。
+//
+// ★ 「没了」的判据是 nsjailPidRunning（僵尸算死）：僵尸不占端口、不跑代码，等它被父进程
+// 回收不该算「还没停干净」（容器里 pid 1 不回收僵尸 ⇒ 用 nsjailPidAlive 会一直等到超时）。
 func (b *NsjailBackend) waitPidsGone(ctx context.Context, pids []int, d time.Duration) {
 	if d <= 0 {
 		return
@@ -581,7 +739,7 @@ func (b *NsjailBackend) waitPidsGone(ctx context.Context, pids []int, d time.Dur
 	for {
 		alive := false
 		for _, pid := range pids {
-			if nsjailPidAlive(pid) {
+			if nsjailPidRunning(pid) {
 				alive = true
 				break
 			}

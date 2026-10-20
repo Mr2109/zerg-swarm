@@ -112,6 +112,8 @@ func (b *FakeBackend) Capabilities() (Capabilities, error) {
 		CrossMountMechanism: "待接真后端",
 		Expose:              true,
 		ExposeMechanism:     "仅记账（假后端分配宿主端口号，不做真转发）",
+		Overlay:             false,
+		OverlayMechanism:    "无（假后端不起进程、不碰文件系统：没有镜像根可叠）",
 	}
 	if err := c.Validate(); err != nil {
 		return Capabilities{}, err

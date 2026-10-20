@@ -282,9 +282,12 @@ func TestNsjailResolveArgv0(t *testing.T) {
 	if _, err := nsjailResolveArgv0([]string{"definitely-not-here-xyz"}, nsjailDefaultPATH, "/"); !errors.Is(err, ErrBadArgv) {
 		t.Fatalf("找不到的裸命令名应 ErrBadArgv，得到 %v", err)
 	}
-	// 换了 rootfs ⇒ 裸命令名一律拒（宿主 stat 证明不了茧内有什么）。
-	if _, err := nsjailResolveArgv0([]string{"sh"}, nsjailDefaultPATH, "/some/rootfs"); !errors.Is(err, ErrBadArgv) {
-		t.Fatalf("非 / 的 chroot 下裸命令名应 ErrBadArgv，得到 %v", err)
+	// 换了真 rootfs ⇒ 改成在**茧内**解析（见 TestNsjailResolveArgv0InJail）。这里只钉一条：
+	// 那个 rootfs 里没有 sh ⇒ 不报错、也**不许**被换成宿主的 /bin/sh（拿宿主凑茧内）。
+	if got, err := nsjailResolveArgv0([]string{"sh"}, nsjailDefaultPATH, "/some/rootfs-that-has-no-sh"); err != nil {
+		t.Fatalf("茧内找不到不该由本层报错，得到 %v", err)
+	} else if got[0] != "sh" {
+		t.Fatalf("茧内找不到时 argv[0] 必须原样（不许填宿主路径），得到 %q", got[0])
 	}
 	// 空 argv。
 	if _, err := nsjailResolveArgv0(nil, nsjailDefaultPATH, "/"); !errors.Is(err, ErrBadArgv) {
@@ -522,6 +525,14 @@ func TestNsjailLinuxBookkeeping(t *testing.T) {
 	if err := be.Mount(ctx, inst, "relative/path", "/x", true); !errors.Is(err, ErrBadMount) {
 		t.Fatalf("相对路径应 ErrBadMount，得到 %v", err)
 	}
+	// ★ 整根挂一律拒：把宿主根挂成茧内 "/" 等于把换根作废（隔离面只剩 namespace），
+	//   而调用方会以为「挂了个盘」。
+	if err := be.Mount(ctx, inst, "/srv/app", "/", true); !errors.Is(err, ErrBadMount) {
+		t.Fatalf("把东西挂到茧内 \"/\" 应 ErrBadMount，得到 %v", err)
+	}
+	if err := be.Mount(ctx, inst, "/", "/", true); !errors.Is(err, ErrBadMount) {
+		t.Fatalf("整根挂应 ErrBadMount，得到 %v", err)
+	}
 
 	if _, err := be.Expose(ctx, inst, 8000, ""); !errors.Is(err, ErrBackendUnsupported) {
 		t.Fatalf("Expose 应 ErrBackendUnsupported（Linux 不映射端口），得到 %v", err)
@@ -720,5 +731,337 @@ func TestNsjailRealExec(t *testing.T) {
 	// ⑥ 端口映射在本后端**不支持**（同栈直连），必须是 ErrBackendUnsupported。
 	if _, err := be.Expose(ctx, inst, 8000, ""); !errors.Is(err, ErrBackendUnsupported) {
 		t.Fatalf("Expose 应 ErrBackendUnsupported，得到 %v", err)
+	}
+}
+
+// ── ①e 真 rootfs：方案（rootfs/overlay 的落点算术）──────────────────────
+//
+// 这一格判的是「方案算得对不对」，**不碰 mount**（那在 backend_nsjail_rootfs.go，只有 linux 有）。
+// 所以开发机（macOS）上也能判，且判的是真代码路径。
+func TestNsjailRootfsPlan(t *testing.T) {
+	rootDir := filepath.Join(string(os.PathSeparator), "cocoons", "nsjail-1")
+
+	// ① 既有档：没给 rootfs ⇒ chroot 用后端缺省、不 overlay、不算真镜像根。
+	p, err := nsjailRootfsPlanFor(&Spec{}, "/", rootDir)
+	if err != nil {
+		t.Fatalf("没给 rootfs 不该报错：%v", err)
+	}
+	if p.Overlay || p.IsJail() {
+		t.Fatalf("没给 rootfs 时不该 overlay / 不该当镜像根：%+v", p)
+	}
+	if p.Chroot != "/" {
+		t.Fatalf("没给 rootfs 时 chroot 应当就是后端缺省 \"/\"，得到 %q", p.Chroot)
+	}
+	// nil spec 同理（不许 panic）。
+	if _, err := nsjailRootfsPlanFor(nil, "", rootDir); err != nil {
+		t.Fatalf("nil spec 不该报错：%v", err)
+	}
+
+	// ② 给了 rootfs ⇒ chroot 指向**合并视图**（不是 rootfs 本身，也不是宿主根），
+	//    upper/work/merged/tmp 全落在茧目录下（同盘是 overlay 的硬要求）。
+	sp := &Spec{Cocoon: CocoonSpec{Rootfs: "/images/debian"}}
+	p, err = nsjailRootfsPlanFor(sp, "/", rootDir)
+	if err != nil {
+		t.Fatalf("给了 rootfs 应当算得出方案：%v", err)
+	}
+	if !p.Overlay || !p.IsJail() {
+		t.Fatalf("给了真 rootfs 就该 overlay：%+v", p)
+	}
+	if p.Rootfs != "/images/debian" {
+		t.Fatalf("lower 应当是契约给的 rootfs，得到 %q", p.Rootfs)
+	}
+	wantMerged := filepath.Join(rootDir, nsjailMergedDirName)
+	if p.Chroot != wantMerged || p.Merged != wantMerged {
+		t.Fatalf("chroot 应当是合并视图 %q，得到 chroot=%q merged=%q", wantMerged, p.Chroot, p.Merged)
+	}
+	if p.Chroot == p.Rootfs || p.Chroot == "/" {
+		t.Fatalf("chroot 不许等于 rootfs 本身或宿主根：%q", p.Chroot)
+	}
+	if want := filepath.Join(rootDir, nsjailUpperDirName); p.Upper != want {
+		t.Fatalf("缺省 upper 应当是 %q（<茧目录>/upper），得到 %q", want, p.Upper)
+	}
+	if want := filepath.Join(rootDir, nsjailWorkDirName); p.Work != want {
+		t.Fatalf("work 应当是 %q，得到 %q", want, p.Work)
+	}
+	if want := filepath.Join(rootDir, nsjailTmpDirName); p.TmpDir != want {
+		t.Fatalf("茧内 /tmp 的宿主来源应当是 %q，得到 %q", want, p.TmpDir)
+	}
+
+	// ③ overlay_upper 显式给了 ⇒ 用它（不再拼缺省）。
+	explicit := &Spec{Cocoon: CocoonSpec{Rootfs: "/images/debian", OverlayUpper: "/data/upper/shop"}}
+	p, err = nsjailRootfsPlanFor(explicit, "/", rootDir)
+	if err != nil {
+		t.Fatalf("显式 upper 应当通过：%v", err)
+	}
+	if p.Upper != "/data/upper/shop" {
+		t.Fatalf("显式 overlay_upper 没被采用：%q", p.Upper)
+	}
+
+	// ④ rootfs="/" ⇒ 与不写等价（下层是宿主根，没得叠）。
+	p, err = nsjailRootfsPlanFor(&Spec{Cocoon: CocoonSpec{Rootfs: "/"}}, "/", rootDir)
+	if err != nil || p.Overlay || p.IsJail() || p.Chroot != "/" {
+		t.Fatalf("rootfs=/ 应当等价于不换根：p=%+v err=%v", p, err)
+	}
+
+	// ⑤ 没有茧目录 ⇒ **报错**（这条是本单的判据：不许算不出就退回宿主根）。
+	if _, err := nsjailRootfsPlanFor(sp, "/", ""); err == nil {
+		t.Fatal("给了 rootfs 但没有茧目录（BaseDir 空）必须报错 —— 退回宿主根正是要消灭的行为")
+	} else if !strings.Contains(err.Error(), "BaseDir") {
+		t.Fatalf("报错该点名缺什么（BaseDir）：%v", err)
+	}
+
+	// ⑥ 相对 rootfs：契约层已经绝对化了，走到这里还相对 ⇒ 有人在绕契约，拒。
+	if _, err := nsjailRootfsPlanFor(&Spec{Cocoon: CocoonSpec{Rootfs: "images/debian"}}, "/", rootDir); err == nil {
+		t.Fatal("相对 rootfs 应当被拒（相对谁只能有一个答案，那在契约解析里定）")
+	}
+
+	// ⑦ 自噬型配置：upper 落在合并视图上 / upper == rootfs ⇒ 拒（跑起来只会诡异）。
+	clash := &Spec{Cocoon: CocoonSpec{Rootfs: "/images/debian", OverlayUpper: wantMerged}}
+	if _, err := nsjailRootfsPlanFor(clash, "/", rootDir); err == nil {
+		t.Fatal("overlay_upper 与合并视图同路径应当被拒")
+	}
+	same := &Spec{Cocoon: CocoonSpec{Rootfs: "/images/debian", OverlayUpper: "/images/debian"}}
+	if _, err := nsjailRootfsPlanFor(same, "/", rootDir); err == nil {
+		t.Fatal("overlay_upper 等于 rootfs 应当被拒（上下层是同一个目录）")
+	}
+
+	// ⑧ 目录不在 / 不是目录 ⇒ Provision 会拒（报话必须指向「先解包」，不许假装我们拉了镜像）。
+	if _, err := nsjailCheckRootfs(&Spec{Cocoon: CocoonSpec{Rootfs: filepath.Join(t.TempDir(), "nope")}}); err == nil {
+		t.Fatal("不存在的 rootfs 应当被拒")
+	}
+	plainFile := filepath.Join(t.TempDir(), "a-file")
+	must(t, os.WriteFile(plainFile, nil, 0o600))
+	if _, err := nsjailCheckRootfs(&Spec{Cocoon: CocoonSpec{Rootfs: plainFile}}); err == nil {
+		t.Fatal("rootfs 指向普通文件应当被拒")
+	}
+	if _, err := nsjailCheckRootfs(&Spec{}); err != nil {
+		t.Fatalf("没给 rootfs 时不该报错（既有档）：%v", err)
+	}
+}
+
+// ── ①f 真 rootfs：挂载面与 argv（判据：不整根挂、只读面齐全、/tmp 可写）──────
+func TestNsjailRootfsArgv(t *testing.T) {
+	base := t.TempDir()
+	img := filepath.Join(base, "rootfs")
+	instDir := filepath.Join(base, "inst")
+	// 造一个「像 debian」的最小镜像根：usr 是真目录、bin 是指向 usr/bin 的符号链接。
+	must(t, os.MkdirAll(filepath.Join(img, "usr", "bin"), 0o755))
+	must(t, os.Symlink("usr/bin", filepath.Join(img, "bin")))
+
+	sp := &Spec{
+		Cocoon:    CocoonSpec{Rootfs: img},
+		Resources: ResourceSpec{CPU: 1, MemGB: 1, DiskGB: 1},
+	}
+	p, err := nsjailRootfsPlanFor(sp, "/", instDir)
+	if err != nil {
+		t.Fatalf("方案算不出来：%v", err)
+	}
+	// 合并视图在本机（无内核 overlay）用同名目录代替：本格判 argv 拼装，不判 mount。
+	must(t, os.MkdirAll(filepath.Join(p.Merged, "usr", "bin"), 0o755))
+	must(t, os.Symlink("usr/bin", filepath.Join(p.Merged, "bin")))
+
+	full := nsjailExecArgvForPlan(sp, nil, p, "/app", []string{"/bin/sh", "-c", "true"})
+	sep := slices.Index(full, "--")
+	if sep < 0 {
+		t.Fatalf("argv 里没有 `--`：%v", full)
+	}
+	flags := full[:sep]
+
+	// chroot 必须是合并视图（宿主路径），不是 rootfs、不是 "/"。
+	if got, ok := argValue(flags, "--chroot"); !ok || got != p.Merged {
+		t.Fatalf("--chroot = %q ok=%v，want 合并视图 %q", got, ok, p.Merged)
+	}
+
+	// ★ nsjail 缺省把 chroot 挂成只读 ⇒ 不给 --rw 的话 overlay 的 upper 永远收不到东西
+	//   （「茧内可写」就是假的）。必须恰好一次、且落在 `--` 之前。
+	if argCount(flags, "--rw") != 1 {
+		t.Fatalf("真 rootfs 下应当恰好一次 --rw（chroot 缺省只读）：%v", flags)
+	}
+	if slices.Contains(full[sep+1:], "--rw") {
+		t.Fatalf("--rw 落到 `--` 之后（成了茧内命令的参数）：%v", full)
+	}
+
+	// 只读面：/proc 与 /dev 的三件必须显式挂、且是 ro。
+	for _, want := range []string{"/proc:/proc", "/dev/null:/dev/null", "/dev/urandom:/dev/urandom"} {
+		if !slices.Contains(flags, want) {
+			t.Fatalf("缺只读面 %q：%v", want, flags)
+		}
+	}
+	// /tmp 必须是**可写**的 bind，源是茧目录里的 tmp（不用 tmpfs：壳外要能看见写了什么）。
+	if !slices.Contains(flags, p.TmpDir+":/tmp") {
+		t.Fatalf("缺可写 /tmp（源 %q）：%v", p.TmpDir, flags)
+	}
+	if slices.Contains(flags, "/tmp:/tmp") {
+		t.Fatalf("不许把宿主 /tmp 直接挂进茧（等于把宿主临时目录送给茧写）：%v", flags)
+	}
+	// 系统面：usr 是真实目录 ⇒ 只读挂；bin 是符号链接 ⇒ 跳过（对链接做 bind 会把链接解析掉）。
+	if !slices.Contains(flags, filepath.Join(p.Merged, "usr")+":/usr") {
+		t.Fatalf("系统面 /usr 应当只读挂进来：%v", flags)
+	}
+	if slices.Contains(flags, filepath.Join(p.Merged, "bin")+":/bin") {
+		t.Fatalf("符号链接形态的 /bin 不该被 bind（会被解析成目标，名实不符）：%v", flags)
+	}
+
+	// ★ 不许整根挂：任何一条挂载的 inner 都不许是 "/"，宿主侧也不许有单独一个 "/"。
+	for i := 0; i+1 < len(flags); i++ {
+		if flags[i] != "--bindmount" && flags[i] != "--bindmount_ro" {
+			continue
+		}
+		host, inner, ok := strings.Cut(flags[i+1], ":")
+		if !ok {
+			t.Fatalf("挂载项格式不认识：%q", flags[i+1])
+		}
+		if inner == "/" {
+			t.Fatalf("不许整根挂：%q", flags[i+1])
+		}
+		if host == "/" {
+			t.Fatalf("不许把宿主根挂进来：%q", flags[i+1])
+		}
+	}
+
+	// 用户显式挂的优先（Mount 是有意为之）：用户给了 /tmp 就按用户的来，不被缺省顶掉。
+	userMounts := map[string]nsjailMount{"/tmp": {Host: "/srv/mytmp", Inner: "/tmp", RO: true}}
+	custom := nsjailExecArgvForPlan(sp, userMounts, p, "", []string{"/bin/sh"})
+	if !slices.Contains(custom, "/srv/mytmp:/tmp") || slices.Contains(custom, p.TmpDir+":/tmp") {
+		t.Fatalf("用户显式挂的 /tmp 没被采用（或与缺省同时出现）：%v", custom)
+	}
+
+	// 既有档（没给 rootfs）：一条兜底面都不许冒出来 —— 行为必须与改动前逐字相同。
+	plain := nsjailExecArgvForPlan(&Spec{}, nil, nsjailRootfsPlan{Chroot: "/"}, "", []string{"true"})
+	if argCount(plain, "--rw") != 0 || argCount(plain, "--bindmount_ro") != 0 {
+		t.Fatalf("没给 rootfs 时不该出现 --rw / 兜底面：%v", plain)
+	}
+}
+
+// must — 测试夹具用（写盘失败直接停）。
+func must(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// ── ①g 真 rootfs：argv[0] 按**茧内** PATH 解析（不许拿宿主路径凑）────────────
+func TestNsjailResolveArgv0InJail(t *testing.T) {
+	jail := t.TempDir()
+	must(t, os.MkdirAll(filepath.Join(jail, "usr", "bin"), 0o755))
+	must(t, os.WriteFile(filepath.Join(jail, "usr", "bin", "tool"), []byte("#!/bin/sh\n"), 0o755))
+	// 茧内也有 /bin/sh（用普通文件占位；本格判解析，不判能不能真跑）。
+	must(t, os.MkdirAll(filepath.Join(jail, "bin"), 0o755))
+	must(t, os.WriteFile(filepath.Join(jail, "bin", "sh"), []byte("#!/bin/sh\n"), 0o755))
+
+	got, err := nsjailResolveArgv0([]string{"tool", "arg"}, "/usr/bin:/bin", jail)
+	if err != nil {
+		t.Fatalf("茧内的 tool 应当解析成功：%v", err)
+	}
+	// ★ 写回 argv[0] 的必须是**茧内路径**：把宿主路径塞进去，等于让 nsjail 在茧里 exec 宿主
+	//   二进制（本单要消灭的正是这件事）。
+	if got[0] != "/usr/bin/tool" {
+		t.Fatalf("argv[0] 应当是茧内路径 /usr/bin/tool，得到 %q", got[0])
+	}
+	if strings.HasPrefix(got[0], jail) {
+		t.Fatalf("argv[0] 被写成了宿主路径 %q（拿宿主凑茧内）", got[0])
+	}
+	if !slices.Equal(got[1:], []string{"arg"}) {
+		t.Fatalf("argv[1:] 被改动：%v", got[1:])
+	}
+
+	// 茧内 PATH 里找不到（宿主上却有）：**不 error、也不许换成宿主路径**，原样交给 nsjail 报。
+	miss, err := nsjailResolveArgv0([]string{"definitely-not-here-xyz"}, nsjailDefaultPATH, jail)
+	if err != nil {
+		t.Fatalf("茧内找不到不该由本层报错（交给 nsjail 的 execve 日志）：%v", err)
+	}
+	if miss[0] != "definitely-not-here-xyz" {
+		t.Fatalf("茧内找不到时 argv[0] 必须原样，得到 %q", miss[0])
+	}
+
+	// 写了路径 ⇒ 原样（那是「茧内这条路径」，解析交给 nsjail/chroot）。
+	abs := []string{"/bin/sh", "-c", "true"}
+	if got, err := nsjailResolveArgv0(abs, nsjailDefaultPATH, jail); err != nil || !slices.Equal(got, abs) {
+		t.Fatalf("绝对路径应当原样：got=%v err=%v", got, err)
+	}
+}
+
+// ── ①h 「茧目录」接线口：SetCocoonDir 的五态 + 实例根落点 ──────────────────────
+//
+// 命令面（`cocoon open`）把 `<真源根>/<id>/` 交过来，后端据此把实例根与 overlay 的
+// upper/work/merged 一起放进茧目录。这一格打**校验面**（两平台都能跑）：
+//
+//	① 空串 ⇒ 拒（空串 = 「没给」，✗ 不许静默当默认值）
+//	② 相对路径 ⇒ 拒（实例根会跟着 cwd 漂）
+//	③ 不存在 ⇒ 拒（点明「先建目录再把目录交给后端」= 时序错在调用方）
+//	④ 普通文件 ⇒ 拒（不是目录）
+//	⑤ 真目录 ⇒ BaseDir 设成它（尾斜杠被 Clean 掉）
+//
+// 负控：拒执之后 BaseDir 必须**还是空的**（不许先设上再校验 ⇒ 半生效）。
+func TestNsjailSetCocoonDir(t *testing.T) {
+	be := NewNsjailBackend()
+
+	// ①②③④：四种非法输入全拒，且拒完 BaseDir 仍是空（不许半生效）。
+	bad := []struct {
+		name string
+		dir  string
+		want string
+	}{
+		{"空串", "", "为空"},
+		{"相对路径", filepath.Join("cocoons", "shop"), "不是绝对路径"},
+		{"不存在", filepath.Join(t.TempDir(), "nope", "shop"), "先建目录"},
+	}
+	for _, tc := range bad {
+		err := be.SetCocoonDir(tc.dir)
+		if err == nil {
+			t.Fatalf("%s（%q）应当被拒", tc.name, tc.dir)
+		}
+		if !strings.Contains(err.Error(), tc.want) {
+			t.Fatalf("%s 的报错该点明 %q：%v", tc.name, tc.want, err)
+		}
+		if be.BaseDir != "" {
+			t.Fatalf("%s 被拒后 BaseDir 竟已被设成 %q（拒绝必须零生效）", tc.name, be.BaseDir)
+		}
+	}
+	plain := filepath.Join(t.TempDir(), "a-file")
+	must(t, os.WriteFile(plain, nil, 0o600))
+	if err := be.SetCocoonDir(plain); err == nil || !strings.Contains(err.Error(), "不是目录") {
+		t.Fatalf("普通文件应当被拒且点明「不是目录」：%v", err)
+	}
+	if be.BaseDir != "" {
+		t.Fatalf("文件被拒后 BaseDir 竟已被设成 %q", be.BaseDir)
+	}
+
+	// ⑤ 真目录 ⇒ 设上；尾斜杠被 Clean 掉（Provision 拿它拼实例根，形态要稳）。
+	dir := filepath.Join(t.TempDir(), "shop-abc12345")
+	must(t, os.MkdirAll(dir, 0o700))
+	if err := be.SetCocoonDir(dir + string(filepath.Separator)); err != nil {
+		t.Fatalf("已存在的目录应当接受：%v", err)
+	}
+	if be.BaseDir != dir {
+		t.Fatalf("BaseDir=%q，want %q（要 Clean 掉尾斜杠）", be.BaseDir, dir)
+	}
+	// 幂等：同一个值设两次仍是同一个值。
+	if err := be.SetCocoonDir(dir); err != nil || be.BaseDir != dir {
+		t.Fatalf("重复设置应当幂等：BaseDir=%q err=%v", be.BaseDir, err)
+	}
+
+	// 实例根必须在茧目录**下一层**（不在茧目录本身、也不在它的兄弟位置）：
+	// 这是「close --purge 删茧目录能一次收干净」与「碰不到兄弟茧」的共同前提。
+	if HostPlatform() != PlatformLinux {
+		return // 下面这腿要真建目录，只有 linux 的 Provision 会做
+	}
+	inst, err := be.Provision(context.Background(), &Spec{Cocoon: CocoonSpec{Name: "shop"}})
+	if err != nil {
+		t.Fatalf("Provision: %v", err)
+	}
+	wantRoot := filepath.Join(dir, inst.ID)
+	if inst.Root != wantRoot {
+		t.Fatalf("实例根=%q，want %q（<茧目录>/<后端签发的 id>）", inst.Root, wantRoot)
+	}
+	if filepath.Dir(inst.Root) != dir {
+		t.Fatalf("实例根的父目录应当是茧目录 %q，得到 %q", dir, filepath.Dir(inst.Root))
+	}
+	if fi, err := os.Stat(wantRoot); err != nil || !fi.IsDir() {
+		t.Fatalf("实例根应当真被建出来：stat=%v err=%v", fi, err)
+	}
+	if err := be.Destroy(context.Background(), inst); err != nil {
+		t.Fatalf("Destroy: %v", err)
 	}
 }

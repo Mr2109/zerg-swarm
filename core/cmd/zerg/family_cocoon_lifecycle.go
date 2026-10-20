@@ -43,9 +43,16 @@
 //	收尾：`open` 把后端**签发的**句柄（实例 id + pid 表）落进 meta；`close` 是另一个进程，
 //	内存记账早没了 ⇒ 走 `HandleReaper.ReapPersisted`（后端自己验 pid 归属再下刀）。
 //
-// 未接的面（照实登记 · 不当已做）：真镜像 rootfs（nsjail 后端只做 namespace/cgroup 隔离，
-// `--chroot` 缺省是宿主根；镜像落盘/overlay 未接）· 伪终端（ExecOpts.TTY=true 一律拒）·
-// VZ/HCS 两个后端 · 令牌真值落点（本版只签发并在输出里给脱敏形）。
+//	rootfs：`open`/`close` 都在 Provision/Destroy 之前把**茧目录**（真源根下的 `<id>/`）交给后端
+//	（`cocoon.CocoonDirSetter.SetCocoonDir`）⇒ 契约 `[茧].rootfs` 有值时按 overlay 换根
+//	（lower=该目录只读 · upper/work/merged 都落在茧目录内 · 实例根也在里面 ⇒ 删茧目录一次收干净）。
+//
+// 未接的面（照实登记 · 不当已做）：
+//
+//	· 镜像准备（OCI 拉取/解包）：契约 `[茧].rootfs` 指的那个目录得先备好 —— 后端只报「读不到 /
+//	  不是目录」，✗ 不假装我们替你拉了镜像；上层盘还必须支持叠层（tmpfs/ext4/xfs 可以，
+//	  overlay-on-overlay 不行，见 core/internal/cocoon/backend_nsjail_rootfs.go）。
+//	· 伪终端（ExecOpts.TTY=true 一律拒）· VZ/HCS 两个后端 · 令牌真值落点（本版只签发并在输出里给脱敏形）。
 package main
 
 import (
@@ -56,6 +63,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"sort"
@@ -95,10 +103,10 @@ var (
 	cocoonLsFields  = []string{"id", "phase", "ports", "egg", "pid", "created_at"}
 	cocoonLsDisplay = []string{"id", "phase", "ports", "egg"}
 
-	cocoonOpenFields = []string{"id", "phase", "pid", "ports", "egg", "backend", "token", "dir"}
+	cocoonOpenFields = []string{"id", "phase", "pid", "ports", "egg", "backend", "token", "dir", "logs"}
 
 	cocoonCloseFields = []string{"id", "phase", "purged", "deleted_files", "deleted_dirs",
-		"tombstone", "verified", "dir", "reaped"}
+		"tombstone", "verified", "dir", "reaped", "port_verified"}
 
 	cocoonInspectFields = []string{"id", "phase", "pid", "ports", "egg", "owner", "created_at",
 		"start_time", "backend", "backend_instance", "platform", "isolation", "peer_identity", "peer_mechanism",
@@ -294,6 +302,29 @@ func cocoonBackendCaps(be cocoon.Backend) (cocoon.Capabilities, error) {
 		return c, nil
 	}
 	return cocoon.Capabilities{}, fmt.Errorf("平台 %q 没有能力声明（后端也没自报）", cocoon.HostPlatform())
+}
+
+// cocoonWireCocoonDir —— 把茧目录交给后端（`CocoonDirSetter`；后端不需要落盘就什么都不做）。
+//
+// ★ 为什么要过一道接口而不是直接写 `NsjailBackend.BaseDir`：
+//
+//	· 命令面只认接口（与 CapabilityReporter / HandleReaper 同族），假后端与测试桩按需实现；
+//	· 后端自己校验「目录存在且是目录」⇒「先建目录再传」这条时序由后端把住，✗ 不是注释约定。
+//
+// ★ dir 必须是**茧目录本身**（真源根下的 `<id>/`）：后端的实例根是 `<dir>/<后端签发的 id>`，
+//
+//	overlay 的 upper/work/merged 与茧内 /tmp 全落在这棵下面 ⇒ `close --purge` 删茧目录时
+//	一次收干净，也不会碰到兄弟茧。
+//
+// ★ `open` 与 `close` **都**要设：close 是另一个进程，凭 meta 里的句柄收尾时要靠 BaseDir
+//
+//	算出茧根（`NsjailBackend.reapRoot` 证明「这个目录在我 BaseDir 下一层」才肯删）。
+func cocoonWireCocoonDir(be cocoon.Backend, dir string) error {
+	s, ok := be.(cocoon.CocoonDirSetter)
+	if !ok {
+		return nil // 该后端不落盘（假后端一类）：没有茧目录这回事
+	}
+	return s.SetCocoonDir(dir)
 }
 
 // cocoonTokenMgr —— 令牌管理器单例（本版进程内；`close` 吊销的就是同一张表里的那一枚）。
@@ -593,12 +624,33 @@ func cmdCocoonOpen(inv *invocation, stdout, stderr io.Writer) int {
 		return exitFail
 	}
 
+	// ★ 茧目录先建、再交给后端（`SetCocoonDir` 只校验不建盘 ⇒ 顺序反了会当场红）。
+	//   不靠 `cocoon.Save` 的 MkdirAll 副作用：那是 meta 落盘的内部实现，时序在这里是判据
+	//   （rootfs 的 upper/work/merged 与实例根都要落进这个目录）。
+	if mkerr := os.MkdirAll(cdir, 0o700); mkerr != nil {
+		inv.setErr("failed", "cocoon_dir_failed", mkerr.Error())
+		fmt.Fprintf(stderr, "%s: 建茧目录 %s 失败：%v ⇒ 退码 1（未 Provision / 未起服务）\n",
+			progName, cdir, mkerr)
+		return exitFail
+	}
+	// rootfs 的落点：后端据此把 overlay 的 upper/work/merged 与实例根放进茧目录。
+	if werr := cocoonWireCocoonDir(be, cdir); werr != nil {
+		inv.setErr("failed", "backend_unavailable", werr.Error())
+		fmt.Fprintf(stderr, "%s: 后端不接受茧目录 %s：%v ⇒ 退码 1（未 Provision / 未起服务）\n",
+			progName, cdir, werr)
+		return exitFail
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
 	// 服务的 stdout/stderr 落 <茧目录>/logs/<服务>.log：起服务的是**本进程**，而本进程会退出
 	// —— 管道读端随之消失，长驻服务下一次写就会撞 EPIPE（见 cocoon.ExecOpts.LogPath）。
-	opts := cocoon.OrchestrateOptions{LogDir: filepath.Join(cdir, "logs")}
+	//
+	// ★ Detach=true 是这一单的核心：open 是一次性进程，阻塞档里服务被它一起带走
+	//   （T3b 实测三次真后端 open：pid:0、无 logs/、无 nsjail 进程）。
+	logDir := filepath.Join(cdir, "logs")
+	opts := cocoon.OrchestrateOptions{LogDir: logDir, Detach: true}
 	if !caps.Expose {
 		// 后端不映射端口 ⇒ readiness 探测直连回环（茧与调用方同一网络栈，茧内端口就是宿主端口）。
 		// 走 Expose 会拿到 ErrBackendUnsupported —— 那是「这条链路不存在」，不是「端口不通」。
@@ -641,11 +693,35 @@ func cmdCocoonOpen(inv *invocation, stdout, stderr io.Writer) int {
 			progName, backendName, caps.ExposeMechanism, len(spec.Ports), cocoon.DefaultBind)
 	}
 
-	// ★ 后端**签发**的句柄落盘（实例 id + 活 pid 表）：`close` 是另一个进程，内存记账那时已经没了。
+	// ★ 后端**签发的**句柄落盘（实例 id + 活 pid 表）：`close` 是另一个进程，内存记账那时已经没了。
 	//   这是「跨进程收干净」的唯一依据 —— 不落它，close 只能报成功却什么都没收。
 	var pids []int
 	if pr, ok := be.(cocoon.PIDReporter); ok {
-		pids = pr.InstancePIDs(inst)
+		// ★ 等一小窗再读：Spawn 只是把后端 Exec 丢进 goroutine，pid 由**子进程那边**写进后端记账
+		//   ⇒ 立刻读可能读到空（实测：声明了 readiness 的服务因为多探了几轮而躲过这个竞态，
+		//   没声明 readiness 的服务则被误判成「后端没给 pid」）。这不是「放宽判据」：
+		//   窗口过后仍没有 pid，照样按失败报。
+		pids = cocoonAwaitPids(pr, inst)
+	}
+
+	// ★★ 后台档**验活**（本单的核心判据）：Start 返回只代表「进程签出了」，不代表「服务在跑」。
+	//   T3b 的假绿正是死在这里：open 报成功、盘上 pid:0、茧里其实什么都没有。
+	//   判据只有一条：后端自报的 pid，此刻**真在**（连续一窗活着）。退出即失败。
+	if why := cocoonVerifyDetachedAlive(be, pids); len(why) > 0 {
+		// 起过的东西逆序停掉 + Destroy（与露端口失败同一条回滚路），meta 落 failed、绝不写 running。
+		_ = cocoon.Stop(ctx, r)
+		_ = be.Destroy(ctx, inst)
+		if _, uerr := cocoon.UpdatePhase(metaPath, cocoon.PhaseFailed); uerr != nil {
+			fmt.Fprintf(stderr, "%s: 另：meta 落 failed 也失败：%v\n", progName, uerr)
+		}
+		inv.setErr("failed", "service_not_alive", strings.Join(why, " · "))
+		fmt.Fprintf(stderr, "%s: 后台档验活未过（已停服务 · meta 落 failed，✗ 不写 running）：%s ⇒ 退码 1\n",
+			progName, strings.Join(why, " · "))
+		for _, line := range why {
+			fmt.Fprintf(stderr, "  · %s\n", line)
+		}
+		fmt.Fprintf(stderr, "  日志：%s（茧内服务自己的输出都在这里，没起来时先看它）\n", logDir)
+		return exitFail
 	}
 
 	m2, err := cocoon.Load(metaPath)
@@ -684,6 +760,7 @@ func cmdCocoonOpen(inv *invocation, stdout, stderr io.Writer) int {
 	row["pid"] = strconv.Itoa(m2.PID)
 	row["backend"] = backendName
 	row["token"] = tokenText
+	row["logs"] = cocoonLogsCell(logDir)
 	if inv.jsonGiven {
 		return listCmd(inv, stdout, stderr, cocoonLsDisplay, []map[string]string{row})
 	}
@@ -699,9 +776,10 @@ func cmdCocoonOpen(inv *invocation, stdout, stderr io.Writer) int {
 	if m2.PID == 0 {
 		pidNote = "（本后端不起进程或还没起）"
 	} else if len(m2.BackendPIDs) > 0 {
-		pidNote = fmt.Sprintf("（后端签发的 exec 主进程：%v · 已落 meta.backend_pids）", m2.BackendPIDs)
+		pidNote = fmt.Sprintf("（后端签发的 exec 主进程：%v · 已落 meta.backend_pids · 已验活）", m2.BackendPIDs)
 	}
 	fmt.Fprintf(stdout, "pid        : %d%s\n", m2.PID, pidNote)
+	fmt.Fprintf(stdout, "日志       : %s（本进程退出后服务照旧往这里写；起不来先看它）\n", cocoonLogsCell(logDir))
 	if caps.Expose {
 		fmt.Fprintf(stdout, "端口       : %s\n", cocoonPortsText(ports))
 	} else if len(spec.Ports) > 0 {
@@ -761,6 +839,165 @@ func cocoonOpenPlan(inv *invocation, stdout, stderr io.Writer, dir string, spec 
 	fmt.Fprintf(stdout, "  状态根  : %s/<分配于真跑>\n", cocoonRoot())
 	fmt.Fprintln(stderr, "（--dry-run：只出计划件 · 零副作用 —— 未写 meta、未 Provision、未起服务）")
 	return exitOK
+}
+
+// ── 后台档验活（open 的判据 · close 的事后验）────────────────────────────
+
+const (
+	// cocoonDetachedSettle — 后台档进程要**连续活着**这么久才算「在」。
+	//
+	// ★ 为什么不是「探一次活着就算」：坏档（entry 是 `/bin/sh -c 'exit 0'`）在 Start 之后
+	//   几十毫秒内就没了，而「刚 Start 完」那一瞬所有进程都活着 —— 只探一次必然把「起就崩」
+	//   报成成功。这一窗是「不漏判」的代价，真机上是 0.3s 级。
+	cocoonDetachedSettle = 300 * time.Millisecond
+	// cocoonDetachedBudget — 验活最多等这么久（进程一直在也不许无限等）。
+	cocoonDetachedBudget = 5 * time.Second
+	// cocoonDetachedStep — 验活轮询的步长。
+	cocoonDetachedStep = 50 * time.Millisecond
+	// cocoonPidWaitBudget — 等后端把「刚签出的 pid」记进账的上限（只是记账延迟，不涉及就绪）。
+	cocoonPidWaitBudget = 2 * time.Second
+)
+
+// cocoonLogsCell — 日志格的机器面取值：目录真在就给路径，不在就 `—`（三值纪律：
+// 「没有日志」与「日志路径是空的」必须分得开；假后端不起进程 ⇒ 永远没有 logs/）。
+func cocoonLogsCell(logDir string) string {
+	if st, err := os.Stat(logDir); err == nil && st.IsDir() {
+		return logDir
+	}
+	return cocoonDash
+}
+
+// cocoonAwaitPids — 等后端把「刚签出的 pid」记进账（最多 cocoonPidWaitBudget）。
+//
+// ★ 为什么不能只读一次：`Spawn` 只是把后端 Exec 丢进 goroutine，pid 是**子进程那边**
+// 在 Start 之后写进后端记账的 ⇒ 同一条调用栈上立刻读会读到空。这不是「放宽判据」：
+// 窗口过后仍是空 ⇒ 调用方按「后端没给 pid」失败（见 cocoonVerifyDetachedAlive）。
+func cocoonAwaitPids(pr cocoon.PIDReporter, inst cocoon.Instance) []int {
+	deadline := time.Now().Add(cocoonPidWaitBudget)
+	for {
+		if pids := pr.InstancePIDs(inst); len(pids) > 0 {
+			return pids
+		}
+		if time.Now().After(deadline) {
+			return nil
+		}
+		time.Sleep(cocoonDetachedStep)
+	}
+}
+
+// cocoonVerifyDetachedAlive — 「后台档的进程真在吗」的判据（open 报成功之前必须过）。
+//
+// 返回空 = 全在；否则每条是一句人读的失败理由（✗ 第一条就是「进程已退」的那种）。
+//
+// 三种情形分开处理（三值纪律，✗ 不许把「验不了」混进「验过了」）：
+//
+//	① 后端没有判活面（DetachedProbe）⇒ **不额外验活**（假后端/测试桩：它们不起进程，
+//	   pid 也无从谈起；真后端 nsjail 是实现的，见 backend_nsjail.go 的 DetachedStatus）。
+//	② 有判活面却没自报 pid ⇒ **失败**：这是「说得出该验、又拿不出凭据」的形态，
+//	   放过它等于把「Start 没报错」当「服务在跑」。
+//	③ 有 pid ⇒ 逐条等它连续 settle 时长活着；中途报「已退」⇒ 带退出码/信号失败。
+func cocoonVerifyDetachedAlive(be cocoon.Backend, pids []int) []string {
+	probe, ok := be.(cocoon.DetachedProbe)
+	if !ok {
+		return nil
+	}
+	if len(pids) == 0 {
+		return []string{"后端自报支持后台档判活，却没有给出任何 pid ⇒ 无法证明服务在跑（✗ 不许按成功报）"}
+	}
+	var why []string
+	for _, pid := range pids {
+		if pid <= 0 {
+			why = append(why, fmt.Sprintf("后端给出的 pid 非法（%d）", pid))
+			continue
+		}
+		if msg := cocoonWaitDetachedAlive(probe, pid); msg != "" {
+			why = append(why, msg)
+		}
+	}
+	return why
+}
+
+// cocoonWaitDetachedAlive — 等一个后台档 pid「真在」；返回空 = 在，否则是失败理由。
+func cocoonWaitDetachedAlive(probe cocoon.DetachedProbe, pid int) string {
+	deadline := time.Now().Add(cocoonDetachedBudget)
+	var aliveSince time.Time
+	for {
+		alive, exited, res := probe.DetachedStatus(pid)
+		if exited {
+			return fmt.Sprintf("pid %d 已退出（%s）—— 「起就崩」不是「起好了」", pid, cocoonExitText(res))
+		}
+		if alive && aliveSince.IsZero() {
+			aliveSince = time.Now()
+		}
+		if !aliveSince.IsZero() && time.Since(aliveSince) >= cocoonDetachedSettle {
+			return ""
+		}
+		if time.Now().After(deadline) {
+			// 窗口用完仍未观测到退出 ⇒ 按「在」报（不因为「没攒够一窗」把活着的服务判死）。
+			return ""
+		}
+		time.Sleep(cocoonDetachedStep)
+	}
+}
+
+// cocoonExitText — 退出观测的人读形（RC / 信号 / 超时三位，缺哪个就不编）。
+func cocoonExitText(res cocoon.ExecResult) string {
+	switch {
+	case res.TimedOut:
+		return fmt.Sprintf("超时 RC=%d", res.RC)
+	case res.Signal != "":
+		return fmt.Sprintf("%s（RC=%d）", res.Signal, res.RC)
+	default:
+		return fmt.Sprintf("RC=%d", res.RC)
+	}
+}
+
+// cocoonPortsClosed — `close` 的事后验：契约里那几条茧内端口，此刻必须**连不上**。
+//
+// 入参是**契约目录**（meta.spec_dir，即 `open <dir>` 那个目录），✗ 不是茧目录 —— 契约不在
+// 茧目录里（茧目录是状态根下的 `<id>/`），拿茧目录去读只会得到「读不到 ⇒ 未验」。
+//
+// 返回 (checked, notes, err)：
+//
+//	checked=true  ⇒ 每条端口都验过（notes 是逐条读数）
+//	checked=false ⇒ 没验（契约读不到 / 契约没写端口），notes 里写明为什么 —— ✗ 不许假装验过
+//	err != nil    ⇒ 有端口**还通着**（没停干净）
+//
+// ★ 为什么要它：pid 收干净 ≠ 端口断了。茧与调用方同网络栈（无 DNAT），端口属主可能是
+//
+//	茧内孙进程；主进程死了端口还在听的那种残局，只有真 dial 一次才看得见。
+//
+// ★ 调用点只在「本茧真起过进程」时才调它（见 cmdCocoonClose）：没得验 ≠ 验过了。
+func cocoonPortsClosed(specDir string) (checked bool, notes []string, err error) {
+	specPath := filepath.Join(specDir, cocoon.SpecFileName)
+	raw, rerr := os.ReadFile(specPath)
+	if rerr != nil {
+		return false, []string{fmt.Sprintf("契约读不到（%s）⇒ 端口面未验", specPath)}, nil
+	}
+	spec, perr := cocoon.ParseSpecFile(specPath, raw)
+	if perr != nil {
+		return false, []string{fmt.Sprintf("契约解析不过（%v）⇒ 端口面未验", perr)}, nil
+	}
+	if len(spec.Ports) == 0 {
+		return false, []string{"契约没写 [[端口]] ⇒ 没有可验的端口"}, nil
+	}
+	var bad []string
+	for _, p := range spec.Ports {
+		addr := net.JoinHostPort(cocoon.DefaultBind, strconv.Itoa(p.Inner))
+		conn, derr := net.DialTimeout("tcp", addr, 300*time.Millisecond)
+		if derr != nil {
+			notes = append(notes, fmt.Sprintf("%s 不通（已收干净）", addr))
+			continue
+		}
+		_ = conn.Close()
+		bad = append(bad, addr)
+		notes = append(notes, fmt.Sprintf("%s **仍可连**", addr))
+	}
+	if len(bad) > 0 {
+		return true, notes, fmt.Errorf("close 之后端口仍可连：%s（进程收掉了但端口没断 —— 有残留监听者）",
+			strings.Join(bad, ", "))
+	}
+	return true, notes, nil
 }
 
 // ── close ───────────────────────────────────────────────────────────────
@@ -872,6 +1109,19 @@ func cmdCocoonClose(inv *invocation, stdout, stderr io.Writer) int {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 
+	// ★ 茧目录也交给后端：`close` 在**另一个进程**里，内存记账早没了 ⇒ 靠 meta 的句柄收尾时，
+	//   后端要用 BaseDir 算出茧根（`reapRoot` 只删「BaseDir 下一层」的目录，证明不了就不删）。
+	//   不设 ⇒ 实例根/upper/merged 收不掉，`close` 只能报成功却留着东西。
+	//   目录读不到（已 --purge 过一半）不算失败：这时压根没有茧根可收，后端按「不存在」处理。
+	if st, serr := os.Stat(cdir); serr == nil && st.IsDir() {
+		if werr := cocoonWireCocoonDir(be, cdir); werr != nil {
+			inv.setErr("failed", "backend_unavailable", werr.Error())
+			fmt.Fprintf(stderr, "%s: 后端不接受茧目录 %s：%v ⇒ 退码 1（未停服务）\n",
+				progName, cdir, werr)
+			return exitFail
+		}
+	}
+
 	// 句柄：后端**签发**的实例 id 原样传回（✗ 不许自己拼 —— 假后端时代那套「拿茧 id 当实例 id」
 	// 只在没有 backend_instance 的老 meta 上还留着，是兼容不是口径）。
 	inst := cocoon.Instance{ID: id, Backend: backendName, PID: m.PID}
@@ -899,12 +1149,42 @@ func cmdCocoonClose(inv *invocation, stdout, stderr io.Writer) int {
 	}
 	cocoonTokenMgr().RevokeToken(id)
 
+	// ★ 事后验两条（缺一条就不算「收干净」）：
+	//   ① 进程不在 —— 上面 Destroy/ReapPersisted 已经在验（SIGKILL 后仍在 ⇒ 报错退 1）；
+	//   ② 端口不通 —— 只收 pid 证明不了这件事（茧与宿主同网络栈，残留监听者照样能接）。
+	//
+	// ★ 只在**本茧真起过进程**（meta 里有 pid 表）时验端口：假后端 / 从没起过进程的茧，
+	//   端口上有人听也不是它的事 —— 拿它判红是冤枉（三值纪律：没得验就说没得验）。
+	portChecked, portNotes, portErr := false, []string{}, error(nil)
+	if len(m.BackendPIDs) > 0 {
+		portChecked, portNotes, portErr = cocoonPortsClosed(m.SpecDir)
+	} else {
+		portNotes = []string{"本茧没记 pid（没起过进程）⇒ 端口面不归它，未验"}
+	}
+	for _, n := range portNotes {
+		fmt.Fprintf(stderr, "%s: 端口面：%s\n", progName, n)
+	}
+	if portErr != nil {
+		inv.setErr("failed", "port_still_open", portErr.Error())
+		fmt.Fprintf(stderr, "%s: %v ⇒ 退码 1（meta 停在 stopping；收了 pid 但端口还通着）\n", progName, portErr)
+		return exitFail
+	}
+
 	row := cocoonMetaRow(m, cdir)
 	row["purged"] = strconv.FormatBool(false)
 	row["deleted_files"] = "0"
 	row["deleted_dirs"] = "0"
 	row["tombstone"] = cocoonDash
 	row["verified"] = "false"
+	switch {
+	case !portChecked:
+		// 没验就说没验（✗ 不把「没得验」写成「验过了」）。
+		row["port_verified"] = "skip"
+	case len(portNotes) == 0:
+		row["port_verified"] = "n/a"
+	default:
+		row["port_verified"] = "closed"
+	}
 	if reaped {
 		// 收尾方式也进机器面：让人看得出这一次是「按盘上句柄真收」还是「内存记账收」。
 		row["reaped"] = "persisted"
@@ -1194,6 +1474,9 @@ func cmdCocoonInspect(inv *invocation, stdout, stderr io.Writer) int {
 			caps.PeerIdentity, cocoonOrDash(caps.PeerMechanism), caps.ProcessTreeKill,
 			cocoonOrDash(caps.KillMechanism), caps.SymlinkNoFollow, caps.CrossMountGuard)
 		fmt.Fprintf(stdout, "端口面     : 映射=%t（%s）\n", caps.Expose, cocoonOrDash(caps.ExposeMechanism))
+		// 可写层（rootfs 的 overlay）：与「端口面」同口径 —— 位 + 理由缺一不可。
+		// false 不等于「不能换根」：只能 chroot 的后端照样能跑只读镜像（见 Capabilities.Overlay）。
+		fmt.Fprintf(stdout, "可写层     : overlay=%t（%s）\n", caps.Overlay, cocoonOrDash(caps.OverlayMechanism))
 	}
 	if plan.Valid() {
 		fmt.Fprintf(stdout, "AI 注入面  : base=%s model=%s env=%s\n",

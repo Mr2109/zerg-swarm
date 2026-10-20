@@ -15,6 +15,11 @@ package main
 //	④ `TestCocoonInspectCapabilityFace`：inspect 打印后端名 + 能力面四真（含 PeerIdentity /
 //	   KillMechanism / Expose）；后端自报不出来时**如实印「能力面不可用」且 rc 仍 0**
 //	   （✗ 不填一张全 false 的表冒充「后端在，只是弱」）。
+//	⑤ `TestCocoonOpenPassesCocoonDir`（T3b）：`open` 把**茧目录**（真源根下的 `<id>/`）交给后端
+//	   （`CocoonDirSetter`）—— 时机是「先建目录再传」、`--dry-run` 一次都不传；`close` 传同一个。
+//	   负控：后端拒收 ⇒ 退 1 且**一次 Provision 都没发生**。
+//	⑥ `TestCocoonInspectOverlayBit`（T3b）：inspect 人面印 `可写层 overlay=<bool>（<理由>）`
+//	   （假后端 false 且带理由；真后端 true）；`--json` **键表不动**（不加 overlay 两键）。
 
 import (
 	"context"
@@ -24,6 +29,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/Mr2109/zerg-swarm/core/internal/cocoon"
@@ -335,4 +341,442 @@ func TestCocoonInspectCapabilityFace(t *testing.T) {
 	if !strings.Contains(human, "能力面不可用") {
 		t.Fatalf("人面没说明能力面不可用：\n%s", human)
 	}
+}
+
+// ── ⑤ 命令面把茧目录交给后端（rootfs 的落点 · T3b）──────────────────────────
+
+// ccDirRecorder — 演「要茧目录」的后端（nsjail 那一档的形状），三件事：
+//
+//	① 记下命令面交来的目录（判「传没传、传的是哪个」）；
+//	② **当场**校验该目录已存在（命令面必须「先建目录再传」—— 本桩不替它建）；
+//	③ 数 Provision（判「拒收之后有没有偷偷起实例」）。
+type ccDirRecorder struct {
+	*cocoon.FakeBackend
+	mu         sync.Mutex
+	dirs       []string
+	provisions int
+	reject     error // 非 nil ⇒ 演「后端拒收这个目录」
+}
+
+func (b *ccDirRecorder) SetCocoonDir(dir string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.reject != nil {
+		return b.reject
+	}
+	fi, err := os.Stat(dir)
+	if err != nil {
+		return fmt.Errorf("命令面给的茧目录 %s 读不到（时序错：要先建目录再传）: %w", dir, err)
+	}
+	if !fi.IsDir() {
+		return fmt.Errorf("命令面给的茧目录 %s 不是目录", dir)
+	}
+	b.dirs = append(b.dirs, dir)
+	return nil
+}
+
+func (b *ccDirRecorder) Provision(ctx context.Context, spec *cocoon.Spec) (cocoon.Instance, error) {
+	b.mu.Lock()
+	b.provisions++
+	b.mu.Unlock()
+	return b.FakeBackend.Provision(ctx, spec)
+}
+
+func (b *ccDirRecorder) calls() []string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]string(nil), b.dirs...)
+}
+
+func (b *ccDirRecorder) provisionCount() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.provisions
+}
+
+func TestCocoonOpenPassesCocoonDir(t *testing.T) {
+	proj, root := ccLifeSetup(t)
+	stub := &ccDirRecorder{FakeBackend: cocoon.NewFakeBackend()}
+	ccBeRestoreFactory(t)
+	cocoonBackendFactory = func(string) (cocoon.Backend, error) { return stub, nil }
+	t.Setenv(cocoonBackendEnv, cocoonBackendFake) // 名字任选：工厂已被换掉
+
+	// ★ 负控一：`--dry-run` 一次都不传，也不建任何目录（干跑承诺零副作用）。
+	rc, out, errs := ccLifeRun(t, cmdCocoonOpen, []string{"cocoon", "open"}, []string{proj}, nil,
+		map[string]string{"--dry-run": "true"})
+	if rc != exitOK {
+		t.Fatalf("--dry-run rc=%d 期望 0 · stderr=%s", rc, errs)
+	}
+	if got := stub.calls(); len(got) != 0 {
+		t.Fatalf("--dry-run 竟把茧目录交给了后端 %v（干跑必须零副作用）", got)
+	}
+	if _, err := os.Stat(root); !os.IsNotExist(err) {
+		t.Fatalf("--dry-run 竟建出了状态根 %s（stat err=%v）", root, err)
+	}
+
+	// 真跑：目录必须 = 真源根下的 <id>/（**茧目录本身**，不是它的父目录）。
+	rc, out, errs = ccLifeRun(t, cmdCocoonOpen, []string{"cocoon", "open"}, []string{proj},
+		[]string{"id", "phase", "dir"}, nil)
+	if rc != exitOK {
+		t.Fatalf("open rc=%d 期望 0 · stderr=%s", rc, errs)
+	}
+	id := ccLifeCell(ccLifeRows(t, out)[0], "id")
+	if id == "" {
+		t.Fatalf("open 没给 id：%s", out)
+	}
+	want := filepath.Join(root, id)
+	got := stub.calls()
+	if len(got) != 1 {
+		t.Fatalf("open 应当把茧目录交给后端恰一次，得到 %d 次：%v", len(got), got)
+	}
+	if got[0] != want {
+		t.Fatalf("交给后端的茧目录=%q，want %q（真源根下的 <id>/）", got[0], want)
+	}
+	if filepath.Dir(got[0]) != root {
+		t.Fatalf("茧目录的父目录应当是状态根 %q，得到 %q（传成状态根就落错层）", root, filepath.Dir(got[0]))
+	}
+	// 它必须真是**这个茧的目录**（meta 在里面），否则「交给后端的」就是别的路径。
+	if _, err := os.Stat(filepath.Join(got[0], "meta.json")); err != nil {
+		t.Fatalf("%s 里没有 meta.json（交给后端的不是茧目录）：%v", got[0], err)
+	}
+	if stub.provisionCount() != 1 {
+		t.Fatalf("Provision 次数=%d，want 1", stub.provisionCount())
+	}
+
+	// `close` 也要传同一个目录：跨进程收尾靠后端用 BaseDir 算茧根（否则实例根收不掉）。
+	if rc, _, errs := ccLifeRun(t, cmdCocoonClose, []string{"cocoon", "close"}, []string{id}, nil, nil); rc != exitOK {
+		t.Fatalf("close rc=%d · %s", rc, errs)
+	}
+	got = stub.calls()
+	if len(got) != 2 || got[1] != want {
+		t.Fatalf("close 应当把同一个茧目录再交一次（%q），得到 %v", want, got)
+	}
+
+	// ★ 负控二：后端拒收 ⇒ 退 1、**一次 Provision 都没发生**（不许「先 Provision 再看」）。
+	reject := &ccDirRecorder{FakeBackend: cocoon.NewFakeBackend()}
+	reject.reject = fmt.Errorf("stub：不接受茧目录（本格验拒收面）")
+	cocoonBackendFactory = func(string) (cocoon.Backend, error) { return reject, nil }
+	rc, out, errs = ccLifeRun(t, cmdCocoonOpen, []string{"cocoon", "open"}, []string{proj},
+		[]string{"id", "phase"}, nil)
+	if rc != exitFail {
+		t.Fatalf("后端拒收茧目录时 open 应当退 1，得 rc=%d · stdout=%q · stderr=%s", rc, out, errs)
+	}
+	if reject.provisionCount() != 0 {
+		t.Fatalf("后端拒收之后仍 Provision 了 %d 次（顺序错：应当先交目录再 Provision）",
+			reject.provisionCount())
+	}
+	if !strings.Contains(errs, "后端不接受茧目录") {
+		t.Fatalf("stderr 没点明「后端不接受茧目录」：%s", errs)
+	}
+}
+
+// ── ⑥ inspect 印可写层（overlay）位 · `--json` 键表不动（T3b）────────────────
+
+// ccOverlayBackend — 演「能叠可写层」的后端（能力表全绿的那一档），只为正控那条人面。
+type ccOverlayBackend struct{ *cocoon.FakeBackend }
+
+func (b *ccOverlayBackend) Capabilities() (cocoon.Capabilities, error) {
+	c := cocoon.Capabilities{
+		Platform:            cocoon.HostPlatform(),
+		Isolation:           "stub-overlay",
+		PeerIdentity:        cocoon.PeerIdentityStrong,
+		PeerMechanism:       "stub（本格不验身份机制）",
+		ProcessTreeKill:     true,
+		KillMechanism:       "stub（本格不验回收机制）",
+		SymlinkNoFollow:     true,
+		SymlinkMechanism:    "stub",
+		CrossMountGuard:     true,
+		CrossMountMechanism: "stub",
+		Expose:              true,
+		ExposeMechanism:     "stub（本格不验端口面）",
+		Overlay:             true,
+		OverlayMechanism:    "overlayfs（stub：lower=rootfs · upper 在茧目录）",
+	}
+	if err := c.Validate(); err != nil {
+		return cocoon.Capabilities{}, err
+	}
+	return c, nil
+}
+
+func TestCocoonInspectOverlayBit(t *testing.T) {
+	_, root := ccLifeSetup(t)
+
+	// 假后端的茧：可写层 = false，且**必须带理由**（false 不许是一个裸位）。
+	id := "cc-overlay-1"
+	dir := filepath.Join(root, id)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	m := cocoon.New(id, "", "t")
+	if err := m.SetPhase(cocoon.PhaseRunning); err != nil {
+		t.Fatal(err)
+	}
+	m.Backend = cocoonBackendFake
+	if err := cocoon.Save(cocoon.MetaPath(dir), m); err != nil {
+		t.Fatal(err)
+	}
+
+	_, human, errs := ccLifeRun(t, cmdCocoonInspect, []string{"cocoon", "inspect"}, []string{id}, nil, nil)
+	if !strings.Contains(human, "可写层") {
+		t.Fatalf("人面没印「可写层」这一行：\n%s", human)
+	}
+	if !strings.Contains(human, "overlay=false") {
+		t.Fatalf("假后端的 overlay 位应当印 false：\n%s", human)
+	}
+	if !strings.Contains(human, "假后端") {
+		t.Fatalf("overlay=false 必须带理由（OverlayMechanism），人面里没看到：\n%s · stderr=%s", human, errs)
+	}
+
+	// ★ 机器面**键表不动**：inspect 的 --json 字段里不许冒出 overlay 两键
+	//   （加键要同批刷契约基线与文档，本单不做 ⇒ 这里把「不动」钉成判据）。
+	if f := strings.Join(cocoonInspectFields, ","); strings.Contains(f, "overlay") {
+		t.Fatalf("cocoonInspectFields 被加了 overlay 键：%v（本单承诺 --json 键表不动）", cocoonInspectFields)
+	}
+	rc, out, errs := ccLifeRun(t, cmdCocoonInspect, []string{"cocoon", "inspect"}, []string{id},
+		cocoonInspectFields, nil)
+	if rc != exitOK {
+		t.Fatalf("inspect rc=%d · %s", rc, errs)
+	}
+	row := ccLifeRows(t, out)[0]
+	for _, k := range []string{"overlay", "overlay_mechanism"} {
+		if _, ok := row[k]; ok {
+			t.Fatalf("--json 行里冒出了 %q 键（键表约定不动）：%v", k, row)
+		}
+	}
+
+	// 正控：后端自报 overlay=true ⇒ 同一行印 true + 机制（证明这一格不是写死的 false）。
+	oval := &ccOverlayBackend{FakeBackend: cocoon.NewFakeBackend()}
+	ccBeRestoreFactory(t)
+	cocoonBackendFactory = func(string) (cocoon.Backend, error) { return oval, nil }
+	id2 := "cc-overlay-2"
+	dir2 := filepath.Join(root, id2)
+	if err := os.MkdirAll(dir2, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	m2 := cocoon.New(id2, "", "t")
+	if err := m2.SetPhase(cocoon.PhaseRunning); err != nil {
+		t.Fatal(err)
+	}
+	m2.Backend = "stub-overlay"
+	if err := cocoon.Save(cocoon.MetaPath(dir2), m2); err != nil {
+		t.Fatal(err)
+	}
+	_, human, errs = ccLifeRun(t, cmdCocoonInspect, []string{"cocoon", "inspect"}, []string{id2}, nil, nil)
+	if !strings.Contains(human, "overlay=true") {
+		t.Fatalf("后端报 Overlay=true 时人面应当印 true：\n%s · stderr=%s", human, errs)
+	}
+	if !strings.Contains(human, "overlayfs（stub") {
+		t.Fatalf("overlay=true 时人面应当印机制原文：\n%s", human)
+	}
+}
+
+// ── ⑦ 后台档（T3c）：open 必须走「脱钩起服务 + 验活」这条路 ────────────────
+//
+// 这一组的靶子是 T3b 的实测假绿：`cocoon open` 报成功、盘上 pid:0、茧里什么都没有
+// （服务 spawn 在 CLI 自己的 goroutine 里，main 一返回就被带走）。四格：
+//
+//	① 真跑档：open 必须把 `Detach=true` 传给后端（否则服务又被 CLI 带走）；
+//	   且 `--json` 的 logs 格按三值纪律取值（假后端不开日志 ⇒ `—`）。
+//	② 正控：后端自报 pid 且探针说「在」⇒ open 成功、meta 记 running + 真 pid。
+//	③ 负控甲：后端有判活面却没给 pid ⇒ 退 1、meta failed（✗ 不许按成功报）。
+//	④ 负控乙：pid 已退出（rc=7）⇒ 退 1、stderr 点明「已退出（RC=7）」、meta 不写 running。
+
+// ccDetachBackend — 演**真后台档**后端：Exec 立刻签出 pid，判活面按探针说话。
+type ccDetachBackend struct {
+	*cocoon.FakeBackend
+	mu      sync.Mutex
+	pid     int  // 0 = 不签 pid（演「后端嘴上支持、其实没给」）
+	exited  bool // 判活面的读数
+	exitRC  int
+	polls   int
+	detach  bool
+	execOps cocoon.ExecOpts
+}
+
+func (b *ccDetachBackend) Exec(ctx context.Context, inst cocoon.Instance, argv []string, opts cocoon.ExecOpts) (cocoon.ExecResult, error) {
+	b.mu.Lock()
+	b.detach, b.execOps = opts.Detach, opts
+	pid := b.pid
+	b.mu.Unlock()
+	if !opts.Detach || pid == 0 {
+		// 不走后台档 / 不签 pid：保持假后端原语义（立刻 RC=0 的「一次性进程」）。
+		return b.FakeBackend.Exec(ctx, inst, argv, opts)
+	}
+	return cocoon.ExecResult{RC: 0, PID: pid}, nil
+}
+
+func (b *ccDetachBackend) InstancePIDs(cocoon.Instance) []int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.pid == 0 {
+		return nil
+	}
+	return []int{b.pid}
+}
+
+func (b *ccDetachBackend) DetachedStatus(pid int) (bool, bool, cocoon.ExecResult) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.polls++
+	if pid != b.pid {
+		return false, true, cocoon.ExecResult{RC: 1}
+	}
+	if b.exited {
+		return false, true, cocoon.ExecResult{RC: b.exitRC}
+	}
+	return true, false, cocoon.ExecResult{}
+}
+
+func (b *ccDetachBackend) setExited(rc int) {
+	b.mu.Lock()
+	b.exited, b.exitRC = true, rc
+	b.mu.Unlock()
+}
+
+func ccDetachSetup(t *testing.T, stub *ccDetachBackend) (proj, root string) {
+	t.Helper()
+	proj, root = ccLifeSetup(t)
+	ccBeRestoreFactory(t)
+	cocoonBackendFactory = func(string) (cocoon.Backend, error) { return stub, nil }
+	return proj, root
+}
+
+// ① 真跑档：Detach 真的传下去了；logs 格按三值纪律。
+func TestCocoonOpenUsesDetachedExec(t *testing.T) {
+	be := cocoon.NewFakeBackend()
+	proj, root := ccLifeSetup(t)
+	ccBeRestoreFactory(t)
+	cocoonBackendFactory = func(string) (cocoon.Backend, error) { return be, nil }
+
+	rc, out, errs := ccLifeRun(t, cmdCocoonOpen, []string{"cocoon", "open"}, []string{proj},
+		[]string{"id", "phase", "logs"}, nil)
+	if rc != exitOK {
+		t.Fatalf("open rc=%d 期望 0（stderr=%s）", rc, errs)
+	}
+	id := ccLifeCell(ccLifeRows(t, out)[0], "id")
+	// 假后端：拿它的 LastExec 读这次 Exec 的入参（真后端走的是同一个 ExecOpts）。
+	// 实例 id 由后端自己签发（fake-N）⇒ 从 meta.backend_instance 原样取回，✗ 不自己拼。
+	m, merr := cocoon.Load(cocoon.MetaPath(filepath.Join(root, id)))
+	if merr != nil {
+		t.Fatalf("读 meta: %v", merr)
+	}
+	last, ok := be.LastExec(cocoon.Instance{ID: m.BackendInstance})
+	if !ok {
+		t.Fatalf("后端一次 Exec 都没拿到（服务没起？instance=%q）", m.BackendInstance)
+	}
+	if !last.Opts.Detach {
+		t.Fatalf("open 的服务 Exec 必须带 Detach=true（否则 CLI 一退服务就被带走 · T3b 假绿形态）：%+v", last.Opts)
+	}
+	if !strings.HasSuffix(last.Opts.LogPath, string(filepath.Separator)+"logs"+string(filepath.Separator)+"api.log") {
+		t.Fatalf("日志必须落 <茧目录>/logs/api.log，得到 %q", last.Opts.LogPath)
+	}
+	// 假后端不起进程 ⇒ logs/ 不会被建出来 ⇒ 机器面必须说「没有」（不是给个不存在的路径）。
+	if got := ccLifeCell(ccLifeRows(t, out)[0], "logs"); got != cocoonDash {
+		t.Fatalf("假后端的 logs 格该是 %q（三值纪律），得到 %q", cocoonDash, got)
+	}
+}
+
+// ② 正控：有 pid 且在 ⇒ 成功，meta 记 running + 真 pid。
+func TestCocoonOpenDetachedAliveSucceeds(t *testing.T) {
+	stub := &ccDetachBackend{FakeBackend: cocoon.NewFakeBackend(), pid: 4242}
+	proj, root := ccDetachSetup(t, stub)
+
+	rc, out, errs := ccLifeRun(t, cmdCocoonOpen, []string{"cocoon", "open"}, []string{proj},
+		[]string{"id", "phase", "pid"}, nil)
+	if rc != exitOK {
+		t.Fatalf("pid 在跑时 open 该成功，得 rc=%d · stderr=%s", rc, errs)
+	}
+	row := ccLifeRows(t, out)[0]
+	if got := ccLifeCell(row, "phase"); got != string(cocoon.PhaseRunning) {
+		t.Fatalf("phase=%q 期望 running", got)
+	}
+	if got := ccLifeCell(row, "pid"); got != "4242" {
+		t.Fatalf("pid=%q 期望 4242（后端签出的真 pid 必须落盘）", got)
+	}
+	m, err := cocoon.Load(cocoon.MetaPath(filepath.Join(root, ccLifeCell(row, "id"))))
+	if err != nil {
+		t.Fatalf("读 meta: %v", err)
+	}
+	if m.PID != 4242 || len(m.BackendPIDs) != 1 || m.BackendPIDs[0] != 4242 {
+		t.Fatalf("meta 该记 pid=4242 与 backend_pids=[4242]，得到 %d / %v", m.PID, m.BackendPIDs)
+	}
+	stub.mu.Lock()
+	polls, detach := stub.polls, stub.detach
+	stub.mu.Unlock()
+	if !detach {
+		t.Fatalf("detach 没传下去")
+	}
+	if polls == 0 {
+		t.Fatalf("一次判活探针都没打（验活形同虚设）")
+	}
+}
+
+// ③ 负控甲：有判活面却没 pid ⇒ 退 1、meta failed。
+func TestCocoonOpenDetachedNeedsPid(t *testing.T) {
+	stub := &ccDetachBackend{FakeBackend: cocoon.NewFakeBackend(), pid: 0}
+	proj, root := ccDetachSetup(t, stub)
+
+	rc, out, errs := ccLifeRun(t, cmdCocoonOpen, []string{"cocoon", "open"}, []string{proj},
+		[]string{"id", "phase"}, nil)
+	if rc != exitFail {
+		t.Fatalf("后端没给 pid 时 open 必须退 1，得 rc=%d（stdout=%q）", rc, out)
+	}
+	if out != "" {
+		t.Fatalf("失败的 open 不许往 stdout 写东西：%q", out)
+	}
+	if !strings.Contains(errs, "没有给出任何 pid") {
+		t.Fatalf("stderr 该点明「没有给出任何 pid」：%s", errs)
+	}
+	ph, ok := ccLifeMetaPhase(t, root, firstCocoonID(t, root))
+	if !ok || ph == cocoon.PhaseRunning {
+		t.Fatalf("meta 不该是 running（phase=%q ok=%v）", ph, ok)
+	}
+}
+
+// ④ 负控乙：pid 已退 ⇒ 退 1、点明退出码、meta 不写 running。
+func TestCocoonOpenDetachedExitedFails(t *testing.T) {
+	stub := &ccDetachBackend{FakeBackend: cocoon.NewFakeBackend(), pid: 4242, exited: true, exitRC: 7}
+	proj, root := ccDetachSetup(t, stub)
+
+	rc, out, errs := ccLifeRun(t, cmdCocoonOpen, []string{"cocoon", "open"}, []string{proj},
+		[]string{"id", "phase"}, nil)
+	if rc != exitFail {
+		t.Fatalf("进程已退时 open 必须退 1，得 rc=%d（stdout=%q）", rc, out)
+	}
+	for _, want := range []string{"已退出", "RC=7"} {
+		if !strings.Contains(errs, want) {
+			t.Fatalf("stderr 该含 %q（把退出码说出来）：%s", want, errs)
+		}
+	}
+	id := firstCocoonID(t, root)
+	ph, ok := ccLifeMetaPhase(t, root, id)
+	if !ok {
+		t.Fatalf("meta 该在（路径 %s）", cocoon.MetaPath(filepath.Join(root, id)))
+	}
+	if ph == cocoon.PhaseRunning {
+		t.Fatalf("进程已退却把 meta 写成 running（这正是本单要消灭的假绿）")
+	}
+	m, _ := cocoon.Load(cocoon.MetaPath(filepath.Join(root, id)))
+	if m != nil && m.PID != 0 {
+		t.Fatalf("失败的茧不该记 pid（pid=%d）", m.PID)
+	}
+}
+
+// firstCocoonID — 状态根下唯一那个茧目录名（失败路径只留一个）。
+func firstCocoonID(t *testing.T, root string) string {
+	t.Helper()
+	ents, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatalf("读状态根 %s: %v", root, err)
+	}
+	var ids []string
+	for _, e := range ents {
+		if e.IsDir() {
+			ids = append(ids, e.Name())
+		}
+	}
+	if len(ids) != 1 {
+		t.Fatalf("状态根下该恰有 1 个茧目录，得到 %v", ids)
+	}
+	return ids[0]
 }

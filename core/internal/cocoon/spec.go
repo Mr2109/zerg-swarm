@@ -46,6 +46,7 @@ import (
 	"math"
 	"net"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -60,6 +61,12 @@ const DefaultReadinessTimeout = 30 * time.Second
 
 // DefaultBind — [[端口]] 未写 bind 时的默认绑定地址：只绑回环，不默认暴露到网卡。
 const DefaultBind = "127.0.0.1"
+
+// specRootfsHostRoot — 「不换根」那个根。
+//
+// ★ 这里是 spec 层，只认「宿主根目录」这一件事，**不引后端常量**（nsjail 的缺省 chroot
+// 是后端的事；契约层引后端常量会让两份语义永远绑死）。
+const specRootfsHostRoot = "/"
 
 // 合法枚举值。
 const (
@@ -127,7 +134,19 @@ type CocoonSpec struct {
 	Digest  string // 已归一为小写；空表示契约未锁 digest（伴随一条 Warning）
 	Arch    string
 	Workdir string
-	Line    int
+
+	// Rootfs — 可选：茧的**根文件系统目录**（宿主路径）。空 = 不换根（既有档：后端用它的
+	// 缺省 chroot，nsjail 后端缺省是宿主根 `/`）。
+	//
+	// ★ 写绝对路径，或写**相对契约文件所在目录**的路径 —— 解析在 decodeCocoon 里一次做完
+	// （存进来的永远是绝对路径）：让后端拿到的不是「一个要看 cwd 才知道指向哪」的相对串。
+	Rootfs string
+	// OverlayUpper — 可选：overlay 的**可写层**目录（宿主路径；空 = `<茧目录>/upper`）。
+	//
+	// ★ 只在给了 Rootfs 时才有意义：单独给它在解析期就拒（上层没有下层不是配置，是笔误）。
+	OverlayUpper string
+
+	Line int
 }
 
 // Readiness — 一个服务的就绪判据（v2 §D 里是行内表）。
@@ -425,7 +444,7 @@ func (d *specDecoder) decodeCocoon(t *tval) error {
 	if t.kind != tvTable {
 		return d.errf(t.line, f, "必须是表")
 	}
-	if err := d.checkKeys(t, f, "name", "image", "digest", "arch", "workdir"); err != nil {
+	if err := d.checkKeys(t, f, "name", "image", "digest", "arch", "workdir", "rootfs", "overlay_upper"); err != nil {
 		return err
 	}
 	c := CocoonSpec{Line: t.line}
@@ -502,8 +521,83 @@ func (d *specDecoder) decodeCocoon(t *tval) error {
 	}
 	c.Workdir = workdir
 
+	// rootfs / overlay_upper：两个宿主路径，都是**可选**的（缺省空 = 维持既有行为：
+	// 不 chroot、不做 overlay）。★ 这是「既有档」，不是「静默降级」——
+	// 给了 rootfs 之后任何一步做不成都必须报错，不许退回这一档（见 nsjailRootfsPlanFor）。
+	rootfs, hasRootfs, err := d.strField(t, f, "rootfs")
+	if err != nil {
+		return err
+	}
+	if hasRootfs {
+		if strings.TrimSpace(rootfs) == "" {
+			return d.errf(t.tab["rootfs"].line, f+".rootfs",
+				"不得为空串（不想换根就别写这个键：空串会被读成「换到空气里」，与「不换根」是两件事）")
+		}
+		abs, aerr := resolveContractPath(d.file, rootfs)
+		if aerr != nil {
+			return d.errf(t.tab["rootfs"].line, f+".rootfs", "解析成绝对路径失败：%v", aerr)
+		}
+		c.Rootfs = abs
+		if abs == specRootfsHostRoot {
+			// 显式写 `/` 与不写这个键等价：不阻断（这是用户的明确选择），但必须说出来。
+			d.warnf(t.tab["rootfs"].line, f+".rootfs",
+				"rootfs = \"/\" 等于不换根（隔离只剩 namespace + cgroup + rlimit，茧内跑的是宿主二进制）")
+		}
+	}
+
+	upper, hasUpper, err := d.strField(t, f, "overlay_upper")
+	if err != nil {
+		return err
+	}
+	if hasUpper {
+		if strings.TrimSpace(upper) == "" {
+			return d.errf(t.tab["overlay_upper"].line, f+".overlay_upper",
+				"不得为空串（缺省可写层是 <茧目录>/upper；不想用 overlay 就别写这个键）")
+		}
+		if c.Rootfs == "" {
+			return d.errf(t.tab["overlay_upper"].line, f+".overlay_upper",
+				"要先给 .rootfs：overlay 的上层（可写层）没有下层（镜像根）就无处叠加")
+		}
+		if c.Rootfs == specRootfsHostRoot {
+			return d.errf(t.tab["overlay_upper"].line, f+".overlay_upper",
+				"rootfs = \"/\" 时不给 overlay（下层是宿主根，叠出来的可写层等于把宿主根复制一遍）")
+		}
+		abs, aerr := resolveContractPath(d.file, upper)
+		if aerr != nil {
+			return d.errf(t.tab["overlay_upper"].line, f+".overlay_upper", "解析成绝对路径失败：%v", aerr)
+		}
+		c.OverlayUpper = abs
+	}
+
 	d.spec.Cocoon = c
 	return nil
+}
+
+// resolveContractPath — 契约里的宿主路径：绝对路径原样（Clean），相对路径按**契约文件所在目录**
+// 解析成绝对路径。
+//
+// ★ 为什么必须在这里就绝对化：契约在 `A/cocoon.toml` 里写 `rootfs = "images/rootfs"` 时，
+// 「相对谁」只能有一个答案（相对契约自己），而下游（后端/编排）拿到的若是相对串，
+// 它会相对**自己的 cwd** 解析 —— 那是另一个目录，且错得静默。取 cwd 失败（cwd 被删）时
+// 报错而不是回落：这条路径要交给 mount/chroot，猜错等于把宿主的东西当茧的东西。
+func resolveContractPath(contractFile, p string) (string, error) {
+	p = strings.TrimSpace(p)
+	if strings.ContainsRune(p, 0) {
+		return "", fmt.Errorf("路径里含 NUL")
+	}
+	if filepath.IsAbs(p) {
+		return filepath.Clean(p), nil
+	}
+	base := "."
+	if contractFile != "" {
+		base = filepath.Dir(contractFile)
+	}
+	joined := filepath.Join(base, p)
+	abs, err := filepath.Abs(joined)
+	if err != nil {
+		return "", fmt.Errorf("取绝对路径 %q 失败: %w", joined, err)
+	}
+	return abs, nil
 }
 
 // ── [[服务]] ──────────────────────────────────────────────────────────

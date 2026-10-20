@@ -49,6 +49,40 @@ func TestCapabilitiesExposeFace(t *testing.T) {
 	if err := bad.Validate(); err == nil {
 		t.Fatal("Expose=false + 空机制 应当被 Validate 拒")
 	}
+
+	// Overlay 位（真 rootfs 的可写层）：linux 能给 ⇒ true 且机制写清；
+	// 其它平台给不了 ⇒ false，但**必须**写清为什么（与 Expose 同口径）。
+	if !lin.Overlay {
+		t.Fatalf("linux 行 Overlay 应为 true（overlayfs 能把只读镜像根变可写视图），得到 %+v", lin)
+	}
+	if !strings.Contains(lin.OverlayMechanism, "overlayfs") {
+		t.Fatalf("linux 的 OverlayMechanism 该写清是 overlayfs：%q", lin.OverlayMechanism)
+	}
+	for _, p := range Platforms() {
+		if p == PlatformLinux {
+			continue
+		}
+		c, _ := PlatformCapabilities(p)
+		if c.Overlay {
+			t.Fatalf("平台 %q 尚未接 overlay，不该声明 true", p)
+		}
+		if strings.TrimSpace(c.OverlayMechanism) == "" {
+			t.Fatalf("平台 %q 的 Overlay=false 但没写理由（空值等于「没说」）", p)
+		}
+	}
+	// 负控：Overlay=false 且机制为空 ⇒ Validate 必须拒。
+	badOverlay := LinuxCapabilities()
+	badOverlay.Overlay = false
+	badOverlay.OverlayMechanism = ""
+	if err := badOverlay.Validate(); err == nil {
+		t.Fatal("Overlay=false + 空机制 应当被 Validate 拒")
+	}
+	// 假后端自己的那张表也必须过 Validate（它是另一份声明，不借平台表）。
+	if c, err := NewFakeBackend().Capabilities(); err != nil {
+		t.Fatalf("假后端能力面过不了 Validate：%v", err)
+	} else if c.Overlay {
+		t.Fatalf("假后端不该声明 Overlay=true：%+v", c)
+	}
 }
 
 func TestNsjailNonLinuxReapAndPIDs(t *testing.T) {
@@ -78,5 +112,24 @@ func TestExecOptsLogPathValidation(t *testing.T) {
 	}
 	if err := (ExecOpts{}).Validate(); err != nil {
 		t.Fatalf("空 LogPath 是合法缺省：%v", err)
+	}
+}
+
+// TestExecOptsDetachNeedsLogPath — 后台档必须落文件（T3c）。
+//
+// 判据：`Detach=true` 而 LogPath 为空 ⇒ 拒执。理由不是洁癖 —— 管道读端属于起进程的那个
+// 进程，那个进程一退，服务下一次写 stdout/stderr 就撞 EPIPE（等于换个姿势把服务弄死）。
+func TestExecOptsDetachNeedsLogPath(t *testing.T) {
+	if err := (ExecOpts{Detach: true}).Validate(); err == nil {
+		t.Fatal("后台档没给 LogPath 应当被拒（管道会随起进程一起消失 ⇒ 服务写 stdout 就 EPIPE）")
+	} else if !strings.Contains(err.Error(), "LogPath") {
+		t.Fatalf("拒执理由该点名 LogPath：%v", err)
+	}
+	if err := (ExecOpts{Detach: true, LogPath: "/var/log/x.log"}).Validate(); err != nil {
+		t.Fatalf("后台档 + 绝对 LogPath 应当通过：%v", err)
+	}
+	// 阻塞档不受这条约束（内存管道是它的正常语义）。
+	if err := (ExecOpts{}).Validate(); err != nil {
+		t.Fatalf("阻塞档不带 LogPath 应当通过：%v", err)
 	}
 }

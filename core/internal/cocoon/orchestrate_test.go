@@ -903,3 +903,99 @@ readiness = { port = 5432, timeout = "500ms" }
 		t.Fatalf("无 path 时应探 TCP 而不是 HTTP，得到：\n%s", strings.Join(r.Log(), "\n"))
 	}
 }
+
+// ── ⑩ 后台档：Exec 返回 ≠ 进程退出（T3c 的编排层判据）──────────────────────
+
+// orchDetachBackend — 演真后台档后端：签出 pid 即返回，退出观测交给 DetachedProbe。
+type orchDetachBackend struct {
+	*FakeBackend
+	mu     sync.Mutex
+	pid    int
+	exited bool
+	exitRC int
+	polls  int
+	detach bool
+}
+
+func (b *orchDetachBackend) Exec(ctx context.Context, inst Instance, argv []string, opts ExecOpts) (ExecResult, error) {
+	b.mu.Lock()
+	b.detach = opts.Detach
+	b.mu.Unlock()
+	if !opts.Detach {
+		return b.FakeBackend.Exec(ctx, inst, argv, opts)
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return ExecResult{RC: 0, PID: b.pid}, nil
+}
+
+func (b *orchDetachBackend) DetachedStatus(pid int) (bool, bool, ExecResult) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.polls++
+	if b.exited {
+		return false, true, ExecResult{RC: b.exitRC}
+	}
+	return true, false, ExecResult{}
+}
+
+func (b *orchDetachBackend) kill(rc int) {
+	b.mu.Lock()
+	b.exited, b.exitRC = true, rc
+	b.mu.Unlock()
+}
+
+// TestOrchestrateDetachDoesNotCountSignOutAsExit — 后台档 Exec 立刻返回（签出即返回），
+// 编排层**不许**把它当「进程已退」：
+//
+//	① 该服务在就绪前不该被判死（否则每个后台档服务都永远起不来）；
+//	② 探针说「退了」之后，存活边才生效（rc≠0 ⇒ 判死）。
+func TestOrchestrateDetachDoesNotCountSignOutAsExit(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	be := &orchDetachBackend{FakeBackend: NewFakeBackend(), pid: 4242, exitRC: 3}
+	srv := healthServer(t)
+	box := newOrchBox()
+	box.fallback = hostPortOf(t, srv.URL)
+
+	sp := mustOrchSpec(t, `[[服务]]
+name      = "api"
+entry     = ["uvicorn", "app:api"]
+readiness = { port = 8000, path = "/healthz", timeout = "2s" }
+`)
+	opts := box.optsFor()
+	opts.Detach = true
+	// 后台档必须落文件（ExecOpts.Validate 会拒「Detach 而无 LogPath」）⇒ 给一格临时日志目录。
+	opts.LogDir = t.TempDir()
+	// 用缺省 Spawner（本格要验的正是它），只留探测桩与短超时。
+	opts.Spawn = nil
+	r, err := StartWith(ctx, be, sp, opts)
+	if err != nil {
+		t.Fatalf("后台档签出后应当起得来（Exec 返回 ≠ 退出），得到错误: %v", err)
+	}
+	t.Cleanup(func() { _ = Stop(ctx, r) })
+
+	if st := r.States(); len(st) != 1 || !st[0].Ready || st[0].Exited {
+		t.Fatalf("签出后该是「就绪且未退」，得到 %+v", st)
+	}
+	be.mu.Lock()
+	polls, detach := be.polls, be.detach
+	be.mu.Unlock()
+	if !detach {
+		t.Fatalf("Detach 没传到后端 Exec（服务又会被起它的进程带走）")
+	}
+	if polls == 0 {
+		t.Fatalf("一次判活探针都没打")
+	}
+
+	// 探针改口：进程真退了（rc=3）⇒ 存活边判死。
+	be.kill(3)
+	waitFor(t, "api 判死", func() bool {
+		st := r.States()
+		return len(st) == 1 && st[0].Exited
+	})
+	st := r.States()[0]
+	if !st.Dead || st.Exit.RC != 3 {
+		t.Fatalf("rc=3 的退出该判死，得到 %+v", st)
+	}
+}

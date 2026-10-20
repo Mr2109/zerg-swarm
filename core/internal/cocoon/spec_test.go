@@ -1031,3 +1031,105 @@ func TestSpecParserNeverPanicsOnGarbage(t *testing.T) {
 		}()
 	}
 }
+
+// ── ⑰ [茧].rootfs / overlay_upper（换真 rootfs 的契约面） ────────────────
+//
+// 判据四条：
+//
+//	① 不写这两个键 ⇒ 两个字段都是空（既有档：chroot 由后端给，不是「契约说了换根」）。
+//	② 绝对路径原样（只 Clean）；相对路径按**契约文件所在目录**解析成绝对路径。
+//	③ 空串 ≠ 不写：空串是「换到空气里」，必须在解析期就拒。
+//	④ 只给 overlay_upper、不给 rootfs ⇒ 拒（上层没有下层不是配置，是笔误）。
+func TestSpecCocoonRootfsAndOverlay(t *testing.T) {
+	tmpl := func(extra string) string {
+		return `[茧]
+name  = "shop"
+image = "debian:bookworm"
+` + extra + `
+[[服务]]
+name  = "api"
+entry = ["/bin/sh"]
+
+[资源]
+cpu = 1
+mem_gb = 2
+disk_gb = 10
+`
+	}
+
+	// ① 既有档：两键都不写。
+	plain := mustParseSpec(t, tmpl(""))
+	if plain.Cocoon.Rootfs != "" || plain.Cocoon.OverlayUpper != "" {
+		t.Fatalf("没写 rootfs/overlay_upper 时两个字段都该是空，得到 %q / %q",
+			plain.Cocoon.Rootfs, plain.Cocoon.OverlayUpper)
+	}
+
+	// ② 绝对路径：原样（带 ../ 的话要 Clean，不是原串照抄）。
+	withAbs := tmpl("rootfs        = \"/srv/images/debian/..//debian\"\noverlay_upper = \"/srv/cocoons/shop/upper\"")
+	sp := mustParseSpec(t, withAbs)
+	if sp.Cocoon.Rootfs != "/srv/images/debian" {
+		t.Fatalf("绝对 rootfs 应当 Clean 成 /srv/images/debian，得到 %q", sp.Cocoon.Rootfs)
+	}
+	if sp.Cocoon.OverlayUpper != "/srv/cocoons/shop/upper" {
+		t.Fatalf("绝对 overlay_upper 不符：%q", sp.Cocoon.OverlayUpper)
+	}
+
+	// ②b 只写 rootfs：overlay_upper 留空（缺省由后端算成 <茧目录>/upper，不在契约层猜）。
+	onlyRoot := mustParseSpec(t, tmpl("rootfs = \"/srv/images/debian\""))
+	if onlyRoot.Cocoon.OverlayUpper != "" {
+		t.Fatalf("没写 overlay_upper 时应当留空（缺省由后端定），得到 %q", onlyRoot.Cocoon.OverlayUpper)
+	}
+
+	// ②c 相对路径：按**契约文件所在目录**解析（用 LoadSpec 才拿得到真实路径）。
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "images", "debian"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, SpecFileName)
+	if err := os.WriteFile(path, []byte(tmpl("rootfs = \"images/debian\"\noverlay_upper = \"upper\"")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := LoadSpec(path)
+	if err != nil {
+		t.Fatalf("LoadSpec 失败：%v", err)
+	}
+	if want := filepath.Join(dir, "images", "debian"); loaded.Cocoon.Rootfs != want {
+		t.Fatalf("相对 rootfs 应按契约目录解析成 %q，得到 %q", want, loaded.Cocoon.Rootfs)
+	}
+	if want := filepath.Join(dir, "upper"); loaded.Cocoon.OverlayUpper != want {
+		t.Fatalf("相对 overlay_upper 应按契约目录解析成 %q，得到 %q", want, loaded.Cocoon.OverlayUpper)
+	}
+
+	// ③ 空串必须拒（与「不写」分开：空串会被读成「换到空根」）。
+	wantSpecErr(t, tmpl("rootfs = \"\""), "茧.rootfs", "不得为空串", lineOf(tmpl("rootfs = \"\""), "rootfs"))
+	blankUpperSrc := tmpl("rootfs = \"/srv/i\"\noverlay_upper = \"  \"")
+	wantSpecErr(t, blankUpperSrc, "茧.overlay_upper", "不得为空串", lineOf(blankUpperSrc, "overlay_upper"))
+
+	// ④ overlay_upper 单独出现 ⇒ 拒。
+	wantSpecErr(t, tmpl("overlay_upper = \"/srv/u\""), "茧.overlay_upper", "要先给 .rootfs", 4)
+
+	// ④b rootfs="/" 时不给 overlay（下层是宿主根，叠出来只是把宿主根复制一遍）。
+	hostRootOverlay := tmpl("rootfs = \"/\"\noverlay_upper = \"/srv/u\"")
+	wantSpecErr(t, hostRootOverlay, "茧.overlay_upper", "不给 overlay", lineOf(hostRootOverlay, "overlay_upper"))
+
+	// ⑤ rootfs="/" 本身不阻断（用户的明确选择），但要有一条警告说明「等于不换根」。
+	hostRoot := mustParseSpec(t, tmpl("rootfs = \"/\""))
+	var found bool
+	for _, w := range hostRoot.Warnings {
+		if w.Field == "茧.rootfs" {
+			found = true
+			if !strings.Contains(w.Msg, "等于不换根") {
+				t.Fatalf("rootfs=/ 的警告该说清「等于不换根」：%q", w.Msg)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("rootfs=/ 应当留一条警告（不许静默当成「已换根」），Warnings=%v", hostRoot.Warnings)
+	}
+
+	// ⑥ 拼错键名照旧报错，且允许清单里现在含这两个新键。
+	se := wantSpecErr(t, tmpl("rootfss = \"/x\""), "茧.rootfss", "未知字段", 4)
+	if !strings.Contains(se.Msg, "rootfs") || !strings.Contains(se.Msg, "overlay_upper") {
+		t.Fatalf("未知字段的允许清单该列出 rootfs / overlay_upper：%q", se.Msg)
+	}
+}

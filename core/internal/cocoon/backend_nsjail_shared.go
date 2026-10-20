@@ -28,6 +28,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -52,6 +53,12 @@ const (
 	nsjailDefaultCgroupMount = "/sys/fs/cgroup"
 	// nsjailDefaultChroot — 缺省根文件系统（宿主根；真镜像根由上层给）。
 	nsjailDefaultChroot = "/"
+	// overlay 三件套在茧目录里的固定位置（`[茧].overlay_upper` 未写时的缺省是 `<茧目录>/upper`）。
+	// ★ 名字是**契约的一部分**（Destroy/跨进程收尾都按它们找挂载点），改名字等于改语义。
+	nsjailUpperDirName  = "upper"
+	nsjailWorkDirName   = "work"
+	nsjailMergedDirName = "merged"
+	nsjailTmpDirName    = "tmp"
 )
 
 // NsjailBackend — Linux 上的真后端：**只负责拼 nsjail 命令行并管进程/目录**，
@@ -92,6 +99,17 @@ type NsjailBackend struct {
 	mu     sync.Mutex
 	nextID int
 	insts  map[string]*nsjailInstance
+	// detached — 后台档（ExecOpts.Detach）签出的进程：pid → 退出观测点。
+	// 惰性初始化（nil 表示还没起过后台档进程）。见 DetachedStatus。
+	detached map[int]*nsjailDetach
+}
+
+// nsjailDetach — 一次后台档 exec 的观测点。
+//
+// ★ res 只在 close(done) 之前写、之后读（有 happens-before，不必再加锁）。
+type nsjailDetach struct {
+	done chan struct{}
+	res  ExecResult
 }
 
 // nsjailInstance — 一个茧的后端记账（不落契约副本：spec 由调用方持有）。
@@ -129,6 +147,38 @@ func NewNsjailBackend() *NsjailBackend {
 	}
 }
 
+// SetCocoonDir — 实现 CocoonDirSetter：把「茧目录」设成后端落点的父目录。
+//
+// 落地口径（三条，与接口注释同源）：
+//
+//	① 目录必须**已经存在**：命令面是先落 meta（顺带建目录）再把目录交给后端 ——
+//	   这里只校验、不建盘，建不出来就说明调用方的时序错了（不是本层该兜的）。
+//	② 绝对化 + Clean 之后再存：`Provision` 用 `filepath.Join(b.BaseDir, id)` 拼实例根，
+//	   相对路径会让实例根跟着进程 cwd 漂（同一个茧在两次 exec 里落到不同地方）。
+//	③ 拒空串 / 拒非目录 / 拒读不到的路径。任何一条都不许「静默当没给」——
+//	   契约给了 rootfs 时，没落点 = 只能报错；悄悄吞掉等于让调用方以为接上了。
+func (b *NsjailBackend) SetCocoonDir(dir string) error {
+	d := strings.TrimSpace(dir)
+	if d == "" {
+		return fmt.Errorf("cocoon: 茧目录为空（调用方必须在 Provision 之前给出 <真源根>/<id>/）")
+	}
+	if !filepath.IsAbs(d) {
+		return fmt.Errorf("cocoon: 茧目录 %q 不是绝对路径（相对路径会让实例根跟着 cwd 漂）", dir)
+	}
+	d = filepath.Clean(d)
+	fi, err := os.Stat(d)
+	if err != nil {
+		return fmt.Errorf("cocoon: 茧目录 %s 读不到: %w —— 先建目录再把目录交给后端（本方法只校验不建盘）", d, err)
+	}
+	if !fi.IsDir() {
+		return fmt.Errorf("cocoon: 茧目录 %s 不是目录", d)
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.BaseDir = d
+	return nil
+}
+
 // ── pid 归属校验（ReapPersisted 的安全前提）───────────────────────────
 
 // nsjailPidIsOurs — /proc/<pid>/cmdline 的第一个参数是不是「本后端那个 nsjail」。
@@ -163,6 +213,40 @@ func nsjailPidAlive(pid int) bool {
 	}
 	_, err := os.Stat("/proc/" + strconv.Itoa(pid))
 	return err == nil
+}
+
+// nsjailPidRunning — pid 不但还在 /proc 里，而且**不是僵尸/正在消失**。
+//
+// ★ 与 nsjailPidAlive 的两处差别，都是判活的硬要求：
+//
+//	① 僵尸（state=Z）算死：父进程还没 wait 掉的孩子在 /proc 里照样占着这个号，但它
+//	   已经什么都不做了 —— 把 Z 当活着，就会把「起就崩」报成「服务在跑」（T3b 的假绿形态）。
+//	② state=X（正在被销毁）同样算死。
+//
+// 读 /proc/<pid>/stat 的第二个字段即可（comm 里可能有空格，所以从**最后一个** ')' 之后切）。
+// 读不到 ⇒ 没有这个进程 ⇒ 死。非 linux 上 /proc 不存在 ⇒ 一律返回 false（本函数只服务于
+// linux 后端的判活面；其它平台的真相由它们自己的探针报）。
+func nsjailPidRunning(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	data, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
+	if err != nil {
+		return false
+	}
+	s := string(data)
+	i := strings.LastIndexByte(s, ')')
+	if i < 0 || i+2 >= len(s) {
+		return false
+	}
+	switch s[i+2] {
+	case 'Z', 'X', 'x':
+		return false
+	case 'R', 'S', 'D', 'T', 't', 'W', 'P', 'I':
+		return true
+	}
+	// 未知状态：不猜「活」，宁可让调用方多验一轮（判活要 fail-closed）。
+	return false
 }
 
 // Name — 后端名（Instance.Backend 同字面量）。
@@ -357,7 +441,10 @@ func nsjailReapEmptyCgroups(mount string) []error {
 			if perr != nil || pid <= 0 {
 				continue
 			}
-			if nsjailPidAlive(pid) {
+			// ★ 判「pid 还在」用 nsjailPidRunning（僵尸算死）：茧内 init 被杀后可能以僵尸形态
+			//   留在 /proc 里（父进程是 init，未回收），那种 pid 什么都不做、cgroup.procs 里也没有它
+			//   ⇒ 用 nsjailPidAlive 会把空壳永久留下（实测：容器里攒出一个 NSJAIL.<僵尸 pid>）。
+			if nsjailPidRunning(pid) {
 				continue
 			}
 			dir := filepath.Join(base, e.Name())
@@ -463,6 +550,196 @@ func nsjailPPID(pid int) (int, bool) {
 	return ppid, true
 }
 
+// ── 根文件系统方案（rootfs + overlay）─────────────────────────────────
+//
+// ★ 这一节只做**数据与计算**：真正动手 mount 的代码在 backend_nsjail_rootfs.go
+// （`//go:build linux`），因为 mount syscall 只在 linux 上有。分开的好处是
+// 「方案算得对不对」（宿主机与跨平台都能判）与「挂没挂上」（只有真机能判）能分别验证。
+
+// nsjailJailReadOnlyTopDirs — 茧内**系统面**顶层目录：真 rootfs 模式下逐个 bind 成只读。
+//
+// ★ 为什么非做不可（实测）：overlay 的语义是「下层只读、写时复制到上层」——若只挂 overlay，
+// 茧内写 /usr/bin/x 会**成功**（copy-up 到 upper），「系统面只读」这条承诺就是空的。
+// 所以系统面必须显式再 bind 一次 ro（茧内真出现 EROFS），可写面留给 upper 与 /tmp。
+// 不存在/是符号链接的（debian 的 /bin /lib → usr/*）跳过：对符号链接做 bind 会把链接
+// 解析成目标，挂出来的东西跟名字对不上。
+var nsjailJailReadOnlyTopDirs = []string{"usr", "bin", "sbin", "lib", "lib64", "lib32", "libx32"}
+
+// nsjailRootfsPlan — 一次 exec 的根文件系统方案（都是宿主路径；chroot 的值也在里面）。
+type nsjailRootfsPlan struct {
+	// Rootfs — 下层：真镜像根（宿主路径）。空 = 不换根（既有档）。
+	Rootfs string
+	// Upper — 上层：可写层（宿主路径）。
+	Upper string
+	// Work — overlay 的 workdir（必须与 Upper 同盘，否则 mount 直接拒）。
+	Work string
+	// Merged — overlay 合并视图 = 最终 chroot 目标（宿主路径）。
+	Merged string
+	// TmpDir — 茧内 /tmp 的宿主来源（每座茧一个；destroy 时跟着茧根一起删）。
+	TmpDir string
+	// Chroot — `--chroot` 的值：不给 rootfs 时是后端缺省（可能是 "/"），给了就是 Merged。
+	Chroot string
+	// Overlay — 是否要走 overlay（给了真 rootfs，且不是 "/"）。
+	Overlay bool
+}
+
+// IsJail — 是不是「真镜像根」⇒ 要挂最小只读面、argv[0] 要按茧内 PATH 解析。
+func (p nsjailRootfsPlan) IsJail() bool {
+	return p.Rootfs != "" && p.Chroot != "" && p.Chroot != nsjailDefaultChroot
+}
+
+// nsjailRootfsPlanFor — 契约 [茧].rootfs / overlay_upper + 后端缺省 chroot + 茧目录 ⇒ 方案。
+//
+// 三条纪律（都写在这里，因为这是唯一决定「换不换根」的地方）：
+//
+//	① 没给 rootfs ⇒ 完全维持既有行为（Chroot=后端缺省、不做 overlay）。这是**既有档**，
+//	   不是降级：契约没要求换根。
+//	② 给了 rootfs 但算不出落点（没有茧目录）⇒ **报错**。宁可在 Provision 就红，也不许
+//	   「算不出就退回宿主根」——那正是本单要消灭的那件事。
+//	③ rootfs="/" ⇒ 与不写等价（不 overlay）：下层是宿主根，叠出来的可写层没有意义。
+func nsjailRootfsPlanFor(spec *Spec, chroot, rootDir string) (nsjailRootfsPlan, error) {
+	if chroot == "" {
+		chroot = nsjailDefaultChroot
+	}
+	if spec == nil {
+		return nsjailRootfsPlan{Chroot: chroot}, nil
+	}
+	rootfs := strings.TrimSpace(spec.Cocoon.Rootfs)
+	if rootfs == "" {
+		return nsjailRootfsPlan{Chroot: chroot}, nil
+	}
+	rootfs = filepath.Clean(rootfs)
+	if rootfs == nsjailDefaultChroot {
+		return nsjailRootfsPlan{Chroot: nsjailDefaultChroot}, nil
+	}
+	if !filepath.IsAbs(rootfs) {
+		// decodeCocoon 已绝对化；走到这里说明有别的调用方绕过了契约解析 ⇒ 拒，不猜。
+		return nsjailRootfsPlan{}, fmt.Errorf("cocoon: [茧].rootfs 必须是绝对路径，得到 %q", spec.Cocoon.Rootfs)
+	}
+	rootDir = strings.TrimSpace(rootDir)
+	if rootDir == "" {
+		return nsjailRootfsPlan{}, fmt.Errorf(
+			"cocoon: 契约给了 [茧].rootfs=%s，但后端没有茧目录（NsjailBackend.BaseDir 为空）："+
+				"overlay 的 upper/work/merged 与茧内 /tmp 无处可落 —— 不退回宿主根（宁红不假绿）；"+
+				"请先调 SetCocoonDir 把茧目录交给后端（`cocoon open` 已接），再 Provision", rootfs)
+	}
+	p := nsjailRootfsPlan{
+		Rootfs:  rootfs,
+		Work:    filepath.Join(rootDir, nsjailWorkDirName),
+		Merged:  filepath.Join(rootDir, nsjailMergedDirName),
+		TmpDir:  filepath.Join(rootDir, nsjailTmpDirName),
+		Chroot:  filepath.Join(rootDir, nsjailMergedDirName),
+		Overlay: true,
+	}
+	if upper := strings.TrimSpace(spec.Cocoon.OverlayUpper); upper != "" {
+		if !filepath.IsAbs(upper) {
+			return nsjailRootfsPlan{}, fmt.Errorf("cocoon: [茧].overlay_upper 必须是绝对路径，得到 %q", upper)
+		}
+		p.Upper = filepath.Clean(upper)
+	} else {
+		p.Upper = filepath.Join(rootDir, nsjailUpperDirName)
+	}
+	// 三个目录互相重叠 = overlay 的经典自噬（upper 落在 merged 里 ⇒ 边写边长）。
+	// 这种配置不会报「参数错」，只会在跑起来之后诡异 —— 提前拒。
+	switch {
+	case p.Upper == p.Merged:
+		return nsjailRootfsPlan{}, fmt.Errorf("cocoon: overlay_upper 与合并视图同一条路径（%s）", p.Upper)
+	case p.Work == p.Merged || p.Work == p.Upper:
+		return nsjailRootfsPlan{}, fmt.Errorf("cocoon: overlay work 目录（%s）与 upper/merged 重叠", p.Work)
+	case p.Upper == rootfs:
+		return nsjailRootfsPlan{}, fmt.Errorf("cocoon: overlay_upper 不能等于 rootfs（%s）——上下层是同一个目录", rootfs)
+	}
+	return p, nil
+}
+
+// nsjailCheckRootfs — 契约给的 rootfs 目录是否真的在、且是目录。
+//
+// ★ 只查「在不在」：镜像从哪来（OCI 拉取/解包）不在本件 —— 报了「读不到」就是在说
+// 「先把它解包到目录」，而不是假装我们替你拉了镜像。
+func nsjailCheckRootfs(spec *Spec) (string, error) {
+	if spec == nil {
+		return "", nil
+	}
+	rootfs := strings.TrimSpace(spec.Cocoon.Rootfs)
+	if rootfs == "" || rootfs == nsjailDefaultChroot {
+		return rootfs, nil
+	}
+	rootfs = filepath.Clean(rootfs)
+	fi, err := os.Stat(rootfs)
+	if err != nil {
+		return rootfs, fmt.Errorf("cocoon: [茧].rootfs=%s 读不到（%w）—— 镜像得先解包到目录（OCI 拉取不在本件）", rootfs, err)
+	}
+	if !fi.IsDir() {
+		return rootfs, fmt.Errorf("cocoon: [茧].rootfs=%s 不是目录", rootfs)
+	}
+	return rootfs, nil
+}
+
+// nsjailPlanMounts — 真镜像根需要的**最小面**（只读面 + 一个可写 /tmp）。
+//
+// 规矩：
+//   - `/` 一律不许挂（整根挂进来 = 隔离面等于没有）；
+//   - /proc、/dev/{null,zero,urandom,random} 只读；
+//   - /tmp 来自茧目录里那个 rw 目录（**不用 tmpfs**：tmpfs 的内容在壳外看不见，
+//     「茧里写了什么」就查不到，验收要能在宿主上直接看见）；
+//   - 系统面顶层目录（nsjailJailReadOnlyTopDirs 里真实存在、非符号链接的）逐个 bind ro。
+func nsjailPlanMounts(p nsjailRootfsPlan) map[string]nsjailMount {
+	if !p.IsJail() {
+		return nil
+	}
+	m := map[string]nsjailMount{
+		"/proc":        {Host: "/proc", Inner: "/proc", RO: true},
+		"/dev/null":    {Host: "/dev/null", Inner: "/dev/null", RO: true},
+		"/dev/zero":    {Host: "/dev/zero", Inner: "/dev/zero", RO: true},
+		"/dev/urandom": {Host: "/dev/urandom", Inner: "/dev/urandom", RO: true},
+		"/dev/random":  {Host: "/dev/random", Inner: "/dev/random", RO: true},
+		"/tmp":         {Host: p.TmpDir, Inner: "/tmp", RO: false},
+	}
+	for _, name := range nsjailJailReadOnlyTopDirs {
+		host := filepath.Join(p.Chroot, name)
+		if !nsjailRealDir(host) {
+			continue
+		}
+		inner := "/" + name
+		m[inner] = nsjailMount{Host: host, Inner: inner, RO: true}
+	}
+	return m
+}
+
+// nsjailRealDir — path 是**真实目录**（不是符号链接）。只看盘上事实，不改盘。
+func nsjailRealDir(path string) bool {
+	fi, err := os.Lstat(path)
+	if err != nil {
+		return false
+	}
+	return fi.IsDir() && fi.Mode()&os.ModeSymlink == 0
+}
+
+// nsjailMergeMounts — 用户挂载 + 茧内最小面（**用户显式挂的优先**：Mount 是有意为之）。
+func nsjailMergeMounts(user map[string]nsjailMount, base map[string]nsjailMount) map[string]nsjailMount {
+	out := make(map[string]nsjailMount, len(user)+len(base))
+	for k, v := range base {
+		out[k] = v
+	}
+	for k, v := range user {
+		out[k] = v
+	}
+	return out
+}
+
+// nsjailExecArgvForPlan — 按方案拼一次 exec 的完整 argv（挂载面 + --chroot + --rw）。
+//
+// ★ `--rw` 是必须的：nsjail 缺省把 chroot **挂成只读**（`--rw` 的 help 原文：
+// 「Mount chroot dir (/) R/W (default: R/O)」）。不传它，overlay 的 upper 永远收不到东西、
+// 「茧内可写」这条就是假的。只读面靠 nsjailPlanMounts 里逐个 `--bindmount_ro` 压住。
+func nsjailExecArgvForPlan(spec *Spec, mounts map[string]nsjailMount, p nsjailRootfsPlan, dir string, argv []string) []string {
+	out := nsjailExecArgv(spec, nsjailMergeMounts(mounts, nsjailPlanMounts(p)), p.Chroot, dir, argv)
+	if p.Overlay {
+		out = nsjailInsertFlag(out, "--rw")
+	}
+	return out
+}
+
 // nsjailExecArgv — 一次 exec 的完整 argv（nsjail 旗标 + 挂载 + 工作目录 + `--` + 用户 argv）。
 //
 // ★ `--` 之前的一切都由本层生成，用户 argv 只许出现在 `--` 之后：这样「茧内命令」永远
@@ -484,6 +761,15 @@ func nsjailExecArgv(spec *Spec, mounts map[string]nsjailMount, chroot, dir strin
 // nsjailWithHostNet — 在 `--` **之前**插入 `--disable_clone_newnet`（缺了 `--` 就退化成追加，
 // 那种形态会把旗标塞进用户 argv —— 直接返回原样，让调用方看见「没生效」而不是悄悄改语义）。
 func nsjailWithHostNet(args []string) []string {
+	return nsjailInsertFlag(args, "--disable_clone_newnet")
+}
+
+// nsjailInsertFlag — 把一个无值旗标插到 `--` 之前（`--` 之前是本层生成的旗标区）。
+//
+// ★ 没有 `--` ⇒ 原样返回：那种形态下「插进去」只能追加到尾部，那已经不在旗标区了，
+//
+//	插了等于把旗标当成茧内命令的参数发出去（看着成功、其实没生效）。
+func nsjailInsertFlag(args []string, flag string) []string {
 	sep := -1
 	for i, a := range args {
 		if a == "--" {
@@ -496,7 +782,7 @@ func nsjailWithHostNet(args []string) []string {
 	}
 	out := make([]string, 0, len(args)+1)
 	out = append(out, args[:sep]...)
-	out = append(out, "--disable_clone_newnet")
+	out = append(out, flag)
 	out = append(out, args[sep:]...)
 	return out
 }
@@ -518,33 +804,45 @@ func nsjailJailPATH(spec *Spec) string {
 // nsjail 退 255（日志在茧的 logs/<服务>.log 里）。契约里 Backend 的注释本来就写了
 // 「argv[0] 按 PATH 解析由后端定」，所以解析责任在我们这边。
 //
-// ★ 只在「没换 rootfs」（chroot 为空或 "/"）时做：那时宿主路径 == 茧内路径，解析可证。
-// 换真镜像根之后宿主看不到那份 rootfs，就得在茧内解析 —— 本件未接，此时**拒**，
-// 不猜一个宿主上的同名路径塞进去（那会把「宿主的东西」当成「茧内的东西」跑）。
+// 两种情形，判据各不相同：
+//
+//	① 没换根（chroot 为空或 "/"）：宿主路径 == 茧内路径 ⇒ 直接 stat 宿主即可，解析可证；
+//	   找不到 ⇒ ErrBadArgv（此时报错是准的：我们真知道茧内有什么）。
+//	② 换了真 rootfs：**在茧内解析**（stat <chroot>/<dir>/<name>），但写回 argv[0] 的必须是
+//	   **茧内绝对路径**（/usr/bin/x），✗ 绝不许把宿主的 /usr/bin/x 塞进去 —— 那正是
+//	   「茧里跑宿主二进制」的入口。茧内找不到时**不编错误**：原样交回，让 nsjail 自己报
+//	   （它的 execve 日志就是现场；我们编的「找不到」会掩掉「挂载没挂上」这类真因）。
 func nsjailResolveArgv0(argv []string, jailPATH, chroot string) ([]string, error) {
 	if len(argv) == 0 || argv[0] == "" {
 		return nil, fmt.Errorf("%w: argv 为空或 argv[0] 为空", ErrBadArgv)
 	}
 	a0 := argv[0]
 	if strings.Contains(a0, "/") {
+		// 写了路径（绝对或相对）⇒ 意思就是「茧内这条路径」，原样交给 nsjail 在茧内解析。
 		return argv, nil
 	}
-	if chroot != "" && chroot != "/" {
-		return nil, fmt.Errorf("%w: argv[0]=%q 是裸命令名，而本后端未在该 rootfs 内解析 PATH（chroot=%q）⇒ 请写茧内绝对路径",
-			ErrBadArgv, a0, chroot)
-	}
+	jail := chroot != "" && chroot != nsjailDefaultChroot
 	for _, dir := range strings.Split(jailPATH, ":") {
 		if dir == "" || !strings.HasPrefix(dir, "/") {
 			continue
 		}
-		p := filepath.Join(dir, a0)
-		fi, err := os.Stat(p)
+		inner := path.Join(dir, a0)
+		host := inner
+		if jail {
+			// chroot 是宿主侧路径、inner 是茧内路径：拼起来才是「茧内那个文件在宿主上的位置」。
+			host = filepath.Join(chroot, inner)
+		}
+		fi, err := os.Stat(host)
 		if err != nil || fi.IsDir() || fi.Mode()&0o111 == 0 {
 			continue
 		}
 		out := append([]string(nil), argv...)
-		out[0] = p
+		out[0] = inner // ★ 茧内路径，不是 host
 		return out, nil
+	}
+	if jail {
+		// 见上 ②：茧内没找到 ⇒ 交回原样，让 nsjail 的 execve 报真现场。
+		return append([]string(nil), argv...), nil
 	}
 	return nil, fmt.Errorf("%w: argv[0]=%q 在茧内 PATH=%q 里找不到可执行文件（nsjail 不走 PATH，本层替它解析）",
 		ErrBadArgv, a0, jailPATH)

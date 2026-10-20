@@ -150,6 +150,15 @@ func (f SpawnFunc) Spawn(ctx context.Context, be Backend, inst Instance, svc Ser
 }
 
 // defaultSpawner — 缺省实现：把阻塞的 be.Exec 丢进 goroutine，停 = 取消该服务的 ctx。
+//
+// ★ 后台档（ExecOpts.Detach）走同一个 goroutine，只多一步：Exec 若**真签出了进程**
+// （返回 res.PID > 0），这条 goroutine 不把「Exec 返回」当退出，而是转去 DetachedProbe
+// 轮询那个 pid —— 直到它真退（或 ctx 到期）。这样：
+//
+//	· 「起完就退」与「起住长跑」在存活边上仍然分得开（前者 pid 为 0 ⇒ 立刻记退出，
+//	  编排层当场报「进程在就绪前退出」，而不是白等到就绪超时）；
+//	· 不支持后台档的后端（Exec 一直阻塞到退出、PID 恒 0）行为**逐字不变**；
+//	· 测试用的 Spawner 缝照旧可换。
 type defaultSpawner struct{}
 
 func (defaultSpawner) Spawn(ctx context.Context, be Backend, inst Instance, svc ServiceSpec, opts ExecOpts) (Proc, error) {
@@ -157,12 +166,16 @@ func (defaultSpawner) Spawn(ctx context.Context, be Backend, inst Instance, svc 
 		return nil, errors.New("cocoon: 缺后端")
 	}
 	pctx, cancel := context.WithCancel(ctx)
-	p := &execProc{cancel: cancel, done: make(chan struct{})}
+	p := &execProc{cancel: cancel, done: make(chan struct{}), be: be}
 	argv := append([]string(nil), svc.Entry...)
 	go func() {
 		defer close(p.done)
 		res, err := be.Exec(pctx, inst, argv, opts)
 		p.res, p.err = res, err
+		if err == nil && opts.Detach && res.PID > 0 {
+			// 真签出了：从这里开始由探针观测退出（不把「签出」当「退出」）。
+			p.res = p.observeDetached(pctx, res.PID)
+		}
 	}()
 	return p, nil
 }
@@ -171,9 +184,41 @@ func (defaultSpawner) Spawn(ctx context.Context, be Backend, inst Instance, svc 
 type execProc struct {
 	cancel context.CancelFunc
 	done   chan struct{}
+	// be — 后台档要用它取 DetachedProbe（签名出之后只有探针能说「还在不在」）。
+	be Backend
 	// res/err 在 close(done) 之前写、之后读 ⇒ 有 happens-before，无需再加锁。
 	res ExecResult
 	err error
+}
+
+// DetachedPollInterval — 后台档进程的判活轮询间隔。
+//
+// ★ 为什么不是「一次探完就算数」：进程刚 Start 的那一瞬谁都在，「起住没起住」要跨一个
+// 小窗才看得出来（实测坏档 '/bin/sh -c exit 0' 在几十毫秒内就没了）。200ms 是「不漏判」
+// 与「不白等」的折中；命令面另有自己的验活窗口（见 cocoon open）。
+const DetachedPollInterval = 200 * time.Millisecond
+
+// observeDetached — 等后台档进程真退出（返回退出观测）。ctx 到期即返回（不装死）。
+func (p *execProc) observeDetached(ctx context.Context, pid int) ExecResult {
+	probe, ok := p.be.(DetachedProbe)
+	if !ok {
+		// 没有探针 ⇒ 只能等 Stop。★ 这条**不假装能判活**：等就绪的那条路照常走，
+		// 但「中途死掉」这件事本层观测不到（能力缺口，如实写在接口注释里）。
+		<-ctx.Done()
+		return ExecResult{RC: 0, PID: pid}
+	}
+	tick := time.NewTicker(DetachedPollInterval)
+	defer tick.Stop()
+	for {
+		if _, exited, res := probe.DetachedStatus(pid); exited {
+			return res
+		}
+		select {
+		case <-ctx.Done():
+			return ExecResult{RC: 0, PID: pid}
+		case <-tick.C:
+		}
+	}
 }
 
 func (p *execProc) Wait() ExecResult {
@@ -217,6 +262,12 @@ type OrchestrateOptions struct {
 	// ⇒ 长驻服务下一次写 stdout/stderr 就是 EPIPE。落文件后服务活得过父进程，日志也留得住。
 	// 空 = 保持原样（内存管道；只适合「起完不退」的进程内用法与假后端）。
 	LogDir string
+	// Detach — 后台档：服务进程与起它的进程**脱钩**（setsid + 不等退出），见 ExecOpts.Detach。
+	//
+	// ★ 命令面（`cocoon open`）必须置 true：它是一次性进程，阻塞档里服务会被它一起带走
+	// （T3b 实测：三次真后端 open 全是 pid:0、无 nsjail 进程，集成测试能过只因为测试进程一直活着）。
+	// ★ 置 true 时 LogDir 也必须有（后台档必须落文件，否则 Validate 拒执）。
+	Detach bool
 }
 
 func (o OrchestrateOptions) withDefaults() OrchestrateOptions {
@@ -557,6 +608,8 @@ func (st *runState) launch(svc ServiceSpec) (*svcRun, error) {
 		// 服务输出落文件（见 OrchestrateOptions.LogDir）：起服务的那条命令会退出。
 		opts.LogPath = filepath.Join(st.opts.LogDir, svc.Name+".log")
 	}
+	// 后台档（见 OrchestrateOptions.Detach）：命令面起的一次性进程必须走这一档。
+	opts.Detach = st.opts.Detach
 	if err := opts.Validate(); err != nil {
 		return nil, &OrchestrateError{Op: "launch", Service: svc.Name, Cause: ErrLaunchFailed, Msg: err.Error()}
 	}
