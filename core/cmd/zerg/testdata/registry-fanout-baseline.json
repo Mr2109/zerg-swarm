@@ -1,0 +1,23 @@
+[
+ "scripts/build/publish-preflight.sh|干跑语义",
+ "scripts/build/start-zerg-core.sh|干跑语义",
+ "scripts/build/zerg-upgrade.sh|干跑语义",
+ "scripts/calib/calib-local-model.sh|干跑语义",
+ "scripts/calib/calib-x3-model.sh|干跑语义",
+ "scripts/gates/accept-no-probe-selftest.sh|干跑语义",
+ "scripts/gates/accept-no-probe.sh|干跑语义",
+ "scripts/gates/all.sh|干跑语义",
+ "scripts/gates/check-agentd-unit-default.sh|干跑语义",
+ "scripts/gates/check-gate-bootstrap.sh|干跑语义",
+ "scripts/gates/check-upgrade-local-source.sh|干跑语义",
+ "scripts/gates/mutation-smoke.sh|干跑语义",
+ "scripts/gates/overlay-guard.sh|干跑语义",
+ "scripts/gates/probe-build-all-wall-wiring.sh|干跑语义",
+ "scripts/gates/redaction-probes.sh|干跑语义",
+ "scripts/gates/shard-go-test.sh|干跑语义",
+ "scripts/sandbox-probes/negctl-two-states.sh|干跑语义",
+ "scripts/sandbox/test-fleet-sandbox.sh|干跑语义",
+ "scripts/sandbox/test-update-sandbox.sh|干跑语义",
+ "scripts/svc/zerg-core-daemon.sh|干跑语义",
+ "scripts/svc/zerg-dbbackup.sh|干跑语义"
+]
