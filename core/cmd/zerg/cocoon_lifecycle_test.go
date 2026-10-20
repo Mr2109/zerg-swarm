@@ -70,7 +70,7 @@ func ccLifeSetup(t *testing.T) (proj, root string) {
 	t.Setenv(cocoonAllowRootsEnv, base)
 	t.Setenv(cocoonBackendEnv, cocoonBackendFake)
 	t.Setenv(cocoonTokenEnv, "")
-	t.Setenv(cocoonAIUpstreamEnv, "")
+	t.Setenv(cocoonAIBaseEnv, "")
 	return proj, root
 }
 
@@ -1097,4 +1097,43 @@ func ccLifeGrepTree(t *testing.T, dir, needle string) []string {
 		t.Fatalf("扫树 %s: %v", dir, err)
 	}
 	return hits
+}
+
+// ── ⑥b AI base 的三级真源（T4b：base 的 env 名与「真上游」分开）──────────────────
+//
+// 三条判据（第三条是负控，也是这次改名真正的理由）：
+//
+//	① 缺省 = `http://` ＋ `cocoon.DefaultBrokerHTTPAddr`：茧内 base 与 broker 的 HTTP 面
+//	   同一个真源（T4 的 ECONNREFUSED 就来自这两处各写一份 8082）；
+//	② `ZERG_AI_BASE` 能改它，契约 `[茧.ai].base` 盖过它；
+//	③ ★ `ZERG_AI_UPSTREAM`（broker 的**真上游**）**不许**改到茧内 base —— 改到了就等于
+//	   让茧绕过 broker 直连模型，占位符那一跳白做。
+//
+// ★ 这一格是纯函数（cocoonAIUpstream），不建茧、不写盘：判据在「三个真源谁盖谁」上。
+func TestCocoonAIUpstreamThreeTier(t *testing.T) {
+	t.Setenv(cocoonAIBaseEnv, "")
+	t.Setenv("ZERG_AI_UPSTREAM", "http://127.0.0.1:9400")
+
+	// ① 缺省与 broker 缺省监听地址逐字对齐。
+	if got, want := cocoonAIUpstream(cocoon.AISpec{}), "http://"+cocoon.DefaultBrokerHTTPAddr; got != want {
+		t.Fatalf("缺省 base = %q，want %q（要与 broker 的 HTTP 面同一真源）", got, want)
+	}
+	// ③ 负控：只有真上游 env 时，茧内 base 不许被它带走。
+	if got := cocoonAIUpstream(cocoon.AISpec{}); strings.Contains(got, ":9400") {
+		t.Fatalf("ZERG_AI_UPSTREAM 把茧内 base 带到了 %q —— 茧会绕过 broker 直连模型", got)
+	}
+
+	// ② env 覆盖缺省；契约再盖过 env。
+	t.Setenv(cocoonAIBaseEnv, "http://127.0.0.1:18082")
+	if got, want := cocoonAIUpstream(cocoon.AISpec{}), "http://127.0.0.1:18082"; got != want {
+		t.Fatalf("ZERG_AI_BASE 覆盖 = %q，want %q", got, want)
+	}
+	if got, want := cocoonAIUpstream(cocoon.AISpec{Base: "http://127.0.0.1:19000"}), "http://127.0.0.1:19000"; got != want {
+		t.Fatalf("契约 base 该盖过 env，实得 %q", got)
+	}
+
+	// 名字本身也钉一下：茧内看到的就是 ZERG_AI_BASE（与 inject.go 的 EnvAIBase 同一格）。
+	if cocoonAIBaseEnv != cocoon.EnvAIBase {
+		t.Fatalf("cocoonAIBaseEnv = %q，want %q（与茧内 env 名同一个字）", cocoonAIBaseEnv, cocoon.EnvAIBase)
+	}
 }

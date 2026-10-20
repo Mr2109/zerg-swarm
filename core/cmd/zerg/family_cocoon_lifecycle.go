@@ -51,7 +51,8 @@
 //
 //	`enabled = true` ⇒ `open` 给茧内注入三个 env，**一个字节的真值都没有**：
 //
-//	  ZERG_AI_BASE       = 宿主 broker 的回环 base（`[茧.ai].base` ＞ `ZERG_AI_UPSTREAM` ＞ 内置回环）
+//	  ZERG_AI_BASE       = 宿主 broker 的回环 base（`[茧.ai].base` ＞ `ZERG_AI_BASE` ＞ 内置回环
+//	                       `http://127.0.0.1:8082`，与 `cocoon.DefaultBrokerHTTPAddr` 同一个真源）
 //	  ZERG_AI_MODEL      = `[茧.ai].model`（缺省 Nemotron-3.5-Super-VL-120B-A12B）
 //	  ZERG_AI_TOKEN_FILE = 茧内一个**只读件**的路径，内容恒为占位符 `zerg-broker`
 //
@@ -69,12 +70,14 @@
 //	  不是目录」，✗ 不假装我们替你拉了镜像；上层盘还必须支持叠层（tmpfs/ext4/xfs 可以，
 //	  overlay-on-overlay 不行，见 core/internal/cocoon/backend_nsjail_rootfs.go）。
 //	· 伪终端（ExecOpts.TTY=true 一律拒）· VZ/HCS 两个后端 · 令牌真值落点（本版只签发并在输出里给脱敏形）。
-//	· ★ **broker 的命令面**：茧内拿到的只是「指向 broker 的 base」＋「占位符」，
-//	  真值的交接在 `cocoon.Broker`（`ai.request` op：先 Authorize，再 RewriteRequest 换值），
-//	  而**本仓现读没有 `zerg ai inject` / `zerg ai call` 这一类命令面**（`grep -rn '"ai ' core/cmd/zerg`
-//	  命中 0）。⇒ 茧内 `curl $ZERG_AI_BASE/...` **现在调不通**：要先有 broker 进程
-//	  （`NewBroker` ＋ `Listen` ＋ `Serve` ＋ 令牌面）在 base 那个端口上听。这一段是缺口，
-//	  ✗ 不许把它写成"已接上"。
+//	· ★ **broker 的命令面**：茧内拿到的只是「指向 broker 的 base」＋「占位符」，真值的交接在
+//	  `cocoon.Broker`：unix 面的 `ai.request` op（先 Authorize、再 RewriteRequest 换值），
+//	  以及 **HTTP 回环面**（T4b：`ListenHTTP` 的 `/health` ＋ `POST /v1/chat/completions`
+//	  透传，真令牌只在 broker 进程内加进出站请求头 —— 茧内 `curl $ZERG_AI_BASE/health` 因此
+//	  能真通）。⇒ **还缺的是「起 broker 的命令面」**：本仓现读没有 `zerg ai inject` /
+//	  `zerg ai call` / `zerg cocoon broker` 这一类命令（`grep -rn '"ai ' core/cmd/zerg` 命中 0）
+//	  ⇒ 茧内那两条 HTTP 路径**通不通，取决于宿主上有没有人起 broker**（`NewBroker` ＋
+//	  `ListenHTTP` ＋ `Serve`）。这一段是缺口，✗ 不许把它写成"命令面已接上"。
 package main
 
 import (
@@ -107,9 +110,15 @@ const (
 	cocoonBackendEnv = "ZERG_COCOON_BACKEND"
 	// cocoonTokenEnv —— `inspect` 的令牌面：只回**脱敏形**（真值不进 stdout / argv / 日志）。
 	cocoonTokenEnv = "ZERG_COCOON_TOKEN"
-	// cocoonAIUpstreamEnv / cocoonDefaultAIUpstream —— 注入面的宿主 broker 回环 base。
-	cocoonAIUpstreamEnv     = "ZERG_AI_UPSTREAM"
-	cocoonDefaultAIUpstream = "http://127.0.0.1:8082"
+	// cocoonAIBaseEnv / cocoonDefaultAIUpstream —— 注入面的宿主 broker 回环 base。
+	//
+	// ★ env 名是 `ZERG_AI_BASE`，**不是** `ZERG_AI_UPSTREAM`：后者已归 broker 用（`cocoon.EnvAIUpstream`
+	// = 真上游地址，缺省 `http://127.0.0.1:9400`）。两个名字混用等于让宿主想「把 broker 指向模型」
+	// 的那条配置顺手把**茧内的 base 也带走** —— 茧就绕过 broker 直连模型，占位符那一跳白做。
+	// ★ 缺省值直接由 `cocoon.DefaultBrokerHTTPAddr` 拼出来：两处各写一份 8082，迟早会有
+	// 一处改了、另一处没改，症状就是 T4 的 ECONNREFUSED。
+	cocoonAIBaseEnv         = "ZERG_AI_BASE"
+	cocoonDefaultAIUpstream = "http://" + cocoon.DefaultBrokerHTTPAddr
 
 	cocoonBackendFake   = "fake"
 	cocoonBackendNsjail = "nsjail"
@@ -566,15 +575,18 @@ func cocoonOpenUsage(inv *invocation, stderr io.Writer, why string) int {
 
 // ── AI 注入面（T4）─────────────────────────────────────────────────────
 
-// cocoonAIUpstream — AI base 的三级真源：契约 `[茧.ai].base` ＞ `ZERG_AI_UPSTREAM` ＞ 内置回环。
+// cocoonAIUpstream — AI base 的三级真源：契约 `[茧.ai].base` ＞ `ZERG_AI_BASE` ＞ 内置回环。
 //
 // ★ 为什么"缺省取宿主真源"而不是把内置值抄进契约：base 指向的是**宿主上的 broker**，
 // 它的端口由 broker bind 后回写 ⇒ 契约里写死端口等于让契约去猜一个运行期才存在的值。
+// ★ 为什么 env 这一级不是 `ZERG_AI_UPSTREAM`：那个名字是 broker 的**真上游**（`cocoon.EnvAIUpstream`，
+// 缺省 9400）。混用会把"宿主让 broker 指向模型"读成"让茧直连模型" —— 茧内就能绕过 broker
+// 换值那一跳，占位符形同虚设。两个 env 各管一段，是本件的一条判据（测试逐条打）。
 func cocoonAIUpstream(ai cocoon.AISpec) string {
 	if b := strings.TrimSpace(ai.Base); b != "" {
 		return b
 	}
-	if v := strings.TrimSpace(os.Getenv(cocoonAIUpstreamEnv)); v != "" {
+	if v := strings.TrimSpace(os.Getenv(cocoonAIBaseEnv)); v != "" {
 		return v
 	}
 	return cocoonDefaultAIUpstream
@@ -613,8 +625,9 @@ func cocoonAIInject(instID, tokenHost string, spec *cocoon.Spec) (cocoon.AIPlan,
 // cocoonAIText — 人面那一行（真跑/干跑共用同一句话，✗ 不许两处各说一套）。
 func cocoonAIText(plan cocoon.AIPlan) string {
 	return fmt.Sprintf("base=%s · model=%s · 令牌件=%s（内容恒为占位符 %s · 真值不在茧内 · "+
-		"茧内要真发请求得走宿主 broker 换值；本版无 broker 命令面）",
-		plan.Base, plan.Model, plan.TokenFile, cocoon.AITokenPlaceholder)
+		"茧内直连 %s 的 /health 与 /v1/chat/completions，由宿主 broker 换真令牌再拨上游；"+
+		"本版**没有起 broker 的命令面** ⇒ 宿主不起 broker 时茧内 curl 得到连接失败）",
+		plan.Base, plan.Model, plan.TokenFile, cocoon.AITokenPlaceholder, plan.Base)
 }
 
 // ── open ────────────────────────────────────────────────────────────────

@@ -1402,10 +1402,13 @@ func apmLoadManifest(fixdir string) (*apmOrderedMap, string) {
 }
 
 // apmRunCLI —— 进程内复用入口替代 py 的真子进程（rc/stdout/stderr 语义等价）。
+// py `run_cli` 以 `cwd=REPO_ROOT` 起子进程；显式 `--root` 换根而该 cwd 不可用（非目录）时
+// py 抛 `FileNotFoundError`（C 类：最外层无兜底 ⇒ rc=1 回溯）。Go 走进程内入口（件头差异面 11）
+// ⇒ 无子进程 cwd 崩溃面，照 C 类口径转 **rc=2 fail-closed + 具名文案**（写进件头未覆盖面 11）。
 func apmRunCLI(argv []string) (int, string, string) {
-	// py `run_cli` 以 `cwd=REPO_ROOT` 起子进程；显式 `--root` 换根而该 cwd 不可用（非目录）时
-	// py 抛 `FileNotFoundError`（C 类：最外层无兜底 ⇒ rc=1 回溯）。Go 走进程内入口（件头差异面 11）
-	// ⇒ 无子进程 cwd 崩溃面，照 C 类口径转 **rc=2 fail-closed + 具名文案**（写进件头未覆盖面 11）。
+	// ★ 只看**本次运行**的根：`apmRunCliRoot` 由 `main` 在本趟开头清零、解析 `--root` 后重钉，
+	// 并在**本趟结束时清零**（见 main 的 defer）。旧实现只在开头清零 ⇒ 上一趟的残留会漏进
+	// 本趟**第一次** apmRunCLI 的前置判，临时目录清理后一律 rc=2（"机器面取不到"）⇒ 跑序一换就红。
 	if apmRunCliRoot != "" {
 		if st, err := os.Stat(apmRunCliRoot); err != nil || !st.IsDir() {
 			return 2, "", "⛔ 不给结论：`--root` 指向的不是可用目录（" + apmRunCliRoot +
@@ -1952,7 +1955,7 @@ func apmArgparseErr(stderr io.Writer, msg string) {
 }
 
 func apmParseArgs(argv []string, stdout, stderr io.Writer) (*apmArgs, int, bool) {
-	apmRunCliRoot = "" // 自清：显式 `--root` 由 main 在解析后重钉（防跨调用污染）
+	apmRunCliRoot = "" // 自清：显式 `--root` 由 main 在解析后重钉（防跨调用残留）
 	a := &apmArgs{
 		root:     apmCwd(),
 		state:    apmPyJoin(apmExpandUser("~"), ".zerg", "state"),
@@ -2051,6 +2054,9 @@ func apmNowISO(inject string) string {
 
 // checkApproveMergeGateMain —— 本件入口（与 py `main()` 对齐）。
 func checkApproveMergeGateMain(stdout, stderr io.Writer, argv []string) int {
+	// ★ 本趟结束清零：嵌套调用（自检里的 run_cli 面）在**本趟内**仍需看得见根，
+	// 但跨顶层调用不许留 —— 上一趟钉的临时目录（已被清理）会让下一趟的前置判一律 rc=2。
+	defer func() { apmRunCliRoot = "" }()
 	known := map[string]bool{
 		"--self-test": true, "--no-self-test": true, "--json": true, "--fixtures": true,
 		"--audit-view": true, "--source": true, "--machine": true, "--roster": true,

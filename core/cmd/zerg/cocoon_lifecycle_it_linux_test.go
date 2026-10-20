@@ -86,7 +86,7 @@ func TestCocoonOpenWithRootfsIT(t *testing.T) {
 	t.Setenv(cocoonAllowRootsEnv, base)
 	t.Setenv(cocoonBackendEnv, cocoonBackendNsjail)
 	t.Setenv(cocoonTokenEnv, "")
-	t.Setenv(cocoonAIUpstreamEnv, "")
+	t.Setenv(cocoonAIBaseEnv, "")
 
 	rc, out, errs := ccLifeRun(t, cmdCocoonOpen, []string{"cocoon", "open"}, []string{proj},
 		[]string{"id", "phase", "backend"}, nil)

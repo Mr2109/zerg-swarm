@@ -305,12 +305,23 @@ type Broker struct {
 	// ErrorHook — handler 报错的服务端出口（**细节只走这里**，不进 wire）。
 	ErrorHook func(inst, op string, err error)
 
+	// HTTPOptions — 茧内 AI 回环面的配置（Addr / Upstream / Model…，见 broker_http.go）。
+	//
+	// ★ 它和 Tokens / Ops 同档：是**配置**，不是行为开关。没调 `ListenHTTP` 的调用方
+	// 看不到任何变化（unix 面逐字不变）—— 「开了 HTTP 面」这件事只由 `ListenHTTP` 决定。
+	HTTPOptions BrokerHTTPOptions
+
 	mu       sync.Mutex
 	ln       *net.UnixListener
 	path     string
 	closed   bool
 	closeErr error
 	wg       sync.WaitGroup
+
+	// http / httpErr — 茧内 AI 的 HTTP 回环面（`ListenHTTP` 建 · `Close` 收 · nil = 没开）。
+	// ★ 与 unix 面共用一把 mu：两条面的启停必须原子地「一起有、一起没有」。
+	http    *httpFace
+	httpErr error
 
 	auditMu sync.Mutex
 }
@@ -458,6 +469,12 @@ func (b *Broker) Serve(ctx context.Context) error {
 		ctx = context.Background()
 	}
 
+	// ★ 茧内 AI 的 HTTP 回环面（T4b）：与 unix 面同一个生命周期。没 ListenHTTP 时这一段
+	// 是空操作 —— 老调用方的行为零变化。
+	if herr := b.startHTTP(ln); herr != nil {
+		return herr
+	}
+
 	done := make(chan struct{})
 	defer close(done)
 	go func() {
@@ -471,6 +488,12 @@ func (b *Broker) Serve(ctx context.Context) error {
 	for {
 		conn, err := ln.AcceptUnix()
 		if err != nil {
+			// HTTP 面自己出错时会关掉 unix 监听把这里打醒 ⇒ 先报它的错（否则会被读成
+			// 「正常收工」，而 broker 其实只剩半边耳朵）。
+			if herr := b.httpFailure(); herr != nil {
+				b.wg.Wait()
+				return fmt.Errorf("cocoon: broker HTTP 面停止: %w", herr)
+			}
 			if b.isClosed() || ctx.Err() != nil {
 				b.wg.Wait()
 				return nil
@@ -501,6 +524,10 @@ func (b *Broker) Close() error {
 	err := b.closeErr
 	b.closeErr = ErrNotListening
 	b.mu.Unlock()
+
+	// ★ 先收 HTTP 面：它的在飞请求可能正卡在上游，别让 unix 面的收工等它（两条面各自收，
+	// 合起来的语义仍是「Close 之后这个 broker 一条面都不通」）。
+	b.closeHTTP()
 
 	if ln != nil {
 		if cerr := ln.Close(); cerr != nil && !errors.Is(cerr, net.ErrClosed) {
