@@ -588,6 +588,22 @@ func (p nsjailRootfsPlan) IsJail() bool {
 	return p.Rootfs != "" && p.Chroot != "" && p.Chroot != nsjailDefaultChroot
 }
 
+// nsjailChroots — **契约是否要求换根**（只看契约，不依赖茧目录：这是"要不要"，不是"落在哪"）。
+//
+// ★ 单一口径：`nsjailRootfsPlanFor` 的早退分支与外部（命令面判"令牌件要不要挂进茧"）
+// 都问它 —— 复制出第二份「rootfs 非空且 ≠ /」的判断迟早会分家，而分家的代价是给茧内
+// 一个读不到的路径（看着有、其实读不到）。
+func nsjailChroots(spec *Spec) bool {
+	if spec == nil {
+		return false
+	}
+	rootfs := strings.TrimSpace(spec.Cocoon.Rootfs)
+	if rootfs == "" {
+		return false
+	}
+	return filepath.Clean(rootfs) != nsjailDefaultChroot
+}
+
 // nsjailRootfsPlanFor — 契约 [茧].rootfs / overlay_upper + 后端缺省 chroot + 茧目录 ⇒ 方案。
 //
 // 三条纪律（都写在这里，因为这是唯一决定「换不换根」的地方）：
@@ -604,14 +620,13 @@ func nsjailRootfsPlanFor(spec *Spec, chroot, rootDir string) (nsjailRootfsPlan, 
 	if spec == nil {
 		return nsjailRootfsPlan{Chroot: chroot}, nil
 	}
-	rootfs := strings.TrimSpace(spec.Cocoon.Rootfs)
-	if rootfs == "" {
+	if !nsjailChroots(spec) {
+		if strings.TrimSpace(spec.Cocoon.Rootfs) != "" {
+			return nsjailRootfsPlan{Chroot: nsjailDefaultChroot}, nil
+		}
 		return nsjailRootfsPlan{Chroot: chroot}, nil
 	}
-	rootfs = filepath.Clean(rootfs)
-	if rootfs == nsjailDefaultChroot {
-		return nsjailRootfsPlan{Chroot: nsjailDefaultChroot}, nil
-	}
+	rootfs := filepath.Clean(strings.TrimSpace(spec.Cocoon.Rootfs))
 	if !filepath.IsAbs(rootfs) {
 		// decodeCocoon 已绝对化；走到这里说明有别的调用方绕过了契约解析 ⇒ 拒，不猜。
 		return nsjailRootfsPlan{}, fmt.Errorf("cocoon: [茧].rootfs 必须是绝对路径，得到 %q", spec.Cocoon.Rootfs)

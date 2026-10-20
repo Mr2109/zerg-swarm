@@ -318,8 +318,14 @@ func TestCocoonOpenLsCloseChain(t *testing.T) {
 	if !strings.Contains(out, "example-35b") {
 		t.Fatalf("inspect 没显示绑定的卵：\n%s", out)
 	}
-	if !strings.Contains(out, cocoon.EnvAIBase) {
-		t.Fatalf("绑了卵却没有 AI 注入面（%s 缺席）：\n%s", cocoon.EnvAIBase, out)
+	// ★ AI 注入面的真源是**契约 `[茧.ai]`**，不是"绑了卵"：本格契约没写那一段 ⇒ inspect
+	// 必须如实印 `—` 并说清为什么（旧行为拿 m.Egg 编一个形状，等于把 open 从没做过的事
+	// 报成"已注入"）。两态都判：**出现** base 就红、**没出现** 也必须给出理由。
+	if strings.Contains(out, cocoon.EnvAIBase) {
+		t.Fatalf("契约没开 [茧.ai] 却印了 %s（把没注入的东西报成已注入）：\n%s", cocoon.EnvAIBase, out)
+	}
+	if !strings.Contains(out, "契约未开 [茧.ai].enabled") {
+		t.Fatalf("inspect 该说清 AI 面为何是 —：\n%s", out)
 	}
 	if !strings.Contains(out, "peer_identity") && !strings.Contains(out, "对端身份=none") {
 		t.Errorf("inspect 没印对端身份强度（假后端必须是 none，✗ 不冒充 strong）：\n%s", out)
@@ -846,4 +852,249 @@ func TestCocoonLsDoesNotListOrphans(t *testing.T) {
 		t.Fatalf("--dry-run 建了状态根（零副作用被破坏）：%v", err)
 	}
 	_ = proj
+}
+
+// ── ⑥ AI 注入面（T4）：三个 env ＋ 占位符件 ＋ 「真令牌 0 命中」─────────────────
+//
+// 判据四条（每条都带负控）：
+//
+//	① 契约 `[茧.ai] enabled = true` ⇒ 服务的 Exec 拿到 ZERG_AI_BASE / ZERG_AI_MODEL /
+//	   ZERG_AI_TOKEN_FILE 三项，且 base 走宿主真源（不是契约里那句同名的 [环境] 键）；
+//	② 令牌件落在茧目录里、内容**只有**占位符 `zerg-broker`（权限 0444）；
+//	③ ★ 反向：把一枚"真令牌"放进进程环境（ZERG_COCOON_TOKEN），整座茧目录 ＋ open 的
+//	   stdout/stderr 里**一处都不许出现它** —— 这是"真值不进茧"唯一能机检的形态；
+//	④ 契约没开这一段 ⇒ 一个 AI env 都不注入、茧目录里也没有 ai.token（安全侧）。
+func TestCocoonOpenInjectsAIPlaceholder(t *testing.T) {
+	const sentinel = "sk-REAL-TOKEN-MUST-NOT-LEAK-9f3a2b"
+
+	// 把 [茧.ai] 插进最小契约（放在 [茧] 与 [[服务]] 之间）。
+	withAI := func(spec, ai string) string {
+		return strings.Replace(spec, "\n[[服务]]", "\n"+ai+"\n\n[[服务]]", 1)
+	}
+
+	t.Run("开了 AI：三个 env ＋ 占位符件 ＋ 真令牌 0 命中", func(t *testing.T) {
+		proj, root := ccLifeSetup(t)
+		aiSpec := withAI(ccLifeSpec, "[茧.ai]\nenabled = true")
+		// 契约 [环境] 里塞一个同名的 base：注入面必须盖掉它（否则契约能把茧指向任意 URL）。
+		aiSpec = strings.Replace(aiSpec, "[资源]", "[环境]\nZERG_AI_BASE = \"http://<cluster-ip>:9999\"\n\n[资源]", 1)
+		if err := os.WriteFile(filepath.Join(proj, cocoon.SpecFileName), []byte(aiSpec), 0o644); err != nil {
+			t.Fatalf("写契约: %v", err)
+		}
+		// ★ 真令牌只存在于**宿主进程环境**里（模拟主控/子端那份令牌）—— 它哪儿都不许落。
+		t.Setenv(cocoonTokenEnv, sentinel)
+
+		// ★ 先干跑：开了 [茧.ai] 的契约，干跑也必须**零写盘**（✗ 不许"顺手"把占位符件落了）。
+		//   人面还要说清「占位符 · 真值不在茧内 · 需 broker」（否则用户会以为 base 能直接调）。
+		rc0, out0, errs0 := ccLifeRun(t, cmdCocoonOpen, []string{"cocoon", "open"}, []string{proj},
+			nil, map[string]string{"--dry-run": "1"})
+		if rc0 != exitOK {
+			t.Fatalf("dry-run rc=%d（stderr=%s）", rc0, errs0)
+		}
+		if !strings.Contains(out0, cocoon.AITokenPlaceholder) || !strings.Contains(out0, "干跑不落件") {
+			t.Fatalf("干跑计划件该说清占位符与「不落件」：%s", out0)
+		}
+		if !strings.Contains(out0, "broker") {
+			t.Fatalf("干跑计划件该写明「需宿主 broker 换值」：%s", out0)
+		}
+		if _, serr := os.Stat(root); !os.IsNotExist(serr) {
+			t.Fatalf("干跑必须零副作用（状态根 %s 都不该建），却存在（err=%v）", root, serr)
+		}
+
+		rc, out, errs := ccLifeRun(t, cmdCocoonOpen, []string{"cocoon", "open"}, []string{proj},
+			[]string{"id", "phase", "backend"}, nil)
+		if rc != exitOK {
+			t.Fatalf("open rc=%d（stdout=%q stderr=%s）", rc, out, errs)
+		}
+		rows := ccLifeRows(t, out)
+		if len(rows) != 1 {
+			t.Fatalf("open --json 该回恰一行：%s", out)
+		}
+		id := ccLifeCell(rows[0], "id")
+		cdir := filepath.Join(root, id)
+
+		// ① 三个 env，值来自宿主真源（不是契约里那句 <cluster-ip>）
+		beI, err := cocoonBackendByName(cocoonBackendFake)
+		if err != nil {
+			t.Fatalf("取假后端: %v", err)
+		}
+		be, ok := beI.(*cocoon.FakeBackend)
+		if !ok {
+			t.Fatalf("假后端类型不符：%T", beI)
+		}
+		m, err := cocoon.Load(cocoon.MetaPath(cdir))
+		if err != nil {
+			t.Fatalf("读 meta: %v", err)
+		}
+		last, ok := be.LastExec(cocoon.Instance{ID: m.BackendInstance, Backend: cocoonBackendFake})
+		if !ok {
+			t.Fatal("假后端没记下这次 Exec（判据无从落地）")
+		}
+		if got := last.Opts.Env["ZERG_AI_BASE"]; got != "http://127.0.0.1:8082" {
+			t.Fatalf("ZERG_AI_BASE = %q，want 宿主缺省真源（契约 [环境] 那句必须被盖掉）", got)
+		}
+		if got := last.Opts.Env["ZERG_AI_MODEL"]; got != cocoon.DefaultCocoonAIModel {
+			t.Fatalf("ZERG_AI_MODEL = %q，want %q", got, cocoon.DefaultCocoonAIModel)
+		}
+		tokenPath := last.Opts.Env["ZERG_AI_TOKEN_FILE"]
+		if tokenPath == "" {
+			t.Fatal("ZERG_AI_TOKEN_FILE 没注入")
+		}
+		// 没换根 ⇒ 茧内看到的就是宿主路径（本格用假后端，没有 chroot）。
+		if want := filepath.Join(cdir, cocoon.AITokenHostFileName); tokenPath != want {
+			t.Fatalf("令牌件路径 = %q，want %q", tokenPath, want)
+		}
+
+		// ② 件内容只有占位符
+		raw, rerr := os.ReadFile(tokenPath)
+		if rerr != nil {
+			t.Fatalf("读令牌件: %v", rerr)
+		}
+		// ★ 按**字面量**判（协议串），✗ 不拿常量与它自己比。
+		if string(raw) != "zerg-broker\n" {
+			t.Fatalf("令牌件内容 = %q，want %q", string(raw), "zerg-broker\n")
+		}
+
+		// ③ 反向：真令牌在整座茧目录（含 meta / 日志 / 令牌件）与命令输出里 0 命中
+		leaks := ccLifeGrepTree(t, cdir, sentinel)
+		if len(leaks) > 0 {
+			t.Fatalf("真令牌字符串出现在茧目录里（%v）—— 「真值不进茧」被破", leaks)
+		}
+		if strings.Contains(out, sentinel) || strings.Contains(errs, sentinel) {
+			t.Fatalf("真令牌出现在命令输出里：stdout=%q stderr=%q", out, errs)
+		}
+
+		// inspect 的注入面按契约报（同一份形状，✗ 不许与 open 各说一套）
+		rc3, out3, errs3 := ccLifeRun(t, cmdCocoonInspect, []string{"cocoon", "inspect"}, []string{id},
+			[]string{"ai_base", "ai_model", "ai_env"}, nil)
+		if rc3 != exitOK {
+			t.Fatalf("inspect rc=%d（stderr=%s）", rc3, errs3)
+		}
+		irows := ccLifeRows(t, out3)
+		if len(irows) != 1 {
+			t.Fatalf("inspect 该回一行：%s", out3)
+		}
+		if got := ccLifeCell(irows[0], "ai_base"); got != "http://127.0.0.1:8082" {
+			t.Fatalf("inspect ai_base = %q，want 与 open 同一份形状", got)
+		}
+		if got := ccLifeCell(irows[0], "ai_model"); got != cocoon.DefaultCocoonAIModel {
+			t.Fatalf("inspect ai_model = %q", got)
+		}
+		if env := ccLifeCell(irows[0], "ai_env"); !strings.Contains(env, "ZERG_AI_TOKEN_FILE=") {
+			t.Fatalf("inspect ai_env 少了令牌件那一项：%q", env)
+		}
+	})
+
+	t.Run("没开 AI：一个 env 都不注入、不留令牌件", func(t *testing.T) {
+		proj, root := ccLifeSetup(t)
+		rc, out, errs := ccLifeRun(t, cmdCocoonOpen, []string{"cocoon", "open"}, []string{proj},
+			[]string{"id"}, nil)
+		if rc != exitOK {
+			t.Fatalf("open rc=%d（stderr=%s）", rc, errs)
+		}
+		id := ccLifeCell(ccLifeRows(t, out)[0], "id")
+		cdir := filepath.Join(root, id)
+
+		if _, serr := os.Stat(filepath.Join(cdir, cocoon.AITokenHostFileName)); !os.IsNotExist(serr) {
+			t.Fatalf("没开 [茧.ai] 却落了令牌件（err=%v）", serr)
+		}
+		beI, err := cocoonBackendByName(cocoonBackendFake)
+		if err != nil {
+			t.Fatalf("取假后端: %v", err)
+		}
+		be, ok := beI.(*cocoon.FakeBackend)
+		if !ok {
+			t.Fatalf("假后端类型不符：%T", beI)
+		}
+		m, err := cocoon.Load(cocoon.MetaPath(cdir))
+		if err != nil {
+			t.Fatalf("读 meta: %v", err)
+		}
+		last, ok := be.LastExec(cocoon.Instance{ID: m.BackendInstance, Backend: cocoonBackendFake})
+		if !ok {
+			t.Fatal("假后端没记下这次 Exec")
+		}
+		for _, k := range []string{"ZERG_AI_BASE", "ZERG_AI_MODEL", "ZERG_AI_TOKEN_FILE"} {
+			if v, has := last.Opts.Env[k]; has {
+				t.Fatalf("没开 AI 却注入了 %s=%q（安全侧被破）", k, v)
+			}
+		}
+	})
+
+	t.Run("换了根：令牌件改走 ro 绑定 + 茧内固定落点", func(t *testing.T) {
+		proj, root := ccLifeSetup(t)
+		// rootfs 指一个真存在的目录（假后端不对它做任何事，只用来看命令面算出来的形状）。
+		img := filepath.Join(filepath.Dir(proj), "image-root")
+		if err := os.MkdirAll(img, 0o755); err != nil {
+			t.Fatalf("建镜像根: %v", err)
+		}
+		spec := ccLifeSpec
+		spec = withAI(spec, "[茧.ai]\nenabled = true")
+		spec = strings.Replace(spec, "image  = \"python:3.12-slim\"",
+			"image  = \"python:3.12-slim\"\nrootfs = \""+img+"\"", 1)
+		if err := os.WriteFile(filepath.Join(proj, cocoon.SpecFileName), []byte(spec), 0o644); err != nil {
+			t.Fatalf("写契约: %v", err)
+		}
+		rc, out, errs := ccLifeRun(t, cmdCocoonOpen, []string{"cocoon", "open"}, []string{proj},
+			[]string{"id"}, nil)
+		if rc != exitOK {
+			t.Fatalf("open rc=%d（stderr=%s）", rc, errs)
+		}
+		id := ccLifeCell(ccLifeRows(t, out)[0], "id")
+		cdir := filepath.Join(root, id)
+
+		beI, _ := cocoonBackendByName(cocoonBackendFake)
+		be := beI.(*cocoon.FakeBackend)
+		m, err := cocoon.Load(cocoon.MetaPath(cdir))
+		if err != nil {
+			t.Fatalf("读 meta: %v", err)
+		}
+		inst := cocoon.Instance{ID: m.BackendInstance, Backend: cocoonBackendFake}
+		last, ok := be.LastExec(inst)
+		if !ok {
+			t.Fatal("假后端没记下这次 Exec")
+		}
+		if got := last.Opts.Env["ZERG_AI_TOKEN_FILE"]; got != cocoon.AITokenInJailPath {
+			t.Fatalf("换根后茧内路径 = %q，want %q", got, cocoon.AITokenInJailPath)
+		}
+		mounts := be.Mounts(inst)
+		if len(mounts) != 1 {
+			t.Fatalf("换根后应当恰好一条挂载，得到 %+v", mounts)
+		}
+		if mounts[0].Inner != cocoon.AITokenInJailPath || !mounts[0].RO {
+			t.Fatalf("挂载项不符（必须是 ro 绑定）：%+v", mounts[0])
+		}
+		if want := filepath.Join(cdir, cocoon.AITokenHostFileName); mounts[0].Host != want {
+			t.Fatalf("挂载源 = %q，want %q", mounts[0].Host, want)
+		}
+	})
+}
+
+// ccLifeGrepTree — 在一棵目录里逐件找 needle（二进制件也找）；返回命中件的相对路径。
+//
+// ★ 判「真值不进茧」必须**扫全树**（meta / 日志 / 令牌件 / 子目录），不许只看一个件：
+// 泄漏面从来不是"你想到的那一处"。
+func ccLifeGrepTree(t *testing.T, dir, needle string) []string {
+	t.Helper()
+	var hits []string
+	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		b, rerr := os.ReadFile(p)
+		if rerr != nil {
+			return nil // 读不了的件不算命中（也不该因此让判据假绿：路径集合由上一层的 walk 决定）
+		}
+		if strings.Contains(string(b), needle) {
+			rel, _ := filepath.Rel(dir, p)
+			hits = append(hits, rel)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("扫树 %s: %v", dir, err)
+	}
+	return hits
 }

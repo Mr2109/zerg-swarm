@@ -97,6 +97,36 @@ func apvtTState(t *testing.T, shiftSeconds int, ats []string) string {
 	return st
 }
 
+// apvtHasToken ★ 按**词边界**判某个 token 出不出现。
+// 不用 `strings.Contains`：门跑的私有临时目录名可能带 `R1…`（如 shard-affected-iso-core-R1ujRh），
+// 裸子串匹配会把**路径里的 R1** 误判成**世代标签 R1** ⇒ 假红。判据语义不变（仍不许出现该标签），
+// 只是不再被无关的字串碰瓷。
+func apvtHasToken(s, tok string) bool {
+	for i := 0; ; {
+		j := strings.Index(s[i:], tok)
+		if j < 0 {
+			return false
+		}
+		p := i + j
+		before := byte(' ')
+		if p > 0 {
+			before = s[p-1]
+		}
+		after := byte(' ')
+		if p+len(tok) < len(s) {
+			after = s[p+len(tok)]
+		}
+		if !apvtWordByte(before) && !apvtWordByte(after) {
+			return true
+		}
+		i = p + 1
+	}
+}
+
+func apvtWordByte(b byte) bool {
+	return b == '_' || (b >= '0' && b <= '9') || (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z')
+}
+
 func apvtTRun(argv ...string) (int, string, string) {
 	var out, errb bytes.Buffer
 	rc := checkApproveTimeGateMain(&out, &errb, argv)
@@ -198,10 +228,29 @@ func TestCheckApproveTimeTimeBoundaries(t *testing.T) {
 			if !strings.Contains(out, c.wantIn) {
 				t.Errorf("stdout 应含 %q\n%s", c.wantIn, out)
 			}
-			if c.wantNotIn != "" && strings.Contains(out, c.wantNotIn) {
+			if c.wantNotIn != "" && apvtHasToken(out, c.wantNotIn) {
 				t.Errorf("stdout 不应含 %q\n%s", c.wantNotIn, out)
 			}
 		})
+	}
+}
+
+// TestApvtHasToken ★ 判据件自身要有牙：路径里的 R1 不许碰瓷，独立标签 R1 必须上榜。
+func TestApvtHasToken(t *testing.T) {
+	cases := []struct {
+		s    string
+		want bool
+	}{
+		{"/var/folders/x/shard-affected-iso-core-R1ujRh/tmp/a", false},
+		{"── 世代 R1 · 越界", true},
+		{"R1", true},
+		{"R10", false},
+		{"_R1_", false},
+	}
+	for _, c := range cases {
+		if got := apvtHasToken(c.s, "R1"); got != c.want {
+			t.Errorf("apvtHasToken(%q) = %v，应 %v", c.s, got, c.want)
+		}
 	}
 }
 

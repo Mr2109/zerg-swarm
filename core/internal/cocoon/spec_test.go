@@ -1133,3 +1133,129 @@ disk_gb = 10
 		t.Fatalf("未知字段的允许清单该列出 rootfs / overlay_upper：%q", se.Msg)
 	}
 }
+
+// ── ⑯ [茧.ai]（T4 注入面契约）────────────────────────────────────────────
+//
+// 五正例（缺省 / 三键齐给 / 行内表 / base 归一 / 模型缺省档）＋ 十一负例
+// （base 带凭据·带 query·非回环·非 http(s)·空串 / model 空串·带空白 / enabled 非布尔 /
+//  未开却给 base·model / 未知键 / ai 不是表）。
+//
+// ★ 负例的判据一律是「字段名 ＋ 行号 ＋ 说明含关键词」：只报"契约错了"等于让人在
+// 两百行契约里自己找。
+
+// aiSpecWith — 把一段 ai 配置插在 [茧] 与 [[服务]] 之间（行号仍可精确算）。
+func aiSpecWith(ai string) string {
+	return strings.Replace(specWithDigest(specValidDigest), "\n[[服务]]", "\n"+ai+"\n\n[[服务]]", 1)
+}
+
+func TestSpecAISection(t *testing.T) {
+	t.Run("缺省不给 AI 能力", func(t *testing.T) {
+		sp := mustParseSpec(t, specWithDigest(specValidDigest))
+		if sp.Cocoon.AI.Enabled {
+			t.Fatalf("没写 [茧.ai] 时 Enabled 必须为 false（安全侧），得到 %+v", sp.Cocoon.AI)
+		}
+		if sp.Cocoon.AI.Base != "" || sp.Cocoon.AI.Model != "" {
+			t.Fatalf("缺省形状该是零值，得到 %+v", sp.Cocoon.AI)
+		}
+		// 默认模型档是契约层常量（open / inspect 都读它，✗ 不许两处各写一份）。
+		if got := sp.Cocoon.AI.ModelOrDefault(); got != DefaultCocoonAIModel {
+			t.Fatalf("ModelOrDefault() = %q，want %q", got, DefaultCocoonAIModel)
+		}
+	})
+
+	t.Run("三键齐给逐项对", func(t *testing.T) {
+		src := aiSpecWith("[茧.ai]\nenabled = true\nbase = \"http://127.0.0.1:18080\"\nmodel = \"m-x\"")
+		sp := mustParseSpec(t, src)
+		if !sp.Cocoon.AI.Enabled || sp.Cocoon.AI.Base != "http://127.0.0.1:18080" || sp.Cocoon.AI.Model != "m-x" {
+			t.Fatalf("[茧.ai] 解析错：%+v", sp.Cocoon.AI)
+		}
+		if want := lineOf(src, "[茧.ai]"); sp.Cocoon.AI.Line != want {
+			t.Fatalf("AI.Line = %d，want %d（指向 [茧.ai] 头）", sp.Cocoon.AI.Line, want)
+		}
+	})
+
+	t.Run("行内表形态也收", func(t *testing.T) {
+		src := strings.Replace(specWithDigest(specValidDigest),
+			"digest = \""+specValidDigest+"\"",
+			"digest = \""+specValidDigest+"\"\nai     = { enabled = true }", 1)
+		sp := mustParseSpec(t, src)
+		if !sp.Cocoon.AI.Enabled {
+			t.Fatalf("行内表没读出来：%+v", sp.Cocoon.AI)
+		}
+	})
+
+	t.Run("base 归一去尾斜杠", func(t *testing.T) {
+		sp := mustParseSpec(t, aiSpecWith("[茧.ai]\nenabled = true\nbase = \"http://127.0.0.1:18080/broker/ai/\""))
+		if want := "http://127.0.0.1:18080/broker/ai"; sp.Cocoon.AI.Base != want {
+			t.Fatalf("Base = %q，want %q", sp.Cocoon.AI.Base, want)
+		}
+	})
+
+	t.Run("只给 enabled ⇒ base 留空（由宿主真源决定）model 取默认档", func(t *testing.T) {
+		sp := mustParseSpec(t, aiSpecWith("[茧.ai]\nenabled = true"))
+		if sp.Cocoon.AI.Base != "" {
+			t.Fatalf("Base 该留空（缺省取宿主真源），得到 %q", sp.Cocoon.AI.Base)
+		}
+		if sp.Cocoon.AI.Model != "" || sp.Cocoon.AI.ModelOrDefault() != DefaultCocoonAIModel {
+			t.Fatalf("模型缺省档不符：%+v", sp.Cocoon.AI)
+		}
+	})
+}
+
+func TestSpecAIRejects(t *testing.T) {
+	t.Run("base 带 userinfo（把令牌写进 base）", func(t *testing.T) {
+		src := aiSpecWith("[茧.ai]\nenabled = true\nbase = \"http://u:tok@127.0.0.1:8082\"")
+		wantSpecErr(t, src, "茧.ai.base", "userinfo", lineOf(src, "base ="))
+	})
+
+	t.Run("base 带 query", func(t *testing.T) {
+		src := aiSpecWith("[茧.ai]\nenabled = true\nbase = \"http://127.0.0.1:8082/?k=v\"")
+		wantSpecErr(t, src, "茧.ai.base", "query", lineOf(src, "base ="))
+	})
+
+	t.Run("base 非回环", func(t *testing.T) {
+		src := aiSpecWith("[茧.ai]\nenabled = true\nbase = \"http://<cluster-ip>:8082\"")
+		wantSpecErr(t, src, "茧.ai.base", "回环", lineOf(src, "base ="))
+	})
+
+	t.Run("base 非 http(s)", func(t *testing.T) {
+		src := aiSpecWith("[茧.ai]\nenabled = true\nbase = \"ftp://127.0.0.1:8082\"")
+		wantSpecErr(t, src, "茧.ai.base", "upstream", lineOf(src, "base ="))
+	})
+
+	t.Run("base 空串", func(t *testing.T) {
+		src := aiSpecWith("[茧.ai]\nenabled = true\nbase = \"\"")
+		wantSpecErr(t, src, "茧.ai.base", "不得为空串", lineOf(src, "base ="))
+	})
+
+	t.Run("model 空串", func(t *testing.T) {
+		src := aiSpecWith("[茧.ai]\nenabled = true\nmodel = \"\"")
+		wantSpecErr(t, src, "茧.ai.model", "不得为空串", lineOf(src, "model ="))
+	})
+
+	t.Run("model 带空白", func(t *testing.T) {
+		src := aiSpecWith("[茧.ai]\nenabled = true\nmodel = \"gpt 4o\"")
+		wantSpecErr(t, src, "茧.ai.model", "空白", lineOf(src, "model ="))
+	})
+
+	t.Run("enabled 非布尔", func(t *testing.T) {
+		src := aiSpecWith("[茧.ai]\nenabled = \"yes\"\nmodel = \"m\"")
+		wantSpecErr(t, src, "茧.ai.enabled", "布尔", lineOf(src, "enabled ="))
+	})
+
+	t.Run("未开却给 base", func(t *testing.T) {
+		src := aiSpecWith("[茧.ai]\nbase = \"http://127.0.0.1:8082\"")
+		wantSpecErr(t, src, "茧.ai", "enabled", lineOf(src, "[茧.ai]"))
+	})
+
+	t.Run("未知键", func(t *testing.T) {
+		src := aiSpecWith("[茧.ai]\nenabled = true\nfoo = \"x\"")
+		wantSpecErr(t, src, "茧.ai.foo", "未知字段", lineOf(src, "foo ="))
+	})
+
+	t.Run("ai 不是表", func(t *testing.T) {
+		src := strings.Replace(specWithDigest(specValidDigest),
+			"digest = \""+specValidDigest+"\"", "digest = \""+specValidDigest+"\"\nai     = \"on\"", 1)
+		wantSpecErr(t, src, "茧.ai", "必须是表", lineOf(src, "ai     ="))
+	})
+}

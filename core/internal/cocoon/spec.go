@@ -62,6 +62,13 @@ const DefaultReadinessTimeout = 30 * time.Second
 // DefaultBind — [[端口]] 未写 bind 时的默认绑定地址：只绑回环，不默认暴露到网卡。
 const DefaultBind = "127.0.0.1"
 
+// DefaultCocoonAIModel — `[茧.ai]` 未写 model 时的默认模型 id（T4 定的档）。
+//
+// ★ 为什么在契约层给默认值而不是"缺省就不注入"：`[茧.ai] enabled = true` 是人的明确选择，
+// 此时不给模型 id 只会让茧内拿到一个空串、请求打到上游缺省模型上 —— 那是"看起来能用、
+// 实际不是你要的模型"。默认值写在契约层，inspect 与 open 读到的是同一个串。
+const DefaultCocoonAIModel = "Nemotron-3.5-Super-VL-120B-A12B"
+
 // specRootfsHostRoot — 「不换根」那个根。
 //
 // ★ 这里是 spec 层，只认「宿主根目录」这一件事，**不引后端常量**（nsjail 的缺省 chroot
@@ -146,7 +153,41 @@ type CocoonSpec struct {
 	// ★ 只在给了 Rootfs 时才有意义：单独给它在解析期就拒（上层没有下层不是配置，是笔误）。
 	OverlayUpper string
 
+	// AI — 可选：`[茧.ai]`（茧内 AI 能力的形状）。零值 = 不给 AI 能力（安全侧）。
+	AI AISpec
+
 	Line int
+}
+
+// AISpec — `[茧.ai]`：**形状**，不含任何真值。
+//
+// 三个键（都可选，但 enabled=false 时不许给另外两个 —— 见 decodeCocoonAICocoon）：
+//
+//	enabled = true|false   缺省 false。true ⇒ `cocoon open` 给茧内注入三个 env（见 inject.go ⑤）
+//	base    = "http://…"   缺省"取宿主真源"：先 `ZERG_AI_UPSTREAM`，再内置回环
+//	model   = "…"          缺省 DefaultCocoonAIModel
+//
+// ★ 为什么 base 缺省是"由宿主决定"而不是把内置值抄进契约：base 指向的是**宿主上的 broker**
+// （端口由 broker bind 后回写），把它冻进契约等于让契约去猜一个运行期才存在的端口。
+// ★ base 在解析期就过 `CheckAIUpstream`：`http://user:tok@host:port` 这种"把令牌写进 base"
+// 的形态必须**在契约这一刻**就拒（✗ 拖到 open 才拒 —— 那时人已经以为配好了）。
+type AISpec struct {
+	// Enabled — 是否给这座茧 AI 能力。
+	Enabled bool
+	// Base — 宿主 broker 的回环 base（已归一化：无尾斜杠）。空 = 取宿主缺省真源。
+	Base string
+	// Model — 模型 id。空 = DefaultCocoonAIModel。
+	Model string
+	// Line — `ai` 这一段在文件里的起始行（报错定位用）。
+	Line int
+}
+
+// ModelOrDefault — 实际要注入的模型 id（空 ⇒ 默认档）。
+func (a AISpec) ModelOrDefault() string {
+	if strings.TrimSpace(a.Model) == "" {
+		return DefaultCocoonAIModel
+	}
+	return a.Model
 }
 
 // Readiness — 一个服务的就绪判据（v2 §D 里是行内表）。
@@ -444,7 +485,7 @@ func (d *specDecoder) decodeCocoon(t *tval) error {
 	if t.kind != tvTable {
 		return d.errf(t.line, f, "必须是表")
 	}
-	if err := d.checkKeys(t, f, "name", "image", "digest", "arch", "workdir", "rootfs", "overlay_upper"); err != nil {
+	if err := d.checkKeys(t, f, "name", "image", "digest", "arch", "workdir", "rootfs", "overlay_upper", "ai"); err != nil {
 		return err
 	}
 	c := CocoonSpec{Line: t.line}
@@ -570,7 +611,84 @@ func (d *specDecoder) decodeCocoon(t *tval) error {
 	}
 
 	d.spec.Cocoon = c
+
+	// `[茧.ai]`：可选段。★ 放在 [茧] 的最后（而 checkKeys 已保证 `ai` 是合法键）：
+	// 它的错误要指向 `茧.ai.<键>`，与 [茧] 自己的键区分开。
+	if tv, ok := t.tab["ai"]; ok {
+		ai, aerr := d.decodeCocoonAI(tv)
+		if aerr != nil {
+			return aerr
+		}
+		c.AI = ai
+		d.spec.Cocoon = c
+	}
 	return nil
+}
+
+// decodeCocoonAI — `[茧.ai]`（也接受行内表 `ai = { enabled = true }`）。
+//
+// 三条口径（都是判据，不是文风）：
+//
+//	① **enabled 缺省 false**：不给 AI 能力是安全侧 —— 老契约（没有这一段）行为零变化。
+//	② **enabled=false 时不许给 base/model**：写了就是笔误（"关了却还在配地址"），
+//	   静默忽略会让人以为配生效了；这与 overlay_upper 单独出现即拒同一条口径。
+//	③ **base 走 CheckAIUpstream**（与注入期同一个口）：回环 / 无 userinfo / 无 query。
+//	   带 userinfo 或 query 的 base 是"把令牌写进 base"，在契约这一刻就拒。
+func (d *specDecoder) decodeCocoonAI(t *tval) (AISpec, error) {
+	const f = "茧.ai"
+	if t.kind != tvTable {
+		return AISpec{}, d.errf(t.line, f, "必须是表（写成 [茧.ai] 或 ai = { enabled = true }）")
+	}
+	if err := d.checkKeys(t, f, "enabled", "base", "model"); err != nil {
+		return AISpec{}, err
+	}
+	ai := AISpec{Line: t.line}
+
+	if tv, ok := t.tab["enabled"]; ok {
+		if tv.kind != tvBool {
+			return AISpec{}, d.errf(tv.line, f+".enabled", "必须是布尔（true / false）")
+		}
+		ai.Enabled = tv.b
+	}
+
+	base, hasBase, err := d.strField(t, f, "base")
+	if err != nil {
+		return AISpec{}, err
+	}
+	if hasBase {
+		if strings.TrimSpace(base) == "" {
+			return AISpec{}, d.errf(t.tab["base"].line, f+".base",
+				"不得为空串（不想指定就别写这个键：缺省取宿主真源，空串会被读成「指向空气」）")
+		}
+		norm, cerr := CheckAIUpstream(base)
+		if cerr != nil {
+			// ★ 错误串不回显 base 原值（它可能夹带凭据 —— 报错本身不许成为泄漏面）。
+			return AISpec{}, d.errf(t.tab["base"].line, f+".base", "不合格：%v", cerr)
+		}
+		ai.Base = norm
+	}
+
+	model, hasModel, err := d.strField(t, f, "model")
+	if err != nil {
+		return AISpec{}, err
+	}
+	if hasModel {
+		if strings.TrimSpace(model) == "" {
+			return AISpec{}, d.errf(t.tab["model"].line, f+".model",
+				"不得为空串（缺省即 %s；要默认档就别写这个键）", DefaultCocoonAIModel)
+		}
+		// 空白/控制字符会把 envp 打断（见 inject.go 的 hasEnvBreak），在这里就拒。
+		if hasEnvBreak(model) {
+			return AISpec{}, d.errf(t.tab["model"].line, f+".model", "不得含空白或控制字符：%q", model)
+		}
+		ai.Model = model
+	}
+
+	if !ai.Enabled && (hasBase || hasModel) {
+		return AISpec{}, d.errf(t.line, f,
+			"enabled 不是 true 时不给 base / model（关了却还在配地址 = 笔误；要配就先写 enabled = true）")
+	}
+	return ai, nil
 }
 
 // resolveContractPath — 契约里的宿主路径：绝对路径原样（Clean），相对路径按**契约文件所在目录**

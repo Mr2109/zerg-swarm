@@ -268,6 +268,34 @@ type OrchestrateOptions struct {
 	// （T3b 实测：三次真后端 open 全是 pid:0、无 nsjail 进程，集成测试能过只因为测试进程一直活着）。
 	// ★ 置 true 时 LogDir 也必须有（后台档必须落文件，否则 Validate 拒执）。
 	Detach bool
+	// AIEnv — 追加给**每个**服务的环境变量（茧内 AI 注入面：ZERG_AI_BASE / ZERG_AI_MODEL /
+	// ZERG_AI_TOKEN_FILE）。
+	//
+	// ★ 与 Spec.Env 同名时以这里为准：茧内看到的 AI 指向**只能由宿主算出来**（回环 broker、
+	// 只读占位符件），✗ 不许契约的 `[环境]` 把它改掉 —— 否则"base 由宿主给"这条就成了装饰，
+	// 一个契约就能把茧指向任意 URL。
+	// ★ 这里装的东西都**不含真值**（形状见 inject.go 的 AIPlan）：真令牌既不入 env 也不落盘。
+	AIEnv map[string]string
+	// Mounts — Provision 之后、起服务之前逐条挂进茧里（`Mount` 是 Backend 的既有面）。
+	//
+	// ★ 存在理由（T4）：换了根时，宿主侧的只读占位符件在茧内 merged 视图里**不存在**
+	// ⇒ 必须 bind 进去。挂载只能"起进程时给"（nsjail 的 --bindmount），所以它属于编排面。
+	// ★ 任一条挂不上 ⇒ 整次 Start 失败并 Destroy 实例（宁红不假绿：挂不上就等于茧内
+	// 读不到令牌面，那不是"少了个便利"，是承诺没做到）。
+	Mounts []OrchestrateMount
+}
+
+// OrchestrateMount — 一条「宿主件/目录 → 茧内路径」的挂载（RO=true 即只读绑定）。
+//
+// ★ 只表达"挂什么、挂到哪、可写不可写"三件事：换根、namespace、cgroup 一律由后端决定，
+// 编排层不掺和（否则两边各有一套隔离口径）。
+type OrchestrateMount struct {
+	// Host — 宿主侧路径（绝对路径；后端会再校验一次）。
+	Host string
+	// Inner — 茧内路径（绝对路径）。
+	Inner string
+	// RO — true ⇒ 只读绑定（茧内写它得到 EROFS）。
+	RO bool
 }
 
 func (o OrchestrateOptions) withDefaults() OrchestrateOptions {
@@ -498,6 +526,17 @@ func StartWith(ctx context.Context, be Backend, spec *Spec, opts OrchestrateOpti
 	if err != nil {
 		return Running{}, &OrchestrateError{Op: "plan", Cause: err, Msg: "Provision 失败"}
 	}
+	// ★ 挂载面（T4）：Provision 之后、**第一个服务起之前**逐条挂好。
+	//   挂不上就整次失败并 Destroy —— 理由见 OrchestrateOptions.Mounts（宁红不假绿）。
+	if err := applyMounts(ctx, be, inst, opts.Mounts); err != nil {
+		dctx, dcancel := context.WithTimeout(context.Background(), opts.StopTimeout)
+		defer dcancel()
+		if derr := be.Destroy(dctx, inst); derr != nil {
+			return Running{}, errors.Join(&OrchestrateError{Op: "plan", Cause: err, Msg: "挂载失败"},
+				fmt.Errorf("cocoon: 挂载失败后的 Destroy(%s) 也失败: %w", inst.ID, derr))
+		}
+		return Running{}, &OrchestrateError{Op: "plan", Cause: err, Msg: "挂载失败（实例已销毁）"}
+	}
 	// ★ 服务挂在**自己的**生命周期 ctx 上，不挂在 Start 的入参 ctx 上：
 	// 否则调用方一句 `defer cancel()` 就会把刚起来的服务全杀掉（Start 返回 ≠ 服务结束）。
 	life, lifeCancel := context.WithCancel(context.Background())
@@ -537,6 +576,38 @@ func Stop(ctx context.Context, r Running) error {
 		return nil // 零值 = 没起过；停一个不存在的东西是 no-op，不是错误（defer 里好用）
 	}
 	return r.st.stopAll(ctx)
+}
+
+// applyMounts — 逐条挂进茧（空表即 no-op）。挂载项的形态先自检：空/相对路径在
+// nsjail 那里的报错是"invalid argument"级，看不出是路径写错 ⇒ 本层先判、先报。
+func applyMounts(ctx context.Context, be Backend, inst Instance, mounts []OrchestrateMount) error {
+	for _, m := range mounts {
+		if m.Host == "" || m.Inner == "" {
+			return fmt.Errorf("cocoon: 挂载项的宿主/茧内路径都不得为空（host=%q inner=%q）", m.Host, m.Inner)
+		}
+		if err := be.Mount(ctx, inst, m.Host, m.Inner, m.RO); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// mergeExecEnv — 把 AI 注入面并进服务的 env：**同名以 extra 为准**（见 OrchestrateOptions.AIEnv）。
+//
+// ★ 不改入参 map（base 由 cloneEnv 产出的副本，这里再拷一份返回）：调用方可能复用同一份
+// Spec.Env 起多个服务，就地改会让"第二个服务看到第一个服务的 env"。
+func mergeExecEnv(base map[string]string, extra map[string]string) map[string]string {
+	if len(extra) == 0 {
+		return base
+	}
+	out := make(map[string]string, len(base)+len(extra))
+	for k, v := range base {
+		out[k] = v
+	}
+	for k, v := range extra {
+		out[k] = v
+	}
+	return out
 }
 
 // ── 起 ────────────────────────────────────────────────────────────────
@@ -601,7 +672,7 @@ func (st *runState) launch(svc ServiceSpec) (*svcRun, error) {
 	}
 	opts := ExecOpts{
 		// ★ 服务的 Exec **不设 Timeout**：服务是长驻的，Timeout>0 等于给它判死期。
-		Env: cloneEnv(st.spec.Env),
+		Env: mergeExecEnv(cloneEnv(st.spec.Env), st.opts.AIEnv),
 		Dir: st.spec.Cocoon.Workdir,
 	}
 	if st.opts.LogDir != "" {

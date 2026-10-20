@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
@@ -893,5 +894,170 @@ func TestRewriteConcurrentNoSharedMutation(t *testing.T) {
 	}
 	for _, ev := range sink.all() {
 		assertNoSecret(t, "并发审计事件", ev.String())
+	}
+}
+
+// ── ①b 茧内占位符件（T4）─────────────────────────────────────────────────
+//
+// 判据四条：
+//
+//	① 件里**只有**占位符 `zerg-broker`（＋一个换行）—— 真令牌一个字节都不在里面；
+//	② 权限 0444（只读件：owner 也不该能直接写它）；
+//	③ 幂等：同一茧目录重复写，内容不变、不留 `.ai.token-*` 临时件；
+//	④ 换根与否决定"茧内看到哪条路径"（没换根 = 宿主路径原样；换根 = 固定落点 + ro 挂载）。
+func TestAITokenPlaceholderFile(t *testing.T) {
+	cdir := filepath.Join(t.TempDir(), "shop-1a2b3c4d")
+
+	host, err := WriteAITokenPlaceholder(cdir)
+	if err != nil {
+		t.Fatalf("写占位符件失败: %v", err)
+	}
+	if want := filepath.Join(cdir, AITokenHostFileName); host != want {
+		t.Fatalf("落点 = %q，want %q", host, want)
+	}
+
+	// ★ 占位符是**对外协议字面量**（茧内程序与宿主 broker 都按这一串认）：这里按**字面量**
+	// 断言，✗ 不拿常量与它自己比 —— 否则把常量改成"像一个真令牌"的串，测试照样全绿。
+	if AITokenPlaceholder != "zerg-broker" {
+		t.Fatalf("占位符字面量变了：%q（协议串是 zerg-broker，改它等于改协议）", AITokenPlaceholder)
+	}
+
+	// ① 内容恒为占位符（多一个换行是刻意的：cat 出来的行尾）
+	raw, err := os.ReadFile(host)
+	if err != nil {
+		t.Fatalf("读占位符件: %v", err)
+	}
+	if string(raw) != "zerg-broker\n" {
+		t.Fatalf("件内容 = %q，want %q（真令牌不许落盘）", string(raw), "zerg-broker\n")
+	}
+	if got, rerr := ReadAITokenPlaceholder(host); rerr != nil || got != AITokenPlaceholder {
+		t.Fatalf("ReadAITokenPlaceholder = (%q, %v)，want (%q, nil)", got, rerr, AITokenPlaceholder)
+	}
+
+	// ② 0444
+	fi, err := os.Stat(host)
+	if err != nil {
+		t.Fatalf("stat 占位符件: %v", err)
+	}
+	if perm := fi.Mode().Perm(); perm != 0o444 {
+		t.Fatalf("权限 = %04o，want 0444（只读件）", perm)
+	}
+
+	// ③ 幂等：再写一次（目标件已是 0444 ⇒ 直接 os.WriteFile 会 EACCES，本实现用临时件+rename）
+	if host2, err := WriteAITokenPlaceholder(cdir); err != nil || host2 != host {
+		t.Fatalf("重复写应幂等，得到 (%q, %v)", host2, err)
+	}
+	raw2, err := os.ReadFile(host)
+	if err != nil || string(raw2) != string(raw) {
+		t.Fatalf("重复写改变了内容：%q（err=%v）", string(raw2), err)
+	}
+	ents, err := os.ReadDir(cdir)
+	if err != nil {
+		t.Fatalf("列茧目录: %v", err)
+	}
+	if len(ents) != 1 || ents[0].Name() != AITokenHostFileName {
+		names := make([]string, 0, len(ents))
+		for _, e := range ents {
+			names = append(names, e.Name())
+		}
+		t.Fatalf("茧目录里应当只有 %s，得到 %v（临时件没清）", AITokenHostFileName, names)
+	}
+}
+
+// TestAITokenCocoonPathAndMount — 「茧内看到哪条路径」的两态 ＋ 挂载项两态。
+func TestAITokenCocoonPathAndMount(t *testing.T) {
+	host := "/state/cocoons/shop-1a2b3c4d/ai.token"
+
+	// 没换根：chroot=/ ⇒ 宿主路径在茧内原样可见，不需要挂载。
+	if got := AITokenInCocoonPath(false, host); got != host {
+		t.Fatalf("没换根时应原样给宿主路径，得到 %q", got)
+	}
+	if m, ok := AITokenMount(false, host); ok {
+		t.Fatalf("没换根时不该产生挂载项，得到 %+v", m)
+	}
+
+	// 换根：茧内是 merged 视图，宿主路径不存在 ⇒ 固定落点 + ro 绑定。
+	if got := AITokenInCocoonPath(true, host); got != AITokenInJailPath {
+		t.Fatalf("换根时应给 %q，得到 %q", AITokenInJailPath, got)
+	}
+	m, ok := AITokenMount(true, host)
+	if !ok {
+		t.Fatal("换根时必须产生挂载项（否则茧内读不到令牌件）")
+	}
+	if m.Host != host || m.Inner != AITokenInJailPath || !m.RO {
+		t.Fatalf("挂载项不符（令牌件必须 ro）：%+v", m)
+	}
+}
+
+// TestAIPlanWithTokenFile — 三个 env 的形状 ＋ 令牌件路径的三类拒执。
+func TestAIPlanWithTokenFile(t *testing.T) {
+	base, err := BuildAIEnvChecked("shop-1a2b3c4d", "m-1", "http://127.0.0.1:8082")
+	if err != nil {
+		t.Fatalf("BuildAIEnvChecked: %v", err)
+	}
+
+	t.Run("三个 env 且顺序稳定", func(t *testing.T) {
+		p, perr := base.WithTokenFile(AITokenInJailPath)
+		if perr != nil {
+			t.Fatalf("WithTokenFile: %v", perr)
+		}
+		if p.TokenFile != AITokenInJailPath {
+			t.Fatalf("TokenFile = %q", p.TokenFile)
+		}
+		want := []string{
+			"ZERG_AI_BASE=http://127.0.0.1:8082",
+			"ZERG_AI_MODEL=m-1",
+			"ZERG_AI_TOKEN_FILE=" + AITokenInJailPath,
+		}
+		if got := p.Environ(); !reflect.DeepEqual(got, want) {
+			t.Fatalf("Environ() = %v，want %v", got, want)
+		}
+		// 原 plan 不被就地改（调用方可能并发读同一份）
+		if len(base.Env) != 2 || base.TokenFile != "" {
+			t.Fatalf("WithTokenFile 就地改了原 plan：%v / %q", base.Env, base.TokenFile)
+		}
+		// 日志面不许出现真值（本件里根本没有真值，这条是防"以后有人加一格"）
+		if s := p.String(); strings.Contains(s, "{{secret:") {
+			t.Fatalf("String() 像在带密钥：%q", s)
+		}
+	})
+
+	t.Run("非法路径一律拒", func(t *testing.T) {
+		for _, bad := range []string{"", "   ", "tmp/rel.token", "/tmp/a b", "/tmp/a\nb"} {
+			if _, perr := base.WithTokenFile(bad); !errors.Is(perr, ErrAIPlanBadTokenFile) {
+				t.Fatalf("路径 %q 应拒（ErrAIPlanBadTokenFile），得到 %v", bad, perr)
+			}
+		}
+	})
+
+	t.Run("零值 plan 不给令牌件面", func(t *testing.T) {
+		if _, perr := (AIPlan{}).WithTokenFile(AITokenInJailPath); perr == nil {
+			t.Fatal("零值 plan（没有 base/model）不该能补令牌件面")
+		}
+	})
+}
+
+// TestCocoonChroots — 「换不换根」的单一口径：rootfs 缺省 / 空 / "/" 都不算换根。
+func TestCocoonChroots(t *testing.T) {
+	cases := []struct {
+		rootfs string
+		want   bool
+	}{
+		{"", false},
+		{"   ", false},
+		{"/", false},
+		{"/  ", false},
+		{"/var/lib/images/debian", true},
+		{"/var/lib/images/debian/", true},
+	}
+	for _, c := range cases {
+		sp := &Spec{}
+		sp.Cocoon.Rootfs = c.rootfs
+		if got := CocoonChroots(sp); got != c.want {
+			t.Fatalf("rootfs=%q ⇒ CocoonChroots=%v，want %v", c.rootfs, got, c.want)
+		}
+	}
+	if CocoonChroots(nil) {
+		t.Fatal("nil 契约不该判成换根")
 	}
 }

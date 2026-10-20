@@ -999,3 +999,106 @@ readiness = { port = 8000, path = "/healthz", timeout = "2s" }
 		t.Fatalf("rc=3 的退出该判死，得到 %+v", st)
 	}
 }
+
+// ── ⑪ AI 注入面：Env 合并 ＋ 挂载面（T4）────────────────────────────────
+
+// TestOrchestrateAIEnvAndMounts — 编排层替命令面做两件事，两件都要有牙：
+//
+//	① 把 AI 注入面（三个 env）并进**每个**服务的 Exec，且**同名以注入面为准** ——
+//	   否则契约 [环境] 里一句 ZERG_AI_BASE 就能把茧指向任意 URL（"base 由宿主给"就成了装饰）。
+//	② 在 Provision 之后、**第一个服务起之前**逐条挂好（nsjail 的 --bindmount 只能起进程时给）；
+//	   挂不上 ⇒ 整次 Start 失败且实例已销毁（✗ 不许"少挂一条照跑"）。
+func TestOrchestrateAIEnvAndMounts(t *testing.T) {
+	ctx := context.Background()
+	oneSvc := `[[服务]]
+name  = "web"
+entry = ["webd"]
+`
+
+	t.Run("三个 env 并进去且同名以注入面为准", func(t *testing.T) {
+		be := NewFakeBackend()
+		sp := mustOrchSpec(t, oneSvc)
+		// 契约里的同名键必须被盖掉；不同名的键必须留着（注入面不是"清空 env"）。
+		sp.Env[EnvAIBase] = "http://<cluster-ip>:9999"
+		sp.Env["KEEP"] = "kept"
+
+		aiEnv := map[string]string{
+			EnvAIBase:      "http://127.0.0.1:8082",
+			EnvAIModel:     "m-1",
+			EnvAITokenFile: AITokenInJailPath,
+		}
+		opts := OrchestrateOptions{
+			StopTimeout: time.Second,
+			AIEnv:       aiEnv,
+			Mounts:      []OrchestrateMount{{Host: "/host/shop-1/ai.token", Inner: AITokenInJailPath, RO: true}},
+		}
+		r, err := StartWith(ctx, be, sp, opts)
+		if err != nil {
+			t.Fatalf("应当起得来，得到错误: %v", err)
+		}
+		t.Cleanup(func() { _ = Stop(ctx, r) })
+
+		// ★ 缺省 Spawner 在 **goroutine** 里调 Exec ⇒ 先等它真跑完（rc=0 ⇒ completed），
+		//   否则这条断言会在"还没 exec"的瞬间读到空（那不是缺陷，是竞态）。
+		waitFor(t, "web 的 Exec 跑完", func() bool {
+			st := r.States()
+			return len(st) == 1 && st[0].Exited
+		})
+		last, ok := be.LastExec(r.Instance())
+		if !ok {
+			t.Fatal("缺省 Spawner 必须真的调 Backend.Exec")
+		}
+		for k, want := range aiEnv {
+			if got := last.Opts.Env[k]; got != want {
+				t.Fatalf("Exec 的 env[%s] = %q，want %q（注入面没并进服务 env）", k, got, want)
+			}
+		}
+		if last.Opts.Env["KEEP"] != "kept" {
+			t.Fatalf("契约自己的 env 键被丢了：%v", last.Opts.Env)
+		}
+
+		mounts := be.Mounts(r.Instance())
+		if len(mounts) != 1 {
+			t.Fatalf("应当恰好一条挂载，得到 %+v", mounts)
+		}
+		if mounts[0].Inner != AITokenInJailPath || mounts[0].Host != "/host/shop-1/ai.token" || !mounts[0].RO {
+			t.Fatalf("挂载项不符（令牌件必须是 ro 绑定）：%+v", mounts[0])
+		}
+
+		// 顺序判据：mount 必须排在 exec 之前（挂载只能"起进程时给"）。
+		calls := be.Calls()
+		iMount, iExec := -1, -1
+		for i, c := range calls {
+			if strings.HasPrefix(c, "mount ") && iMount < 0 {
+				iMount = i
+			}
+			if strings.HasPrefix(c, "exec ") && iExec < 0 {
+				iExec = i
+			}
+		}
+		if iMount < 0 || iExec < 0 || iMount > iExec {
+			t.Fatalf("mount 必须早于 exec（mount=%d exec=%d）：%v", iMount, iExec, calls)
+		}
+	})
+
+	t.Run("挂不上 ⇒ 整次失败且实例已销毁", func(t *testing.T) {
+		be := NewFakeBackend()
+		sp := mustOrchSpec(t, oneSvc)
+		// 相对路径：后端拒（ErrBadMount），编排层要把它变成"整次失败"而不是"少挂一条照跑"。
+		_, err := StartWith(ctx, be, sp, OrchestrateOptions{
+			StopTimeout: time.Second,
+			Mounts:      []OrchestrateMount{{Host: "rel/ai.token", Inner: AITokenInJailPath, RO: true}},
+		})
+		if err == nil {
+			t.Fatal("挂载失败时 Start 必须报错（宁红不假绿）")
+		}
+		for _, c := range be.Calls() {
+			if strings.HasPrefix(c, "exec ") {
+				t.Fatalf("挂载失败后不该起任何服务，却见到：%s", c)
+			}
+		}
+		if ids := be.LiveIDs(); len(ids) != 0 {
+			t.Fatalf("挂载失败后实例必须被 Destroy，仍活着：%v", ids)
+		}
+	})
+}

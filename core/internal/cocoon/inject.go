@@ -16,6 +16,26 @@
 //
 // ★ 为什么 host 白名单只收**上游**、不收回环：茧 → broker 那一跳若也换值，真值就重新进入茧
 // 能读到的报文里，等于白做。故 `127.0.0.1` 不在默认表内（它出现在请求里只可能是被误用）。
+//
+// ── ⑤ 茧内拿到的三样东西（`cocoon open` 的注入面 · T4）────────────────────────
+//
+// `[茧.ai] enabled = true` 时，茧内服务拿到三个环境变量，**一个字节的真值都没有**：
+//
+//	ZERG_AI_BASE       = 宿主 broker 的回环 base（`http://127.0.0.1:<port>`，回环/无 userinfo/无 query）
+//	ZERG_AI_MODEL      = 模型 id
+//	ZERG_AI_TOKEN_FILE = 茧内一个**只读件**的路径，内容恒为占位符 `zerg-broker`
+//
+// ★ 三条不变量（照 ①②③ 的口径延伸，改这里先读它们）：
+//
+//	ⓐ **令牌文件里只有占位符**：`zerg-broker` 是一个**协议标记**（"请向宿主 broker 换票"），
+//	  不是令牌、也不是任何令牌的前缀/哈希。真令牌既不入 env、也不入茧内任何文件。
+//	ⓑ **真值只在宿主 broker 手里**：茧内要真的发一次 AI 请求，必须带着这个占位符走
+//	  broker（`cocoon.Broker` 的 `ai.request` op：先 Authorize，再由 `RewriteRequest` 换值）。
+//	ⓒ **本版没有 broker 的命令面** ⇒ 占位符是**终点**，不是"能用但没人验"的半成品：
+//	  `zerg ai inject` / `ai call` 这一类命令面在**本仓现读不存在**（见文件头这段的出处：
+//	  `grep -rn '"ai ' core/cmd/zerg` 命中 0）。⇒ 茧内拿到 base 也**调不通**上游；要真跑通
+//	  必须先有 broker 进程（`NewBroker` + `Listen` + `Serve` + 令牌面）。
+//	  这一段是**照实登记的未接面**，✗ 不许把它读成"已经接上了"。
 package cocoon
 
 import (
@@ -26,6 +46,9 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"path"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -38,6 +61,28 @@ const (
 	EnvAIBase = "ZERG_AI_BASE"
 	// EnvAIModel — 茧内使用的模型 id（与 Zerg 其余组件的 ZERG_AI_MODEL 同一口径）。
 	EnvAIModel = "ZERG_AI_MODEL"
+	// EnvAITokenFile — 茧内**只读占位符件**的路径。★ 文件内容恒为 AITokenPlaceholder，
+	// 真令牌既不在这个文件里、也不在 env 里（见件头 ⑤）。
+	EnvAITokenFile = "ZERG_AI_TOKEN_FILE"
+
+	// AITokenPlaceholder — 记在令牌文件里的**唯一内容**：一个协议标记，不是一个令牌。
+	//
+	// ★ 为什么不是"空文件"或"真令牌的脱敏形"：
+	//   · 空文件会让茧内程序分不清「没有令牌面」与「有令牌面但读不到」；
+	//   · 放脱敏形（`abcd…wxyz`）会诱导人把它当凭据去拼 Authorization；
+	//   · 放一个固定标记，茧内程序**只能**照协议把它整串交给 broker —— 它抄不出任何密钥材料。
+	// ★ 也不带任何前缀/长度/哈希信息：任何"看起来像令牌"的形态都会被当成令牌去用。
+	AITokenPlaceholder = "zerg-broker"
+
+	// AITokenHostFileName — 占位符件在**茧目录**里的文件名（宿主侧真身：`<茧目录>/ai.token`）。
+	AITokenHostFileName = "ai.token"
+	// AITokenInJailPath — 换了根（`[茧].rootfs`）时，占位符件在**茧内**的落点。
+	//
+	// ★ 选 `/tmp` 下而不是 `/run` 或新建目录：`/tmp` 是 nsjail 挂载面里**唯一保证存在且可写**
+	// 的目录（rootfs 档由茧目录逐茧绑进去，见 nsjailPlanMounts），bind mount 的目标父目录
+	// 一定在；而 `/run` 在最小镜像（debian-slim 一类）里不保证有。★ 件本身是 **ro 绑定**，
+	// 可写的是目录、不是这个件（写它得到 EROFS）。
+	AITokenInJailPath = "/tmp/zerg-ai.token"
 
 	// ScrubPlaceholder — 响应擦除后的替身。与 obs/redact 的通用遮蔽同口径（`[REDACTED]`），
 	// 免得同一份日志里出现两种记号、让人以为还漏了一处。
@@ -70,6 +115,9 @@ var (
 	ErrAIPlanUpstreamQuery = errors.New("cocoon: AI 计划 upstream 带 query/fragment")
 	// ErrAIPlanNotLoopback — base 必须指向宿主回环。指到别处等于把茧内的流量放出宿主。
 	ErrAIPlanNotLoopback = errors.New("cocoon: AI 计划 base 必须是宿主回环地址（127.0.0.0/8 · ::1 · localhost）")
+	// ErrAIPlanBadTokenFile — 茧内占位符件的路径非法（空 / 相对 / 含空白控制字符）。
+	// ★ 相对路径在茧内是「看 cwd 才知道指向哪」的串，而那正是我们要消掉的那类不确定性。
+	ErrAIPlanBadTokenFile = errors.New("cocoon: AI 计划的令牌件路径非法（必须是茧内绝对路径，且不含空白/控制字符）")
 
 	// ErrBadHost — host 形态非法（空、带路径、带 userinfo、带空白）。
 	ErrBadHost = errors.New("cocoon: host 形态非法")
@@ -95,24 +143,50 @@ var secretNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 
 // AIPlan — 给一个茧的 AI 指向。这是**形状**，不是连接：没有任何拨号动作发生在这一层。
 //
-// ★ 三个字段都不承载真值：Base 是宿主回环地址，Model 是模型 id，Env 只由这两项拼成。
+// ★ 四个字段都不承载真值：Base 是宿主回环地址，Model 是模型 id，TokenFile 是茧内一个
+// **只读占位符件**的路径（件内容恒为 AITokenPlaceholder），Env 只由这三项拼成。
 type AIPlan struct {
 	// Base — 宿主 broker 的回环 base（`http://127.0.0.1:<port>`，端口由 broker 回写后传入）。
 	Base string
 	// Model — 模型 id。
 	Model string
-	// Env — 交给茧内的环境变量（只有 EnvAIBase / EnvAIModel 两项）。
+	// TokenFile — 茧内只读占位符件的路径（空 = 本档不注入令牌件面）。
+	TokenFile string
+	// Env — 交给茧内的环境变量（EnvAIBase / EnvAIModel，给了 TokenFile 时再加 EnvAITokenFile）。
 	Env map[string]string
 }
 
 // Valid — 形状是否成立（Base 与 Model 都非空）。零值 plan 即"没有 AI 能力"，是安全侧。
 func (p AIPlan) Valid() bool { return p.Base != "" && p.Model != "" }
 
-// String — 日志面。只有两个非敏感字段，故不设脱敏形。
-func (p AIPlan) String() string { return fmt.Sprintf("AIPlan{base=%q model=%q}", p.Base, p.Model) }
+// String — 日志面。只有非敏感字段，故不设脱敏形。
+func (p AIPlan) String() string {
+	return fmt.Sprintf("AIPlan{base=%q model=%q token_file=%q}", p.Base, p.Model, p.TokenFile)
+}
 
 // GoString — `%#v` 也走日志面。
 func (p AIPlan) GoString() string { return p.String() }
+
+// WithTokenFile — 补上「茧内占位符件」这一格（返回**副本**，不改原 plan：调用方可能正在
+// 并发读同一份 plan）。
+//
+// ★ 只接受茧内**绝对路径**：相对路径在茧内指向哪里取决于 cwd，而 cwd 来自契约 / 后端 ——
+// 那等于把「去哪读令牌」交给第三方决定。空白/控制字符同样拒（会打断 envp 或 argv）。
+func (p AIPlan) WithTokenFile(inCocoonPath string) (AIPlan, error) {
+	if !p.Valid() {
+		return AIPlan{}, ErrAIPlanEmptyInstance
+	}
+	s := strings.TrimSpace(inCocoonPath)
+	if s == "" || !path.IsAbs(s) || hasEnvBreak(s) {
+		return AIPlan{}, fmt.Errorf("%w: %q", ErrAIPlanBadTokenFile, inCocoonPath)
+	}
+	env := make(map[string]string, len(p.Env)+1)
+	for k, v := range p.Env {
+		env[k] = v
+	}
+	env[EnvAITokenFile] = s
+	return AIPlan{Base: p.Base, Model: p.Model, TokenFile: s, Env: env}, nil
+}
 
 // Environ — 按 key 排序的 `K=V` 列表（exec 的 envp 要稳定顺序，否则两次启动的 env 哈希不同）。
 func (p AIPlan) Environ() []string {
@@ -159,25 +233,10 @@ func BuildAIEnvChecked(instID, model, upstream string) (AIPlan, error) {
 	if hasEnvBreak(m) {
 		return AIPlan{}, ErrAIPlanBadModel
 	}
-
-	u, err := url.Parse(strings.TrimSpace(upstream))
-	if err != nil || u.Scheme == "" || u.Host == "" {
-		return AIPlan{}, ErrAIPlanBadUpstream
+	base, err := CheckAIUpstream(upstream)
+	if err != nil {
+		return AIPlan{}, err
 	}
-	if u.Scheme != "http" && u.Scheme != "https" {
-		return AIPlan{}, ErrAIPlanBadUpstream
-	}
-	if u.User != nil {
-		return AIPlan{}, ErrAIPlanUpstreamCredential
-	}
-	if u.RawQuery != "" || u.Fragment != "" {
-		return AIPlan{}, ErrAIPlanUpstreamQuery
-	}
-	if !isLoopbackHost(u.Hostname()) {
-		return AIPlan{}, fmt.Errorf("%w: host %q", ErrAIPlanNotLoopback, u.Hostname())
-	}
-
-	base := u.Scheme + "://" + u.Host + strings.TrimSuffix(u.EscapedPath(), "/")
 	return AIPlan{
 		Base:  base,
 		Model: m,
@@ -186,6 +245,134 @@ func BuildAIEnvChecked(instID, model, upstream string) (AIPlan, error) {
 			EnvAIModel: m,
 		},
 	}, nil
+}
+
+// CheckAIUpstream — AI base 的**唯一**校验口（契约解析期与注入期共用同一份口径）。
+//
+// 收：`http`/`https` · 有 host · **回环** · 无 userinfo · 无 query/fragment。
+// 拒：其余一切（不回显原值 —— 它可能夹带凭据）。
+//
+// ★ 为什么契约层也要走这里：`[茧].ai.base` 写一个 `http://user:tok@<cluster-ip>:8082`
+// 就是"把令牌写进 base"，而这条路径一旦在 open 期才拒，契约已经落盘、人已经以为配好了。
+// 也正因为共用同一个口，两处不可能对「什么算合法 base」各说一套。
+func CheckAIUpstream(upstream string) (string, error) {
+	u, err := url.Parse(strings.TrimSpace(upstream))
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return "", ErrAIPlanBadUpstream
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return "", ErrAIPlanBadUpstream
+	}
+	if u.User != nil {
+		return "", ErrAIPlanUpstreamCredential
+	}
+	if u.RawQuery != "" || u.Fragment != "" {
+		return "", ErrAIPlanUpstreamQuery
+	}
+	if !isLoopbackHost(u.Hostname()) {
+		return "", fmt.Errorf("%w: host %q", ErrAIPlanNotLoopback, u.Hostname())
+	}
+	return u.Scheme + "://" + u.Host + strings.TrimSuffix(u.EscapedPath(), "/"), nil
+}
+
+// ── ①b 茧内占位符件（`ZERG_AI_TOKEN_FILE` 指向的那个件）──────────────────────
+
+// AITokenHostPath — 占位符件在**宿主侧**的落点：`<茧目录>/ai.token`。
+//
+// ★ 放在茧目录里（而不是状态根旁边另开一处）：删茧目录一次收干净，而且它属于"这座茧"，
+// 不属于整台机 —— 两座茧各有各的 0444 占位符件，谁也改不到谁的。
+func AITokenHostPath(cocoonDir string) string {
+	return filepath.Join(cocoonDir, AITokenHostFileName)
+}
+
+// WriteAITokenPlaceholder — 写占位符件：内容恒为 `AITokenPlaceholder` ＋ 一个换行，权限 0444。
+//
+// ★ 幂等：内容是常量，同一目录重复 open 不产生内容 diff（只有 mtime 会动）。
+// ★ 为什么是"临时件 ＋ rename"而不是直接 `os.WriteFile`：目标件是 **0444**，第二次写会
+// EACCES（owner 也写不进去 —— 这正是我们要的最终形态）。同目录 rename 是原子的，
+// 茧内程序永远读不到半截内容。
+// ★ 返回值是**宿主**路径；茧内看到哪条路径由 AITokenInCocoonPath 决定（两者在没换根时相同）。
+func WriteAITokenPlaceholder(cocoonDir string) (string, error) {
+	if strings.TrimSpace(cocoonDir) == "" {
+		return "", fmt.Errorf("%w: 茧目录为空", ErrAIPlanBadTokenFile)
+	}
+	if err := os.MkdirAll(cocoonDir, 0o700); err != nil {
+		return "", fmt.Errorf("cocoon: 建茧目录 %s 失败: %w", cocoonDir, err)
+	}
+	host := AITokenHostPath(cocoonDir)
+	fh, err := os.CreateTemp(cocoonDir, ".ai.token-*")
+	if err != nil {
+		return "", fmt.Errorf("cocoon: 建占位符临时件失败: %w", err)
+	}
+	tmp := fh.Name()
+	// 失败路径一律把临时件删掉：留一个 `.ai.token-*` 在茧目录里会被误读成"有人动过令牌面"。
+	cleanup := func() { _ = os.Remove(tmp) }
+	if _, werr := fh.WriteString(AITokenPlaceholder + "\n"); werr != nil {
+		_ = fh.Close()
+		cleanup()
+		return "", fmt.Errorf("cocoon: 写占位符件失败: %w", werr)
+	}
+	// ★ 先 chmod 再 close：rename 之后就没法（也不该）再改权限位了。
+	if cerr := fh.Chmod(0o444); cerr != nil {
+		_ = fh.Close()
+		cleanup()
+		return "", fmt.Errorf("cocoon: 占位符件设 0444 失败: %w", cerr)
+	}
+	if cerr := fh.Close(); cerr != nil {
+		cleanup()
+		return "", fmt.Errorf("cocoon: 关占位符临时件失败: %w", cerr)
+	}
+	if rerr := os.Rename(tmp, host); rerr != nil {
+		cleanup()
+		return "", fmt.Errorf("cocoon: 占位符件落位 %s 失败: %w", host, rerr)
+	}
+	return host, nil
+}
+
+// ReadAITokenPlaceholder — 读回占位符件的内容（排障与判据用）。
+//
+// ★ 调用方**不许**把它当"读到了令牌"：它恒为 AITokenPlaceholder；真值不在这里，也不该
+// 有代码去别处找它（真值的唯一来源是宿主 broker 的 SecretResolver）。
+func ReadAITokenPlaceholder(hostPath string) (string, error) {
+	b, err := os.ReadFile(hostPath)
+	if err != nil {
+		return "", fmt.Errorf("cocoon: 读占位符件 %s 失败: %w", hostPath, err)
+	}
+	return strings.TrimRight(string(b), "\n"), nil
+}
+
+// AITokenInCocoonPath — 占位符件在**茧内**看到的路径。
+//
+//	没换根（chroot = `/`）⇒ 茧内就是宿主文件系统视图，宿主路径原样可用（0444 即"只读件"）。
+//	换了根（`[茧].rootfs`/overlay）⇒ 茧内看到的是 merged 视图，宿主路径在里面不存在
+//	  ⇒ 用固定落点 AITokenInJailPath，由 AITokenMount 以 **ro bind** 挂进去。
+//
+// ★ 这里**不猜**：换没换根是调用方（命令面）从契约读出来的事实，不由本函数去嗅探盘面。
+func AITokenInCocoonPath(chrooted bool, hostPath string) string {
+	if chrooted {
+		return AITokenInJailPath
+	}
+	return hostPath
+}
+
+// AITokenMount — 需要时给出「把占位符件以只读方式挂进茧」的那条挂载项。
+//
+// 返回 ok=false ⇒ 不需要挂（没换根，宿主路径在茧内本来就可见）。这**不是**失败：
+// 换根与否决定"可见性从哪来"，两种都只给一个**只读**的占位符件。
+func AITokenMount(chrooted bool, hostPath string) (OrchestrateMount, bool) {
+	if !chrooted {
+		return OrchestrateMount{}, false
+	}
+	return OrchestrateMount{Host: hostPath, Inner: AITokenInJailPath, RO: true}, true
+}
+
+// CocoonChroots — 这份契约**会不会换根**（命令面问它，✗ 别自己去看 rootfs 串）。
+//
+// ★ 单一口径：直接落到真正决定 chroot 的那一处（`nsjailChroots`，`nsjailRootfsPlanFor`
+// 的早退也用它）—— 复制的第二份「rootfs 非空且 ≠ /」迟早分家，而分家的代价是
+// "按宿主路径给茧内一个读不到的令牌件路径"（看着有、其实读不到）。
+func CocoonChroots(spec *Spec) bool {
+	return nsjailChroots(spec)
 }
 
 // hasEnvBreak — env 值里出现空白/控制字符就会把 envp 打断（`K=V W` 里多出一个变量名）。

@@ -47,12 +47,34 @@
 //	（`cocoon.CocoonDirSetter.SetCocoonDir`）⇒ 契约 `[茧].rootfs` 有值时按 overlay 换根
 //	（lower=该目录只读 · upper/work/merged 都落在茧目录内 · 实例根也在里面 ⇒ 删茧目录一次收干净）。
 //
+// AI 注入面（T4 · 契约 `[茧.ai]` 可选段）：
+//
+//	`enabled = true` ⇒ `open` 给茧内注入三个 env，**一个字节的真值都没有**：
+//
+//	  ZERG_AI_BASE       = 宿主 broker 的回环 base（`[茧.ai].base` ＞ `ZERG_AI_UPSTREAM` ＞ 内置回环）
+//	  ZERG_AI_MODEL      = `[茧.ai].model`（缺省 Nemotron-3.5-Super-VL-120B-A12B）
+//	  ZERG_AI_TOKEN_FILE = 茧内一个**只读件**的路径，内容恒为占位符 `zerg-broker`
+//
+//	★ 三条口径（都是判据）：
+//	  ① **真令牌不写盘、不入 env、不进 meta**：真值只在宿主 broker 的 SecretResolver 手里。
+//	  ② 令牌件落在**茧目录**（`<茧目录>/ai.token` · 0444）；换了根（`[茧].rootfs`）时再以
+//	     **ro bind** 挂到茧内 `/tmp/zerg-ai.token`（宿主路径在 merged 视图里不存在 ⇒ 必须挂，
+//	     而挂载只认"起进程时给"，所以走 OrchestrateOptions.Mounts）。
+//	  ③ `base` 在契约解析期就过 `CheckAIUpstream`（回环 / 无 userinfo / 无 query）⇒
+//	     "把令牌写进 base"这种形态**写不进契约**，也就到不了 env。
+//
 // 未接的面（照实登记 · 不当已做）：
 //
 //	· 镜像准备（OCI 拉取/解包）：契约 `[茧].rootfs` 指的那个目录得先备好 —— 后端只报「读不到 /
 //	  不是目录」，✗ 不假装我们替你拉了镜像；上层盘还必须支持叠层（tmpfs/ext4/xfs 可以，
 //	  overlay-on-overlay 不行，见 core/internal/cocoon/backend_nsjail_rootfs.go）。
 //	· 伪终端（ExecOpts.TTY=true 一律拒）· VZ/HCS 两个后端 · 令牌真值落点（本版只签发并在输出里给脱敏形）。
+//	· ★ **broker 的命令面**：茧内拿到的只是「指向 broker 的 base」＋「占位符」，
+//	  真值的交接在 `cocoon.Broker`（`ai.request` op：先 Authorize，再 RewriteRequest 换值），
+//	  而**本仓现读没有 `zerg ai inject` / `zerg ai call` 这一类命令面**（`grep -rn '"ai ' core/cmd/zerg`
+//	  命中 0）。⇒ 茧内 `curl $ZERG_AI_BASE/...` **现在调不通**：要先有 broker 进程
+//	  （`NewBroker` ＋ `Listen` ＋ `Serve` ＋ 令牌面）在 base 那个端口上听。这一段是缺口，
+//	  ✗ 不许把它写成"已接上"。
 package main
 
 import (
@@ -471,6 +493,31 @@ func cocoonSpecLockOf(m *cocoon.Meta) cocoonSpecLockView {
 	return v
 }
 
+// cocoonSpecOfMeta — **只读**回读 meta 记下的那份契约（`open` 的注入形状就是按它算的）。
+//
+// 返回 (spec, why)：读不到 / 解析不过 ⇒ spec=nil 且 why 是原因。调用方按三值纪律处理
+// （有形状 / 没开 / 取不到数），✗ 不许把"取不到"伪装成"没开"。
+//
+// ★ 为什么不把形状写进 meta：meta 是要给人看、给脚本读的盘上件，而"注入面"的真源只有
+// 契约一处。写两份就会有两种说法（契约改了、meta 还留着旧形状），而克隆出来的那份
+// 特别容易被读成"这就是茧内真拿到的"。
+func cocoonSpecOfMeta(m *cocoon.Meta) (*cocoon.Spec, string) {
+	dir := strings.TrimSpace(m.SpecDir)
+	if dir == "" {
+		return nil, "meta 没记契约目录（老茧 / 脚本写的 meta）"
+	}
+	p := filepath.Join(dir, cocoon.SpecFileName)
+	raw, err := os.ReadFile(p)
+	if err != nil {
+		return nil, fmt.Sprintf("契约读不到（%s）", p)
+	}
+	spec, perr := cocoon.ParseSpecFile(p, raw)
+	if perr != nil {
+		return nil, fmt.Sprintf("契约解析不过（%v）", perr)
+	}
+	return spec, ""
+}
+
 // cocoonAllocID —— 分配茧 id：`<契约名>-<8 位十六进制>`，并确保 `<根>/<id>` 与墓碑都不在盘上。
 func cocoonAllocID(name string) (string, error) {
 	base := strings.ToLower(strings.TrimSpace(name))
@@ -515,6 +562,59 @@ func cocoonOpenUsage(inv *invocation, stderr io.Writer, why string) int {
 	fmt.Fprintf(stderr, "%s: %s\n", progName, why)
 	fmt.Fprintf(stderr, "用法：%s cocoon open <dir> [--dry-run] [--json <字段>]\n", progName)
 	return exitUsage
+}
+
+// ── AI 注入面（T4）─────────────────────────────────────────────────────
+
+// cocoonAIUpstream — AI base 的三级真源：契约 `[茧.ai].base` ＞ `ZERG_AI_UPSTREAM` ＞ 内置回环。
+//
+// ★ 为什么"缺省取宿主真源"而不是把内置值抄进契约：base 指向的是**宿主上的 broker**，
+// 它的端口由 broker bind 后回写 ⇒ 契约里写死端口等于让契约去猜一个运行期才存在的值。
+func cocoonAIUpstream(ai cocoon.AISpec) string {
+	if b := strings.TrimSpace(ai.Base); b != "" {
+		return b
+	}
+	if v := strings.TrimSpace(os.Getenv(cocoonAIUpstreamEnv)); v != "" {
+		return v
+	}
+	return cocoonDefaultAIUpstream
+}
+
+// cocoonAIInject — 按契约算出「要注入给茧内的三件东西」＋需要的那条挂载项。
+//
+//	返回零值 plan ⇒ 契约没开 AI（安全侧：茧内拿不到任何 AI env）。
+//	mounts        ⇒ 换了根时那条 **ro** 绑定；没换根 ⇒ nil（宿主路径在茧内本来就可见）。
+//
+// ★ 本函数**不写盘、不碰网**：`--dry-run` 也要能算同一份形状，而干跑必须零副作用。
+//
+//	写占位符件那一步由调用方（真跑档）单独做 —— 两件事分开，干跑就不可能偷偷落了件。
+func cocoonAIInject(instID, tokenHost string, spec *cocoon.Spec) (cocoon.AIPlan, []cocoon.OrchestrateMount, error) {
+	if spec == nil || !spec.Cocoon.AI.Enabled {
+		return cocoon.AIPlan{}, nil, nil
+	}
+	plan, err := cocoon.BuildAIEnvChecked(instID, spec.Cocoon.AI.ModelOrDefault(), cocoonAIUpstream(spec.Cocoon.AI))
+	if err != nil {
+		return cocoon.AIPlan{}, nil, err
+	}
+	// ★「换不换根」只问一个口（cocoon.CocoonChroots），✗ 不在这里自己看 rootfs 串：
+	//   两处各判一次，迟早会有一处把 `rootfs = "/"`（等价于不换根）当成换根。
+	chrooted := cocoon.CocoonChroots(spec)
+	plan, err = plan.WithTokenFile(cocoon.AITokenInCocoonPath(chrooted, tokenHost))
+	if err != nil {
+		return cocoon.AIPlan{}, nil, err
+	}
+	var mounts []cocoon.OrchestrateMount
+	if mnt, ok := cocoon.AITokenMount(chrooted, tokenHost); ok {
+		mounts = append(mounts, mnt)
+	}
+	return plan, mounts, nil
+}
+
+// cocoonAIText — 人面那一行（真跑/干跑共用同一句话，✗ 不许两处各说一套）。
+func cocoonAIText(plan cocoon.AIPlan) string {
+	return fmt.Sprintf("base=%s · model=%s · 令牌件=%s（内容恒为占位符 %s · 真值不在茧内 · "+
+		"茧内要真发请求得走宿主 broker 换值；本版无 broker 命令面）",
+		plan.Base, plan.Model, plan.TokenFile, cocoon.AITokenPlaceholder)
 }
 
 // ── open ────────────────────────────────────────────────────────────────
@@ -641,6 +741,38 @@ func cmdCocoonOpen(inv *invocation, stdout, stderr io.Writer) int {
 		return exitFail
 	}
 
+	// ── AI 注入面（T4）─────────────────────────────────────────────────────
+	//
+	// ★ 真跑档才落件（干跑在上面已经 return 了）—— 干跑只出计划，✗ 不写盘。
+	// ★ 落的是**占位符**（`zerg-broker`），真令牌既不写盘也不入 env：真值只在宿主 broker。
+	var (
+		aiPlan   cocoon.AIPlan
+		aiMounts []cocoon.OrchestrateMount
+	)
+	if spec.Cocoon.AI.Enabled {
+		tokenHost, werr := cocoon.WriteAITokenPlaceholder(cdir)
+		if werr != nil {
+			if _, uerr := cocoon.UpdatePhase(metaPath, cocoon.PhaseFailed); uerr != nil {
+				fmt.Fprintf(stderr, "%s: 另：meta 落 failed 也失败：%v\n", progName, uerr)
+			}
+			inv.setErr("failed", "ai_token_file_failed", werr.Error())
+			fmt.Fprintf(stderr, "%s: 写 AI 占位符件失败（已停在这一步 · meta 落 failed · 未 Provision）：%v ⇒ 退码 1\n",
+				progName, werr)
+			return exitFail
+		}
+		p, ms, perr := cocoonAIInject(id, tokenHost, spec)
+		if perr != nil {
+			if _, uerr := cocoon.UpdatePhase(metaPath, cocoon.PhaseFailed); uerr != nil {
+				fmt.Fprintf(stderr, "%s: 另：meta 落 failed 也失败：%v\n", progName, uerr)
+			}
+			inv.setErr("failed", "ai_inject_failed", perr.Error())
+			fmt.Fprintf(stderr, "%s: 算不出 AI 注入形状（已停在这一步 · meta 落 failed · 未起服务）：%v ⇒ 退码 1\n",
+				progName, perr)
+			return exitFail
+		}
+		aiPlan, aiMounts = p, ms
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
@@ -651,6 +783,12 @@ func cmdCocoonOpen(inv *invocation, stdout, stderr io.Writer) int {
 	//   （T3b 实测三次真后端 open：pid:0、无 logs/、无 nsjail 进程）。
 	logDir := filepath.Join(cdir, "logs")
 	opts := cocoon.OrchestrateOptions{LogDir: logDir, Detach: true}
+	// AI 注入面：三个 env（base/model/令牌件路径）＋换了根时那条 ro 绑定。
+	// ★ 两者都只在 `[茧.ai] enabled = true` 时非空（零值即"没有 AI 能力"）。
+	if aiPlan.Valid() {
+		opts.AIEnv = aiPlan.Env
+		opts.Mounts = aiMounts
+	}
 	if !caps.Expose {
 		// 后端不映射端口 ⇒ readiness 探测直连回环（茧与调用方同一网络栈，茧内端口就是宿主端口）。
 		// 走 Expose 会拿到 ErrBackendUnsupported —— 那是「这条链路不存在」，不是「端口不通」。
@@ -789,6 +927,11 @@ func cmdCocoonOpen(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "端口       : %s\n", cocoonPortsText(ports))
 	}
 	fmt.Fprintf(stdout, "服务       : %s\n", strings.Join(spec.Order, " → "))
+	if aiPlan.Valid() {
+		fmt.Fprintf(stdout, "AI         : %s\n", cocoonAIText(aiPlan))
+	} else {
+		fmt.Fprintf(stdout, "AI         : %s（契约未开 [茧.ai].enabled ⇒ 不给 AI 能力，是安全侧）\n", cocoonDash)
+	}
 	fmt.Fprintf(stdout, "令牌       : %s（只出脱敏形；真值进茧内 env，✗ 不进 stdout/argv/日志）\n", tokenText)
 	fmt.Fprintf(stdout, "状态根     : %s\n", cdir)
 	return exitOK
@@ -833,6 +976,17 @@ func cocoonOpenPlan(inv *invocation, stdout, stderr io.Writer, dir string, spec 
 	if !caps.Expose {
 		fmt.Fprintf(stdout, "  端口面  : 后端不映射端口（%s）⇒ 上面这些 [[端口]] 会被**跳过**，readiness 探测直连 %s:<茧内端口>\n",
 			cocoonOrDash(caps.ExposeMechanism), cocoon.DefaultBind)
+	}
+	// AI 注入面：干跑**只算形状**（✗ 不写占位符件 —— 干跑必须零副作用）。
+	if spec.Cocoon.AI.Enabled {
+		tokenHost := filepath.Join(cocoonRoot(), "<分配于真跑>", cocoon.AITokenHostFileName)
+		if p, _, perr := cocoonAIInject("<分配于真跑>", tokenHost, spec); perr == nil {
+			fmt.Fprintf(stdout, "  AI      : enabled · %s（干跑不落件）\n", cocoonAIText(p))
+		} else {
+			fmt.Fprintf(stdout, "  AI      : enabled · 算不出注入形状：%v（真跑会在起服务之前拒执）\n", perr)
+		}
+	} else {
+		fmt.Fprintf(stdout, "  AI      : %s（契约未开 [茧.ai].enabled ⇒ 不给 AI 能力，是安全侧）\n", cocoonDash)
 	}
 	fmt.Fprintf(stdout, "  会做的  : 分配茧 id → 写 meta(created→starting) → Provision → 按序起服务 → Expose → 写 meta(running)\n")
 	fmt.Fprintf(stdout, "  不会做  : 任何磁盘写入 / 任何进程 / 任何端口\n")
@@ -1422,20 +1576,22 @@ func cmdCocoonInspect(inv *invocation, stdout, stderr io.Writer) int {
 		row["caps_error"] = cocoonDash
 	}
 
-	// 注入面：绑了卵才有 AI 形状（没绑 ⇒ 零值 plan = 没有 AI 能力，是安全侧）。
-	upstream := strings.TrimSpace(os.Getenv(cocoonAIUpstreamEnv))
-	if upstream == "" {
-		upstream = cocoonDefaultAIUpstream
-	}
-	plan := cocoon.BuildAIEnv(m.ID, m.Egg, upstream)
-	if plan.Valid() {
-		row["ai_base"] = plan.Base
-		row["ai_model"] = plan.Model
-		row["ai_env"] = strings.Join(plan.Environ(), ";")
+	// 注入面：真源是**契约 `[茧.ai]`**（`open` 就是按它算 env 的），✗ 不是 meta ——
+	// meta 里一个令牌面都不落。契约读不到 / 没开这一段 ⇒ 三格如实印 `—`（✗ 编一个形状）。
+	//
+	// ★ 这里**不读令牌件本身**：它的内容恒为占位符（读它没有新信息），而"读一次"会让
+	// inspect 从"只读 meta+契约"变成"还要摸茧目录里的件"，白白多一条会失败的路径。
+	aiSpec, _ := cocoonSpecOfMeta(m)
+	if aiSpec != nil && aiSpec.Cocoon.AI.Enabled {
+		if plan, _, perr := cocoonAIInject(m.ID, cocoon.AITokenHostPath(cdir), aiSpec); perr == nil {
+			row["ai_base"] = plan.Base
+			row["ai_model"] = plan.Model
+			row["ai_env"] = strings.Join(plan.Environ(), ";")
+		} else {
+			row["ai_base"], row["ai_model"], row["ai_env"] = cocoonDash, cocoonDash, cocoonDash
+		}
 	} else {
-		row["ai_base"] = cocoonDash
-		row["ai_model"] = cocoonDash
-		row["ai_env"] = cocoonDash
+		row["ai_base"], row["ai_model"], row["ai_env"] = cocoonDash, cocoonDash, cocoonDash
 	}
 
 	tokenText, tokenSource := cocoonDash, "absent"
@@ -1478,11 +1634,11 @@ func cmdCocoonInspect(inv *invocation, stdout, stderr io.Writer) int {
 		// false 不等于「不能换根」：只能 chroot 的后端照样能跑只读镜像（见 Capabilities.Overlay）。
 		fmt.Fprintf(stdout, "可写层     : overlay=%t（%s）\n", caps.Overlay, cocoonOrDash(caps.OverlayMechanism))
 	}
-	if plan.Valid() {
+	if row["ai_base"] != cocoonDash && row["ai_base"] != "" {
 		fmt.Fprintf(stdout, "AI 注入面  : base=%s model=%s env=%s\n",
-			plan.Base, plan.Model, strings.Join(plan.Environ(), " · "))
+			row["ai_base"], row["ai_model"], strings.ReplaceAll(row["ai_env"], ";", " · "))
 	} else {
-		fmt.Fprintf(stdout, "AI 注入面  : %s（未绑定卵 ⇒ 没有 AI 能力，安全侧）\n", cocoonDash)
+		fmt.Fprintf(stdout, "AI 注入面  : %s（契约未开 [茧.ai].enabled，或契约读不到 ⇒ 没有 AI 能力，安全侧）\n", cocoonDash)
 	}
 	fmt.Fprintf(stdout, "令牌       : %s（%s · 只出脱敏形）\n", tokenText, tokenSource)
 	// 契约锁：人面只印前 8 位（全文在 meta.json 的 spec_sha —— 要看全文去读那件，不往终端抄指纹）。
