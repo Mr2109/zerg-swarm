@@ -455,6 +455,31 @@ func run(args []string, stdout, stderr io.Writer) int {
 			inv.unknown = append(inv.unknown, f)
 		}
 	}
+	// ★ 同一条数据驱动收口（批 B4 · 2026-10-20 · `zerg api serve` 归入命令面）：两枚旗标
+	//   （`--port` 取值 · 已在 `valueFlagName`；`--insecure` 布尔 · 上面刚上户口）⇒ **全族共用**；
+	//   若不在此收口，别族（usage 未列它的命令）真给它们会从「未知旗标 2」退化成**静默吞**
+	//   （硬约束⑤：既有命令的退码与输出一字不动）。形状逐字照拄上面 B2 那条：把不归本命令的
+	//   那一枚**补回 `inv.unknown`** ⇒ 由下面**同一条**判词 + 同一个退码 2 收口。
+	//   `api serve` 与 `context set-port` 的 usage 已列 `--port`；`api serve` 的 usage 已列
+	//   `--insecure` ⇒ 归它们。
+	for _, f := range []string{"--port", "--insecure"} {
+		if inv.hasFlag(f) && !usageDeclaresFlag(cmd, f) {
+			inv.unknown = append(inv.unknown, f)
+		}
+	}
+	// ★ 同一条数据驱动收口（批 B5 · 2026-10-20 · `zerg agent run` 归入命令面）：十一枚旗标
+	//   （九枚取值 —— `--task`/`--issue`/`--tools`/`--mcp`/`--max-turns`/`--retry`/`--gateway`/
+	//   `--x3-status`/`--x3-token` 已在 `valueFlagName`；两枚布尔 —— `--auto-issue`/`--subtask`
+	//   上面刚上户口）⇒ **全族共用**；若不在此收口，别族（usage 未列它们的命令）真给它们会从
+	//   「未知旗标 2」退化成**静默吞**（硬约束⑤：既有命令的退码与输出一字不动）。形状逐字照拄
+	//   上面 B4 那条：把不归本命令的那一枚**补回 `inv.unknown`** ⇒ 由下面**同一条**判词 + 同一个
+	//   退码 2 收口。`agent run` 的 usage 已列这十一枚 ⇒ 归它。
+	for _, f := range []string{"--task", "--issue", "--tools", "--mcp", "--max-turns", "--retry",
+		"--gateway", "--x3-status", "--x3-token", "--auto-issue", "--subtask"} {
+		if inv.hasFlag(f) && !usageDeclaresFlag(cmd, f) {
+			inv.unknown = append(inv.unknown, f)
+		}
+	}
 	// ★ 同一条数据驱动收口（本单 · 缺口 GAP-20260928-139）：`--build-info` 在解析面刚上户口（布尔 case）⇒ **全族共用**；
 	//   若不在此收口，别族（usage 未列它的命令）真给它会从「未知旗标 2」退化成**静默吞**（硬约束⑤：既有命令的退码与输出一字不动）。
 	//   形状逐字照拄上面 `--literal-text` 那条：把不归本命令的那一枚补回 `inv.unknown` ⇒ 由下面**同一条**判词 + 同一个退码 2 收口。`version` 的 usage 已列它 ⇒ 归它。
@@ -865,6 +890,28 @@ func init() {
 			endpoint: "",
 			run:      cmdAPIHelp,
 		},
+		// ---- 批 B4（2026-10-20 · `zerg api serve`）：独立入口 `core/cmd/zerg-api` 归入命令面 ----
+		// 源件 227 行 · 旗标三枚**逐字**保留（`-port 8083` / `-workdir .` / `-insecure`），只把 Go
+		// `flag` 的单横线写成双横线。★ 并入**既有** `api` 族（`ls`/`openapi`/`help` 三条只读投影 =
+		// 打主控 `/api/*` 的**客户端**面），✗ 不新开顶层族；动作名分家：`serve` = **在本机起服务端**。
+		// **双轨期**：`core/cmd/zerg-api` 二进制一字不动。实现在 `family_api_serve.go`
+		// （件头逐条写清与源件的五处差异 —— 用法退码 1→2、`--port` 值域前置判、工作目录启动时定死、
+		// 不切进程 cwd、优雅停）。
+		// 写面（`POST /task` 真派单 · 改任务单目录）但**不进危险表**，理由与 `sched run` 那一格同：
+		// 它是操作者当场在本机起的那个常驻进程（本来由 launchd 拉起），Ctrl-C/SIGTERM 即停；
+		// 远端可达面**由鉴权闸守着**（缺 `ZERG_API_TOKEN` 即拒启，无令牌必须显式 `--insecure` 并打横幅）
+		// ⇒ 本机可逆、无远端副作用；与 `trace`/`review` 同一种「不进危险表」的判法。
+		{
+			path:     []string{"api", "serve"},
+			kind:     "ApiServe",
+			summary:  "在本机起外部接入 REST API（**常驻档**：`POST /task` 提交任务进 git 自循环 · `GET /task/{id}` 查 · `GET /capabilities` 机器可读清单 · `GET /status` 统计 · `GET /panel` 面板；缺 `ZERG_API_TOKEN` 即拒启、`--insecure` 放行并打横幅）",
+			usage:    "zerg api serve [--port <端口>] [--workdir <目录>] [--insecure]",
+			arity:    "none",
+			args:     []string{"（不收位置参数：端口走 `--port`、工作目录走 `--workdir`）"},
+			endpoint: "",
+			opened:   true,
+			run:      cmdAPIServe,
+		},
 		{
 			path:     []string{"agent", "ls"},
 			kind:     "Machine",
@@ -1237,6 +1284,31 @@ func init() {
 				"缺口 GAP-20261018-20 · 同族先例 agent restart（D3 · 远端 ssh 落 F-5 那一格）", true, dangerScopeRemote},
 			opened: true,
 			run:    cmdAgentDeploy,
+		},
+		// ---- 批 B5（2026-10-20 · `zerg agent run`）：独立入口 `core/cmd/zerg-agent` 归入命令面 ----
+		// 源件 462 行 · 十六枚 Go `flag` **逐字**保留（只把单横线写成双横线；`-version` 除外 ——
+		// `zerg version`/全局 `--version` 是身份面唯一真源）。★ 并入**既有** `agent` 族
+		// （`ls`/`show`/`ping`/`deploy`/`load`/`unload`/… = 打子端/主控的投影与控制面），✗ 不新开
+		// 顶层族；动作名分家：`run` = **在本机跑一个 Agent 任务**（调网关、执行工具、写自己的任务单）。
+		// 与 `sched run`／`api serve` 同一条判法（族已在册 ⇒ 只增一格）。
+		// **双轨期**：`core/cmd/zerg-agent` 二进制**一字不动** —— 主控调度器
+		// （`core/internal/agent/scheduler.go:477` 与 `worker.go:157`）仍 `exec zerg-agent`，
+		// 且**靠它的进程内语义码** 0/2/3/4 判重试与死信；本命令走命令面退码表（3/4 已另有所指）
+		// ⇒ 两条轨的退码空间**不同**，不许互换（差异 ③ 在实现件件头逐字写着）。
+		// 写面（真调模型、真执行工具、写工作目录与任务单）但**不进危险表**，理由与 `sched run`
+		// 同：它是操作者当场在本机起的那个任务运行器，跑的是自己给的那段任务、写的是自己的工作区；
+		// 工具门在**内层**（`control.NewAgentGateFromRepo` 的规则表 · 缺省 `block` · 装不上则恒拦）
+		// ⇒ 本机可逆、无远端副作用。
+		{
+			path:    []string{"agent", "run"},
+			kind:    "AgentRun",
+			summary: "在本机**跑一个 Agent 任务**（调网关 → 执行工具 → 写工作区；`--issue` 接单档：读问题单→查因→回填结论→标 resolved/escalated；`--auto-issue` 失败自动挂单 · `--subtask` 子任务结晶 · `--mcp` 挂 MCP 工具 · `--state` 断连恢复；缺令牌即拒跑、工具门缺省恒拦）",
+			usage:   agentRunUsageLine,
+			arity:   "none",
+			args:    []string{"（不收位置参数：任务走 `--task`、问题单走 `--issue`）"},
+			fields:  agentRunFields,
+			opened:  true,
+			run:     cmdAgentRun,
 		},
 		{
 			path:    []string{"agent", "probe"},
@@ -5370,6 +5442,26 @@ func parseInvocation(args []string) (*invocation, error) {
 			inv.kvSet(a, "true")
 		case a == "--dev":
 			inv.kvSet(a, "true")
+		// ★ 批 B4（2026-10-20 · `zerg api serve` 归入命令面）：一枚**布尔**旗标 ——
+		//   `--insecure`（允许无令牌运行 · **会打横幅**；源件 `-insecure` 的逐字保留）。
+		//   与 `--container`/`--dev` 同一种形态（写进 `inv.kv`（`kvSet`）⇒ `foreignFlag` 看得见）；
+		//   ★ **✗ 不进 `valueFlagName`**（那张表是取值旗标名表 · 门73 判据丙：布尔名登进去 ⇒ 形态判红）；
+		//   ★ 单列一条 `case`（✗ 不许合并：门73 的取数面按 `case a == \"--x\"` 逐条现读）。
+		//   用法串与本处**必须同改**（门73）＋ dispatch 收口（见下 `--insecure` 那一排）。
+		case a == "--insecure":
+			inv.kvSet(a, "true")
+		// ★ 批 B5（2026-10-20 · `zerg agent run` 归入命令面）：两枚**布尔**旗标 ——
+		//   `--auto-issue`（重试耗尽仍失败 ⇒ 写 `docs/issues/` 挂单 · 源件 `-auto-issue` 逐字保留）·
+		//   `--subtask`（子任务结晶模式 · 源件 `-subtask` 逐字保留）。
+		//   与 `--container`/`--dev`/`--insecure` 同一种形态（写进 `inv.kv`（`kvSet`）⇒
+		//   `foreignFlag` 看得见）；★ **✗ 不进 `valueFlagName`**（门73 判据丙：布尔名登进取值表 ⇒
+		//   形态判红）；★ 两枚**各写一条** `case`（✗ 不许合并成一串 `||`：门73 取数面按
+		//   `case a == "--x"` 逐条现读，合并只读得到前者）。用法串与本处**必须同改**（门73）
+		//   ＋ dispatch 收口（见下 `--auto-issue` 那一排）。
+		case a == "--auto-issue":
+			inv.kvSet(a, "true")
+		case a == "--subtask":
+			inv.kvSet(a, "true")
 		// `code find` 的**短形**上下文/归一旗标（缺口 `GAP-20260927-250/252` · 本枚）：
 		//   `-i`（大小写归一 · 布尔）· `-A<N>`/`--after <N>`（后文）· `-B<N>`/`--before <N>`（前文）·
 		//   `-C<N>`（前后各 N，POSIX grep 惯用 · 与缺口症状逐字 `-A2`/`-C1` 同形）。
@@ -5961,6 +6053,20 @@ func valueFlagName(a string) string {
 	//   用法串与本表**必须同改**（门73）；配套 dispatch 收口（不归本命令的那一枚补回 `inv.unknown`）。
 	switch a {
 	case "--workdir", "--agent-bin", "--repo":
+		return a
+	}
+	// ★ 批 B5（2026-10-20 · `zerg agent run` 归入命令面）：**九枚取值旗标** ——
+	//   `--task <任务描述>`（与 `--issue` 二选一）· `--issue <问题单>` · `--tools <子集>` ·
+	//   `--mcp <spec>` · `--max-turns <N>` · `--retry <N>` · `--gateway <URL>` ·
+	//   `--x3-status <URL>` · `--x3-token <令牌>`（后两枚 = 机器级采样的环境变量兜底）。
+	//   与上面各排同一口径：值照收，语义在 `family_agent_run.go:agentRunParse` 里判。
+	//   ★ 本排是名字表「唯一真源」⇒ 不登记就一律退 2「未知旗标」= 新旗标等于不可用；
+	//   用法串与本表**必须同改**（门73 判据乙/丙）；配套 dispatch 收口（不归本命令的那一枚
+	//   补回 `inv.unknown`）。★ `--model` / `--workdir` / `--state` / `--json` 已在既有各排
+	//   （一族共用一张名字表 ⇒ 本排**不重开同名旗标**）。
+	switch a {
+	case "--task", "--issue", "--tools", "--mcp", "--max-turns", "--retry",
+		"--gateway", "--x3-status", "--x3-token":
 		return a
 	}
 	return ""

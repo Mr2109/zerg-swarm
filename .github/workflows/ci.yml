@@ -63,6 +63,9 @@ jobs:
           #   · 没有测试件的包不进列表（`go test` 无事可做），编译面由上面的 `go build ./...` 接住。
           # **不许退回 `go test ./...`**：全量 = 把「只在本机成立的判据」当成公开面的尺。
           # 增删包 ⇒ 同批改这个名字列（名单件与本列表**逐字一致**，现核命令见名单件头部）。
+          # ★ 2026-10-20：`./internal/cocoon/` 进名单（名单内 32 → 33）—— 该包**只 import 标准库**
+          #   （不引本仓任何包），无状态目录 / 端口 / 制品依赖；本机现跑 `go test ./internal/cocoon/ -count=1`
+          #   **rc=0**（14.961s）。跨挂载 / SUID / root 三面在平台不成立时由测试自身 `t.Skip` 跳过。
           go test \
             ./cmd/zerg-model/ \
             ./internal/agent/ \
@@ -71,6 +74,7 @@ jobs:
             ./internal/audit/ \
             ./internal/behaviorobs/ \
             ./internal/chat/ \
+            ./internal/cocoon/ \
             ./internal/compat/ \
             ./internal/config/ \
             ./internal/control/ \

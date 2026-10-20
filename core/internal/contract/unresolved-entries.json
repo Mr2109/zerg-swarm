@@ -18,28 +18,35 @@
       "dir": "core/cmd/zerg-agent",
       "main": "core/cmd/zerg-agent/main.go",
       "bin": "zerg-agent",
-      "who_calls": "主控侧的**子端调度器**在生产默认路径上 exec 它 · 构建/打包/升级三条脚本出它 · CI 工作流出它 · 文档把它写成常驻子端（systemd `edge-node-agent.service` / 用户域 LaunchAgent `com.zerg.agent`）",
+      "who_calls": "主控侧的**子端调度器**在生产默认路径上 exec 它（`scheduler.go` 带 `-json`、`worker.go` 不带 ⇒ **两枚调用者都靠它的进程内语义码判重试/死信**）· 构建/打包/升级三条脚本出它 · CI 工作流出它 · 文档把它写成常驻子端（systemd `edge-node-agent.service` / 用户域 LaunchAgent `com.zerg.agent`）；★ 2026-10-20 批 B5：**任务运行器那一段已归入命令面** —— `zerg agent run …`（实现在 `core/cmd/zerg/family_agent_run.go`，旗标/接单档/重试/挂单/结果面逐面搬自本入口；并入**既有** `agent` 族 · ✗ 不新开族）；**常驻子端仍是 `agent/cmd/zerg-agentd`**；双轨期 `core/cmd/zerg-agent` 二进制一字不动",
       "callers": [
         {"file": "core/internal/agent/scheduler.go", "anchor": "exec.CommandContext(ctx, \"zerg-agent\"", "line_hint": 477, "公开面对应件": "core/internal/agent/scheduler.go", "what": "生产默认：`exec zerg-agent`（唯一的仓内运行时调用）"},
         {"file": "core/cmd/zerg/pack_release.go", "anchor": "zerg-agent-darwin-", "line_hint": 247, "公开面对应件": "core/cmd/zerg/pack_release.go", "what": "打包：落进发布目录（darwin）—— Go 真身（批B1 真搬 · 原 shell 件已退场）"},
         {"file": "publish/ci/release-agent.yml", "anchor": "zerg-agent-$GOOS-$GOARCH\" ./cmd/zerg-agent", "line_hint": 112, "公开面对应件": ".github/workflows/release-agent.yml", "what": "CI：交叉编译出该件"},
         {"file": "scripts/build/zerg-upgrade.sh", "anchor": "子端 : $(ver_of \"$PREFIX/zerg-agent\")", "line_hint": 746, "公开面对应件": "不进公开面 ⇒ 该证据只在私有面成立", "what": "升级器：读它的版本号（四件清单之一）"},
-        {"file": "README.md", "anchor": "`~/zerg/bin/zerg-agentd`（检出 `bin/`），**用户域 LaunchAgent** `~/Library/LaunchAgents/com.zerg.agent.plist`", "line_hint": 82, "公开面对应件": "不进公开面 ⇒ 该证据只在私有面成立", "what": "文档：常驻面（Linux systemd / macOS 用户域 LaunchAgent · :8100）"}
+        {"file": "README.md", "anchor": "`~/zerg/bin/zerg-agentd`（检出 `bin/`），**用户域 LaunchAgent** `~/Library/LaunchAgents/com.zerg.agent.plist`", "line_hint": 82, "公开面对应件": "不进公开面 ⇒ 该证据只在私有面成立", "what": "文档：常驻面（Linux systemd / macOS 用户域 LaunchAgent · :8100）"},
+        {"file": "README.md", "anchor": "| zerg-agent | 子端（低端机 Linux + 迷你 macOS——:8100）· **已归入命令面**：`zerg agent run", "line_hint": 30, "公开面对应件": "不进公开面 ⇒ 该证据只在私有面成立", "what": "文档：组件清单那一行 ＋ 命令面入口（批 B5）"},
+        {"file": "docs/skills/zerg-overview.md", "anchor": "| zerg-agent | 子端（EDGE-NODE Linux + Mini macOS——:8100）· **已归入命令面**：`zerg agent run", "line_hint": 58, "公开面对应件": "不进公开面 ⇒ 该证据只在私有面成立", "what": "文档：同一行（skills 总览 · 批 B5）"},
+        {"file": "core/cmd/zerg/main.go", "anchor": "path:    []string{\"agent\", \"run\"},", "line_hint": 1303, "公开面对应件": "core/cmd/zerg/main.go", "what": "**命令面登记行**（批 B5）：`zerg agent run` 进命令树 ⇒ 同一个任务运行器有 CLI 入口"},
+        {"file": "core/cmd/zerg/family_agent_run.go", "anchor": "func cmdAgentRun(inv *invocation, stdout, stderr io.Writer) int {", "line_hint": 682, "公开面对应件": "core/cmd/zerg/family_agent_run.go", "what": "**实现件**（批 B5）：源件 `main()` 的逐面搬（令牌闸 → 接单档 → 造 Agent＋M3 工具门 → 日志/状态/MCP/技能 → loop 含重试 → 挂单/收尾 → 结果面）"}
       ],
-      "verdict": "待拍（P13 第一条：件是任务运行器还是子端常驻，与 agent/cmd/zerg-agentd 的分工要人定）"
+      "verdict": "**已归（2026-10-20 批 B5）**：`P13` 第一条问的「它是任务运行器还是子端常驻」由**现读事实**答完 —— 两个仓内调用者都 `exec zerg-agent <件>`（一次一单、退回码），常驻面一直是 `agent/cmd/zerg-agentd`（:8100 · systemd/LaunchAgent）⇒ 本件的语义 = **任务运行器**，已归入命令面 `zerg agent run`（实现在 `core/cmd/zerg/family_agent_run.go` · 十六枚旗标里十五枚逐字保留、`-version` 由 `zerg version` 取代 · 接单档与重试/挂单/结果面逐字搬）；并入**既有** `agent` 族（子端投影/控制面二十条一字不动），✗ 不新开顶层族。★ **双轨期不删不改** `core/cmd/zerg-agent`（`P13` 的「拍板前不许删」照旧成立），且它的**进程内语义码 0/2/3/4 仍是调度器的判据** —— 命令面退码表里 3=partial_ok / 4=unauthenticated ⇒ 两条轨的码空间不同、不许互换（差异 ③）。若 Mr2109 对归属另有安排（例如把调度器改走 `zerg agent run`），那要先给它的 0/2/3/4 重新取号（`P-013` ⑤）再改调用点"
     },
     {
       "id": "api",
       "dir": "core/cmd/zerg-api",
       "main": "core/cmd/zerg-api/main.go",
       "bin": "zerg-api",
-      "who_calls": "**无第三方调用者**（仓内零脚本起它）；只有文档登记 + 令牌纪律的说明面引它（`credentials.go` 点名它的 8083 面「无令牌即放行」必须治）+ 打包公开面的排除说明",
+      "who_calls": "**文档两行 + 令牌纪律的说明面 + 打包排除说明**；★ 2026-10-20 批 B4：**已归入命令面** —— `zerg api serve [--port <端口>] [--workdir <目录>] [--insecure]`（实现在 `core/cmd/zerg/family_api_serve.go`，六条路由/令牌闸/启动判词逐字搬自本入口；并入**既有** `api` 族 · ✗ 不新开族）；双轨期 `core/cmd/zerg-api` 二进制一字不动",
       "callers": [
         {"file": "core/cmd/zerg/credentials.go", "anchor": "`zerg-api`（8083 外部接入面）", "line_hint": 81, "公开面对应件": "core/cmd/zerg/credentials.go", "what": "命令面自描述：点名它的 8083 面曾无令牌放行（T-18 已治）"},
-        {"file": "README.md", "anchor": "| zerg-api | API 服务（:8083） |", "line_hint": 31, "公开面对应件": "不进公开面 ⇒ 该证据只在私有面成立", "what": "文档：把它登记成「API 服务（:8083）」"},
+        {"file": "README.md", "anchor": "| zerg-api | API 服务（:8083）· **已归入命令面**：`zerg api serve [--port <端口>] [--workdir <目录>] [--insecure]`（双轨期二进制仍在） |", "line_hint": 31, "公开面对应件": "不进公开面 ⇒ 该证据只在私有面成立", "what": "文档：登记成「API 服务（:8083）」＋ 命令面入口那一行"},
+        {"file": "docs/skills/zerg-overview.md", "anchor": "| zerg-api | API 服务（:8083）· **已归入命令面**：`zerg api serve [--port <端口>] [--workdir <目录>] [--insecure]`（双轨期二进制仍在） |", "line_hint": 59, "公开面对应件": "不进公开面 ⇒ 该证据只在私有面成立", "what": "文档：同一行（skills 总览）"},
+        {"file": "core/cmd/zerg/main.go", "anchor": "path:     []string{\"api\", \"serve\"},", "line_hint": 892, "公开面对应件": "core/cmd/zerg/main.go", "what": "**命令面登记行**（批 B4）：`zerg api serve` 进命令树 ⇒ 同一套外部接入 REST API 有 CLI 入口"},
+        {"file": "core/cmd/zerg/family_api_serve.go", "anchor": "func cmdAPIServe(inv *invocation, stdout, stderr io.Writer) int {", "line_hint": 377, "公开面对应件": "core/cmd/zerg/family_api_serve.go", "what": "**实现件**（批 B4）：源件 `main()` 的逐面搬（令牌闸 → 六条路由 → 监听；端点判词/JSON 键/面板 HTML 逐字）"},
         {"file": "scripts/build/publish-public.sh", "anchor": "（zerg-agent/zerg-api/… 60MB+）", "line_hint": 137, "公开面对应件": "不进公开面 ⇒ 该证据只在私有面成立", "what": "发布面：把它当**编译产物**排除（不是调用者）"}
       ],
-      "verdict": "待拍（P13：与主控 76 条真路径是否重复 —— `验真-§五-入口组:96` 记「调用面 0 命中」）"
+      "verdict": "**已归（2026-10-20 批 B4）**：归入命令面 `zerg api serve`（实现在 `core/cmd/zerg/family_api_serve.go` · 三枚旗标 `--port`/`--workdir`/`--insecure` 逐字保留 · 六条路由与令牌闸逐字搬）；并入**既有** `api` 族（客户端只读投影三条一字不动），✗ 不新开顶层族。双轨期独立入口 `core/cmd/zerg-api` **不删、不改**（`P13` 的「拍板前不许删」照旧成立）。★ 本条从 `待拍` 改为 `已归` 依赖 Mr2109 对 B4 的拍板 —— 若归属另有安排，改回 `待拍` 并把 `api` 的动作段 `serve` 从命令树摘除（判据③ 只按段名判，`api` 是既有族 ⇒ 禁列里本来就没有它）"
     },
     {
       "id": "compat",

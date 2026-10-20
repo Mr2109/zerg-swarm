@@ -1191,8 +1191,26 @@ var chsBaseline = chsBaselineSet{
 	//   危险档面（`help dangerous` 128 行 / 49360 字节 · 116 条）与 `help config`（21 / 1748）**一分未变**：
 	//   `review` 的确认动作落在**本机、调用者自己给的**工作目录/仓库上（理由在 main.go 那一格的注释里）⇒
 	//   不进危险表。这是「没有顺手放宽」的反证，不是省了没量。
-	"help --all":     {HasLines: true, Lines: 473, HasBytes: true, Bytes: 253157},
-	"help":           {HasLines: true, Lines: 347, HasBytes: true, Bytes: 87636, HasLast: true, Last: "      非交互用 `--token-stdin`；详见 `zerg help credentials`）。"},
+	// ★ 2026-10-20（本枚 · 批 B4：`api serve` 一条**挂既有 `api` 族** · 写面但零危险档 ·
+	//   源件 `core/cmd/zerg-api`）：族数**不变**（59 —— `api` 族本来就在），只多一条命令的用法行 ⇒
+	//   `help --all` 与裸 `help` 各 **+2 行**（用法行 + 该族段里那一行）。字节与行数由现跑
+	//   `zerg gate check check-help-shape --emit-baseline` 取数照抄（**禁手写** —— 件头纪律）：
+	//   `help --all` 473 → 475 行 / 253157 → 253786 字节 · 裸 `help` 347 → 349 行 / 87636 → 88265 字节。
+	//   危险档面（`help dangerous` 128 行 / 49360 字节 · 116 条）与 `help config`（21 / 1748）**一分未变**：
+	//   `api serve` 的鉴权闸（缺 `ZERG_API_TOKEN` 即拒启 · 无令牌必须显式 `--insecure` 并打横幅）与
+	//   「操作者在自己机器上起的常驻进程」这两条理由写在 main.go 那一格的注释里 ⇒ 不进危险表。
+	//   这是「没有顺手放宽」的反证，不是省了没量。
+	// ★ 2026-10-20（本枚 · 批 B5：`agent run` 一条**挂既有 `agent` 族** · 源件
+	//   `core/cmd/zerg-agent` 的任务运行器那一段）：族数**不变**（`agent` 族本来就在 ⇒ 21 → 22 条动作），
+	//   只多一条命令的用法行 ⇒ `help --all` 与裸 `help` 各 **+2 行**（用法行 + 该族段里那一行）。
+	//   字节与行数由现跑 `zerg gate check check-help-shape --emit-baseline` 取数照抄（**禁手写** ——
+	//   件头纪律）：`help --all` 475 → 477 行 / 253786 → 254716 字节 · 裸 `help` 349 → 351 行 /
+	//   88265 → 89195 字节。危险档面（`help dangerous` 128 行 / 49360 字节 · 116 条）与
+	//   `help config`（21 / 1748）**一分未变**：`agent run` 不进危险表（理由在 main.go 那一格的
+	//   注释里：操作者当场在本机起的任务运行器 · 工具门在内层且缺省恒拦 · 本机可逆无远端副作用）。
+	//   这是「没有顺手放宽」的反证，不是省了没量。
+	"help --all":     {HasLines: true, Lines: 477, HasBytes: true, Bytes: 254716},
+	"help":           {HasLines: true, Lines: 351, HasBytes: true, Bytes: 89195, HasLast: true, Last: "      非交互用 `--token-stdin`；详见 `zerg help credentials`）。"},
 	"help dangerous": {HasLines: true, Lines: 128, HasBytes: true, Bytes: 49360, HasRows: true, Rows: 116, HasTail: true, Tail: "上表 116 条：**已开放 103 条**（确认档齐就真执行 —— 逐条见上行标记）；**未开放 13 条**（真跑一律**拒执**、退码 2 = 不给结论，只有 `--dry-run` 出计划件 = 退码 0）。"},
 	"help config":    {HasLines: true, Lines: 21, HasBytes: true, Bytes: 1748},
 }

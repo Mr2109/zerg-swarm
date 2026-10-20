@@ -17,6 +17,8 @@
 #     core ：48 包 = **ok 32 · FAIL 5 · no test files 11**（整模块 rc=1）
 #     agent：13 包 = **ok 10 · FAIL 0 · no test files 3**（整模块 rc=0 ✓）
 #   ⇒ 名单内 = 32（core）+ 10（agent）= **42** 个包；名单外 = 5 个包（逐条理由见下）。
+#   ★ 2026-10-20 增量（不覆盖上面的读数快照）：新包 `core/internal/cocoon` 原先**两边都没登记**（门㉚ 不红 · CI 也不跑），本批补登记为 **in-ci**
+#     ⇒ 现读 `in-ci` = 42 + 1 = **43**（core 33 · agent 10），`ci.yml` 点名同数；本机现跑该包 `go test` rc=0（14.961s）。
 #   ★ 这份读数是**可复跑**的：把发布器产出树当本机一份 checkout 跑一遍（§十 的 ⑭ 闸同源做法）。
 #   ★ 为什么不用真 clone 跑这一遍：公开仓当前 HEAD（`b337c4c9`）落后本机（`ec48f1ea`）⇒ 它里面
 #     还没有本波要判的件（含本波 A1 的两档矩阵）⇒ 在落后树上跑出来的读数**不对应**本波源码。
@@ -69,6 +71,7 @@ core	internal/api	in-ci	公开面里成立的**纯源码判据**（不碰本机�
 core	internal/audit	in-ci	公开面里成立的**纯源码判据**（不碰本机状态目录 / 端口 / 守护 / 制品 / 私有件）；公开面快照现跑 `go test` **rc=0**（本波现读 · 见本件头部读数块）	—
 core	internal/behaviorobs	in-ci	公开面里成立的**纯源码判据**（不碰本机状态目录 / 端口 / 守护 / 制品 / 私有件）；公开面快照现跑 `go test` **rc=0**（本波现读 · 见本件头部读数块）	—
 core	internal/chat	in-ci	公开面里成立的**纯源码判据**（不碰本机状态目录 / 端口 / 守护 / 制品 / 私有件）；公开面快照现跑 `go test` **rc=0**（本波现读 · 见本件头部读数块）	—
+core	internal/cocoon	in-ci	公开面里成立的**纯源码判据**（只依赖标准库 · 不 import 任何本仓包 · 不碰本机状态目录 / 端口 / 守护 / 制品 / 私有件；`$HOME` 只作负控落脚点，跨挂载 / SUID / root 三面在本机不成立时 `t.Skip` 跳过）；2026-10-20 本机现跑 `go test ./internal/cocoon/ -count=1` **rc=0**（14.961s · 含 meta/reconcile/rm/pack 四个测试件）	—
 core	internal/compat	in-ci	公开面里成立的**纯源码判据**（不碰本机状态目录 / 端口 / 守护 / 制品 / 私有件）；公开面快照现跑 `go test` **rc=0**（本波现读 · 见本件头部读数块）	—
 core	internal/compressor	out-ci	判据要**本机模型制品** `compress_models/llmlingua2-onnx/model.onnx`（ONNX 会话 + 模型驻留）—— §二 明列「本机已装的模型 / ONNX 动态库」不该进 CI；公开树里**这条判据不成立**（不是红，是**无意义**：它判的是本机装没装那个模型）。	不设回名单条件（除非将来 ONNX 模型进公开制品通道 —— 那是产品口径变更，不是 CI 口径变更）；公开面的编译面由同一 job 的 `go build ./...` 那一步接住。
 core	internal/config	in-ci	公开面里成立的**纯源码判据**（不碰本机状态目录 / 端口 / 守护 / 制品 / 私有件）；公开面快照现跑 `go test` **rc=0**（本波现读 · 见本件头部读数块）	—

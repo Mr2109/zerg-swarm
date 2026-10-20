@@ -202,14 +202,21 @@ func cmdAPIHelp(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s: `api help` 不吃位置参数（给的是 %q）\n", progName, inv.args[0])
 		return exitUsage
 	}
-	fmt.Fprint(stdout, `api 族 —— HTTP 能力面的只读投影（批 A）
+	fmt.Fprint(stdout, `api 族 —— HTTP 面两条腿：**客户端只读投影** ＋ **本机服务端**
 
   zerg api ls        能力清单（投影主控 /api/capabilities；字段名与它逐字同源）
   zerg api openapi   路径表（投影主控 /api/openapi.json 的 paths）
   zerg api help      本说明
+  zerg api serve     在本机**起**外部接入 REST API（常驻档 · 批 B4 归入：源件 zerg-api）
+                     POST /task 提交任务 · GET /task/{id} 查 · GET /capabilities 清单 ·
+                     GET /status 统计 · GET /panel 面板。鉴权：环境变量 ZERG_API_TOKEN
+                     （缺则**拒启**；显式 --insecure 才放行并打横幅）
+
+分工：ls / openapi / help 打的是**主控**（客户端面，零写操作）；serve 是**服务端**（在本机起
+进程、由别的程序来打你 —— 写面，但只写你自己的任务单目录）。
 
 不做的：`+"`api call`"+`（通用逃生门）**暂不开** —— 它绕过全部命令面校验，风险最高，
-等命令面稳定再放（§7.1 P10 的定案）。批 1 期间本族**零写操作**。
+等命令面稳定再放（§7.1 P10 的定案）。
 `)
 	return exitOK
 }

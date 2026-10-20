@@ -12091,6 +12091,98 @@
    "want_rc": 2,
    "want_stdout_bytes": 0,
    "why": "只收 `<workdir> <issue-id> [approve|reject]` 三段（源件把多余参数静默忽略 —— 差异②：命令面按 §4.1 K14 退 2）"
+  },
+  {
+   "id": "api/serve#未知旗标",
+   "command": "api serve",
+   "argv": [
+    "api",
+    "serve",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "api/serve#不认的契约主号",
+   "command": "api serve",
+   "argv": [
+    "api",
+    "serve",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "api/serve#说明面不认 --json",
+   "command": "api serve",
+   "argv": [
+    "api",
+    "serve",
+    "--json",
+    "name"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "没有字段表的说明面 ⇒ 2（与 K2 甲档归一后的 2 同码、**错因不同**：这里根本没有字段表）"
+  },
+  {
+   "id": "agent/run#未知旗标",
+   "command": "agent run",
+   "argv": [
+    "agent",
+    "run",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰令牌、不碰问题单、不建日志目录"
+  },
+  {
+   "id": "agent/run#不认的契约主号",
+   "command": "agent run",
+   "argv": [
+    "agent",
+    "run",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判（派发层就退，跑不到令牌闸）"
+  },
+  {
+   "id": "agent/run#--task 与 --issue 同给（两档互斥）",
+   "command": "agent run",
+   "argv": [
+    "agent",
+    "run",
+    "--task",
+    "t",
+    "--issue",
+    "i"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "源件 task 赢、收尾却按 issue 改状态（静默吞一枚）⇒ 命令面按 K14 明拒（差异 ⑥）；执行前判，两个目标一个都不碰"
+  },
+  {
+   "id": "agent/run#--json 不给字段（K2 甲档）",
+   "command": "agent run",
+   "argv": [
+    "agent",
+    "run",
+    "--task",
+    "t",
+    "--json"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "给了 `--json` 不给字段表 ⇒ 2 并列出可选字段（K2 甲档）· 在执行**之前**判（不许跑完一整个任务才发现旗标拼错）"
   }
  ],
  "tiers": {

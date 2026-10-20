@@ -8,11 +8,11 @@
     "non_literal_read": "非字面量取空白规整化后的表达式文本"
   },
   "counts": {
-    "literals": 698,
-    "literal_sites": 1486,
+    "literals": 706,
+    "literal_sites": 1496,
     "non_literals": 14,
-    "non_literal_sites": 87,
-    "sites_total": 1573
+    "non_literal_sites": 88,
+    "sites_total": 1584
   },
   "literals": [
     {
@@ -74,6 +74,30 @@
       "sites": [
         "core/cmd/zerg/family_eggs_cocoons.go:1018",
         "core/cmd/zerg/family_eggs_cocoons.go:1401"
+      ]
+    },
+    {
+      "value": "api_port_bad",
+      "sites": [
+        "core/cmd/zerg/family_api_serve.go:110"
+      ]
+    },
+    {
+      "value": "api_port_empty",
+      "sites": [
+        "core/cmd/zerg/family_api_serve.go:102"
+      ]
+    },
+    {
+      "value": "api_workdir_empty",
+      "sites": [
+        "core/cmd/zerg/family_api_serve.go:123"
+      ]
+    },
+    {
+      "value": "api_workdir_unresolvable",
+      "sites": [
+        "core/cmd/zerg/family_api_serve.go:131"
       ]
     },
     {
@@ -537,7 +561,7 @@
     {
       "value": "bad_schema_major",
       "sites": [
-        "core/cmd/zerg/main.go:560"
+        "core/cmd/zerg/main.go:585"
       ]
     },
     {
@@ -662,7 +686,7 @@
       "value": "bad_wallclock",
       "sites": [
         "core/cmd/zerg/family_fs_tools.go:929",
-        "core/cmd/zerg/main.go:602"
+        "core/cmd/zerg/main.go:627"
       ]
     },
     {
@@ -1031,7 +1055,7 @@
     {
       "value": "core_unreadable",
       "sites": [
-        "core/cmd/zerg/readonly.go:803"
+        "core/cmd/zerg/readonly.go:810"
       ]
     },
     {
@@ -1537,6 +1561,12 @@
       ]
     },
     {
+      "value": "flag_value_empty",
+      "sites": [
+        "core/cmd/zerg/family_agent_run.go:205"
+      ]
+    },
+    {
       "value": "fleet_invalid",
       "sites": [
         "core/cmd/zerg/family_config.go:1162",
@@ -1565,7 +1595,7 @@
         "core/cmd/zerg/family_model_pull.go:130",
         "core/cmd/zerg/family_model_put.go:148",
         "core/cmd/zerg/family_model_verify.go:328",
-        "core/cmd/zerg/readonly.go:836"
+        "core/cmd/zerg/readonly.go:843"
       ]
     },
     {
@@ -1908,6 +1938,20 @@
       ]
     },
     {
+      "value": "issue_unreadable",
+      "sites": [
+        "core/cmd/zerg/family_agent_run.go:296",
+        "core/cmd/zerg/family_agent_run.go:650"
+      ]
+    },
+    {
+      "value": "issue_write_failed",
+      "sites": [
+        "core/cmd/zerg/family_agent_run.go:303",
+        "core/cmd/zerg/family_agent_run.go:655"
+      ]
+    },
+    {
       "value": "json_fields_required",
       "sites": [
         "core/cmd/zerg/family_config.go:300",
@@ -1942,7 +1986,7 @@
         "core/cmd/zerg/family_gap_state.go:3303",
         "core/cmd/zerg/family_gap_state.go:3574",
         "core/cmd/zerg/family_gap_state.go:3836",
-        "core/cmd/zerg/main.go:6047"
+        "core/cmd/zerg/main.go:6153"
       ]
     },
     {
@@ -2084,6 +2128,12 @@
       "sites": [
         "core/cmd/zerg/family_dev_scoped.go:105",
         "core/cmd/zerg/family_gate_bench.go:125"
+      ]
+    },
+    {
+      "value": "log_dir_unwritable",
+      "sites": [
+        "core/cmd/zerg/family_agent_run.go:524"
       ]
     },
     {
@@ -5037,7 +5087,7 @@
         "core/cmd/zerg/family_route.go:85",
         "core/cmd/zerg/family_trace.go:189",
         "core/cmd/zerg/gate.go:609",
-        "core/cmd/zerg/main.go:6430"
+        "core/cmd/zerg/main.go:6536"
       ]
     },
     {
@@ -5070,6 +5120,7 @@
     {
       "value": "detail",
       "sites": [
+        "core/cmd/zerg/family_agent_run.go:154",
         "core/cmd/zerg/family_chat.go:239",
         "core/cmd/zerg/family_config.go:1125",
         "core/cmd/zerg/family_config.go:1270",
