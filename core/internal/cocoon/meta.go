@@ -165,6 +165,14 @@ type Meta struct {
 	Ports map[int]int `json:"ports,omitempty"`
 	// Egg — 卵（模型/镜像）标识。
 	Egg string `json:"egg"`
+	// SpecSHA — 起茧时那份 `cocoon.toml` 的**原始字节** sha256（小写 hex · 64 位 · 见 speclock.go）。
+	// 空 = 未登记（老 meta / 脚本手写 ⇒ 「无从比对」，✗ 不当成一致）。
+	// ★ 这一格是判据 9（v2 §E）的唯一真源：`open` 靠它拒掉改动过的契约，`inspect` 靠它报漂移。
+	SpecSHA string `json:"spec_sha,omitempty"`
+	// SpecDir — 契约所在目录（`<SpecDir>/cocoon.toml`，已 realpath）。
+	// `inspect` 只有茧 id、没有项目路径 ⇒ 回读契约的唯一入口就是这一格。
+	// 空 = 未登记（与 SpecSHA 同进退；两格有一格空就判「未锁定」）。
+	SpecDir string `json:"spec_dir,omitempty"`
 	// CreatedAt — 登记时刻（UTC）。
 	CreatedAt time.Time `json:"created_at"`
 	// Owner — 归属者（派单方/会话 id，用于回收与审计）。

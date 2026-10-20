@@ -117,6 +117,11 @@ var (
 	ErrOpExists = errors.New("cocoon: 操作已注册")
 	// ErrOpEmptyName — 注册空名字的 op（空名会让"未知 op"和"空 op"混成一格）。
 	ErrOpEmptyName = errors.New("cocoon: 操作名为空")
+	// ErrRepoSelfOp — 试图注册宿主仓操作（`repo` / `repo.*`）。判据 6（v2 §E）：茧内的
+	// `zerg repo commit` **必拒** —— 那一族动的是宿主的版本面（暂存 / 提交 / 改写 refs），
+	// 茧里跑的任何东西都没有宿主仓的写权；把 `repo.commit` 挂上 broker 等于把「谁对宿主仓签名」
+	// 交给了茧。⇒ 不是「本版没注册、以后再说」，是**注册表层面收不了**。
+	ErrRepoSelfOp = errors.New("cocoon: 茧内不许注册宿主仓操作（repo.*）")
 	// ErrFrameTooLong — 单帧超过 MaxFrameBytes。
 	ErrFrameTooLong = errors.New("cocoon: 帧超过上限")
 	// ErrSocketPathTooLong — socket 路径超过内核 sun_path 容量（超了只会得到
@@ -189,13 +194,19 @@ func NewOpRegistry() *OpRegistry {
 	return &OpRegistry{ops: make(map[string]OpSpec)}
 }
 
-// Register — 注册一个操作。空名 / 重名一律拒（重名会让"谁的权限档生效"取决于注册顺序）。
+// Register — 注册一个操作。空名 / 重名 / 宿主仓族（`repo.*`）一律拒
+// （重名会让"谁的权限档生效"取决于注册顺序；`repo.*` 见 `ErrRepoSelfOp`）。
 func (r *OpRegistry) Register(spec OpSpec) error {
 	if r == nil {
 		return errors.New("cocoon: 操作注册表未初始化")
 	}
 	if strings.TrimSpace(spec.Name) == "" {
 		return ErrOpEmptyName
+	}
+	// ★ 判据 6：宿主仓操作**注册不进来**。放在注册口而不是只靠「默认表里没写」——
+	//   后者是一句注释，前者是一条拒执；`DefaultOps` 以后被谁加一笔也逃不过。
+	if isRepoSelfOp(spec.Name) {
+		return fmt.Errorf("%w: %q", ErrRepoSelfOp, spec.Name)
 	}
 	if spec.Handle == nil {
 		return fmt.Errorf("cocoon: 操作 %q 没有执行体", spec.Name)
@@ -236,6 +247,19 @@ func (r *OpRegistry) Names() []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// repoOpFamily — 宿主仓族的**族名**（判据 6 的禁名单）。
+const repoOpFamily = "repo"
+
+// isRepoSelfOp — 这个名字是不是宿主仓族（`repo` 本体 / `repo.` 前缀）。
+//
+// ★ 判据只认这一个族、且按「族名 + 点」判：`repo.commit` / `repo.status` / `repo.diffstat`
+// 全进禁名单，而 `report` / `repofoo` 这类只是**前缀像**的名字不受影响（不误伤）。
+// 大小写与首尾空白一并收窄（注册表本来就把名字当字面键，`Repo.Commit` 不该绕过禁名单）。
+func isRepoSelfOp(name string) bool {
+	n := strings.ToLower(strings.TrimSpace(name))
+	return n == repoOpFamily || strings.HasPrefix(n, repoOpFamily+".")
 }
 
 // ── 审计行 ────────────────────────────────────────────────────────────

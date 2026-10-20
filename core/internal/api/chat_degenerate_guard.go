@@ -27,7 +27,9 @@ const degenerateMaxRunes = 16
 //
 // 返回新正文；不满足条件时**原样返回**（逐字不改，避免污染既有金标）。
 func annotateDegenerateAnswer(content string, toolCalls int) string {
-	trimmed := strings.TrimSpace(content)
+	// A07：测长/判空只看正文本身 —— 先剥掉已追加的守卫标注块（「按实测」那条），
+	// 两条标注才互不吞没、先标后标结果一致。
+	trimmed := strings.TrimSpace(stripGuardAnnotations(content))
 	if toolCalls < degenerateToolCalls || trimmed == "" {
 		return content
 	}
@@ -40,7 +42,7 @@ func annotateDegenerateAnswer(content string, toolCalls int) string {
 		snippet = string(r[:16]) + "…"
 	}
 	return content + fmt.Sprintf(
-		"\n\n⚠ **疑似退化输出**：本轮跑过 %d 次工具，最终答复却只有 %d 个字符（%q）。"+
+		"\n\n"+degenerateGuardMarker+"：本轮跑过 %d 次工具，最终答复却只有 %d 个字符（%q）。"+
 			"长任务末段常这样退化成一句无关短句，**产物很可能没落盘** —— 请以盘上件 / 缺口账 / 提交记录为准，✗ 别把这一轮当交付（缺口 GAP-20260926-214）。\n",
 		toolCalls, utf8.RuneCountInString(trimmed), snippet)
 }

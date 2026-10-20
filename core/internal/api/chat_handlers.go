@@ -648,7 +648,9 @@ func (h *ChatHandlers) SendMessageTool(w http.ResponseWriter, r *http.Request) {
 		toolCallsStr = string(tracesJSON)
 	}
 	// ★ GAP-20260926-214：有工具足迹却只吐一句短话 ⇒ 标「疑似退化」（只标不拦）。
-	msgContent := annotateDegenerateAnswer(normalizeChatContent(kres.Content), len(traces))
+	// ★ A07：零工具却声称实测 ⇒ 标「无可核证据」（只标不拦）；两条标注都是追加、互不吞没。
+	msgContent := annotateUnverifiedClaim(normalizeChatContent(kres.Content), len(traces))
+	msgContent = annotateDegenerateAnswer(msgContent, len(traces))
 	msgReasoning := kres.Reasoning
 	assistantMsg := &chat.Message{
 		SessionID: id, Role: "assistant", Content: msgContent,

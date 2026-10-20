@@ -1665,43 +1665,9 @@ func eggWaitLoadReady(inv *invocation, c *client, respBody string, eggID, model,
 	}
 }
 
-// cmdCocoonLs —— `zerg cocoon ls`：虫茧清单（**主控面仍没有茧投影端点 ⇒ 不给结论**）。
-func cmdCocoonLs(inv *invocation, stdout, stderr io.Writer) int {
-	c := newClient()
-	var resp jsonObj
-	if err := c.getJSON("/api/cocoons", &resp); err == nil {
-		rows, display := flattenPayload(resp)
-		return listCmd(inv, stdout, stderr, display, rows)
-	}
-	return eggsProjectionAbsent(inv, "虫茧清单", stderr)
-}
-
-// cmdCocoonOpen —— `zerg cocoon open <名>`：起 8610 服务 ⇒ **只登记形状，不执行**。
-//
-// 为什么不做成"直接跑一下"：起服务 = 起进程 = **动生产**（不可逆动作的邻居）。
-// 判据（开工单 T-47 ③）要求的是"它能起 8610 服务"这件事**有落点**，不是"本版替你起一次"。
-func cmdCocoonOpen(inv *invocation, stdout, stderr io.Writer) int {
-	name := "(未给名)"
-	if len(inv.args) > 0 {
-		name = inv.args[0]
-	}
-	if inv.dryRun {
-		fmt.Fprintln(stdout, "计划件（--dry-run · 零副作用 —— 未执行、未改任何状态）")
-		fmt.Fprintf(stdout, "  动作     : %s cocoon open\n", progName)
-		fmt.Fprintf(stdout, "  危险档   : D3（起一个常驻服务 ⇒ 按不可逆动作办）\n")
-		fmt.Fprintf(stdout, "  目标     : %s\n", name)
-		fmt.Fprintf(stdout, "  它会动   : 起虫茧的文档服务（监听 **8610**）—— 这会占端口、进程常驻\n")
-		fmt.Fprintf(stdout, "  执行要   : --confirm=<茧名> 与 --yes 同时到\n")
-		fmt.Fprintf(stdout, "  本版状态 : **未开放** —— 起服务 = 动生产；要开请 Mr2109 拍（§6.3 S5）\n")
-		fmt.Fprintf(stdout, "  来源     : §3.4 J 族 · §7.1 P6 · 开工单 T-47\n")
-		fmt.Fprintln(stderr, "（--dry-run：只出计划件 · 零副作用 —— 未执行、未改任何状态）")
-		return exitOK
-	}
-	inv.setErr("usage", "not_opened", "起服务属本版未开放档")
-	fmt.Fprintf(stderr, "%s: `cocoon open` 要在目标机上**起一个常驻服务（8610）** ⇒ 本版**未开放**（不给结论 · 退码 2）\n", progName)
-	fmt.Fprintf(stderr, "先看计划件：%s cocoon open %s --dry-run\n", progName, name)
-	return exitUsage
-}
+// ★ 2026-10-20（C1 · 沙箱生命周期）：`cmdCocoonLs` / `cmdCocoonOpen` 已迁到
+// `family_cocoon_lifecycle.go` —— 那两条旧实现是「主控面无茧投影 ⇒ 不给结论」的占位面，
+// 本版换成真生命周期（meta 真源 + FakeBackend）。本件只剩 `pack|info|verify|xfer` 四条转发。
 
 // eggCocoonNames —— 两族的族名（`N4` 硬占位表的落点面）。
 func eggCocoonNames() []string {

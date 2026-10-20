@@ -412,4 +412,10 @@ var (
 	ErrExecSignaled = errors.New("cocoon: exec 被信号杀死")
 	// ErrExecNonZero — exec 非零退出（ExitError 的 cause）。
 	ErrExecNonZero = errors.New("cocoon: exec 非零退出")
+	// ErrBackendUnsupported — 该后端在本平台/本能力面上**不做**这件事。
+	//
+	// 两个来源：非 linux 上的 nsjail 后端（整个后端不可用）、Linux 后端的 Expose
+	// （茧与调用方同栈，没有端口映射这回事）。★ 不许拿它当「降级成功」用：
+	// 返回它就等于告诉调用方「这条链路不存在，别指望我」。
+	ErrBackendUnsupported = errors.New("cocoon: 后端不支持该操作")
 )

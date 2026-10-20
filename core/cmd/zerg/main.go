@@ -513,6 +513,14 @@ func run(args []string, stdout, stderr io.Writer) int {
 	if inv.hasFlag("--build-info") && !usageDeclaresFlag(cmd, "--build-info") {
 		inv.unknown = append(inv.unknown, "--build-info")
 	}
+	// ★ 本单（C1 · 虫茧生命周期 · 2026-10-20）：`--purge` 在解析面刚上户口（布尔 case）⇒ **全族共用**；
+	//   若不在此收口，别族（usage 未列它的命令）真给它会从「未知旗标 2」退化成**静默吞**
+	//   （硬约束⑤：既有命令的退码与输出一字不动）。形状逐字照拄上面 `--build-info` 那条：
+	//   把不归本命令的那一枚补回 `inv.unknown` ⇒ 由下面**同一条**判词 + 同一个退码 2 收口。
+	//   `cocoon close` 的 usage 已列它 ⇒ 归它。
+	if inv.hasFlag("--purge") && !usageDeclaresFlag(cmd, "--purge") {
+		inv.unknown = append(inv.unknown, "--purge")
+	}
 	// ★ 同一条数据驱动收口（本单 · 缺口 GAP-20260927-240）：`--list-selfcases` 在解析面刚上户口（布尔 case）⇒ **全族共用**；
 	//   若不在此收口，别族（usage 未列它的命令）真给它会从「未知旗标 2」退化成**静默吞**（硬约束⑤：既有命令的退码与输出一字不动）。
 	//   形状逐字照拄上面 `--build-info` 那条：把不归本命令的那一枚补回 `inv.unknown` ⇒ 由下面**同一条**判词 + 同一个退码 2 收口。`gate check` 的 usage 已列它 ⇒ 归它。
@@ -1986,6 +1994,22 @@ func init() {
 			endpoint: "",
 			run:      cmdCodeConstDup,
 		},
+		// ---- 登记面自动补面（`GAP-20261020-03` 下半 · Mr2109 拍「方案 B：一处登记，其余自动校验」）----
+		// ★ 只补**能由件本身推出来**的那一面：`scripts/公开标记.tsv` 缺行 ⇒ 尾部追加一行
+		//   （第 2 列缺省 `no`、第 3 列逐字「自动补登 · 待人工确认用途」）。
+		// ★★ 硬约束：干跑语义 / 门步骤 / 契约矩阵**一律不补**（语义是判断不是事实 ——
+		//   猜一条 = 凭空造语义；缺的 `.sh` 只在输出里列「需人写」）。实现件见 `family_registry_sync.go` 件头。
+		{
+			path:     []string{"registry", "sync"},
+			kind:     "RegistrySync",
+			summary:  "把**能由件本身推出来**的登记面补齐（只补 `scripts/公开标记.tsv` 缺行 · 第 2 列缺省 `no` · 第 3 列「自动补登 · 待人工确认用途」· 尾部追加 · 原子写 · `--dry-run` 零副作用且列出将改的行）；**语义面（干跑语义 / 门步骤 / 契约矩阵）一律✗不补**，`.sh` 缺干跑语义条目只在输出里点名「需人写」· 幂等（第二遍补 0 行）",
+			usage:    "zerg registry sync [--dry-run] [--json <字段>]",
+			arity:    "none",
+			args:     []string{"（不收位置参数：仓根由 env `ZERG_REPO_ROOT` 或 cwd 上溯定）"},
+			fields:   rsFields,
+			endpoint: "",
+			run:      cmdRegistrySync,
+		},
 		{
 			path:     []string{"repo", "status"},
 			kind:     "RepoStatus",
@@ -2530,23 +2554,61 @@ func init() {
 				"（现成端点包装 · 不新开一条路 · 只读）",
 			run: cmdEggDoctor,
 		},
+		// ---- 虫茧沙箱 · 生命周期五条（C1 · 2026-10-20）------------------------------------
+		// 真源 = `cocoon/meta.json`（`core/internal/cocoon/meta.go`）；后端本版只接 FakeBackend。
+		// ★ 与下面 `cocoon pack|info|verify|xfer`（卵的单文件封装 · A12 归名）**不是一件事**。
 		{
 			path:     []string{"cocoon", "ls"},
 			kind:     "Cocoon",
-			summary:  "虫茧清单（主控面无投影端点 ⇒ 不给结论）",
+			summary:  "虫茧清单（只读 meta 真源：id / phase / 端口 / 绑定的卵 · 目录里有而 meta 没有的孤儿不进清单）",
 			usage:    "zerg cocoon ls [--json <字段>]",
-			fields:   []string{"name", "state", "port", "path"},
-			endpoint: "GET /api/cocoons（主控面没有 ⇒ 现跑 404）",
+			fields:   cocoonLsFields,
+			endpoint: "本机状态根 <ZERG_COCOON_ROOT|cocoons>/<id>/meta.json（不扫目录当真源）",
 			run:      cmdCocoonLs,
 		},
 		{
-			path:    []string{"cocoon", "open"},
-			summary: "起虫茧的文档服务（8610 · D3 起服务档 · **计划面已开放**：`--dry-run` 出计划件；真跑本版未开放 · 拒执退码 2）",
-			usage:   "zerg cocoon open <茧名> [--confirm=<茧名> --yes | --dry-run]",
-			arity:   "any",
-			args:    []string{"茧名"},
-			refuses: true, // 真跑拒执（`cmdCocoonOpen` 非 dry-run 一律 `not_opened` 退 2 —— 起常驻服务本版未开放）
-			run:     cmdCocoonOpen,
+			path:     []string{"cocoon", "open"},
+			kind:     "CocoonOpen",
+			summary:  "按 cocoon.toml 起一个茧（分配 id → 写 meta → Provision → 起服务 → 回写 pid/ports；后端本版 = FakeBackend）",
+			usage:    "zerg cocoon open <dir> [--dry-run] [--json <字段>]",
+			args:     []string{"茧目录（含 cocoon.toml）"},
+			arity:    "any",
+			fields:   cocoonOpenFields,
+			endpoint: "本机：<dir>/cocoon.toml + 状态根 <id>/meta.json（后端 FakeBackend · 真 nsjail 未接）",
+			run:      cmdCocoonOpen,
+		},
+		{
+			path:     []string{"cocoon", "close"},
+			kind:     "CocoonClose",
+			summary:  "停一个茧（先落 stopping 再停 → 写 gone → 留盘）；`--purge` 额外删树（先留墓碑、失败即零删除 · 要 --confirm=<id>）",
+			usage:    "zerg cocoon close <id> [--purge --confirm=<id>] [--dry-run] [--json <字段>]",
+			args:     []string{"茧 id（照 `cocoon ls` 的 id 那一格）"},
+			arity:    "any",
+			fields:   cocoonCloseFields,
+			endpoint: "本机：状态根 <id>/meta.json + <id>.meta.json（墓碑）",
+			run:      cmdCocoonClose,
+		},
+		{
+			path:     []string{"cocoon", "inspect"},
+			kind:     "CocoonInspect",
+			summary:  "单个茧的现状（只读：meta + 后端能力面 + AI 注入面形状 · 令牌只出脱敏形）",
+			usage:    "zerg cocoon inspect <id> [--json <字段>]",
+			args:     []string{"茧 id（照 `cocoon ls` 的 id 那一格）"},
+			arity:    "any",
+			fields:   cocoonInspectFields,
+			endpoint: "本机：状态根 <id>/meta.json ＋ 后端 Capabilities（零写盘、连锁件都不建）",
+			run:      cmdCocoonInspect,
+		},
+		{
+			path:     []string{"cocoon", "bind"},
+			kind:     "CocoonBind",
+			summary:  "把茧绑到一颗虫卵（写 meta 的 egg 字段 · 终态的茧不许再绑）",
+			usage:    "zerg cocoon bind <id> <卵名> [--json <字段>]",
+			args:     []string{"茧 id", "卵名（模型 × 机 的那一枚）"},
+			arity:    "any",
+			fields:   cocoonBindFields,
+			endpoint: "本机：状态根 <id>/meta.json（写 egg 一格）",
+			run:      cmdCocoonBind,
 		},
 		// ---- A 档 批 1（换件面）· A12：卵的**单文件封装**（`*.egg`）工具 —— 从「虫卵」归名到「虫茧」（决-13）----
 		// 依据：`~/.zerg/state/拍板落定-所有稿-20261007.md` 决-13（Mr2109「拍 按你推荐」）。
@@ -5373,6 +5435,10 @@ func parseInvocation(args []string) (*invocation, error) {
 			inv.manifestOnly = true
 		case a == "--dry-run":
 			inv.dryRun = true
+		// `--purge`（C1 · 虫茧生命周期 · 2026-10-20）：`cocoon close` 的**删树**档。
+		// 布尔旗标**不进** `valueFlagName`（门73 判据丙：布尔按取值收会判形态不一致）⇒ 这里单列一条。
+		case a == "--purge":
+			inv.kvSet(a, "true")
 		case a == "--yes":
 			inv.yes = true
 		// 缺口面 P0 两枚布尔旗标（2026-09-21）：`--all`（`build show` 列全部件）与

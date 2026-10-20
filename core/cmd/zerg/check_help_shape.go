@@ -1136,6 +1136,11 @@ type chsFaceBl struct {
 type chsBaselineSet map[string]chsFaceBl
 
 var chsBaseline = chsBaselineSet{
+	// ★ 2026-10-21 · `GAP-20261020-03` 下半（`zerg registry sync` 一条新 path · 新族 `registry`）：
+	//   `help --all` 497→499 行 / 260597→261366 字节 · 裸 `help` 371→373 行 / 95066→95823 字节 —— 两个数由
+	//   现跑 `zerg gate check check-help-shape --emit-baseline --bin <仓外新制品>` 取数**照抄**（禁手写）。
+	//   危险档面（128 / 49360 · 116 条 · 已开放 103）与 `help config`（21 / 1748）**一分未变**：本命令零危险档。
+	//   ★ 同一棵树上还压着另一批未提交的虫茧 path ⇒ 本趟刷新后的两个数**含它们**（同一命令树现算，无法拆开）。
 	// ★ 2026-10-17 · `GAP-20261010-20`（`zerg audit hardcoded-addr` 一条新 path）：`help --all` 与裸 `help`
 	//   各 +2 行（族内一条新命令 ⇒ 两处各多一行用法行 + 与族级段相关的换行）；字节由现跑
 	//   `zerg gate check check-help-shape --emit-baseline` 取数照抄（**禁手写** —— 件头纪律）。
@@ -1228,8 +1233,17 @@ var chsBaseline = chsBaselineSet{
 	//   四条都不进危险表（理由在 main.go 那一格的注释里：只有 `migrate` 写**本机状态目录**、落点由
 	//   `--state-dir`/环境变量显式给、覆盖前自动备份、`--dry-run` 可预演 ⇒ 本机可逆无远端副作用）
 	//   ⇒ 这是「没有顺手放宽」的反证，不是省了没量。
-	"help --all":     {HasLines: true, Lines: 491, HasBytes: true, Bytes: 259212},
-	"help":           {HasLines: true, Lines: 365, HasBytes: true, Bytes: 93681, HasLast: true, Last: "      非交互用 `--token-stdin`；详见 `zerg help credentials`）。"},
+	// ★ 2026-10-20（本单 · C1 虫茧生命周期：`cocoon close|inspect|bind` 三条**挂既有 `cocoon` 族**）：
+	//   族数**不变**（`cocoon` 族本来就在），三条新动作各占一行 ⇒ `help --all` 与裸 `help` 各 **+6 行**
+	//   （3 × 用法行 ＋ 该族段里那 3 行）。字节与行数由现跑
+	//   `zerg gate check check-help-shape --emit-baseline` 取数照抄（**禁手写** —— 件头纪律）：
+	//   `help --all` 491 → 497 行 / 259212 → 260597 字节 · 裸 `help` 365 → 371 行 / 93681 → 95066 字节。
+	//   危险档面（`help dangerous` 128 行 / 49360 字节 · 116 条）与 `help config`（21 / 1748）**一分未变**：
+	//   五条生命周期命令都不进危险表（`close --purge` 的删除闸是**本命令自己的** `--confirm=<id>`，
+	//   不是 D2/D3 全局三态 —— 理由写在 `family_cocoon_lifecycle.go` 件头与 main.go 那一格的注释里）
+	//   ⇒ 这是「没有顺手放宽」的反证，不是省了没量。
+	"help --all":     {HasLines: true, Lines: 499, HasBytes: true, Bytes: 261366},
+	"help":           {HasLines: true, Lines: 373, HasBytes: true, Bytes: 95823, HasLast: true, Last: "      非交互用 `--token-stdin`；详见 `zerg help credentials`）。"},
 	"help dangerous": {HasLines: true, Lines: 128, HasBytes: true, Bytes: 49360, HasRows: true, Rows: 116, HasTail: true, Tail: "上表 116 条：**已开放 103 条**（确认档齐就真执行 —— 逐条见上行标记）；**未开放 13 条**（真跑一律**拒执**、退码 2 = 不给结论，只有 `--dry-run` 出计划件 = 退码 0）。"},
 	"help config":    {HasLines: true, Lines: 21, HasBytes: true, Bytes: 1748},
 }

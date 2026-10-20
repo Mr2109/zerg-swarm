@@ -97,10 +97,22 @@
    "备注": "D3b 第一步解死锁：`--only cli` 是**命令面自举**档（不常驻、不绑端口、不在跑 ⇒ 不是换件）"
   },
   {
-   "file": "core/cmd/zerg/family_eggs_cocoons.go",
-   "类": "命令面三态（`cocoon open --dry-run` 的计划件 · 与 guard.go 同一套语义）",
+   "file": "core/cmd/zerg/family_cocoon_lifecycle.go",
+   "类": "命令面三态（`cocoon open --dry-run` 的计划件 · `cocoon close --dry-run` 的停/删计划件 · 与 guard.go 同一套语义）",
    "语义": "dryrun.v1",
-   "零副作用判据": "`bin/zerg cocoon open <茧名> --dry-run` ⇒ 退码 0 · stdout 只有计划件 + stderr 一行「（--dry-run：只出计划件 · 零副作用 —— 未执行、未改任何状态）」· **不起任何服务**（现跑对拍：跑前后 `lsof -nP -iTCP:8610` 逐条相同）· 不落盘；真跑（不带 --dry-run）是明确的「未开放」档（退码 2），不是偷偷执行。"
+   "零副作用判据": "`bin/zerg cocoon open <dir> --dry-run` ⇒ 退码 0 · stdout 只有计划件（契约/镜像/服务序/端口/资源/后端）+ stderr 一行「（--dry-run：只出计划件 · 零副作用 —— 未写 meta、未 Provision、未起服务）」· **不建状态根、不写 meta、不 Provision、不起进程、不占端口**（现跑对拍：跑前跑后整棵状态根逐件 sha256 相同、`ZERG_COCOON_ROOT` 不存在）；`bin/zerg cocoon close <id> --dry-run` ⇒ 退码 0 · stdout 只有停/删计划件 · **不落 stopping、不停实例、不删任何东西**（跑前跑后 meta 与目录逐件 sha256 相同）；两命令真跑都走真实生命周期（open ⇒ 写 meta + FakeBackend 起服务；close ⇒ stopping→gone，`--purge` 先留墓碑再删且要 `--confirm=<id>`），不是偷偷执行。"
+  },
+  {
+   "file": "core/cmd/zerg/family_eggs_cocoons.go",
+   "类": "命令面三态（`egg run` / `egg stop` 的 --dry-run 计划件 · 与 guard.go 同一套语义）—— 本件的 `cocoon open` 旧占位面已迁走，剩卵的装卸两条",
+   "语义": "dryrun.v1",
+   "零副作用判据": "`bin/zerg egg run <卵 id> --dry-run` / `egg stop <卵 id> --dry-run` ⇒ 退码 0 · 计划件走 stdout、stderr 一行「（--dry-run：只出计划件 · 零副作用 —— 未执行、未改任何状态）」· **一个主控请求都不发**（计划和执行走同一个 helper · `if inv.dryRun` 分支在发请求之前返回）；缺 `--yes` ⇒ 计划件走 stderr + 退 2（0 字节 stdout），不是偷偷执行。"
+  },
+  {
+   "file": "core/cmd/zerg/cocoon_lifecycle_test.go",
+   "类": "判据件（成对负控：全链 / 用法面 / 只读面）—— 本件只**断言** dry-run 的零副作用，不新立语义",
+   "语义": "dryrun.v1",
+   "零副作用判据": "`TestCocoonLsDoesNotListOrphans` 现跑 `cocoon open --dry-run` ⇒ rc=0 且 `ZERG_COCOON_ROOT` 跑后**仍不存在**（建了根就红）；`TestCocoonCloseUsageFace` 现跑 `close --purge` 缺 `--confirm` ⇒ rc=2 且整棵状态根逐件 sha256 不变、meta.phase 仍 running。"
   },
   {
    "file": "core/cmd/zerg/family_agent_ops.go",
@@ -1439,6 +1451,20 @@
    "语义": "dryrun.v1",
    "零副作用判据": "`--dry-run` ⇒ 只打健康面并写日志/连败计数（`$ZERG_STATE_DIR/core-watchdog.log`、`.fails`），**不执行** `launchctl kickstart`、不重启主控；门禁/提交在跑时只记 skip",
    "备注": "脚本侧：与命令面同义（计划 + 不落盘）"
+  },
+  {
+   "file": "core/cmd/zerg/family_registry_sync.go",
+   "类": "写面命令的干跑档（`zerg registry sync --dry-run`）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "`--dry-run` ⇒ 退码 0 · 只打将改的行与「需人写」清单 · **整棵树逐字节不变**（不建 tmp、不 rename、不建目录；判据件 `TestRegistrySyncDryRunIsZeroSideEffectAndListsRows` 取整树 sha256 清单前后对拍）· 真跑的零副作用/可回退由 `TestRegistrySyncWritesAtomically` 判（tmp→rename 换 inode · 失败时原件逐字节不变）",
+   "备注": "GAP-20261020-03 下半；硬约束：语义面**不补**，缺干跑语义的 `.sh` 只在输出里点名"
+  },
+  {
+   "file": "core/cmd/zerg/family_registry_sync_test.go",
+   "类": "干跑/原子写的判据件（合成仓根 · `ZERG_REPO_ROOT` 注入）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "全部判据跑在 `t.TempDir()` 的合成仓根里 · 不碰真仓一个字节 · 干跑档前后取整树 sha256 清单要求逐字相同",
+   "备注": "GAP-20261020-03 下半"
   }
  ]
 }

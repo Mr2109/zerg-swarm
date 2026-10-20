@@ -37,8 +37,47 @@ func gapEnvLedger(t *testing.T, state string) {
 	}
 }
 
+// gapEnvIsSystemTempRoot —— 「系统临时根」判据（与 `family_gap_env.go` 的 `gapTempRootIsSystem`
+// **同口径**：`/tmp`／`/private/tmp`／`/var/folders/…` 族）。测试侧自判，不动产线判据。
+func gapEnvIsSystemTempRoot(dir string) bool {
+	if strings.TrimSpace(dir) == "" {
+		return false
+	}
+	p := filepath.Clean(dir)
+	switch {
+	case p == "/tmp", p == "/private/tmp":
+		return true
+	case strings.HasPrefix(p, "/var/folders/"), strings.HasPrefix(p, "/private/var/folders/"):
+		return true
+	}
+	return false
+}
+
+// gapEnvHermetic —— 用例**自设**环境前提（✗ 不沿用继承值 · ✗ 不放宽断言 · ✗ 不 skip）。
+//
+// 病（门内恒红三格）：本族 ④⑤ 的「默认态」前提逐字含「`TMPDIR` 走**系统临时根** ⇒ 不进名单」，
+// 而门跑语境 —— `scripts/gates/shard-go-test.sh` 的 B3 真因层隔离 —— **有意**给本步一个**私有**
+// `TMPDIR`（`…/shard-affected-iso-…/tmp`，为的是临时件不落共享域）⇒ 该步继承进来的 `TMPDIR`
+// 天然是「非系统临时根」⇒ 「默认态」前提当场被门外环境打破 ⇒ `TestGapEnvTiers_*` 在门内必红。
+// 治法（只去外部依赖）：每个用例先把前提钉成**它自己期望的形态** —— 默认态 = 系统临时根 +
+// `ZERG_REPO` 清空（`ZERG_STATE_DIR` 由各用例自设：空串 = 默认 `~/.zerg/state`，见 `stateDirOf()`）。
+func gapEnvHermetic(t *testing.T) {
+	t.Helper()
+	root := strings.TrimSpace(os.Getenv("TMPDIR"))
+	if !gapEnvIsSystemTempRoot(root) {
+		root = "/tmp" // 经典系统临时根（macOS 上 → /private/tmp，同一族）
+	}
+	root = filepath.Clean(root)
+	t.Setenv("TMPDIR", root)
+	if !gapEnvIsSystemTempRoot(os.Getenv("TMPDIR")) { // 前提没立住 ⇒ 当场停，别把环境病读成判据红
+		t.Fatalf("夹具自设 TMPDIR 失败：%q 不是系统临时根", root)
+	}
+	t.Setenv("ZERG_REPO", "") // ② 类旋钮：默认态 = 不指任何继承值
+}
+
 // 正控：正常态 ⇒ stderr 明示当前状态目录与来源（机读令牌闭集；stdout 一字不动）。
 func TestGapEnvTiers_StateDirVisible(t *testing.T) {
+	gapEnvHermetic(t)
 	state := t.TempDir()
 	gapEnvLedger(t, state)
 	t.Setenv("ZERG_STATE_DIR", state)
@@ -61,6 +100,7 @@ func TestGapEnvTiers_StateDirVisible(t *testing.T) {
 
 // 负控①：夹具专用口被设 ⇒ 无条件清（值真被 unset）且清理可见（点名变量）。
 func TestGapEnvTiers_FixtureClearedVisible(t *testing.T) {
+	gapEnvHermetic(t)
 	state := t.TempDir()
 	gapEnvLedger(t, state)
 	t.Setenv("ZERG_STATE_DIR", state)
@@ -77,6 +117,7 @@ func TestGapEnvTiers_FixtureClearedVisible(t *testing.T) {
 
 // 负控②：REPO_ROOT 类（`ZERG_REPO`）被设成非仓根 ⇒ 显式申报（真仓根 + 来源，或逐字「取不到」）。
 func TestGapEnvTiers_RepoRootDeclared(t *testing.T) {
+	gapEnvHermetic(t)
 	state := t.TempDir()
 	gapEnvLedger(t, state)
 	t.Setenv("ZERG_STATE_DIR", state)
@@ -94,6 +135,7 @@ func TestGapEnvTiers_RepoRootDeclared(t *testing.T) {
 
 // 负控③：来源申报缺失那一半 —— 状态目录毒化到不存在处 ⇒ 如实申报 + fail-closed（✗ 不静默换源）。
 func TestGapEnvTiers_NoSilentSourceSwap(t *testing.T) {
+	gapEnvHermetic(t)
 	t.Setenv("ZERG_STATE_DIR", "/tmp/不存在的状态目录-zzz")
 
 	rc, out, errb := gapRun(t, "gap", "ls")
@@ -112,6 +154,7 @@ func TestGapEnvTiers_NoSilentSourceSwap(t *testing.T) {
 // （点名旋钮名 + 当前值）；且**系统临时根**（`TMPDIR` = `/var/folders/…` 一族）**不进名单**。
 // ★ 哑化 `family_gap_env.go` 的 ④ 分支（去掉「非默认根来源点名」那一段）⇒ 本用例**真红**。
 func TestGapEnvTiers_NonDefaultRootNamedLoudly(t *testing.T) {
+	gapEnvHermetic(t)      // ④ 的默认态前提：TMPDIR 自设成系统临时根（不沿用门的私有 TMPDIR）
 	outside := t.TempDir() // 仓外目录 = 非默认状态根
 	gapEnvLedger(t, outside)
 	t.Setenv("ZERG_STATE_DIR", outside)
@@ -133,6 +176,7 @@ func TestGapEnvTiers_NonDefaultRootNamedLoudly(t *testing.T) {
 // 响亮申报 ④（点名旋钮名 + 当前值）；**默认态一字不加**（既有默认输出逐字不动）。
 // ★ 哑化 `main.go` 咽喉点的 **非 gap 支**（去掉那半 `gapNonDefaultRootLine()` 调用）⇒ 本用例**真红**。
 func TestGapEnvTiers_GlobalNonDefaultRootNamedLoudly(t *testing.T) {
+	gapEnvHermetic(t) // ④ 的默认态前提：TMPDIR 自设成系统临时根（不沿用门的私有 TMPDIR）
 	// 非默认根态：`ZERG_STATE_DIR` 指**仓外**目录 ⇒ 非 gap 族命令的 stderr 也必须响亮申报一行。
 	outside := t.TempDir()
 	t.Setenv("ZERG_STATE_DIR", outside)

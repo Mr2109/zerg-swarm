@@ -24,6 +24,15 @@
 // 路径边界（承 §6）：解析出的件必须在 `<仓根>/scripts/` 前缀内，越界 ⇒ `2`（壳自身错，
 // `judge_resolved=false`），不 exec。
 //
+// ★ 回放口（task -04 · 「整包测试互相污染」的真闸）：`go` scope 的「core: 受影响包 go test」步现带
+// `--shuffle on`（`scripts/gates/shard-go-test.sh` 的 `--shuffle` 档）⇒ 该步按 `go test -shuffle=<种子>`
+// 跑，并把**种子**与**一行可直接回放的命令**打进 step 日志。日志里 `↺ 回放：` 那行照抄即可复现同一顺序：
+//
+//	cd <仓根>/core && go test -shuffle=<种子> -timeout 25m -count=1 <包…>
+//
+// 要换序重跑 ⇒ `--shuffle on`（种子取当下时钟秒数）；要复现 ⇒ `--shuffle <日志里那个种子>`。
+// 只换「按什么顺序跑」，包集/`-count`/`-timeout`/断言一条不改。
+//
 // ★ 本刀补落（M1 批B · 四条**合一件**）：
 //
 //	M1-06 壳级 `--dry-run` / `--json` **全表干跑档**（逐件名字⇒件解析 · ✗ 不 exec · 零副作用）；

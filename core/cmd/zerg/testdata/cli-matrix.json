@@ -12512,6 +12512,118 @@
    "want_rc": 2,
    "want_stdout_bytes": 0,
    "why": "取值旗标三态（`GAP-20260928-151`）：裸给/空值 ⇒ 2 且**不回落缺省目录**（源件空值静默回落 ⇒ 差异 ⑥ 同族口径）"
+  },
+  {
+   "id": "cocoon/close#未知旗标",
+   "command": "cocoon close",
+   "argv": [
+    "cocoon",
+    "close",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "cocoon/close#不认的契约主号",
+   "command": "cocoon close",
+   "argv": [
+    "cocoon",
+    "close",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "cocoon/inspect#未知旗标",
+   "command": "cocoon inspect",
+   "argv": [
+    "cocoon",
+    "inspect",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "cocoon/inspect#不认的契约主号",
+   "command": "cocoon inspect",
+   "argv": [
+    "cocoon",
+    "inspect",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "cocoon/bind#未知旗标",
+   "command": "cocoon bind",
+   "argv": [
+    "cocoon",
+    "bind",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "cocoon/bind#不认的契约主号",
+   "command": "cocoon bind",
+   "argv": [
+    "cocoon",
+    "bind",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "registry/sync#未知旗标",
+   "command": "registry sync",
+   "argv": [
+    "registry",
+    "sync",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "registry/sync#不认的契约主号",
+   "command": "registry sync",
+   "argv": [
+    "registry",
+    "sync",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "registry/sync#--json 不给字段",
+   "command": "registry sync",
+   "argv": [
+    "registry",
+    "sync",
+    "--json"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "给了 --json 不给字段 ⇒ 2 + stdout 0 字节（§4.1 K2 甲档 · 码**取自退码表** `usage`）"
   }
  ],
  "tiers": {

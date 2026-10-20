@@ -303,6 +303,19 @@
    "waiver": ""
   },
   {
+   "path": "agent run",
+   "danger": "",
+   "opened": true,
+   "default_writes": false,
+   "writes_where": [],
+   "write_kind": "",
+   "gated_by": [],
+   "readonly_flag": "",
+   "probe": "live",
+   "reason": "带 `--task` 真调网关 → 真执行工具 → 写工作目录；`--issue` 档回填结论并置 resolved/escalated（工具门在内层 · 缺省恒拦）；裸跑缺 `--task`/`--issue` ⇒ 退 2、零写盘（实测）",
+   "waiver": ""
+  },
+  {
    "path": "agent scheduler set",
    "danger": "D2",
    "opened": true,
@@ -417,6 +430,19 @@
    "readonly_flag": "",
    "probe": "live",
    "reason": "",
+   "waiver": ""
+  },
+  {
+   "path": "api serve",
+   "danger": "",
+   "opened": true,
+   "default_writes": "unprobed",
+   "writes_where": [],
+   "write_kind": "",
+   "gated_by": [],
+   "readonly_flag": "",
+   "probe": "exempt",
+   "reason": "常驻档：裸跑无 `ZERG_API_TOKEN` ⇒ 拒启退 1、零写盘（实测）；**外环境若已配令牌** ⇒ 裸跑真起 :8083 监听并常驻不退出（探针必超时、且会占真端口）⇒ 沙箱探针不可代表默认档；写面 = `POST /task` 真派单改任务单目录（远端可达面由令牌闸守着 · 故不进危险表）",
    "waiver": ""
   },
   {
@@ -919,6 +945,45 @@
    "readonly_flag": "--dry-run",
    "probe": "live",
    "reason": "",
+   "waiver": ""
+  },
+  {
+   "path": "cocoon bind",
+   "danger": "",
+   "opened": false,
+   "default_writes": false,
+   "writes_where": [],
+   "write_kind": "",
+   "gated_by": [],
+   "readonly_flag": "",
+   "probe": "live",
+   "reason": "带 <茧 id> <卵名> 真跑写本机状态根 <id>/meta.json 的 egg 一格；裸跑（本表口径）缺参 ⇒ 退 2、零写盘",
+   "waiver": ""
+  },
+  {
+   "path": "cocoon close",
+   "danger": "",
+   "opened": false,
+   "default_writes": false,
+   "writes_where": [],
+   "write_kind": "",
+   "gated_by": [],
+   "readonly_flag": "--dry-run",
+   "probe": "live",
+   "reason": "带 <茧 id> 真跑写 meta（stopping→gone）；`--purge` 先留墓碑再删整棵树（缺 `--confirm=<id>` ⇒ 退 2、零删除）；裸跑缺参 ⇒ 退 2、零写盘",
+   "waiver": ""
+  },
+  {
+   "path": "cocoon inspect",
+   "danger": "",
+   "opened": false,
+   "default_writes": false,
+   "writes_where": [],
+   "write_kind": "",
+   "gated_by": [],
+   "readonly_flag": "",
+   "probe": "live",
+   "reason": "只读：meta + 后端能力面 + 注入面形状；**连锁件都不建**（读 meta 不走 flock 的 O_CREATE 路径）",
    "waiver": ""
   },
   {
@@ -2799,6 +2864,45 @@
    "waiver": ""
   },
   {
+   "path": "model record ls",
+   "danger": "",
+   "opened": true,
+   "default_writes": false,
+   "writes_where": [],
+   "write_kind": "",
+   "gated_by": [],
+   "readonly_flag": "",
+   "probe": "live",
+   "reason": "只读：读模型目录 `manifests/` 逐条投影（实测 rc0 零写盘 · 空目录同）；不建目录、不落锁件",
+   "waiver": ""
+  },
+  {
+   "path": "model record probe",
+   "danger": "",
+   "opened": true,
+   "default_writes": false,
+   "writes_where": [],
+   "write_kind": "",
+   "gated_by": [],
+   "readonly_flag": "",
+   "probe": "live",
+   "reason": "默认档只打印：带目标不给 `--out` ⇒ rc0 零写盘（实测）；`--out` 原子写记录件 ＋ 兄弟 `<版>.trace.json`/`<版>.capabilities.json`，`--store` 进模型目录 `manifests/`（同内容不重写 · 不合标准拒入 · 写前过 `modelreg.Verify`）；裸跑缺目标 ⇒ 退 2、零写盘",
+   "waiver": ""
+  },
+  {
+   "path": "model record verify",
+   "danger": "",
+   "opened": true,
+   "default_writes": false,
+   "writes_where": [],
+   "write_kind": "",
+   "gated_by": [],
+   "readonly_flag": "",
+   "probe": "live",
+   "reason": "只读：校验记录件形状 · `--integrity` 流式 sha256 核 `files[]` 与磁盘件 · `--in-place` 核记录位置与身份自洽——只读文件、不改件、不落锁；裸跑缺记录件路径 ⇒ 退 2、零写盘",
+   "waiver": ""
+  },
+  {
    "path": "model rm",
    "danger": "D2",
    "opened": true,
@@ -3048,6 +3152,21 @@
    "waiver": ""
   },
   {
+   "path": "registry sync",
+   "danger": "",
+   "opened": true,
+   "default_writes": "unprobed",
+   "writes_where": [
+    "repo"
+   ],
+   "write_kind": "artifact",
+   "gated_by": [],
+   "readonly_flag": "--dry-run",
+   "probe": "exempt",
+   "reason": "裸跑会把 `scripts/公开标记.tsv` 尾部追加缺行（原子写 tmp→rename）；沙箱探针不可代表默认档 —— 本命令按**仓内**登记表现读现补，沙箱里跑仍指向真仓（cwd 上溯 ⇒ 真根），且干净仓缺项为 0 ⇒ 零副作用面改由 `--dry-run` 与判据件 `TestRegistrySyncDryRunIsZeroSideEffectAndListsRows` / `TestRegistrySyncWritesAtomically` 覆盖（干跑整树 sha 不变 · 写失败原件逐字节不变 · inode 换证 rename）",
+   "waiver": ""
+  },
+  {
    "path": "repo commit",
    "danger": "D2",
    "opened": true,
@@ -3136,6 +3255,19 @@
    "readonly_flag": "--dry-run",
    "probe": "live",
    "reason": "",
+   "waiver": ""
+  },
+  {
+   "path": "review",
+   "danger": "",
+   "opened": false,
+   "default_writes": false,
+   "writes_where": [],
+   "write_kind": "",
+   "gated_by": [],
+   "readonly_flag": "",
+   "probe": "live",
+   "reason": "`list` 只读（实测 rc0 零写盘）；`<issue-id> approve` 真 merge 回 main 并置 issue done · `reject` 丢分支并置 retry —— 目标是命令行给的 `<workdir>`/`--repo`（本机、无远端效应）；裸跑缺位置参数 ⇒ 退 2、零写盘",
    "waiver": ""
   },
   {
@@ -3266,6 +3398,19 @@
    "readonly_flag": "--dry-run",
    "probe": "live",
    "reason": "",
+   "waiver": ""
+  },
+  {
+   "path": "sched run",
+   "danger": "",
+   "opened": true,
+   "default_writes": "unprobed",
+   "writes_where": [],
+   "write_kind": "",
+   "gated_by": [],
+   "readonly_flag": "",
+   "probe": "exempt",
+   "reason": "常驻档：裸跑即起调度器并轮询（不退订、探针必超时 ⇒ 沙箱不可代表默认档）；写面 = 按 `--workdir` 派单、改任务单状态、起 worker，SIGINT/SIGTERM 优雅停 ⇒ 本机可逆（故不进危险表）",
    "waiver": ""
   },
   {
@@ -3629,6 +3774,19 @@
    "readonly_flag": "--dry-run",
    "probe": "exempt",
    "reason": "D3 档（真跑拒执/整机面）",
+   "waiver": ""
+  },
+  {
+   "path": "trace",
+   "danger": "",
+   "opened": false,
+   "default_writes": false,
+   "writes_where": [],
+   "write_kind": "",
+   "gated_by": [],
+   "readonly_flag": "",
+   "probe": "live",
+   "reason": "只读：`os.Open`/`os.Stat` 读 `events.jsonl`（`sysmetrics.jsonl` 有则联动）并打印，实测给真 logdir 跑全活 rc0 零写盘；裸跑缺 `<logdir>` ⇒ 退 2、零写盘",
    "waiver": ""
   },
   {

@@ -775,3 +775,113 @@ func TestVerifySocketPerm(t *testing.T) {
 		t.Fatalf("件不存在时应当报错")
 	}
 }
+
+// ── ⑬ 判据 6（v2 §E）：宿主仓操作（`repo.*`）在册为零 · 注册口也收不进 ────────
+//
+// ★ 这一格测**两件事**，缺一不可：
+//
+//	(a) 真在用的注册表里没有 `repo` / `repo.*` —— 「本版没写」是个会被下一次提交推翻的事实，
+//	    必须由测试钉住（`DefaultOps` 加一笔就红）。
+//	(b) 注册口**自己拒收** —— 就算有人绕过 (a) 去 `Register`，也加不进来。只钉 (a) 等于只钉
+//	    「当前这份默认表」，钉 (b) 才钉住「茧内不可能有宿主仓写权」这条判据。
+func TestBrokerRepoOpsNotRegistered(t *testing.T) {
+	// (a) 真跑用的那张表（`NewBroker` 填的 `DefaultOps`）。
+	r := newRig(t, strongProbe)
+	if r.b.Ops == nil {
+		t.Fatal("broker 没有注册表（fail-closed 面本身要在，才能谈「在册为零」）")
+	}
+	names := r.b.Ops.Names()
+	if len(names) == 0 {
+		t.Fatal("注册表是空的 —— 这一格就无从谈起（正控：至少要有一枚在册 op）")
+	}
+	for _, name := range names {
+		if isRepoSelfOp(name) {
+			t.Fatalf("宿主仓操作 %q 进了白名单（判据 6：茧内 `repo commit` 必拒）", name)
+		}
+	}
+	for _, op := range []string{"repo", "repo.commit", "repo.status", "repo.diffstat", "repo.push", "Repo.Commit"} {
+		if _, ok := r.b.Ops.Lookup(op); ok {
+			t.Fatalf("Lookup(%q) 命中了 —— 宿主仓操作在册", op)
+		}
+	}
+	// 正控：非仓族的两枚桩照常在册（不是「把表清空」冒充判据）。
+	for _, op := range []string{"code.show", "ai.request"} {
+		if _, ok := r.b.Ops.Lookup(op); !ok {
+			t.Fatalf("%q 不在册 —— 判据 6 不许靠清空白名单达成", op)
+		}
+	}
+
+	// (b) 注册口拒收（大小写 / 空白变形一并收窄）。空注册表 ⇒ 谁也别想偷偷塞进去。
+	nop := func(context.Context, *Broker, OpRequest) (any, error) { return nil, nil }
+	for _, op := range []string{"repo", "repo.commit", "repo.status", "  repo.push  ", "Repo.Commit"} {
+		reg := NewOpRegistry()
+		err := reg.Register(OpSpec{Name: op, Privileged: true, Handle: nop})
+		if !errors.Is(err, ErrRepoSelfOp) {
+			t.Fatalf("Register(%q) 应回 ErrRepoSelfOp，得 %v（宿主仓操作被收进了注册表）", op, err)
+		}
+		if got := reg.Names(); len(got) != 0 {
+			t.Fatalf("Register(%q) 被拒后注册表却有 %v（拒得不干净）", op, got)
+		}
+	}
+	// 负控：只是前缀像的名字不受误伤（否则「禁 repo.*」会顺手废掉一片无关 op）。
+	for _, op := range []string{"report", "repofoo", "repo2.commit"} {
+		reg := NewOpRegistry()
+		if err := reg.Register(OpSpec{Name: op, Handle: nop}); err != nil {
+			t.Fatalf("Register(%q) 被误当成宿主仓操作：%v", op, err)
+		}
+	}
+}
+
+// TestBrokerRepoCommitRefusedOnWire — 真发一条 `op="repo.commit"`，逐字节看回帧：
+// 拒、码是 `unknown_op`（令牌与身份都过了才谈在册），且**不带任何细节**（连 op 名都不回显）。
+func TestBrokerRepoCommitRefusedOnWire(t *testing.T) {
+	r := newRig(t, strongProbe) // strong：身份闸不拦 ⇒ 走到的是「在不在册」那一道
+	tok := r.issue("cocoon-c")
+
+	req, err := json.Marshal(map[string]any{
+		"inst": "cocoon-c", "token": tok, "op": "repo.commit",
+		"args": map[string]any{"only": []string{"core/"}, "message": "茧内提交"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := r.send(string(req))
+	got := strings.TrimSpace(string(line))
+
+	// ★ 逐字节相等：这一串就是「拒 + 无细节」的全部内容。多一个 reason/detail/hint 都红。
+	if want := `{"ok":false,"code":"unknown_op"}`; got != want {
+		t.Fatalf("回帧不是恰好 %s，实得 %q（多出的字段 = 把「为什么拒」告诉了对端）", want, got)
+	}
+	// 连 op 名都不回显（否则对端能拿它当「哪些 op 存在」的探针）。
+	if strings.Contains(strings.ToLower(got), "repo") {
+		t.Fatalf("回帧回显了 op 名: %q", got)
+	}
+	// 解析面同判（`errorCode` 顺带断言「拒帧只有 ok/code 两键」）。
+	errorCode(t, r.call("cocoon-c", tok, "repo.commit", map[string]any{"only": []string{"core/"}}), CodeUnknownOp)
+
+	// 正控：同一枚令牌打一枚在册 op ⇒ 成功。证明「拒」是 op 不在册，不是令牌/身份不行。
+	if resp := r.call("cocoon-c", tok, "code.show", map[string]any{"file": "main.go"}); resp["ok"] != true {
+		t.Fatalf("同一枚令牌打 code.show 应放行，得 %#v（那这一格就没证明 repo.commit 是被 op 拒的）", resp)
+	}
+
+	// 审计仍留痕（被拒也记一行），且不含令牌本体。
+	lines := r.auditLines()
+	if len(lines) != 3 {
+		t.Fatalf("审计应有 3 行（repo.commit ×2 + code.show ×1），实得 %d: %#v", len(lines), lines)
+	}
+	denied := 0
+	for _, a := range lines {
+		if a.Op == "repo.commit" {
+			denied++
+			if a.OK {
+				t.Fatalf("被拒的 repo.commit 在审计里记成了成功: %#v", a)
+			}
+		}
+	}
+	if denied != 2 {
+		t.Fatalf("审计里 repo.commit 应有 2 行，实得 %d: %#v", denied, lines)
+	}
+	if strings.Contains(r.audit.String(), tok) {
+		t.Fatal("审计里出现了令牌本体")
+	}
+}
