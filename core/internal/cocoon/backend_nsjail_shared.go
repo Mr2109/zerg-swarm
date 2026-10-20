@@ -13,10 +13,15 @@
 //	--max_cpus              个数，0 = 不限
 //	--iface_no_lo           真义是「**不**把 lo 拉起来」⇒ 要回环就**不许**传
 //	--disable_proc          真义是「不挂 procfs」⇒ 语言运行时要用 /proc 就**不许**传
-//	--disable_clone_newnet  真义是「不建 netns，直接用宿主网络」⇒ 要断网就**不许**传
+//	--disable_clone_newnet  真义是「**不**建 netns，直接用宿主网络」⇒ 看 HostNetwork 位（见下）
 //
-// 这三条「不传」是**有意为空**的：它们不是漏了，而是传了就与设计目标相反
-// （茧内要回环给 AI 端点、要有 /proc、要断外网）。测试里逐条断言「不含」。
+// 前两条「不传」是**有意为空**的：它们不是漏了，而是传了就与设计目标相反
+// （茧内要回环给 AI 端点、要有 /proc）。测试里逐条断言「不含」。
+//
+// ★ `--disable_clone_newnet` 与上面两条不同，它由 **NsjailBackend.HostNetwork** 决定
+// （缺省不传 = 茧有独立 netns ⇒ 断外网；命令面置 true = 共享宿主 netns ⇒ 茧内端口即宿主端口）。
+// 两条承诺互斥，只能选一条：要「能出网之外的隔离」就得接 DNAT/代理，本件未接
+// （见 backend_nsjail.go 文件头撞约束 Ⅰb）。
 package cocoon
 
 import (
@@ -76,6 +81,13 @@ type NsjailBackend struct {
 	CgroupMount string
 	// KillGrace — 超时后 SIGTERM → 宽限 → SIGKILL 的宽限（0 = 直接 SIGKILL）。
 	KillGrace time.Duration
+	// HostNetwork — 是否让茧**共享宿主 netns**（传 `--disable_clone_newnet`）。
+	//
+	// ★ 缺省 false（nsjail 自己建新 netns ⇒ 茧内只有 lo、出不了网，这是「运行期断外网」的
+	//   唯一现成实现）。置 true 时茧与宿主同一网络栈：茧内监听 127.0.0.1:<port> 就是宿主
+	//   127.0.0.1:<port>（⇒ 不需要也不存在端口映射），代价是**茧能出网**。
+	//   两边都要就得接 DNAT/代理，本件未接（见文件头撞约束 Ⅰb）。
+	HostNetwork bool
 
 	mu     sync.Mutex
 	nextID int
@@ -90,6 +102,10 @@ type nsjailInstance struct {
 	mounts map[string]nsjailMount
 	gone   bool
 	pid    int
+	// pids — 当前还在跑的各次 exec 主进程（宿主 pid 集合）。
+	// 用途：`open` 之后把这份 pid 表落进 meta —— 起服务的那个 CLI 进程会退出，
+	// 收尾的是**另一个**进程（见 ReapPersisted）。
+	pids map[int]struct{}
 }
 
 // nsjailMount — 一次挂载：宿主路径 + 茧内路径 + 读写位（同 inner 不许挂两次到不同源）。
@@ -111,6 +127,42 @@ func NewNsjailBackend() *NsjailBackend {
 		KillGrace:   nsjailDefaultKillGrace,
 		insts:       make(map[string]*nsjailInstance),
 	}
+}
+
+// ── pid 归属校验（ReapPersisted 的安全前提）───────────────────────────
+
+// nsjailPidIsOurs — /proc/<pid>/cmdline 的第一个参数是不是「本后端那个 nsjail」。
+//
+// ★ 为什么必须验：`close <id>` 只凭 meta 里记的 pid 就去杀，等于把「meta 被改过 /
+// pid 号被复用」两条都当成不可能。验法是读 cmdline（同 uid 可读），看 argv[0] 的
+// basename 是否等于本后端可执行文件名 —— 这不是密码学证据，但足以挡住「杀手无寸铁的
+// 无关进程」这唯一的灾难后果。
+func nsjailPidIsOurs(pid int, bin string) bool {
+	if pid <= 0 {
+		return false
+	}
+	if bin == "" {
+		bin = nsjailBinaryDefault
+	}
+	want := filepath.Base(bin)
+	data, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/cmdline")
+	if err != nil {
+		return false
+	}
+	if len(data) == 0 {
+		return false
+	}
+	arg0 := strings.SplitN(string(data), "\x00", 2)[0]
+	return filepath.Base(arg0) == want
+}
+
+// nsjailPidAlive — pid 还活着（僵尸也算活着：等它被回收）。
+func nsjailPidAlive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	_, err := os.Stat("/proc/" + strconv.Itoa(pid))
+	return err == nil
 }
 
 // Name — 后端名（Instance.Backend 同字面量）。
@@ -253,8 +305,69 @@ func removeCgroupDirs(cgroupMount string, pid int) []error {
 	for _, dir := range nsjailCgroupPaths(cgroupMount, pid) {
 		// cgroupfs 上 rmdir 只在空时成功：里面还有活进程 ⇒ EBUSY/ENOTEMPTY，如实报出来
 		// （「删不掉」本身就是一条事实：说明这棵树没死透）。
-		if err := os.Remove(dir); err != nil && !os.IsNotExist(err) {
-			errs = append(errs, fmt.Errorf("cocoon: 清 cgroup 目录 %s 失败: %w", dir, err))
+		if err := removeCgroupDir(dir); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errs
+}
+
+// removeCgroupDir — 删一个 cgroup 目录（不存在 = 已经收过，不算错）。
+//
+// ★ 为什么除了「按 pid 拼路径」还要单开这一条：cgroup v2 下目录名是**茧内 init 的宿主 pid**，
+// 它比我们手里的 nsjail pid 大一两号（实测 NSJAIL.73 不存在、真的是 NSJAIL.74）。
+// 只按自己的 pid 拼路径会漏掉真正的目录 —— 于是每座茧都在 /sys/fs/cgroup 留一个空壳。
+func removeCgroupDir(dir string) error {
+	if dir == "" {
+		return nil
+	}
+	if err := os.Remove(dir); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("cocoon: 清 cgroup 目录 %s 失败: %w", dir, err)
+	}
+	return nil
+}
+
+// nsjailReapEmptyCgroups — 收掉「进程已经不在了、里面也没人」的 `NSJAIL.<pid>` 空壳。
+//
+// ★ 为什么需要它（实测）：cgroup v2 的目录名是**茧内 init 的宿主 pid**，而我们在收尾时手里
+// 只有 nsjail 的 pid；树一死，`/proc` 里的父链也没了 ⇒ 事后无法把「这个目录」和「这座茧」
+// 对上号。于是每座茧都会在 `/sys/fs/cgroup` 留一个空目录（实测：三轮集成后攒了 3 个）。
+//
+// 判据只有两条，且都可证：
+//
+//	① 目录名里的 pid 在 /proc 里**不存在**（还活着的一律不碰 —— 那是别人的茧正在建）；
+//	② `cgroup.procs` 为空（还有进程的，即使父链断了也不动 —— 那说明没死透，该报不该删）。
+//
+// 不猜、不按时间、不按前缀通配全部删掉：删掉的只能是「已经确定什么都装不下的空壳」。
+func nsjailReapEmptyCgroups(mount string) []error {
+	if mount == "" {
+		return nil
+	}
+	var errs []error
+	for _, base := range []string{mount, filepath.Join(mount, "NSJAIL")} {
+		ents, err := os.ReadDir(base)
+		if err != nil {
+			continue
+		}
+		for _, e := range ents {
+			if !e.IsDir() || !strings.HasPrefix(e.Name(), "NSJAIL.") {
+				continue
+			}
+			pid, perr := strconv.Atoi(strings.TrimPrefix(e.Name(), "NSJAIL."))
+			if perr != nil || pid <= 0 {
+				continue
+			}
+			if nsjailPidAlive(pid) {
+				continue
+			}
+			dir := filepath.Join(base, e.Name())
+			if procs, rerr := os.ReadFile(filepath.Join(dir, "cgroup.procs")); rerr == nil &&
+				strings.TrimSpace(string(procs)) != "" {
+				continue
+			}
+			if err := removeCgroupDir(dir); err != nil {
+				errs = append(errs, err)
+			}
 		}
 	}
 	return errs
@@ -366,6 +479,75 @@ func nsjailExecArgv(spec *Spec, mounts map[string]nsjailMount, chroot, dir strin
 	}
 	out = append(out, "--")
 	return append(out, argv...)
+}
+
+// nsjailWithHostNet — 在 `--` **之前**插入 `--disable_clone_newnet`（缺了 `--` 就退化成追加，
+// 那种形态会把旗标塞进用户 argv —— 直接返回原样，让调用方看见「没生效」而不是悄悄改语义）。
+func nsjailWithHostNet(args []string) []string {
+	sep := -1
+	for i, a := range args {
+		if a == "--" {
+			sep = i
+			break
+		}
+	}
+	if sep < 0 {
+		return args
+	}
+	out := make([]string, 0, len(args)+1)
+	out = append(out, args[:sep]...)
+	out = append(out, "--disable_clone_newnet")
+	out = append(out, args[sep:]...)
+	return out
+}
+
+// nsjailJailPATH — 茧内 PATH（契约 [环境].PATH 优先，否则最小默认）。
+func nsjailJailPATH(spec *Spec) string {
+	if spec != nil {
+		if p := strings.TrimSpace(spec.Env["PATH"]); p != "" {
+			return p
+		}
+	}
+	return nsjailDefaultPATH
+}
+
+// nsjailResolveArgv0 — argv[0] 是**裸命令名**时按茧内 PATH 解析成绝对路径。
+//
+// ★ 为什么必须有这一条（实测，不是猜）：nsjail 对 argv[0] 直接 execve，**不走 PATH**
+// —— `entry = ["python3", ...]` 会得到 `execve('python3') failed: No such file or directory`、
+// nsjail 退 255（日志在茧的 logs/<服务>.log 里）。契约里 Backend 的注释本来就写了
+// 「argv[0] 按 PATH 解析由后端定」，所以解析责任在我们这边。
+//
+// ★ 只在「没换 rootfs」（chroot 为空或 "/"）时做：那时宿主路径 == 茧内路径，解析可证。
+// 换真镜像根之后宿主看不到那份 rootfs，就得在茧内解析 —— 本件未接，此时**拒**，
+// 不猜一个宿主上的同名路径塞进去（那会把「宿主的东西」当成「茧内的东西」跑）。
+func nsjailResolveArgv0(argv []string, jailPATH, chroot string) ([]string, error) {
+	if len(argv) == 0 || argv[0] == "" {
+		return nil, fmt.Errorf("%w: argv 为空或 argv[0] 为空", ErrBadArgv)
+	}
+	a0 := argv[0]
+	if strings.Contains(a0, "/") {
+		return argv, nil
+	}
+	if chroot != "" && chroot != "/" {
+		return nil, fmt.Errorf("%w: argv[0]=%q 是裸命令名，而本后端未在该 rootfs 内解析 PATH（chroot=%q）⇒ 请写茧内绝对路径",
+			ErrBadArgv, a0, chroot)
+	}
+	for _, dir := range strings.Split(jailPATH, ":") {
+		if dir == "" || !strings.HasPrefix(dir, "/") {
+			continue
+		}
+		p := filepath.Join(dir, a0)
+		fi, err := os.Stat(p)
+		if err != nil || fi.IsDir() || fi.Mode()&0o111 == 0 {
+			continue
+		}
+		out := append([]string(nil), argv...)
+		out[0] = p
+		return out, nil
+	}
+	return nil, fmt.Errorf("%w: argv[0]=%q 在茧内 PATH=%q 里找不到可执行文件（nsjail 不走 PATH，本层替它解析）",
+		ErrBadArgv, a0, jailPATH)
 }
 
 // nsjailEnv — 交给子进程的环境：**不继承宿主环境**（宿主可能带密钥），

@@ -213,9 +213,9 @@
     {
       "value": "backend_unavailable",
       "sites": [
-        "core/cmd/zerg/family_cocoon_lifecycle.go:510",
-        "core/cmd/zerg/family_cocoon_lifecycle.go:522",
-        "core/cmd/zerg/family_cocoon_lifecycle.go:769"
+        "core/cmd/zerg/family_cocoon_lifecycle.go:551",
+        "core/cmd/zerg/family_cocoon_lifecycle.go:557",
+        "core/cmd/zerg/family_cocoon_lifecycle.go:868"
       ]
     },
     {
@@ -315,9 +315,9 @@
     {
       "value": "bad_cocoon_id",
       "sites": [
-        "core/cmd/zerg/family_cocoon_lifecycle.go:1076",
-        "core/cmd/zerg/family_cocoon_lifecycle.go:695",
-        "core/cmd/zerg/family_cocoon_lifecycle.go:961"
+        "core/cmd/zerg/family_cocoon_lifecycle.go:1086",
+        "core/cmd/zerg/family_cocoon_lifecycle.go:1236",
+        "core/cmd/zerg/family_cocoon_lifecycle.go:788"
       ]
     },
     {
@@ -364,7 +364,7 @@
     {
       "value": "bad_egg_name",
       "sites": [
-        "core/cmd/zerg/family_cocoon_lifecycle.go:1081"
+        "core/cmd/zerg/family_cocoon_lifecycle.go:1241"
       ]
     },
     {
@@ -842,7 +842,7 @@
     {
       "value": "bind_needs_two_args",
       "sites": [
-        "core/cmd/zerg/family_cocoon_lifecycle.go:1068"
+        "core/cmd/zerg/family_cocoon_lifecycle.go:1228"
       ]
     },
     {
@@ -938,7 +938,7 @@
     {
       "value": "close_needs_id",
       "sites": [
-        "core/cmd/zerg/family_cocoon_lifecycle.go:688"
+        "core/cmd/zerg/family_cocoon_lifecycle.go:781"
       ]
     },
     {
@@ -950,21 +950,21 @@
     {
       "value": "cocoon_already_gone",
       "sites": [
-        "core/cmd/zerg/family_cocoon_lifecycle.go:706"
+        "core/cmd/zerg/family_cocoon_lifecycle.go:799"
       ]
     },
     {
       "value": "cocoon_closed",
       "sites": [
-        "core/cmd/zerg/family_cocoon_lifecycle.go:1099"
+        "core/cmd/zerg/family_cocoon_lifecycle.go:1259"
       ]
     },
     {
       "value": "cocoon_not_found",
       "sites": [
-        "core/cmd/zerg/family_cocoon_lifecycle.go:1090",
-        "core/cmd/zerg/family_cocoon_lifecycle.go:710",
-        "core/cmd/zerg/family_cocoon_lifecycle.go:969"
+        "core/cmd/zerg/family_cocoon_lifecycle.go:1094",
+        "core/cmd/zerg/family_cocoon_lifecycle.go:1250",
+        "core/cmd/zerg/family_cocoon_lifecycle.go:803"
       ]
     },
     {
@@ -1051,7 +1051,7 @@
         "core/cmd/zerg/family_agent_deploy.go:632",
         "core/cmd/zerg/family_agent_ops.go:1791",
         "core/cmd/zerg/family_build.go:365",
-        "core/cmd/zerg/family_cocoon_lifecycle.go:754",
+        "core/cmd/zerg/family_cocoon_lifecycle.go:847",
         "core/cmd/zerg/family_config.go:1227",
         "core/cmd/zerg/family_config.go:1409",
         "core/cmd/zerg/family_config.go:1628",
@@ -1269,7 +1269,7 @@
     {
       "value": "destroy_failed",
       "sites": [
-        "core/cmd/zerg/family_cocoon_lifecycle.go:778"
+        "core/cmd/zerg/family_cocoon_lifecycle.go:895"
       ]
     },
     {
@@ -1571,7 +1571,7 @@
     {
       "value": "expose_failed",
       "sites": [
-        "core/cmd/zerg/family_cocoon_lifecycle.go:576"
+        "core/cmd/zerg/family_cocoon_lifecycle.go:632"
       ]
     },
     {
@@ -2002,7 +2002,7 @@
     {
       "value": "id_alloc_failed",
       "sites": [
-        "core/cmd/zerg/family_cocoon_lifecycle.go:528"
+        "core/cmd/zerg/family_cocoon_lifecycle.go:569"
       ]
     },
     {
@@ -2074,7 +2074,7 @@
     {
       "value": "inspect_needs_id",
       "sites": [
-        "core/cmd/zerg/family_cocoon_lifecycle.go:954"
+        "core/cmd/zerg/family_cocoon_lifecycle.go:1079"
       ]
     },
     {
@@ -2366,24 +2366,24 @@
     {
       "value": "meta_read_failed",
       "sites": [
-        "core/cmd/zerg/family_cocoon_lifecycle.go:1094",
-        "core/cmd/zerg/family_cocoon_lifecycle.go:585",
-        "core/cmd/zerg/family_cocoon_lifecycle.go:714",
-        "core/cmd/zerg/family_cocoon_lifecycle.go:819",
-        "core/cmd/zerg/family_cocoon_lifecycle.go:973"
+        "core/cmd/zerg/family_cocoon_lifecycle.go:1098",
+        "core/cmd/zerg/family_cocoon_lifecycle.go:1254",
+        "core/cmd/zerg/family_cocoon_lifecycle.go:653",
+        "core/cmd/zerg/family_cocoon_lifecycle.go:807",
+        "core/cmd/zerg/family_cocoon_lifecycle.go:944"
       ]
     },
     {
       "value": "meta_write_failed",
       "sites": [
-        "core/cmd/zerg/family_cocoon_lifecycle.go:1106",
-        "core/cmd/zerg/family_cocoon_lifecycle.go:543",
-        "core/cmd/zerg/family_cocoon_lifecycle.go:548",
-        "core/cmd/zerg/family_cocoon_lifecycle.go:594",
-        "core/cmd/zerg/family_cocoon_lifecycle.go:599",
-        "core/cmd/zerg/family_cocoon_lifecycle.go:762",
-        "core/cmd/zerg/family_cocoon_lifecycle.go:795",
-        "core/cmd/zerg/family_cocoon_lifecycle.go:812"
+        "core/cmd/zerg/family_cocoon_lifecycle.go:1266",
+        "core/cmd/zerg/family_cocoon_lifecycle.go:586",
+        "core/cmd/zerg/family_cocoon_lifecycle.go:591",
+        "core/cmd/zerg/family_cocoon_lifecycle.go:668",
+        "core/cmd/zerg/family_cocoon_lifecycle.go:673",
+        "core/cmd/zerg/family_cocoon_lifecycle.go:855",
+        "core/cmd/zerg/family_cocoon_lifecycle.go:920",
+        "core/cmd/zerg/family_cocoon_lifecycle.go:937"
       ]
     },
     {
@@ -3095,7 +3095,7 @@
     {
       "value": "open_needs_dir",
       "sites": [
-        "core/cmd/zerg/family_cocoon_lifecycle.go:444"
+        "core/cmd/zerg/family_cocoon_lifecycle.go:483"
       ]
     },
     {
@@ -3108,7 +3108,7 @@
     {
       "value": "orchestrate_failed",
       "sites": [
-        "core/cmd/zerg/family_cocoon_lifecycle.go:562"
+        "core/cmd/zerg/family_cocoon_lifecycle.go:616"
       ]
     },
     {
@@ -3541,13 +3541,13 @@
     {
       "value": "purge_failed",
       "sites": [
-        "core/cmd/zerg/family_cocoon_lifecycle.go:858"
+        "core/cmd/zerg/family_cocoon_lifecycle.go:983"
       ]
     },
     {
       "value": "purge_needs_confirm",
       "sites": [
-        "core/cmd/zerg/family_cocoon_lifecycle.go:748"
+        "core/cmd/zerg/family_cocoon_lifecycle.go:841"
       ]
     },
     {
@@ -4153,14 +4153,14 @@
     {
       "value": "root_stat_failed",
       "sites": [
-        "core/cmd/zerg/family_cocoon_lifecycle.go:843",
+        "core/cmd/zerg/family_cocoon_lifecycle.go:968",
         "core/cmd/zerg/family_find.go:76"
       ]
     },
     {
       "value": "root_unreadable",
       "sites": [
-        "core/cmd/zerg/family_cocoon_lifecycle.go:899"
+        "core/cmd/zerg/family_cocoon_lifecycle.go:1024"
       ]
     },
     {
@@ -4547,21 +4547,21 @@
     {
       "value": "spec_drift",
       "sites": [
-        "core/cmd/zerg/family_cocoon_lifecycle.go:496"
+        "core/cmd/zerg/family_cocoon_lifecycle.go:535"
       ]
     },
     {
       "value": "spec_invalid",
       "sites": [
-        "core/cmd/zerg/family_cocoon_lifecycle.go:484",
-        "core/cmd/zerg/family_cocoon_lifecycle.go:503"
+        "core/cmd/zerg/family_cocoon_lifecycle.go:523",
+        "core/cmd/zerg/family_cocoon_lifecycle.go:542"
       ]
     },
     {
       "value": "spec_missing",
       "sites": [
-        "core/cmd/zerg/family_cocoon_lifecycle.go:476",
-        "core/cmd/zerg/family_cocoon_lifecycle.go:488"
+        "core/cmd/zerg/family_cocoon_lifecycle.go:515",
+        "core/cmd/zerg/family_cocoon_lifecycle.go:527"
       ]
     },
     {
@@ -4901,9 +4901,9 @@
     {
       "value": "tombstone_failed",
       "sites": [
-        "core/cmd/zerg/family_cocoon_lifecycle.go:830",
-        "core/cmd/zerg/family_cocoon_lifecycle.go:854",
-        "core/cmd/zerg/family_cocoon_lifecycle.go:866"
+        "core/cmd/zerg/family_cocoon_lifecycle.go:955",
+        "core/cmd/zerg/family_cocoon_lifecycle.go:979",
+        "core/cmd/zerg/family_cocoon_lifecycle.go:991"
       ]
     },
     {
@@ -5423,7 +5423,7 @@
       "sites": [
         "core/cmd/zerg/family_agent_run.go:154",
         "core/cmd/zerg/family_chat.go:239",
-        "core/cmd/zerg/family_cocoon_lifecycle.go:466",
+        "core/cmd/zerg/family_cocoon_lifecycle.go:505",
         "core/cmd/zerg/family_config.go:1125",
         "core/cmd/zerg/family_config.go:1270",
         "core/cmd/zerg/family_config.go:1501",

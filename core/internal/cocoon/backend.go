@@ -13,6 +13,8 @@ import (
 	"errors"
 	"fmt"
 	"path"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -46,6 +48,38 @@ type Backend interface {
 
 	// Destroy — 收进程树、收端口、删实例。**幂等**：已销毁的再调返回 nil。
 	Destroy(ctx context.Context, inst Instance) error
+}
+
+// CapabilityReporter — 可选面：后端自报能力（`cocoon inspect` 打印的就是它）。
+//
+// ★ 为什么单开门而不是塞进 Backend：VZ/HCS 那两个后端还没接，硬塞进去等于逼它们
+// 先写一份「假声明」；门开着，没实现的调用方就退回**平台表**（`PlatformCapabilities`），
+// 而不是自己手搓一份。
+type CapabilityReporter interface {
+	// Capabilities — 本后端在本平台能给什么；给不了就返回 ErrBackendUnsupported
+	// （**不许**返回一张全 false 的表：那会被读成「后端在，只是弱」）。
+	Capabilities() (Capabilities, error)
+}
+
+// PIDReporter — 可选面：该实例当前真在跑的 exec 主进程 pid（宿主侧）。
+//
+// 用途只有一个：把「后端签发的 pid」落进 meta，好让**另一个进程**的 `close` 能收干净。
+// 空实现表示该后端不起进程（假后端）⇒ 调用方不落 pid。
+type PIDReporter interface {
+	// InstancePIDs — 该实例当前还活着的 exec 主进程 pid（升序；后端不在/已销毁 ⇒ nil）。
+	InstancePIDs(inst Instance) []int
+}
+
+// HandleReaper — 可选面：**按盘上句柄**收尾（跨进程 `close` 的唯一入口）。
+//
+// ★ 与 Destroy 的分工：Destroy 认的是「我内存里记过这一号」，跨进程时那份记账不存在；
+// ReapPersisted 认的是「控制面把**后端自己签发的**句柄（id + pid）原样存进了 meta」。
+// 因此实现必须自己验明 pid 归属（本后端的可执行文件、活的进程），**不许**拿调用方
+// 拼出来的 pid 直接下刀 —— 否则一句 `close <id>` 就能借后端之手杀无关进程。
+type HandleReaper interface {
+	// ReapPersisted — 收掉 inst 对应的 pid 树 + cgroup + 茧根。幂等（收过再收返回 nil）。
+	// 空 pids 且茧根不存在 ⇒ nil。
+	ReapPersisted(ctx context.Context, inst Instance, pids []int) error
 }
 
 // Instance — 后端签发的不透明句柄。
@@ -97,6 +131,13 @@ type ExecOpts struct {
 	Env map[string]string
 	// Dir — 工作目录（茧内绝对路径）；空表示用镜像的默认 workdir。
 	Dir string
+	// LogPath — 把 stdout/stderr 重定向到宿主侧这个文件（追加 · 0644）；空 = 走内存管道。
+	//
+	// ★ 存在理由（不是优化）：长驻服务由 `cocoon open` 起，而 open 这个进程**会退出**。
+	// 管道读端随它一起消失 ⇒ 服务下一次往 stdout/stderr 写就是 EPIPE/EPIPE 引发的死法。
+	// 落文件后，服务在 open 退场后照样能写、也能被排障看见（日志在茧目录里）。
+	// ★ 代价（如实说）：设了它，ExecResult.Stdout/Stderr 恒空（输出在文件里，不另留一份）。
+	LogPath string
 }
 
 // Validate — 入参自检：键名/路径不合规会在 execve 那一刻才炸，且报错看不懂，所以提前拒。
@@ -106,6 +147,9 @@ func (o ExecOpts) Validate() error {
 	}
 	if o.Dir != "" && !path.IsAbs(o.Dir) {
 		return fmt.Errorf("cocoon: exec 工作目录必须是绝对路径，得到 %q", o.Dir)
+	}
+	if o.LogPath != "" && !filepath.IsAbs(o.LogPath) {
+		return fmt.Errorf("cocoon: exec 日志落点必须是宿主绝对路径，得到 %q", o.LogPath)
 	}
 	for k := range o.Env {
 		if !specEnvKeyRe.MatchString(k) {
@@ -305,6 +349,15 @@ type Capabilities struct {
 	CrossMountGuard bool
 	// CrossMountMechanism — 对应机制；没有就写「待补」。
 	CrossMountMechanism string
+	// Expose — 有没有「茧内端口 → 宿主端口」的映射能力。
+	//
+	// ★ 这是控制面决定「要不要调 Expose」的**唯一**依据（control plane 不许按平台名猜）：
+	//   false ⇒ 契约里的 [[端口]] 一律**跳过并说明**，不是「静默丢掉」也不是「假装映射成功」；
+	//   同时 readiness 探测改直连（茧与调用方同网络栈时，茧内端口就是宿主端口）。
+	//   Linux/nsjail = false（nsjail 只做 CLONE_NEWNET，不做 DNAT）。
+	Expose bool
+	// ExposeMechanism — 端口怎么露 / 为什么不露（false 时必须写清，空值等于「没说」）。
+	ExposeMechanism string
 }
 
 // Validate — 声明自检：平台/隔离本体/回收机制都必须写清（空值等于「没说」，
@@ -323,6 +376,9 @@ func (c Capabilities) Validate() error {
 	if c.KillMechanism == "" {
 		return fmt.Errorf("cocoon: 后端能力（%s）缺 KillMechanism（ProcessTreeKill=false 时必须写清兜底）", c.Platform)
 	}
+	if !c.Expose && c.ExposeMechanism == "" {
+		return fmt.Errorf("cocoon: 后端能力（%s）Expose=false 但缺 ExposeMechanism（「不映射」与「忘了写」必须能分开）", c.Platform)
+	}
 	return nil
 }
 
@@ -339,6 +395,9 @@ var capabilitiesByPlatform = map[string]Capabilities{
 		SymlinkMechanism:    "openat2 RESOLVE_NO_SYMLINKS",
 		CrossMountGuard:     true,
 		CrossMountMechanism: "openat2 RESOLVE_NO_XDEV",
+		// nsjail 只做 CLONE_NEWNET 隔离，不做 DNAT：茧内监听的端口本来就是宿主端口。
+		Expose:          false,
+		ExposeMechanism: "无 DNAT（茧与调用方同宿主网络栈：本后端有意共享宿主 netns ⇒ 茧内端口即宿主端口，直连 127.0.0.1:<inner>；代价是茧能出网，未接）",
 	},
 	PlatformDarwin: {
 		Platform:            PlatformDarwin,
@@ -351,6 +410,8 @@ var capabilitiesByPlatform = map[string]Capabilities{
 		SymlinkMechanism:    "O_NOFOLLOW_ANY",
 		CrossMountGuard:     false,
 		CrossMountMechanism: "手动比 st_dev（无 NO_XDEV 等价物）",
+		Expose:              false,
+		ExposeMechanism:     "未接（VZ 后端未接：端口转发是 VZ 的活，本件不做）",
 	},
 	PlatformWindows: {
 		Platform:            PlatformWindows,
@@ -363,6 +424,8 @@ var capabilitiesByPlatform = map[string]Capabilities{
 		SymlinkMechanism:    "待补",
 		CrossMountGuard:     false,
 		CrossMountMechanism: "待补",
+		Expose:              false,
+		ExposeMechanism:     "未接（HCS 后端未接：HvSocket 转发是 HCS 的活，本件不做）",
 	},
 }
 
@@ -370,6 +433,9 @@ var capabilitiesByPlatform = map[string]Capabilities{
 func Platforms() []string {
 	return []string{PlatformLinux, PlatformDarwin, PlatformWindows}
 }
+
+// HostPlatform — 本机平台名（runtime.GOOS 与上面三个字面量同形，可直接比对）。
+func HostPlatform() string { return runtime.GOOS }
 
 // PlatformCapabilities — 按平台名取声明；未知平台返回 ok=false（不许给个「默认全 true」）。
 func PlatformCapabilities(platform string) (Capabilities, bool) {

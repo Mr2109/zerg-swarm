@@ -53,3 +53,11 @@ func (b *NsjailBackend) Destroy(context.Context, Instance) error {
 func (b *NsjailBackend) Capabilities() (Capabilities, error) {
 	return Capabilities{}, nsjailUnsupported("Capabilities")
 }
+
+// InstancePIDs — 本平台不起进程 ⇒ 没有 pid 可报（空列表就是实话，不是错误）。
+func (b *NsjailBackend) InstancePIDs(Instance) []int { return nil }
+
+// ReapPersisted — 本平台什么都 provision 过：不许返回 nil（那会被读成「收干净了」）。
+func (b *NsjailBackend) ReapPersisted(context.Context, Instance, []int) error {
+	return nsjailUnsupported("ReapPersisted")
+}

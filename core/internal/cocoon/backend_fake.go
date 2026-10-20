@@ -85,7 +85,39 @@ func NewFakeBackend() *FakeBackend {
 }
 
 // 编译期钉住：假后端必须满足接口（接口一改，这里立刻红）。
-var _ Backend = (*FakeBackend)(nil)
+var (
+	_ Backend            = (*FakeBackend)(nil)
+	_ CapabilityReporter = (*FakeBackend)(nil)
+)
+
+// Name — 后端名（Instance.Backend 同字面量；与 NsjailBackend.Name 对称）。
+func (b *FakeBackend) Name() string { return fakeBackendName }
+
+// Capabilities — 假后端的能力面：**没有隔离、没有对端身份、不起进程**。
+//
+// ★ 这里照实写 none/false，✗ 不借用平台表（`LinuxCapabilities()` 说的是「真 nsjail 能给
+// 什么」，与本节的后端不是一件事）。Expose 是唯一一个 true：它真会分配一个宿主端口号
+// ——但只是记账（不转发），所以 ExposeMechanism 必须把话说明白。
+func (b *FakeBackend) Capabilities() (Capabilities, error) {
+	c := Capabilities{
+		Platform:            HostPlatform(),
+		Isolation:           "fake（脚手架 · 无隔离）",
+		PeerIdentity:        PeerIdentityNone,
+		PeerMechanism:       "无（假后端不签发对端身份）",
+		ProcessTreeKill:     false,
+		KillMechanism:       "无内核级回收（假后端不起进程）",
+		SymlinkNoFollow:     false,
+		SymlinkMechanism:    "待接真后端",
+		CrossMountGuard:     false,
+		CrossMountMechanism: "待接真后端",
+		Expose:              true,
+		ExposeMechanism:     "仅记账（假后端分配宿主端口号，不做真转发）",
+	}
+	if err := c.Validate(); err != nil {
+		return Capabilities{}, err
+	}
+	return c, nil
+}
 
 // ExecKey — argv 的脚本键（用 NUL 拼，避免 "a b" 与 "a"+"b" 撞在一起）。
 func ExecKey(argv []string) string { return strings.Join(argv, "\x00") }

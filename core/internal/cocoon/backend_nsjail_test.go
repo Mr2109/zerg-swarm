@@ -206,6 +206,100 @@ func TestNsjailMountArgsAndExecArgv(t *testing.T) {
 	}
 }
 
+// ── ①c 网络位：HostNetwork ⇒ `--disable_clone_newnet` 落 `--` 之前 ─────────
+
+func TestNsjailHostNetworkFlag(t *testing.T) {
+	argv := []string{"/bin/sh", "-c", "true"}
+	base := nsjailExecArgv(nil, nil, "/", "", argv)
+	if argCount(base, "--disable_clone_newnet") != 0 {
+		t.Fatalf("缺省（独立 netns）不该带 --disable_clone_newnet：%v", base)
+	}
+
+	with := nsjailWithHostNet(base)
+	if argCount(with, "--disable_clone_newnet") != 1 {
+		t.Fatalf("HostNetwork=true 应恰好带一次 --disable_clone_newnet：%v", with)
+	}
+	// ★ 必须在 `--` 之前：插到后面就只是茧内命令的一个参数（网络位形同虚设）。
+	sep := -1
+	for i, a := range with {
+		if a == "--" {
+			sep = i
+			break
+		}
+	}
+	if sep < 0 {
+		t.Fatalf("argv 里没有 `--`：%v", with)
+	}
+	inserted := -1
+	for i, a := range with[:sep] {
+		if a == "--disable_clone_newnet" {
+			inserted = i
+		}
+	}
+	if inserted < 0 {
+		t.Fatalf("--disable_clone_newnet 落到了 `--` 之后（成了茧内命令的参数）：%v", with)
+	}
+	// 用户 argv 逐字不变，且仍在 `--` 之后。
+	if !slices.Equal(with[sep+1:], argv) {
+		t.Fatalf("`--` 之后的 argv 被改动了：\n got=%v\nwant=%v", with[sep+1:], argv)
+	}
+	// 纯函数：不改入参（两次调用不叠旗标）。
+	if argCount(nsjailWithHostNet(with), "--disable_clone_newnet") != 2 {
+		t.Fatal("插旗函数应当只做一次插入（幂等性由调用点保证，这里只验它不就地改入参）")
+	}
+	if argCount(base, "--disable_clone_newnet") != 0 {
+		t.Fatalf("nsjailWithHostNet 就地改了入参：%v", base)
+	}
+}
+
+// ── ①d argv[0] 解析（nsjail 不走 PATH，实测退 255）────────────────────
+
+func TestNsjailResolveArgv0(t *testing.T) {
+	// 绝对路径：原样返回（不碰盘、不改写）。
+	abs := []string{"/bin/sh", "-c", "true"}
+	if got, err := nsjailResolveArgv0(abs, nsjailDefaultPATH, "/"); err != nil || !slices.Equal(got, abs) {
+		t.Fatalf("绝对路径应当原样返回：got=%v err=%v", got, err)
+	}
+
+	// 裸命令名：按茧内 PATH 解析（用本机真实存在的命令，解析 = 宿主 stat，chroot="/" 时等价）。
+	got, err := nsjailResolveArgv0([]string{"sh", "-c", "true"}, nsjailDefaultPATH, "/")
+	if err != nil {
+		t.Fatalf("裸命令名 sh 应当能解析：%v", err)
+	}
+	if !strings.Contains(got[0], "/") || filepath.Base(got[0]) != "sh" || !strings.HasPrefix(got[0], "/") {
+		t.Fatalf("解析结果应当是绝对路径且 basename 不变：%v", got)
+	}
+	// 参数逐字不变（只换 argv[0]）。
+	if !slices.Equal(got[1:], []string{"-c", "true"}) {
+		t.Fatalf("argv[1:] 被改动了：%v", got[1:])
+	}
+	// 不改入参。
+	if abs[0] != "/bin/sh" {
+		t.Fatal("nsjailResolveArgv0 就地改了入参")
+	}
+
+	// 找不到 ⇒ ErrBadArgv（不是「交给 nsjail 退 255 让人猜」）。
+	if _, err := nsjailResolveArgv0([]string{"definitely-not-here-xyz"}, nsjailDefaultPATH, "/"); !errors.Is(err, ErrBadArgv) {
+		t.Fatalf("找不到的裸命令名应 ErrBadArgv，得到 %v", err)
+	}
+	// 换了 rootfs ⇒ 裸命令名一律拒（宿主 stat 证明不了茧内有什么）。
+	if _, err := nsjailResolveArgv0([]string{"sh"}, nsjailDefaultPATH, "/some/rootfs"); !errors.Is(err, ErrBadArgv) {
+		t.Fatalf("非 / 的 chroot 下裸命令名应 ErrBadArgv，得到 %v", err)
+	}
+	// 空 argv。
+	if _, err := nsjailResolveArgv0(nil, nsjailDefaultPATH, "/"); !errors.Is(err, ErrBadArgv) {
+		t.Fatalf("空 argv 应 ErrBadArgv，得到 %v", err)
+	}
+	// 契约 [环境].PATH 优先。
+	sp := &Spec{Env: map[string]string{"PATH": "/opt/x/bin:/bin"}}
+	if got := nsjailJailPATH(sp); got != "/opt/x/bin:/bin" {
+		t.Fatalf("nsjailJailPATH 没优先用契约 PATH：%q", got)
+	}
+	if got := nsjailJailPATH(&Spec{}); got != nsjailDefaultPATH {
+		t.Fatalf("契约没写 PATH 时应当用默认 %q，得到 %q", nsjailDefaultPATH, got)
+	}
+}
+
 // ── ② 非 linux：诚实报不支持 ─────────────────────────────────────────
 
 func TestNsjailNonLinuxUnsupported(t *testing.T) {
@@ -489,6 +583,13 @@ func TestNsjailLinuxBookkeeping(t *testing.T) {
 	}
 	if caps.KillMechanism != "cgroup.kill" || caps.Isolation != "nsjail" {
 		t.Fatalf("KillMechanism/Isolation 不符：%+v", caps)
+	}
+	// 端口面：nsjail 不做 DNAT ⇒ Expose 必须是 false，且理由写清（控制面据此跳过 [[端口]]）。
+	if caps.Expose {
+		t.Fatalf("linux/nsjail 的 Expose 应为 false，得到 %+v", caps)
+	}
+	if caps.ExposeMechanism == "" {
+		t.Fatal("Expose=false 时 ExposeMechanism 不许为空")
 	}
 }
 

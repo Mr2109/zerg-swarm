@@ -20,17 +20,32 @@
 //	④ **退出码闭集 0/1/2**（本件不新开号；`failed`=1 · `usage`=2 —— 闭集外一律不用）。
 //	⑤ **先写 meta 再动**：open 先落 created→starting 再 Provision/起服务；close 先落
 //	   stopping 再停；`--purge` 先留墓碑再删（`cocoon.RemoveCocoon` 内部保证「墓碑失败 ⇒ 零删除」）。
-//	⑥ **后端如实署名**：本版只接了 `FakeBackend`（真 nsjail 未接）⇒ 输出里 `backend=fake`、
-//	   能力面照 `cocoon.Capabilities` 的真值印（弱项逐条写出来，✗ 不冒充 strong）。
+//	⑥ **后端如实署名**：`backend=<meta.backend>`（fake / nsjail），能力面照后端自报的
+//	   `cocoon.Capabilities` 真值印（弱项逐条写出来，✗ 不冒充 strong；后端不报能力面时
+//	   如实印「不可用」而不是填一张全 false 的表）。
 //	⑦ **契约哈希锁（判据 9 · v2 §E）**：`open` 把 `<dir>/cocoon.toml` 的**原始字节** sha256
 //	   落进 meta 的 `spec_sha`（连 `spec_dir` 一起 —— `inspect` 只有 id，靠它回读契约）；
 //	   同一目录已有**未到终态**的茧时，现读字节与锁不符 ⇒ `open` 拒（零副作用，`--dry-run` 同拒）；
 //	   `inspect` 只读比对并报 `ok|drift|unlocked|unreadable`，**rc 恒 0**（观察面不拒）。
 //	   锁的全部实现在 `internal/cocoon/speclock.go`（只算哈希、不写盘）。
 //
-// 未接的面（照实登记 · 不当已做）：真 nsjail/VZ/HCS 后端（`ZERG_COCOON_BACKEND=nsjail` ⇒ 退 8
-// 的「未接」档不在这里 —— 本件按 `failed` 拒，理由逐字写进 stderr）、令牌真值落点（本版只签发
-// 并在输出里给脱敏形，真值应进茧内 env；见 `cocoon.Inject`/`auth.go` 的既有面）。
+// 后端面（本单新接）：
+//
+//	`ZERG_COCOON_BACKEND` 三档：`fake`（缺省 · 脚手架，进程内记账）· `nsjail`（真后端）· `auto`
+//	（linux ⇒ nsjail，其余 ⇒ fake）。**只有 `auto` 允许换档**；显式写 `nsjail` 而本平台不是
+//	linux ⇒ 拒执（退 1，判词含 `ErrBackendUnsupported` 的原话），✗ 不静默降级成假后端 ——
+//	那会把「没有隔离」冒充成「有隔离」。
+//
+//	端口：调不调 `Expose` 只看后端自报的 `Capabilities.Expose`（✗ 不按平台名猜）。linux/nsjail
+//	不映射端口（茧与调用方同宿主网络栈）⇒ 契约的 `[[端口]]` **跳过并在 stderr 说明**，
+//	readiness 探测改直连 `127.0.0.1:<茧内端口>`。
+//
+//	收尾：`open` 把后端**签发的**句柄（实例 id + pid 表）落进 meta；`close` 是另一个进程，
+//	内存记账早没了 ⇒ 走 `HandleReaper.ReapPersisted`（后端自己验 pid 归属再下刀）。
+//
+// 未接的面（照实登记 · 不当已做）：真镜像 rootfs（nsjail 后端只做 namespace/cgroup 隔离，
+// `--chroot` 缺省是宿主根；镜像落盘/overlay 未接）· 伪终端（ExecOpts.TTY=true 一律拒）·
+// VZ/HCS 两个后端 · 令牌真值落点（本版只签发并在输出里给脱敏形）。
 package main
 
 import (
@@ -43,7 +58,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -59,7 +73,7 @@ const (
 	cocoonRootEnv = "ZERG_COCOON_ROOT"
 	// cocoonAllowRootsEnv —— **额外**允许的 `open <dir>` 根（`:` 分隔）。默认允许根见 `cocoonAllowedRoots`。
 	cocoonAllowRootsEnv = "ZERG_COCOON_ALLOW_ROOTS"
-	// cocoonBackendEnv —— 后端选择。`fake`（缺省）· 其余（含 `nsjail`）本版未接 ⇒ 拒。
+	// cocoonBackendEnv —— 后端选择：`fake`（缺省）· `nsjail` · `auto`（linux⇒nsjail，其余⇒fake）。
 	cocoonBackendEnv = "ZERG_COCOON_BACKEND"
 	// cocoonTokenEnv —— `inspect` 的令牌面：只回**脱敏形**（真值不进 stdout / argv / 日志）。
 	cocoonTokenEnv = "ZERG_COCOON_TOKEN"
@@ -67,7 +81,9 @@ const (
 	cocoonAIUpstreamEnv     = "ZERG_AI_UPSTREAM"
 	cocoonDefaultAIUpstream = "http://127.0.0.1:8082"
 
-	cocoonBackendFake = "fake"
+	cocoonBackendFake   = "fake"
+	cocoonBackendNsjail = "nsjail"
+	cocoonBackendAuto   = "auto"
 	// cocoonIDHexBytes —— 茧 id 的随机尾巴字节数（4 字节 ⇒ 8 位十六进制）。
 	cocoonIDHexBytes = 4
 	// cocoonDash —— 人面「没有」的那一格（✗ 不印空串冒充值）。
@@ -82,11 +98,12 @@ var (
 	cocoonOpenFields = []string{"id", "phase", "pid", "ports", "egg", "backend", "token", "dir"}
 
 	cocoonCloseFields = []string{"id", "phase", "purged", "deleted_files", "deleted_dirs",
-		"tombstone", "verified", "dir"}
+		"tombstone", "verified", "dir", "reaped"}
 
 	cocoonInspectFields = []string{"id", "phase", "pid", "ports", "egg", "owner", "created_at",
-		"start_time", "backend", "platform", "isolation", "peer_identity", "peer_mechanism",
+		"start_time", "backend", "backend_instance", "platform", "isolation", "peer_identity", "peer_mechanism",
 		"process_tree_kill", "kill_mechanism", "symlink_nofollow", "cross_mount_guard",
+		"expose", "expose_mechanism", "caps_error",
 		"ai_base", "ai_model", "ai_env", "token", "token_source",
 		// 判据 9（v2 §E）契约哈希锁三格：判定（ok|drift|unlocked|unreadable）· 锁定值 · 现值。
 		"spec_lock", "spec_sha", "spec_now", "dir"}
@@ -203,64 +220,86 @@ var (
 	cocoonFakeOnce sync.Once
 	cocoonFake     cocoon.Backend
 
+	cocoonNsjailOnce sync.Once
+	cocoonNsjail     cocoon.Backend
+
 	cocoonTokensOnce sync.Once
 	cocoonTokens     *cocoon.TokenManager
 )
 
-// cocoonBackendName —— 本次要用的后端名（缺省 fake）。
+// cocoonBackendName —— 本次**实际**要用的后端名（缺省 fake）。
+//
+//	空 / `fake` ⇒ fake（保留既有行为，老脚本不受影响）
+//	`auto`      ⇒ linux 用 nsjail、其余回 fake（**换档只允许发生在这一档**）
+//	`nsjail`    ⇒ nsjail（非 linux 由 cocoonBackendByName 拒执：✗ 不在这儿悄悄改回 fake）
+//	其余        ⇒ 原样返回，由 cocoonBackendByName 报「未知后端」
 func cocoonBackendName() string {
-	if v := strings.TrimSpace(os.Getenv(cocoonBackendEnv)); v != "" {
+	switch v := strings.TrimSpace(os.Getenv(cocoonBackendEnv)); v {
+	case "":
+		return cocoonBackendFake
+	case cocoonBackendAuto:
+		if cocoon.HostPlatform() == cocoon.PlatformLinux {
+			return cocoonBackendNsjail
+		}
+		return cocoonBackendFake
+	default:
 		return v
 	}
-	return cocoonBackendFake
 }
 
-// cocoonBackend —— 取后端。本版只有 `fake`（进程内单例：open/close 同进程时共享实例账；
-// 跨进程时 close 把 `ErrInstanceNotFound` 当「已经不在了」，见 `cmdCocoonClose`）。
+// cocoonBackendByName —— 名字 → 后端（**唯一**的造后端点；进程内单例）。
 //
-// 其余后端名**不冒充**：`nsjail`/`vz`/`hcs` 都还没接 ⇒ 返回错，由调用方退 1 并逐字说「未接」。
-func cocoonBackend() (cocoon.Backend, error) {
-	name := cocoonBackendName()
-	if name != cocoonBackendFake {
-		return nil, fmt.Errorf("后端 %q 本版未接（只有 %q；真后端落点见设计稿 v3 §F）", name, cocoonBackendFake)
+// `nsjail` 在非 linux 上返回**包着 `ErrBackendUnsupported` 的错**：显式要真隔离却拿到假
+// 后端，等于把「没有隔离」冒充成「有隔离」—— 那比拒执危险得多。
+func cocoonBackendByName(name string) (cocoon.Backend, error) {
+	switch name {
+	case "", cocoonBackendFake:
+		cocoonFakeOnce.Do(func() { cocoonFake = cocoon.NewFakeBackend() })
+		return cocoonFake, nil
+	case cocoonBackendNsjail:
+		if cocoon.HostPlatform() != cocoon.PlatformLinux {
+			return nil, fmt.Errorf("%w: 后端 %q 只在 %s 上可用（本平台 %s，未接）；"+
+				"要脚手架请显式写 %s=%s，要自动选档请写 %s",
+				cocoon.ErrBackendUnsupported, cocoonBackendNsjail, cocoon.PlatformLinux,
+				cocoon.HostPlatform(), cocoonBackendEnv, cocoonBackendFake, cocoonBackendAuto)
+		}
+		cocoonNsjailOnce.Do(func() {
+			nb := cocoon.NewNsjailBackend()
+			// ★ 共享宿主 netns：命令面承诺的是「茧内 127.0.0.1:<port> 就是宿主那个端口」
+			//   （Expose=false 的全部依据），也是「AI 端点走 127.0.0.1」的前提 —— nsjail 缺省
+			//   会建**新** netns，那样茧内回环是它自己的，宿主与 broker 都够不着。
+			//   ★ 代价如实登记：茧因此**能出网**（运行期 net=none 未接，见文件头）。
+			nb.HostNetwork = true
+			cocoonNsjail = nb
+		})
+		return cocoonNsjail, nil
 	}
-	cocoonFakeOnce.Do(func() { cocoonFake = cocoon.NewFakeBackend() })
-	return cocoonFake, nil
+	return nil, fmt.Errorf("未知后端 %q（%s 只接受 %s / %s / %s）",
+		name, cocoonBackendEnv, cocoonBackendFake, cocoonBackendNsjail, cocoonBackendAuto)
+}
+
+// cocoonBackendFactory —— 造后端的唯一出口（**测试要能换掉它**：演「不映射端口」这类后端；
+// 生产路径永远是 cocoonBackendByName）。
+var cocoonBackendFactory = cocoonBackendByName
+
+// cocoonBackendCaps —— 后端自报的能力面（inspect / open 的端口决策依据）。
+//
+// ★ 先问后端（`CapabilityReporter`），后端不报才退回**平台表**；两处都拿不到就是错
+// —— ✗ 不许给一张「全 false 的表」冒充「后端在，只是弱」。
+func cocoonBackendCaps(be cocoon.Backend) (cocoon.Capabilities, error) {
+	if r, ok := be.(cocoon.CapabilityReporter); ok {
+		return r.Capabilities()
+	}
+	if c, ok := cocoon.PlatformCapabilities(cocoon.HostPlatform()); ok {
+		return c, nil
+	}
+	return cocoon.Capabilities{}, fmt.Errorf("平台 %q 没有能力声明（后端也没自报）", cocoon.HostPlatform())
 }
 
 // cocoonTokenMgr —— 令牌管理器单例（本版进程内；`close` 吊销的就是同一张表里的那一枚）。
 func cocoonTokenMgr() *cocoon.TokenManager {
 	cocoonTokensOnce.Do(func() { cocoonTokens = cocoon.NewTokenManager() })
 	return cocoonTokens
-}
-
-// cocoonBackendCaps —— 后端的能力面（inspector 用）。
-//
-// ★ 假后端**没有隔离、没有对端身份**：这里照实写 weak/none，✗ 不借用平台表
-// （`cocoon.LinuxCapabilities()` 说的是「真 nsjail 能给什么」，与本节的后端不是一件事）。
-func cocoonBackendCaps(name string) cocoon.Capabilities {
-	if name == cocoonBackendFake {
-		platform := cocoon.PlatformLinux
-		switch runtime.GOOS {
-		case "darwin":
-			platform = cocoon.PlatformDarwin
-		case "windows":
-			platform = cocoon.PlatformWindows
-		}
-		return cocoon.Capabilities{
-			Platform:            platform,
-			Isolation:           "fake（脚手架 · 无隔离）",
-			PeerIdentity:        cocoon.PeerIdentityNone,
-			PeerMechanism:       "无（假后端不签发对端身份）",
-			ProcessTreeKill:     false,
-			KillMechanism:       "无内核级回收（假后端不起进程）",
-			SymlinkNoFollow:     false,
-			SymlinkMechanism:    "待接真后端",
-			CrossMountGuard:     false,
-			CrossMountMechanism: "待接真后端",
-		}
-	}
-	return cocoon.Capabilities{}
 }
 
 // ── 小工具 ──────────────────────────────────────────────────────────────
@@ -505,24 +544,26 @@ func cmdCocoonOpen(inv *invocation, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 	backendName := cocoonBackendName()
-	if backendName != cocoonBackendFake {
-		// 未接的后端**不冒充**：零副作用拒执，理由逐字。
-		inv.setErr("failed", "backend_unavailable", "后端未接")
-		fmt.Fprintf(stderr, "%s: 后端 %q 本版未接（只接了 %q 脚手架）⇒ 退码 1（未写 meta / 未起服务）\n",
-			progName, backendName, cocoonBackendFake)
+	// ★ 后端选档在**任何副作用之前**：名字不认识 / 平台不支持 ⇒ 零写入拒执
+	//   （`--dry-run` 同拒 —— 干跑放行、真跑才拒，那计划件就是在骗人）。
+	be, err := cocoonBackendFactory(backendName)
+	if err != nil {
+		inv.setErr("failed", "backend_unavailable", err.Error())
+		fmt.Fprintf(stderr, "%s: %v ⇒ 退码 1（未写 meta / 未 Provision / 未起服务）\n", progName, err)
+		return exitFail
+	}
+	caps, cerr := cocoonBackendCaps(be)
+	if cerr != nil {
+		inv.setErr("failed", "backend_unavailable", cerr.Error())
+		fmt.Fprintf(stderr, "%s: 后端 %q 的能力面不可用：%v ⇒ 退码 1（未写 meta / 未起服务）\n",
+			progName, backendName, cerr)
 		return exitFail
 	}
 
 	if inv.dryRun {
-		return cocoonOpenPlan(inv, stdout, stderr, dir, spec, backendName)
+		return cocoonOpenPlan(inv, stdout, stderr, dir, spec, backendName, caps)
 	}
 
-	be, err := cocoonBackend()
-	if err != nil {
-		inv.setErr("failed", "backend_unavailable", err.Error())
-		fmt.Fprintf(stderr, "%s: %v ⇒ 退码 1\n", progName, err)
-		return exitFail
-	}
 	id, err := cocoonAllocID(spec.Cocoon.Name)
 	if err != nil {
 		inv.setErr("failed", "id_alloc_failed", err.Error())
@@ -539,6 +580,8 @@ func cmdCocoonOpen(inv *invocation, stdout, stderr io.Writer) int {
 	// 判据 9 的锁值随 meta 一起落盘（**先写 meta 再动**这条不变：锁与 phase 同一次写入）。
 	m.SpecSHA = specSHA
 	m.SpecDir = dir
+	// 后端名先落盘：崩在中途时，盘上至少知道「这是哪个后端的茧」，close 不必按平台猜。
+	m.Backend = backendName
 	if err := cocoon.Save(metaPath, m); err != nil {
 		inv.setErr("failed", "meta_write_failed", err.Error())
 		fmt.Fprintf(stderr, "%s: 写 meta 失败（%s）：%v ⇒ 退码 1\n", progName, metaPath, err)
@@ -552,7 +595,18 @@ func cmdCocoonOpen(inv *invocation, stdout, stderr io.Writer) int {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	r, err := cocoon.Start(ctx, be, spec)
+
+	// 服务的 stdout/stderr 落 <茧目录>/logs/<服务>.log：起服务的是**本进程**，而本进程会退出
+	// —— 管道读端随之消失，长驻服务下一次写就会撞 EPIPE（见 cocoon.ExecOpts.LogPath）。
+	opts := cocoon.OrchestrateOptions{LogDir: filepath.Join(cdir, "logs")}
+	if !caps.Expose {
+		// 后端不映射端口 ⇒ readiness 探测直连回环（茧与调用方同一网络栈，茧内端口就是宿主端口）。
+		// 走 Expose 会拿到 ErrBackendUnsupported —— 那是「这条链路不存在」，不是「端口不通」。
+		opts.ProbeAddr = func(_ cocoon.ServiceSpec, rd cocoon.Readiness) (string, error) {
+			return fmt.Sprintf("%s:%d", cocoon.DefaultBind, rd.Port), nil
+		}
+	}
+	r, err := cocoon.StartWith(ctx, be, spec, opts)
 	if err != nil {
 		// Start 失败路径自己已经把已起的服务逆序停掉、把实例 Destroy 掉（见 orchestrate.go）
 		// ⇒ 这里只负责把盘上的结论改成 failed（**不撒谎成 running**）。
@@ -565,19 +619,33 @@ func cmdCocoonOpen(inv *invocation, stdout, stderr io.Writer) int {
 	}
 	inst := r.Instance()
 	ports := map[int]int{}
-	for _, p := range spec.Ports {
-		hp, perr := be.Expose(ctx, inst, p.Inner, p.Bind)
-		if perr != nil {
-			_ = cocoon.Stop(ctx, r)
-			_ = be.Destroy(ctx, inst)
-			if _, uerr := cocoon.UpdatePhase(metaPath, cocoon.PhaseFailed); uerr != nil {
-				fmt.Fprintf(stderr, "%s: 另：meta 落 failed 也失败：%v\n", progName, uerr)
+	switch {
+	case caps.Expose:
+		for _, p := range spec.Ports {
+			hp, perr := be.Expose(ctx, inst, p.Inner, p.Bind)
+			if perr != nil {
+				_ = cocoon.Stop(ctx, r)
+				_ = be.Destroy(ctx, inst)
+				if _, uerr := cocoon.UpdatePhase(metaPath, cocoon.PhaseFailed); uerr != nil {
+					fmt.Fprintf(stderr, "%s: 另：meta 落 failed 也失败：%v\n", progName, uerr)
+				}
+				inv.setErr("failed", "expose_failed", perr.Error())
+				fmt.Fprintf(stderr, "%s: 露端口 %d 失败（已停服务 · meta 落 failed）：%v ⇒ 退码 1\n", progName, p.Inner, perr)
+				return exitFail
 			}
-			inv.setErr("failed", "expose_failed", perr.Error())
-			fmt.Fprintf(stderr, "%s: 露端口 %d 失败（已停服务 · meta 落 failed）：%v ⇒ 退码 1\n", progName, p.Inner, perr)
-			return exitFail
+			ports[p.Inner] = hp
 		}
-		ports[p.Inner] = hp
+	case len(spec.Ports) > 0:
+		// ★ 跳过要**说出来**：契约写了 3 条端口却一条没映射，静默走下只会让人以为端口在。
+		fmt.Fprintf(stderr, "%s: 后端 %s 不映射端口（%s）⇒ 契约的 %d 条 [[端口]] 跳过，直连 %s:<茧内端口>\n",
+			progName, backendName, caps.ExposeMechanism, len(spec.Ports), cocoon.DefaultBind)
+	}
+
+	// ★ 后端**签发**的句柄落盘（实例 id + 活 pid 表）：`close` 是另一个进程，内存记账那时已经没了。
+	//   这是「跨进程收干净」的唯一依据 —— 不落它，close 只能报成功却什么都没收。
+	var pids []int
+	if pr, ok := be.(cocoon.PIDReporter); ok {
+		pids = pr.InstancePIDs(inst)
 	}
 
 	m2, err := cocoon.Load(metaPath)
@@ -588,8 +656,14 @@ func cmdCocoonOpen(inv *invocation, stdout, stderr io.Writer) int {
 	}
 	now := cocoon.Now()
 	m2.PID = inst.PID
+	if m2.PID == 0 && len(pids) > 0 {
+		m2.PID = pids[0]
+	}
 	m2.Ports = ports
 	m2.StartTime = &now
+	m2.Backend = backendName
+	m2.BackendInstance = inst.ID
+	m2.BackendPIDs = pids
 	if err := m2.SetPhase(cocoon.PhaseRunning); err != nil {
 		inv.setErr("failed", "meta_write_failed", err.Error())
 		fmt.Fprintf(stderr, "%s: meta 落 running 失败：%v ⇒ 退码 1\n", progName, err)
@@ -618,10 +692,24 @@ func cmdCocoonOpen(inv *invocation, stdout, stderr io.Writer) int {
 		specPath, spec.Cocoon.Name, spec.Cocoon.Image, cocoonOrDash(spec.Cocoon.Digest), cocoonOrDash(spec.Cocoon.Arch))
 	fmt.Fprintf(stdout, "契约锁     : sha256 %s…（inspect 与本目录后续 open 都按它判漂移 · 全文在 meta.json 的 spec_sha）\n",
 		cocoon.SpecShort(specSHA))
-	fmt.Fprintf(stdout, "后端       : %s（脚手架 · 真 nsjail/VZ/HCS 未接）\n", backendName)
+	fmt.Fprintf(stdout, "后端       : %s · %s · 平台 %s%s\n", backendName, cocoonOrDash(caps.Isolation), caps.Platform,
+		map[bool]string{true: "（脚手架：不起进程 / 无隔离）", false: ""}[backendName == cocoonBackendFake])
 	fmt.Fprintf(stdout, "相位       : %s\n", m2.Phase)
-	fmt.Fprintf(stdout, "pid        : %d%s\n", m2.PID, map[bool]string{true: "（假后端不起进程）", false: ""}[m2.PID == 0])
-	fmt.Fprintf(stdout, "端口       : %s\n", cocoonPortsText(ports))
+	pidNote := ""
+	if m2.PID == 0 {
+		pidNote = "（本后端不起进程或还没起）"
+	} else if len(m2.BackendPIDs) > 0 {
+		pidNote = fmt.Sprintf("（后端签发的 exec 主进程：%v · 已落 meta.backend_pids）", m2.BackendPIDs)
+	}
+	fmt.Fprintf(stdout, "pid        : %d%s\n", m2.PID, pidNote)
+	if caps.Expose {
+		fmt.Fprintf(stdout, "端口       : %s\n", cocoonPortsText(ports))
+	} else if len(spec.Ports) > 0 {
+		fmt.Fprintf(stdout, "端口       : %s（后端不映射：直连 %s:<茧内端口>；理由见 stderr）\n",
+			cocoonDash, cocoon.DefaultBind)
+	} else {
+		fmt.Fprintf(stdout, "端口       : %s\n", cocoonPortsText(ports))
+	}
 	fmt.Fprintf(stdout, "服务       : %s\n", strings.Join(spec.Order, " → "))
 	fmt.Fprintf(stdout, "令牌       : %s（只出脱敏形；真值进茧内 env，✗ 不进 stdout/argv/日志）\n", tokenText)
 	fmt.Fprintf(stdout, "状态根     : %s\n", cdir)
@@ -629,7 +717,8 @@ func cmdCocoonOpen(inv *invocation, stdout, stderr io.Writer) int {
 }
 
 // cocoonOpenPlan —— `--dry-run` 的计划件（零副作用：本函数只读 spec，不碰盘）。
-func cocoonOpenPlan(inv *invocation, stdout, stderr io.Writer, dir string, spec *cocoon.Spec, backendName string) int {
+func cocoonOpenPlan(inv *invocation, stdout, stderr io.Writer, dir string, spec *cocoon.Spec,
+	backendName string, caps cocoon.Capabilities) int {
 	ports := make([]string, 0, len(spec.Ports))
 	for _, p := range spec.Ports {
 		ports = append(ports, fmt.Sprintf("%d/%s/%s", p.Inner, cocoonOrDash(p.Host), cocoonOrDash(p.Bind)))
@@ -662,7 +751,11 @@ func cocoonOpenPlan(inv *invocation, stdout, stderr io.Writer, dir string, spec 
 		strconv.FormatFloat(spec.Resources.CPU, 'f', -1, 64),
 		strconv.FormatFloat(spec.Resources.MemGB, 'f', -1, 64),
 		strconv.FormatFloat(spec.Resources.DiskGB, 'f', -1, 64))
-	fmt.Fprintf(stdout, "  后端    : %s（脚手架 · 真 nsjail/VZ/HCS 未接）\n", backendName)
+	fmt.Fprintf(stdout, "  后端    : %s · %s · 平台 %s\n", backendName, cocoonOrDash(caps.Isolation), caps.Platform)
+	if !caps.Expose {
+		fmt.Fprintf(stdout, "  端口面  : 后端不映射端口（%s）⇒ 上面这些 [[端口]] 会被**跳过**，readiness 探测直连 %s:<茧内端口>\n",
+			cocoonOrDash(caps.ExposeMechanism), cocoon.DefaultBind)
+	}
 	fmt.Fprintf(stdout, "  会做的  : 分配茧 id → 写 meta(created→starting) → Provision → 按序起服务 → Expose → 写 meta(running)\n")
 	fmt.Fprintf(stdout, "  不会做  : 任何磁盘写入 / 任何进程 / 任何端口\n")
 	fmt.Fprintf(stdout, "  状态根  : %s/<分配于真跑>\n", cocoonRoot())
@@ -764,7 +857,13 @@ func cmdCocoonClose(inv *invocation, stdout, stderr io.Writer) int {
 			return exitFail
 		}
 	}
-	be, berr := cocoonBackend()
+	// ★ 后端按**盘上那一格**选（meta.backend），不按当前 env 猜：这个茧可能是另一种后端开的
+	//   （env 改过一次的机器上，按 env 收尾会收错后端）。老 meta 没这一格 ⇒ 退回当前选档。
+	backendName := m.Backend
+	if backendName == "" {
+		backendName = cocoonBackendName()
+	}
+	be, berr := cocoonBackendFactory(backendName)
 	if berr != nil {
 		inv.setErr("failed", "backend_unavailable", berr.Error())
 		fmt.Fprintf(stderr, "%s: %v ⇒ 退码 1（meta 停在 stopping）\n", progName, berr)
@@ -772,9 +871,27 @@ func cmdCocoonClose(inv *invocation, stdout, stderr io.Writer) int {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	if derr := be.Destroy(ctx, cocoon.Instance{ID: id, Backend: cocoonBackendName(), PID: m.PID}); derr != nil {
-		// 跨进程时假后端没有这一号的实例账 ⇒ 「已经不在了」= 停的语义已满足（幂等）。
-		if !errors.Is(derr, cocoon.ErrInstanceNotFound) {
+
+	// 句柄：后端**签发**的实例 id 原样传回（✗ 不许自己拼 —— 假后端时代那套「拿茧 id 当实例 id」
+	// 只在没有 backend_instance 的老 meta 上还留着，是兼容不是口径）。
+	inst := cocoon.Instance{ID: id, Backend: backendName, PID: m.PID}
+	if m.BackendInstance != "" {
+		inst.ID = m.BackendInstance
+	}
+
+	reaped := false
+	derr := be.Destroy(ctx, inst)
+	if errors.Is(derr, cocoon.ErrInstanceNotFound) {
+		// 跨进程：内存记账里没有这一号（open 早退场了）⇒ 按盘上句柄真收一遍。
+		if r, ok := be.(cocoon.HandleReaper); ok {
+			derr = r.ReapPersisted(ctx, inst, m.BackendPIDs)
+			reaped = true
+		}
+	}
+	if derr != nil {
+		// 假后端（无 HandleReaper）跨进程时没有实例账 ⇒「已经不在了」不算失败；
+		// 真后端一律不许用这一条兜底（它必须真的收干净，收不干净就得报）。
+		if !errors.Is(derr, cocoon.ErrInstanceNotFound) || reaped {
 			inv.setErr("failed", "destroy_failed", derr.Error())
 			fmt.Fprintf(stderr, "%s: 停/收茧实例失败：%v ⇒ 退码 1（meta 停在 stopping）\n", progName, derr)
 			return exitFail
@@ -788,6 +905,14 @@ func cmdCocoonClose(inv *invocation, stdout, stderr io.Writer) int {
 	row["deleted_dirs"] = "0"
 	row["tombstone"] = cocoonDash
 	row["verified"] = "false"
+	if reaped {
+		// 收尾方式也进机器面：让人看得出这一次是「按盘上句柄真收」还是「内存记账收」。
+		row["reaped"] = "persisted"
+	}
+	if len(m.BackendPIDs) > 0 {
+		fmt.Fprintf(stderr, "%s: 收尾面：后端 %s · 句柄 %s · pid 表 %v（已按盘上句柄收干净）\n",
+			progName, backendName, cocoonOrDash(m.BackendInstance), m.BackendPIDs)
+	}
 
 	if !purge {
 		gone, gerr := cocoon.UpdatePhase(metaPath, cocoon.PhaseGone)
@@ -974,18 +1099,48 @@ func cmdCocoonInspect(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s: 读 meta 失败：%v ⇒ 退码 1\n", progName, err)
 		return exitFail
 	}
-	backendName := cocoonBackendName()
-	caps := cocoonBackendCaps(backendName)
+	// 后端名：**meta 里那一格**优先（这才是「这个茧实际用的后端」）；没登记（老 meta）才退回当前选档。
+	backendName := m.Backend
+	if backendName == "" {
+		backendName = cocoonBackendName()
+	}
 	row := cocoonMetaRow(m, cdir)
 	row["backend"] = backendName
-	row["platform"] = cocoonOrDash(caps.Platform)
-	row["isolation"] = cocoonOrDash(caps.Isolation)
-	row["peer_identity"] = string(caps.PeerIdentity)
-	row["peer_mechanism"] = cocoonOrDash(caps.PeerMechanism)
-	row["process_tree_kill"] = strconv.FormatBool(caps.ProcessTreeKill)
-	row["kill_mechanism"] = cocoonOrDash(caps.KillMechanism)
-	row["symlink_nofollow"] = strconv.FormatBool(caps.SymlinkNoFollow)
-	row["cross_mount_guard"] = strconv.FormatBool(caps.CrossMountGuard)
+	row["backend_instance"] = cocoonOrDash(m.BackendInstance)
+
+	// 能力面：问后端自己（`CapabilityReporter`）。★ 观察面**不拒**：拿不到就如实印「不可用」，
+	// 其余字段照常 —— 因能力面读不出来就整份不看，等于把「怎么坏的」也一起藏了。
+	// ✗ 也不许填空值冒充一张「全 false 的表」（那会被读成「后端在，只是弱」）。
+	var caps cocoon.Capabilities
+	capsErr := error(nil)
+	if be, berr := cocoonBackendFactory(backendName); berr != nil {
+		capsErr = berr
+	} else {
+		caps, capsErr = cocoonBackendCaps(be)
+	}
+	if capsErr != nil {
+		for _, k := range []string{"platform", "isolation", "peer_mechanism", "kill_mechanism",
+			"expose", "expose_mechanism"} {
+			row[k] = cocoonDash
+		}
+		row["peer_identity"] = cocoonDash
+		for _, k := range []string{"process_tree_kill", "symlink_nofollow", "cross_mount_guard"} {
+			row[k] = "false"
+		}
+		row["caps_error"] = capsErr.Error()
+	} else {
+		row["platform"] = cocoonOrDash(caps.Platform)
+		row["isolation"] = cocoonOrDash(caps.Isolation)
+		row["peer_identity"] = string(caps.PeerIdentity)
+		row["peer_mechanism"] = cocoonOrDash(caps.PeerMechanism)
+		row["process_tree_kill"] = strconv.FormatBool(caps.ProcessTreeKill)
+		row["kill_mechanism"] = cocoonOrDash(caps.KillMechanism)
+		row["symlink_nofollow"] = strconv.FormatBool(caps.SymlinkNoFollow)
+		row["cross_mount_guard"] = strconv.FormatBool(caps.CrossMountGuard)
+		row["expose"] = strconv.FormatBool(caps.Expose)
+		row["expose_mechanism"] = cocoonOrDash(caps.ExposeMechanism)
+		row["caps_error"] = cocoonDash
+	}
 
 	// 注入面：绑了卵才有 AI 形状（没绑 ⇒ 零值 plan = 没有 AI 能力，是安全侧）。
 	upstream := strings.TrimSpace(os.Getenv(cocoonAIUpstreamEnv))
@@ -1030,11 +1185,16 @@ func cmdCocoonInspect(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "起于       : %s\n", cocoonStamp(*m.StartTime))
 	}
 	fmt.Fprintf(stdout, "状态根     : %s\n", cdir)
-	fmt.Fprintf(stdout, "后端       : %s · 平台 %s · 隔离 %s\n",
-		backendName, cocoonOrDash(caps.Platform), cocoonOrDash(caps.Isolation))
-	fmt.Fprintf(stdout, "能力面     : 对端身份=%s（%s）· 整树回收=%t（%s）· 不跟链接=%t · 不跨挂载=%t\n",
-		caps.PeerIdentity, cocoonOrDash(caps.PeerMechanism), caps.ProcessTreeKill,
-		cocoonOrDash(caps.KillMechanism), caps.SymlinkNoFollow, caps.CrossMountGuard)
+	if capsErr != nil {
+		fmt.Fprintf(stdout, "后端       : %s · 能力面不可用：%v\n", backendName, capsErr)
+	} else {
+		fmt.Fprintf(stdout, "后端       : %s（句柄 %s）· 平台 %s · 隔离 %s\n",
+			backendName, cocoonOrDash(m.BackendInstance), cocoonOrDash(caps.Platform), cocoonOrDash(caps.Isolation))
+		fmt.Fprintf(stdout, "能力面     : 对端身份=%s（%s）· 整树回收=%t（%s）· 不跟链接=%t · 不跨挂载=%t\n",
+			caps.PeerIdentity, cocoonOrDash(caps.PeerMechanism), caps.ProcessTreeKill,
+			cocoonOrDash(caps.KillMechanism), caps.SymlinkNoFollow, caps.CrossMountGuard)
+		fmt.Fprintf(stdout, "端口面     : 映射=%t（%s）\n", caps.Expose, cocoonOrDash(caps.ExposeMechanism))
+	}
 	if plan.Valid() {
 		fmt.Fprintf(stdout, "AI 注入面  : base=%s model=%s env=%s\n",
 			plan.Base, plan.Model, strings.Join(plan.Environ(), " · "))

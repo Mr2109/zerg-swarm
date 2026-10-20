@@ -45,6 +45,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -210,6 +211,12 @@ type OrchestrateOptions struct {
 	// ★ 它在**持内部锁**时被调用：实现里不许回调 Running 的任何方法（会自锁死）。
 	// 只许往文件/通道写一行，别在里头做判活之类的编排动作。
 	Logf func(line string)
+	// LogDir — 若给了，服务的 stdout/stderr 落 `<LogDir>/<服务名>.log`（不占内存管道）。
+	//
+	// ★ 为什么必须有这一格：起服务的那个进程（`cocoon open`）**会退出**，管道读端跟着消失
+	// ⇒ 长驻服务下一次写 stdout/stderr 就是 EPIPE。落文件后服务活得过父进程，日志也留得住。
+	// 空 = 保持原样（内存管道；只适合「起完不退」的进程内用法与假后端）。
+	LogDir string
 }
 
 func (o OrchestrateOptions) withDefaults() OrchestrateOptions {
@@ -545,6 +552,10 @@ func (st *runState) launch(svc ServiceSpec) (*svcRun, error) {
 		// ★ 服务的 Exec **不设 Timeout**：服务是长驻的，Timeout>0 等于给它判死期。
 		Env: cloneEnv(st.spec.Env),
 		Dir: st.spec.Cocoon.Workdir,
+	}
+	if st.opts.LogDir != "" {
+		// 服务输出落文件（见 OrchestrateOptions.LogDir）：起服务的那条命令会退出。
+		opts.LogPath = filepath.Join(st.opts.LogDir, svc.Name+".log")
 	}
 	if err := opts.Validate(); err != nil {
 		return nil, &OrchestrateError{Op: "launch", Service: svc.Name, Cause: ErrLaunchFailed, Msg: err.Error()}

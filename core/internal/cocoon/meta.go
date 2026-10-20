@@ -173,6 +173,19 @@ type Meta struct {
 	// `inspect` 只有茧 id、没有项目路径 ⇒ 回读契约的唯一入口就是这一格。
 	// 空 = 未登记（与 SpecSHA 同进退；两格有一格空就判「未锁定」）。
 	SpecDir string `json:"spec_dir,omitempty"`
+	// Backend — 起这个茧的后端名（`fake` / `nsjail`）。空 = 未登记（老 meta / 假后端时代写的）。
+	//
+	// ★ 为什么要落盘：`close` 是**另一个进程**，它必须知道该把哪个后端的句柄交回去。
+	//   只按 GOOS 猜会把「这个茧其实是假后端开的」写成 nsjail 收尾（收了个不存在的东西）。
+	Backend string `json:"backend,omitempty"`
+	// BackendInstance — 后端**签发**的实例 id（`Instance.ID` 原样存回；✗ 不许自己拼）。
+	// 空 = 该后端不落句柄（假后端：实例账只在进程内）+ 老 meta。
+	BackendInstance string `json:"backend_instance,omitempty"`
+	// BackendPIDs — 后端签发的、当前还在跑的各 exec 主进程 pid（宿主侧）。
+	//
+	// ★ 跨进程 `close` 的唯一依据：起服务的进程（`cocoon open`）退出后，后端的内存记账
+	// 就没了；pid 不落盘，close 只能「什么都没收」却报成功（那是最糟的一种谎）。
+	BackendPIDs []int `json:"backend_pids,omitempty"`
 	// CreatedAt — 登记时刻（UTC）。
 	CreatedAt time.Time `json:"created_at"`
 	// Owner — 归属者（派单方/会话 id，用于回收与审计）。
@@ -220,6 +233,11 @@ func (m *Meta) validateLocked() error {
 	}
 	if m.Epoch < 0 {
 		return fmt.Errorf("%w: epoch %d 为负", ErrInvalidMeta, m.Epoch)
+	}
+	for _, pid := range m.BackendPIDs {
+		if pid <= 0 {
+			return fmt.Errorf("%w: backend_pids 里出现非正 pid（%d）", ErrInvalidMeta, pid)
+		}
 	}
 	for inner, host := range m.Ports {
 		if inner <= 0 || inner > 65535 {

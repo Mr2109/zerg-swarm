@@ -2569,12 +2569,12 @@ func init() {
 		{
 			path:     []string{"cocoon", "open"},
 			kind:     "CocoonOpen",
-			summary:  "按 cocoon.toml 起一个茧（分配 id → 写 meta → Provision → 起服务 → 回写 pid/ports；后端本版 = FakeBackend）",
+			summary:  "按 cocoon.toml 起一个茧（分配 id → 写 meta → Provision → 起服务 → 回写 pid/ports；后端由 ZERG_COCOON_BACKEND 选：fake / nsjail / auto）",
 			usage:    "zerg cocoon open <dir> [--dry-run] [--json <字段>]",
 			args:     []string{"茧目录（含 cocoon.toml）"},
 			arity:    "any",
 			fields:   cocoonOpenFields,
-			endpoint: "本机：<dir>/cocoon.toml + 状态根 <id>/meta.json（后端 FakeBackend · 真 nsjail 未接）",
+			endpoint: "本机：<dir>/cocoon.toml + 状态根 <id>/meta.json（后端 ZERG_COCOON_BACKEND=fake|nsjail|auto，署名见 meta.backend）",
 			run:      cmdCocoonOpen,
 		},
 		{
