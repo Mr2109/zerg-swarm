@@ -480,6 +480,33 @@ func run(args []string, stdout, stderr io.Writer) int {
 			inv.unknown = append(inv.unknown, f)
 		}
 	}
+	// ★ 同一条数据驱动收口（批 B6 · 2026-10-20 · `zerg model record verify|probe|ls` 归入命令面）：
+	//   十枚旗标（七枚取值 —— `--base-dir`/`--store-root`/`--endpoint`/`--engine`/`--id`/`--parent`/
+	//   `--manifests` 已在 `valueFlagName`；三枚布尔 —— `--integrity`/`--in-place`/`--store` 上面刚上户口）
+	//   ⇒ **全族共用**；若不在此收口，别族（usage 未列它们的命令）真给它们会从「未知旗标 2」退化成
+	//   **静默吞**（硬约束⑤：既有命令的退码与输出一字不动）。形状逐字照拄上面 B5 那条：把不归本命令的
+	//   那一枚**补回 `inv.unknown`** ⇒ 由下面**同一条**判词 + 同一个退码 2 收口。
+	//   ★ 收口用的是 `usageDeclaresFlag`（**子串**判）⇒ 同族里互为前缀的两枚（`--base` / `--base-dir`）
+	//   会互相「证明」对方已登记；`--strict` 又不在 `inv.kv` 里（它是 `inv.strict` 这个专用字段）⇒
+	//   这两处由实现件入口的**精确**点名兜住（`family_model_record.go:modelRecordRejectForeign`）。
+	for _, f := range []string{"--base-dir", "--store-root", "--endpoint", "--engine", "--id", "--parent",
+		"--manifests", "--integrity", "--in-place", "--store"} {
+		if inv.hasFlag(f) && !usageDeclaresFlag(cmd, f) {
+			inv.unknown = append(inv.unknown, f)
+		}
+	}
+	// ★ 同一条数据驱动收口（批 B7 · 2026-10-20 · `zerg compat list|check|migrate|manifest` 归入命令面）：
+	//   两枚取值旗标（`--state-dir` / `--receipts-dir`）在 `valueFlagName` 上刚上户口 ⇒ **全族共用**；
+	//   若不在此收口，别族（usage 未列它们的命令）真给它们会从「未知旗标 2」退化成**静默吞**
+	//   （硬约束⑤：既有命令的退码与输出一字不动）。形状逐字照拄上面 B6 那条：把不归本命令的
+	//   那一枚**补回 `inv.unknown`** ⇒ 由下面**同一条**判词 + 同一个退码 2 收口。
+	//   ★ 收口用的是 `usageDeclaresFlag`（**子串**判）⇒ `--state` 会替 `--state-dir` 作证 ⇒ 该面由
+	//   实现件入口的**精确**点名兜住（`family_compat.go:compatFlagAllowed`）。
+	for _, f := range []string{"--state-dir", "--receipts-dir"} {
+		if inv.hasFlag(f) && !usageDeclaresFlag(cmd, f) {
+			inv.unknown = append(inv.unknown, f)
+		}
+	}
 	// ★ 同一条数据驱动收口（本单 · 缺口 GAP-20260928-139）：`--build-info` 在解析面刚上户口（布尔 case）⇒ **全族共用**；
 	//   若不在此收口，别族（usage 未列它的命令）真给它会从「未知旗标 2」退化成**静默吞**（硬约束⑤：既有命令的退码与输出一字不动）。
 	//   形状逐字照拄上面 `--literal-text` 那条：把不归本命令的那一枚补回 `inv.unknown` ⇒ 由下面**同一条**判词 + 同一个退码 2 收口。`version` 的 usage 已列它 ⇒ 归它。
@@ -1568,6 +1595,60 @@ func init() {
 			fields:   []string{"egg_id", "side", "source", "value", "authority", "verdict", "key", "state", "note"},
 			endpoint: "",
 			run:      cmdModelVerify,
+		},
+		// ---- 批 B6（2026-10-20 · `zerg model record verify|probe|ls`）：独立入口
+		// `core/cmd/zerg-model` 归入命令面 ----
+		// 源件 668 行 · 三个子命令（`verify` / `probe` / `list`）· 十六枚旗标**逐字**保留。
+		// ★ 并入**既有** `model` 族，✗ 不新开顶层族；但动作名**不能照抄** —— 源件的 `verify` 与 `list`
+		//   在 `model` 族里都已被占了、且**语义不同**：
+		//     `zerg model verify 模型@机` = 四方对账（`cmdModelVerify`，只读，对象是模型@机）
+		//     `zerg model ls`            = 主控 `/api/fleet/models` 的机型投影（`cmdModelLs`）
+		//   本件搬的是**另一件事**（标准 §三 的记录件面 · `core/internal/modelreg`）⇒ 挂一层 `record`
+		//   中间段把这一面整块收纳（3 段路径，`resolve()` 已支持）；撞名的两条**一字不动**。
+		// **双轨期**：`core/cmd/zerg-model` 二进制一字不动（它自己的 `0/1/2/3/4` 是**组件自有码空间**，
+		//   `exitcode-namespaces.json` 里挂着号）。实现在 `family_model_record.go`，件头逐条写清与源件的
+		//   六处差异（动作名 · 退码重取号 0/1/2/12/14 · 互斥旗标明拒 · `--json` 按 K2 口径 · `--strict`
+		//   的精确点名 · 位置参数归用法错 2）。
+		// 只读面（verify / ls）与写面（probe：`--out` 落件 / `--store` 进模型目录）混在同一条族段里：
+		//   写面**不进危险表**，理由与 `model put/pull`（D2）不同 —— 这一面写的是**本机的记录件/模型目录**，
+		//   真跑前有 `modelreg.Verify` 的门禁（不合标准即拒入目录、不写占位值凑绿），且 `--out` 的落点由
+		//   调用者显式给；它与 `persona` 那类「改主控运行态」的写面不是一回事 ⇒ 无 `--yes`/`--dry-run` 档，
+		//   与源件同形态（`--store` 幂等：同内容不重写、冲突拒覆盖）。
+		{
+			path:     []string{"model", "record", "verify"},
+			kind:     "ModelRecordVerify",
+			summary:  "校验一条模型登记记录（标准 §三）是否符合标准（只读）：`--integrity` 额外核对 files[] 与磁盘件（流式 sha256 + 大小）· `--in-place` 核「记录位置与身份是否自洽」（阶段 1 廉价篡改检出 · 不做签名 · 不代表权重可信）",
+			usage:    modelRecordVerifyUsage,
+			arity:    "any",
+			args:     []string{"记录件路径（`--in-place` 档可给记录目录）"},
+			fields:   []string{"path", "schema", "verdict", "level", "field", "detail", "id", "format_errors", "format_warns", "integrity_status", "integrity_name", "integrity_note"},
+			endpoint: "",
+			opened:   true,
+			run:      cmdModelRecordVerify,
+		},
+		{
+			path:     []string{"model", "record", "probe"},
+			kind:     "ModelRecordProbe",
+			summary:  "探测一个模型（本地路径或端点 URL）并生成登记记录：默认只打印不写盘 · `--out <件>` 原子写（兄弟文件 `<版>.trace.json` / `<版>.capabilities.json` 另写）· `--store` 进模型目录 manifests/（同内容不重写 · 不合标准**拒入**）· 血缘 `--parent`/`--base` 只照抄显式入参、**不推断**",
+			usage:    modelRecordProbeUsage,
+			arity:    "any",
+			args:     []string{"目标（本地模型路径或端点 URL）"},
+			fields:   []string{"id", "version", "digest", "files", "capabilities", "errors", "warnings", "target", "endpoint", "engine", "out", "changed", "verdict"},
+			endpoint: "",
+			opened:   true,
+			run:      cmdModelRecordProbe,
+		},
+		{
+			path:     []string{"model", "record", "ls"},
+			kind:     "ModelRecordLs",
+			summary:  "列出模型目录（manifests/）里的登记记录（只读）：逐条给 ID / 版本 / commercial / files / 能力 / error·warn / 落点，并标出「commercial != yes 不得作默认项」（标准 §五 红线）；目录里有不合标准的记录 ⇒ 退 1",
+			usage:    modelRecordLsUsage,
+			arity:    "none",
+			args:     []string{"（不收位置参数：模型目录根走 `--root`、manifests 目录走 `--manifests`）"},
+			fields:   []string{"id", "version", "commercial", "files", "capabilities", "errors", "warns", "path", "default_eligible", "detail"},
+			endpoint: "",
+			opened:   true,
+			run:      cmdModelRecordLs,
 		},
 		{
 			path:     []string{"model", "put"},
@@ -3791,6 +3872,69 @@ func init() {
 			endpoint: "",
 			run:      cmdContextSetPort,
 		},
+		// ---- 批 B7（2026-10-20 · `zerg compat list|check|migrate|manifest`）：独立入口
+		// `core/cmd/zerg-compat` 归入命令面 ----
+		// 源件 243 行 · 四个子命令（`list` / `check` / `migrate` / `manifest`）· 四枚旗标逐字保留
+		// （`--state-dir` / `--receipts-dir` / `--dry-run` / `--json`）。
+		// ★ 派单原话是「并入**既有** compat 族」—— 而**现读没有这个族**（`zerg help --all` 零命中 ·
+		//   本文件 `compat` 零命中）⇒ 无处可并，只能**新开顶层族 `compat`**（族名 = 源件名的主体）。
+		//   为什么不挂 `build`（`build --only compat` 是构建档名，语义完全不同）/ `doctor` / `gate`：
+		//   理由逐条写在 `family_compat.go` 的件头（照实记一笔，不粉饰派单与现读的差）。
+		// 判定与落盘一行不改（仍是 `core/internal/compat` 的 Entries/StatusAll/MigrateAll/
+		//   ManifestJSONForDump）；退码按 `exitcodes.go` **重取号**（源件 2/3 ⇒ 命令面 8/8，以
+		//   `error.detail` 分家；源件 4「用法错」与命令面 4「未认证」撞号 ⇒ 一律回表取 2）。
+		// ★ 写面只有 `migrate`（原地重写状态文件、先备份）：不进危险表 —— 它写的是**本机状态目录**、
+		//   落点由 `--state-dir` 或环境变量显式给、每次覆盖前自动备份 `<file>.bak-<ts>`、`--dry-run`
+		//   可预演；与 `model record probe`（批 B6）同一条「本机可逆 · 无远端副作用」口径。
+		// **双轨期**：`core/cmd/zerg-compat` 二进制一字不动（它自己的 0/1/2/3/4 是**组件自有码空间**，
+		//   `exitcode-namespaces.json` 里挂着号）。
+		{
+			path:     []string{"compat", "list"},
+			kind:     "CompatList",
+			summary:  "列出跨版本状态文件清单（只读）：逐条给 逻辑名 / 文件 / 当前 schema / 最低可读 / 信封（inband·sidecar）/ 谁盖版本号 / 归属，并打出它将要操作的两个目录",
+			usage:    compatListUsage,
+			arity:    arityNone,
+			args:     []string{"（不收位置参数：目录走 `--state-dir` / `--receipts-dir`）"},
+			fields:   []string{"name", "file", "dir", "current_schema", "min_readable", "envelope", "stamps_schema", "owner"},
+			endpoint: "",
+			opened:   true,
+			run:      cmdCompatList,
+		},
+		{
+			path:     []string{"compat", "check"},
+			kind:     "CompatCheck",
+			summary:  "只读体检：逐文件报现状（不迁移、不备份、不写盘）—— 全部就绪 ⇒ 0 · 有读不动的状态文件 ⇒ 1 · 有待迁移文件或高于本机认知的 schema ⇒ 8（`error.detail` 分家两档）",
+			usage:    compatCheckUsage,
+			arity:    arityNone,
+			args:     []string{"（不收位置参数：目录走 `--state-dir` / `--receipts-dir`）"},
+			fields:   []string{"name", "path", "outcome", "on_disk_schema", "current_schema", "min_readable", "envelope", "owner", "error"},
+			endpoint: "",
+			opened:   true,
+			run:      cmdCompatCheck,
+		},
+		{
+			path:     []string{"compat", "migrate"},
+			kind:     "CompatMigrate",
+			summary:  "执行一次性迁移（幂等 · 可反复跑）：旧版/无 schema 先备份 `<file>.bak-<ts>` 再原地写回并回读校验，校验不过回滚；`--dry-run` 只报将要迁移的文件、不落盘；失败 ⇒ 1",
+			usage:    compatMigrateUsage,
+			arity:    arityNone,
+			args:     []string{"（不收位置参数：目录走 `--state-dir` / `--receipts-dir`）"},
+			fields:   []string{"name", "path", "outcome", "error", "on_disk_schema", "current_schema", "min_readable", "envelope", "owner"},
+			endpoint: "",
+			opened:   true,
+			run:      cmdCompatMigrate,
+		},
+		{
+			path:     []string{"compat", "manifest"},
+			kind:     "CompatManifest",
+			summary:  "打印内嵌清单原文（CI 门禁 / 排障的对照面）—— 直接写原始字节，不再序列化一遍（`<` 不许被转义成 `\\u003c`）；不收任何旗标",
+			usage:    compatManifestUsage,
+			arity:    arityNone,
+			args:     []string{"（不收位置参数、也不收旗标：这一面就是清单原文）"},
+			endpoint: "",
+			opened:   true,
+			run:      cmdCompatManifest,
+		},
 		// ★ `danger` 登记（**D2** · 2026-09-27）：本表项**真跑有副作用**，修前无 `danger` ⇒ `zerg help` 把它当安全档 ✗。
 		//   定档理由（逐条读 `family_config.go:cmdConfigReload` 得）：本件**零 os 落盘调用**（无 `os.WriteFile` /
 		//   `os.MkdirAll` / `os.Create` / `os.Rename` / `os.Remove`）—— 它的效果面是 **HTTP POST**
@@ -5462,6 +5606,21 @@ func parseInvocation(args []string) (*invocation, error) {
 			inv.kvSet(a, "true")
 		case a == "--subtask":
 			inv.kvSet(a, "true")
+		// ★ 批 B6（2026-10-20 · `zerg model record verify|probe|ls` 归入命令面）：三枚**布尔**旗标 ——
+		//   `--integrity`（verify 额外核 files[] 与磁盘件 · 源件 `--integrity` 逐字保留）·
+		//   `--in-place`（verify 核「记录位置与身份自洽」· 源件 `--in-place`）·
+		//   `--store`（probe 写进模型目录 manifests/ · 源件 `--store`）。
+		//   与 `--container`/`--dev`/`--insecure`/`--auto-issue` 同一种形态（写进 `inv.kv`（`kvSet`）
+		//   ⇒ `foreignFlag` 看得见）；★ **✗ 不进 `valueFlagName`**（门73 判据丙：布尔名登进取值表 ⇒
+		//   形态判红）；★ 三枚**各写一条** `case`（✗ 不许合并成一串 `||`：门73 取数面按
+		//   `case a == "--x"` 逐条现读，合并只读得到前者）。用法串与本处**必须同改**（门73）
+		//   ＋ dispatch 收口（见下 `--integrity` 那一排）。
+		case a == "--integrity":
+			inv.kvSet(a, "true")
+		case a == "--in-place":
+			inv.kvSet(a, "true")
+		case a == "--store":
+			inv.kvSet(a, "true")
 		// `code find` 的**短形**上下文/归一旗标（缺口 `GAP-20260927-250/252` · 本枚）：
 		//   `-i`（大小写归一 · 布尔）· `-A<N>`/`--after <N>`（后文）· `-B<N>`/`--before <N>`（前文）·
 		//   `-C<N>`（前后各 N，POSIX grep 惯用 · 与缺口症状逐字 `-A2`/`-C1` 同形）。
@@ -6067,6 +6226,31 @@ func valueFlagName(a string) string {
 	switch a {
 	case "--task", "--issue", "--tools", "--mcp", "--max-turns", "--retry",
 		"--gateway", "--x3-status", "--x3-token":
+		return a
+	}
+	// ★ 批 B6（2026-10-20 · `zerg model record verify|probe|ls` 归入命令面）：**七枚取值旗标** ——
+	//   `--base-dir <目录>`（verify 的 files[] 基准目录 · 源件 `--base-dir`）· `--store-root <目录>`
+	//   （probe 的模型目录根 · 源件 `--store-root`）· `--endpoint <URL>` / `--engine <引擎>` /
+	//   `--id <id>` / `--parent <上一版>`（probe 的探测面与血缘面 · 源件逐字）· `--manifests <目录>`
+	//   （ls 直接指 manifests 目录 · 源件 `--manifests`）。
+	//   与上面各排同一口径：值照收，语义在 `family_model_record.go` 里判。
+	//   ★ 本排是名字表「唯一真源」⇒ 不登记就一律退 2「未知旗标」= 新旗标等于不可用；
+	//   用法串与本表**必须同改**（门73 判据乙/丙）；配套 dispatch 收口（不归本命令的那一枚
+	//   补回 `inv.unknown`）。★ `--root` / `--base` / `--out` / `--timeout` / `--json` 已在既有各排
+	//   （一族共用一张名字表 ⇒ 本排**不重开同名旗标**）；三枚**布尔**（`--integrity` / `--in-place` /
+	//   `--store`）**✗ 不进本表**（门73 判据丙：布尔进名字表 = 值/无值两态不一致）。
+	switch a {
+	case "--base-dir", "--store-root", "--endpoint", "--engine", "--id", "--parent", "--manifests":
+		return a
+	}
+	// ★ 批 B7（2026-10-20 · `zerg compat list|check|migrate|manifest` 归入命令面）：**两枚取值旗标** ——
+	//   `--state-dir <目录>`（状态目录 · 源件 `--state-dir`）· `--receipts-dir <目录>`（升级回执目录 ·
+	//   源件 `--receipts-dir`）。源件另两枚 `--dry-run` / `--json` 是**解析层专用字段**
+	//   （`inv.dryRun` / `inv.jsonGiven`）⇒ ✗ 不进本表（门73 判据丙：布尔进名字表 = 值/无值两态不一致）。
+	//   与上面各排同一口径：值照收，语义在 `family_compat.go` 里判（`--state` 是另一枚既有旗标，
+	//   ✗ 不许拿它的子串去「证明」`--state-dir` 已登记 —— 实现在入口处按**精确名**点名）。
+	switch a {
+	case "--state-dir", "--receipts-dir":
 		return a
 	}
 	return ""

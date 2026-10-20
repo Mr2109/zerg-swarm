@@ -25,8 +25,11 @@
 //		  `forbidden_command_segments` 同步摘）；摘的前提是归属已拍，**不是**为了放行而放行。
 //		  ★ 2026-10-20 批 B2：`scheduler` **已归入命令面**（`zerg sched run`）⇒ 同样摘除；
 //		  注意摘的是「未定段 `scheduler`」，命令名的段是 `sched`（既有族，本来就不在禁列里）。
-//		  ★ 2026-10-20 批 B3：`review` **已归入命令面**（`zerg review`）⇒ 同样摘除；现读禁列只剩
-//		  `compat`（本件的负控③就用它 —— 摘一个已拍定的段、换一个仍待拍的段，判据的牙一颗不少）。
+//		  ★ 2026-10-20 批 B3：`review` **已归入命令面**（`zerg review`）⇒ 同样摘除。
+//		  ★ 2026-10-20 批 B7：`compat` **已归入命令面**（`zerg compat list|check|migrate|manifest`）⇒ 同样摘除；
+//		  七件至此全部「已归」⇒ 台账 `forbidden_command_segments` 现读**空表**。判据③ 的牙一颗不少：
+//		  负控改用**合成台账**（本件 `good` 里那枚 `ForbiddenCommandSegment: []string{"compat"}` 配上
+//		  空路径表自证），✗ 不靠真表留一条假禁名。
 //
 // 负控：判定口 `judgeUnresolved` 是三格判据的**唯一判定口**，负控直接喂它坏台账
 // （锚空 / 锚不存在 / 锚不唯一 / 证据件读不到 / 入口目录没了 / 命令树里冒出未定段（`compat`）/ 空表）⇒ 每格都必须报错。

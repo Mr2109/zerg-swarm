@@ -1209,8 +1209,27 @@ var chsBaseline = chsBaselineSet{
 	//   `help config`（21 / 1748）**一分未变**：`agent run` 不进危险表（理由在 main.go 那一格的
 	//   注释里：操作者当场在本机起的任务运行器 · 工具门在内层且缺省恒拦 · 本机可逆无远端副作用）。
 	//   这是「没有顺手放宽」的反证，不是省了没量。
-	"help --all":     {HasLines: true, Lines: 477, HasBytes: true, Bytes: 254716},
-	"help":           {HasLines: true, Lines: 351, HasBytes: true, Bytes: 89195, HasLast: true, Last: "      非交互用 `--token-stdin`；详见 `zerg help credentials`）。"},
+	// ★ 2026-10-20（本枚 · 批 B6：`model record verify|probe|ls` 三条**挂既有 `model` 族** · 源件
+	//   `core/cmd/zerg-model`）：族数**不变**（`model` 族本来就在 ⇒ 11 → 14 条动作），三条命令的用法行
+	//   各占一行 ⇒ `help --all` 与裸 `help` 各 **+6 行**（3 × 用法行 ＋ 该族段里那 3 行）。字节与行数由
+	//   现跑 `zerg gate check check-help-shape --emit-baseline` 取数照抄（**禁手写** —— 件头纪律）：
+	//   `help --all` 477 → 483 行 / 254716 → 256950 字节 · 裸 `help` 351 → 357 行 / 89195 → 91429 字节。
+	//   危险档面（`help dangerous` 128 行 / 49360 字节 · 116 条）与 `help config`（21 / 1748）**一分未变**：
+	//   三条都不进危险表（理由在 main.go 那一格的注释里：写面只写**本机**的记录件/模型目录、落点由旗标
+	//   显式给、`--store` 入目录前有 modelreg 的 verify 门禁且不写占位值凑绿）⇒ 这是「没有顺手放宽」的
+	//   反证，不是省了没量。
+	// ★ 2026-10-20（本枚 · 批 B7：`compat list|check|migrate|manifest` 四条**新开顶层族** · 源件
+	//   `core/cmd/zerg-compat`）：族数 **59 → 60**（`compat` 是新族 —— 现读**没有**既有 compat 族可挂，
+	//   派单原话「并入既有族」与现读不符，理由逐条写在 `family_compat.go` 件头）⇒ **+8 行**
+	//   （4 × 用法行 ＋ 该族在「用法」段与族级段里的各 2 行）。字节与行数由现跑
+	//   `zerg gate check check-help-shape --emit-baseline --bin <新制品>` 取数照抄（**禁手写** —— 件头纪律）：
+	//   `help --all` 483 → 491 行 / 256950 → 259212 字节 · 裸 `help` 357 → 365 行 / 91429 → 93681 字节。
+	//   危险档面（`help dangerous` 128 行 / 49360 字节 · 116 条）与 `help config`（21 / 1748）**一分未变**：
+	//   四条都不进危险表（理由在 main.go 那一格的注释里：只有 `migrate` 写**本机状态目录**、落点由
+	//   `--state-dir`/环境变量显式给、覆盖前自动备份、`--dry-run` 可预演 ⇒ 本机可逆无远端副作用）
+	//   ⇒ 这是「没有顺手放宽」的反证，不是省了没量。
+	"help --all":     {HasLines: true, Lines: 491, HasBytes: true, Bytes: 259212},
+	"help":           {HasLines: true, Lines: 365, HasBytes: true, Bytes: 93681, HasLast: true, Last: "      非交互用 `--token-stdin`；详见 `zerg help credentials`）。"},
 	"help dangerous": {HasLines: true, Lines: 128, HasBytes: true, Bytes: 49360, HasRows: true, Rows: 116, HasTail: true, Tail: "上表 116 条：**已开放 103 条**（确认档齐就真执行 —— 逐条见上行标记）；**未开放 13 条**（真跑一律**拒执**、退码 2 = 不给结论，只有 `--dry-run` 出计划件 = 退码 0）。"},
 	"help config":    {HasLines: true, Lines: 21, HasBytes: true, Bytes: 1748},
 }

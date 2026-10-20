@@ -12183,6 +12183,335 @@
    "want_rc": 2,
    "want_stdout_bytes": 0,
    "why": "给了 `--json` 不给字段表 ⇒ 2 并列出可选字段（K2 甲档）· 在执行**之前**判（不许跑完一整个任务才发现旗标拼错）"
+  },
+  {
+   "id": "model/record/verify#未知旗标",
+   "command": "model record verify",
+   "argv": [
+    "model",
+    "record",
+    "verify",
+    "x",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰记录件"
+  },
+  {
+   "id": "model/record/verify#不认的契约主号",
+   "command": "model record verify",
+   "argv": [
+    "model",
+    "record",
+    "verify",
+    "x",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "model/record/verify#缺位置参数",
+   "command": "model record verify",
+   "argv": [
+    "model",
+    "record",
+    "verify"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "源件「verify 需要一个记录文件路径」⇒ 3；命令面归用法错 **2**（差异 ②⑥）· 执行前判，不碰任何件"
+  },
+  {
+   "id": "model/record/verify#--json 不给字段（K2 甲档）",
+   "command": "model record verify",
+   "argv": [
+    "model",
+    "record",
+    "verify",
+    "x",
+    "--json"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "给了 `--json` 不给字段表 ⇒ 2 并列出可选字段（K2 甲档）· 在执行**之前**判"
+  },
+  {
+   "id": "model/record/probe#未知旗标",
+   "command": "model record probe",
+   "argv": [
+    "model",
+    "record",
+    "probe",
+    "x",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰目标、不探测、不落件"
+  },
+  {
+   "id": "model/record/probe#不认的契约主号",
+   "command": "model record probe",
+   "argv": [
+    "model",
+    "record",
+    "probe",
+    "x",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "model/record/probe#--out 与 --store 同给（两档互斥）",
+   "command": "model record probe",
+   "argv": [
+    "model",
+    "record",
+    "probe",
+    "x",
+    "--out",
+    "o.json",
+    "--store"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "源件 `--store` 赢、`--out` 被静默吞 ⇒ 命令面按 K14 明拒（差异 ③）；执行前判，两处落点一个都不碰"
+  },
+  {
+   "id": "model/record/ls#未知旗标",
+   "command": "model record ls",
+   "argv": [
+    "model",
+    "record",
+    "ls",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不读任何目录"
+  },
+  {
+   "id": "model/record/ls#不认的契约主号",
+   "command": "model record ls",
+   "argv": [
+    "model",
+    "record",
+    "ls",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "model/record/ls#--root 与 --manifests 同给（两档互斥）",
+   "command": "model record ls",
+   "argv": [
+    "model",
+    "record",
+    "ls",
+    "--root",
+    "r",
+    "--manifests",
+    "m"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "源件 `--manifests` 静默胜出 ⇒ 命令面按 K14 明拒（差异 ③）；执行前判，两个目录一个都不读"
+  },
+  {
+   "id": "compat/list#未知旗标",
+   "command": "compat list",
+   "argv": [
+    "compat",
+    "list",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "compat/list#不认的契约主号",
+   "command": "compat list",
+   "argv": [
+    "compat",
+    "list",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "compat/list#--json 不给字段",
+   "command": "compat list",
+   "argv": [
+    "compat",
+    "list",
+    "--json"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "给了 --json 不给字段 ⇒ 2 + stdout 0 字节（§4.1 K2 甲档 · 码**取自退码表** `usage`）"
+  },
+  {
+   "id": "compat/check#未知旗标",
+   "command": "compat check",
+   "argv": [
+    "compat",
+    "check",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "compat/check#不认的契约主号",
+   "command": "compat check",
+   "argv": [
+    "compat",
+    "check",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "compat/check#--json 不给字段",
+   "command": "compat check",
+   "argv": [
+    "compat",
+    "check",
+    "--json"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "给了 --json 不给字段 ⇒ 2 + stdout 0 字节（§4.1 K2 甲档 · 码**取自退码表** `usage`）"
+  },
+  {
+   "id": "compat/migrate#未知旗标",
+   "command": "compat migrate",
+   "argv": [
+    "compat",
+    "migrate",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "compat/migrate#不认的契约主号",
+   "command": "compat migrate",
+   "argv": [
+    "compat",
+    "migrate",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "compat/migrate#--json 不给字段",
+   "command": "compat migrate",
+   "argv": [
+    "compat",
+    "migrate",
+    "--json"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "给了 --json 不给字段 ⇒ 2 + stdout 0 字节（§4.1 K2 甲档 · 码**取自退码表** `usage`）"
+  },
+  {
+   "id": "compat/manifest#未知旗标",
+   "command": "compat manifest",
+   "argv": [
+    "compat",
+    "manifest",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "compat/manifest#不认的契约主号",
+   "command": "compat manifest",
+   "argv": [
+    "compat",
+    "manifest",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "compat/manifest#说明面不认 --json",
+   "command": "compat manifest",
+   "argv": [
+    "compat",
+    "manifest",
+    "--json",
+    "name"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "没有字段表的说明面 ⇒ 2（与 K2 甲档归一后的 2 同码、**错因不同**：这里根本没有字段表）"
+  },
+  {
+   "id": "compat/list#--dry-run 不归本命令",
+   "command": "compat list",
+   "argv": [
+    "compat",
+    "list",
+    "--dry-run"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "差异 ⑤：源件把 `--dry-run` 照收不误、在 list 档静默忽略 ⇒ 命令面按 K14 明拒 2（`--dry-run` 只归 `migrate`）· 执行前判"
+  },
+  {
+   "id": "compat/manifest#--state-dir 不归本命令",
+   "command": "compat manifest",
+   "argv": [
+    "compat",
+    "manifest",
+    "--state-dir",
+    "s"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "差异 ④：源件在 manifest 档把 `--state-dir` 静默忽略 ⇒ 命令面明拒 2（这一面根本不读目录）· 执行前判"
+  },
+  {
+   "id": "compat/list#--state-dir 裸给",
+   "command": "compat list",
+   "argv": [
+    "compat",
+    "list",
+    "--state-dir"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "取值旗标三态（`GAP-20260928-151`）：裸给/空值 ⇒ 2 且**不回落缺省目录**（源件空值静默回落 ⇒ 差异 ⑥ 同族口径）"
   }
  ],
  "tiers": {

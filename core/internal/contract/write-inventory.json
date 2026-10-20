@@ -1065,6 +1065,58 @@
    "waiver": ""
   },
   {
+   "path": "compat check",
+   "danger": "",
+   "opened": true,
+   "default_writes": false,
+   "writes_where": [],
+   "write_kind": "",
+   "gated_by": [],
+   "readonly_flag": "",
+   "probe": "live",
+   "reason": "",
+   "waiver": ""
+  },
+  {
+   "path": "compat list",
+   "danger": "",
+   "opened": true,
+   "default_writes": false,
+   "writes_where": [],
+   "write_kind": "",
+   "gated_by": [],
+   "readonly_flag": "",
+   "probe": "live",
+   "reason": "",
+   "waiver": ""
+  },
+  {
+   "path": "compat manifest",
+   "danger": "",
+   "opened": true,
+   "default_writes": false,
+   "writes_where": [],
+   "write_kind": "",
+   "gated_by": [],
+   "readonly_flag": "",
+   "probe": "live",
+   "reason": "",
+   "waiver": ""
+  },
+  {
+   "path": "compat migrate",
+   "danger": "",
+   "opened": true,
+   "default_writes": "unprobed",
+   "writes_where": [],
+   "write_kind": "",
+   "gated_by": [],
+   "readonly_flag": "--dry-run",
+   "probe": "exempt",
+   "reason": "裸跑会真改状态文件（先备份 `<file>.bak-<ts>` 再原地重写）⇒ 沙箱空状态目录代表不了默认档（迁移面 0 件）；零副作用面由 `--dry-run` 与判据件 `TestCompatNormalPath` 兜住",
+   "waiver": ""
+  },
+  {
    "path": "config reload",
    "danger": "D2",
    "opened": true,

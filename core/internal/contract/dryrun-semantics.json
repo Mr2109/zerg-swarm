@@ -55,6 +55,20 @@
    "备注": "归并前的第 1 套：语义与 dryrun.v1 一致（只报告不落盘）"
   },
   {
+   "file": "core/cmd/zerg/family_compat.go",
+   "类": "迁移预演（归入命令面：`zerg compat migrate --dry-run`）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "`zerg compat migrate --dry-run` ⇒ 退码 0（盘上有 corrupt ⇒ 1）· 只打印「待迁移 <件>（磁盘 schema=N → 目标 M）」清单与「共 N 个文件待迁移」· **不落盘**：跑前跑后状态目录逐件 sha256 不变（判据件 `TestCompatNormalPath` 第 ② 格与 `TestCompatReadOnly` 两态对拍）；成对负控 = 不带 `--dry-run` 的 `migrate` 必多出 `<file>.bak-<ts>` 与盖章后的正文",
+   "备注": "源件 `core/cmd/zerg-compat/main.go` 的同一档（dryrun.v1 第 1 套语义）⇒ 本件**并入既有语义**，不新立 id；差异只在退码（源件恒 0 ⇒ 命令面「读不到不许当健康」）"
+  },
+  {
+   "file": "core/cmd/zerg/family_compat_test.go",
+   "类": "字样引用（不是干跑语义站点）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "本件只**断言** `compat migrate --dry-run` 的零副作用（跑前跑后状态目录逐件 sha256 不变）与「`--dry-run` 只归 migrate」的拒执面（`list`/`check`/`manifest` 收它 ⇒ 2）；件内**不实现**任何干跑语义",
+   "备注": "门⑩ `R1 未登记件` 的登记面：测试件里出现 `--dry-run` 字样 ⇒ 照同族先例登记为「字样引用」，✗ 不另立语义 id（同 `family_model_record_test.go` 未登记时的处置口径）"
+  },
+  {
    "file": "core/cmd/zerg/check_cli_contract.go",
    "类": "命令面判据门（Go 真搬 · py 同源）：本件 `--emit-matrix` 的干跑档 —— 只报将要合并的增量 · **不写**矩阵件",
    "语义": "dryrun.v1",

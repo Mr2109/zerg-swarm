@@ -11,7 +11,7 @@
   "verify_command_drift": "cd core && go test ./cmd/zerg/ -run TestUnresolvedEvidenceAnchorsAreDriftImmune -count=1 -v",
   "rule_keep": "**拍板前 7 件一个都不许删**（`P13` 逐字）。本机检把这条落成断言：7 个入口目录 + 各自的 main.go 必须在盘上。",
   "rule_no_command": "归属未定者**不许立命令名**（判据③ 逐字「`zerg trace` 这类名字**先不立命令**」）⇒ 命令树里不许出现以这些段开头的命令路径。",
-  "forbidden_command_segments": ["compat"],
+  "forbidden_command_segments": [],
   "entries": [
     {
       "id": "agent",
@@ -53,28 +53,36 @@
       "dir": "core/cmd/zerg-compat",
       "main": "core/cmd/zerg-compat/main.go",
       "bin": "zerg-compat",
-      "who_calls": "**回滚前置校验②**（状态可读性）只能靠它 —— 构建总入口有独立档（`--only-compat`）+ 它进制品矩阵；退码表把它的 4 档登记成独立命名空间；茧壁 argv 静默门把它列进禁用清单",
+      "who_calls": "**回滚前置校验②**（状态可读性）只能靠它 —— 构建总入口有独立档（`--only-compat`）+ 它进制品矩阵；退码表把它的 4 档登记成独立命名空间；茧壁 argv 静默门把它列进禁用清单；★ 2026-10-20 批 B7：**这一面已归入命令面** —— `zerg compat list|check|migrate|manifest`（实现在 `core/cmd/zerg/family_compat.go`，四个子命令/四枚旗标/人面判词/清单原文字节逐面搬自本入口；**新开顶层族** `compat` —— 现读没有既有 `compat` 族可挂，理由逐条写在件头）；双轨期 `core/cmd/zerg-compat` 二进制一字不动",
       "callers": [
         {"file": "scripts/build/cmd/zerg-build-all/main.go", "anchor": "fmt.Fprintln(stdout, \"→ 兼容层 zerg-compat（--only-compat）\")\n\t\tif rc := coreBuild(\"core\", coreOut(\"zerg-compat\"), \"./cmd/zerg-compat\"); rc != 0 {", "line_hint": 257, "公开面对应件": "scripts/build/cmd/zerg-build-all/main.go", "what": "构建：独立档 `--only-compat` 编它一件（真源已真搬 Go 半 · `scripts/build/build-all.sh` 2026-10-09 退役 DEV-2078 ⇒ 证据移 Go 真身；锚 = 宣告行 + 构建行 的**两行上下文窗**，与旧壳同形）"},
         {"file": "core/internal/compat/migrate.go", "anchor": "ManagedBy: \"zerg-compat\",", "line_hint": 575, "公开面对应件": "core/internal/compat/migrate.go", "what": "兼容层自己把 `ManagedBy` 写成它（归属证据）"},
-        {"file": "core/cmd/zerg/check_wall_layer.go", "anchor": "\"zerg-wall\": true, \"zerg-compat\": true,", "line_hint": 90, "公开面对应件": "不进公开面 ⇒ 该证据只在私有面成立", "what": "茧壁门（M2 真搬 py→go）：它进 argv 禁用清单（不许从茧壁里起）"}
+        {"file": "core/cmd/zerg/check_wall_layer.go", "anchor": "\"zerg-wall\": true, \"zerg-compat\": true,", "line_hint": 90, "公开面对应件": "不进公开面 ⇒ 该证据只在私有面成立", "what": "茧壁门（M2 真搬 py→go）：它进 argv 禁用清单（不许从茧壁里起）"},
+        {"file": "README.md", "anchor": "| zerg-compat | 跨版本状态文件兼容层", "line_hint": 36, "公开面对应件": "不进公开面 ⇒ 该证据只在私有面成立", "what": "文档：组件清单那一行 ＋ 命令面入口（批 B7）"},
+        {"file": "docs/skills/zerg-overview.md", "anchor": "| zerg-compat | 跨版本状态文件兼容层", "line_hint": 64, "公开面对应件": "不进公开面 ⇒ 该证据只在私有面成立", "what": "文档：同一行（skills 总览 · 批 B7）"},
+        {"file": "core/cmd/zerg/main.go", "anchor": "path:     []string{\"compat\", \"list\"},", "line_hint": 3892, "公开面对应件": "core/cmd/zerg/main.go", "what": "**命令面登记行**（批 B7）：`zerg compat list|check|migrate|manifest` 进命令树 ⇒ 同一套状态文件兼容面有了 CLI 入口"},
+        {"file": "core/cmd/zerg/family_compat.go", "anchor": "func cmdCompatList(inv *invocation, stdout, stderr io.Writer) int {", "line_hint": 177, "公开面对应件": "core/cmd/zerg/family_compat.go", "what": "**实现件**（批 B7）：源件 `cmdList`/`cmdCheck`/`cmdMigrate`/`cmdManifest` 的逐面搬（取数与输出；判定仍在 `core/internal/compat`）"}
       ],
-      "verdict": "待拍（P13：它是不是对外面 —— 已进制品矩阵与 T-29 的判据面）"
+      "verdict": "**已归（2026-10-20 批 B7）**：`P13` 问的「它是不是对外面」由**现读事实**答完 —— 它不是对外服务，而是**本机状态文件的读写正门**（跨版本 schema 的体检与一次性迁移）⇒ 归入命令面 `zerg compat list|check|migrate|manifest`（实现在 `core/cmd/zerg/family_compat.go` · 四枚旗标逐字保留 · 四个子命令逐面搬）。★ **照实记一笔**：派单原话是「并入既有 `compat` 族」，而现读**没有**这个族（`zerg help --all` 零命中 · `main.go` 里 `compat` 零命中）⇒ 只能**新开顶层族 `compat`**（族名 = 源件名的主体）；为什么不挂 `build`（`--only compat` 是构建档名）／`doctor`／`gate` 写在件头。退码按 `exitcodes.go` **重取号**（源件 2「待迁移」/3「更高版本」⇒ 命令面 8/8 以 `error.detail` 分家；源件 4「用法错」与命令面 4「未认证」撞号 ⇒ 回表取 2）。★ **双轨期不删不改** `core/cmd/zerg-compat`（`P13` 的「拍板前不许删」照旧成立），它的 `0/1/2/3/4` 仍是**组件自有码空间**（`exitcode-namespaces.json` 挂着号）—— 两条轨的码空间不同、不许互换。★ `forbidden_command_segments` 同批**摘掉 `compat`**（七件至此全部「已归」⇒ 现读空表；判据③ 的牙仍由 `unresolved_entries_test.go` 的**合成台账**负控自证，不靠真表留一条假禁名）"
     },
     {
       "id": "model",
       "dir": "core/cmd/zerg-model",
       "main": "core/cmd/zerg-model/main.go",
       "bin": "zerg-model",
-      "who_calls": "**UI 在引导用户去跑它**（模型登记空态的两条本地化文案 + 模型注册模块注释）· 模型登记库（`core/internal/modelreg`）自己引它（probe/lineage/inplace 三件）· 茧壁 argv 静默门把它列进禁用清单",
+      "who_calls": "**UI 在引导用户去跑它**（模型登记空态的两条本地化文案 + 模型注册模块注释）· 模型登记库（`core/internal/modelreg`）自己引它（probe/lineage/inplace 三件）· 茧壁 argv 静默门把它列进禁用清单；★ 2026-10-20 批 B6：**记录件那一面已归入命令面** —— `zerg model record verify|probe|ls`（实现在 `core/cmd/zerg/family_model_record.go`，十六枚旗标/三个子命令/人面判词/落盘路径逐面搬自本入口；并入**既有** `model` 族、动作名挂 `record` 中间段 —— 族里 `model verify`（四方对账）与 `model ls`（机型投影）名字已被占且语义不同 ⇒ ✗ 不覆盖、✗ 不新开族）；双轨期 `core/cmd/zerg-model` 二进制一字不动",
       "callers": [
         {"file": "ui/src/modules/model_registry.rs", "anchor": "引导到 zerg-model probe --store", "line_hint": 840, "公开面对应件": "ui/src/modules/model_registry.rs", "what": "UI 空态：引导到 `zerg-model probe --store`"},
         {"file": "ui/locales/zh-CN.yml", "anchor": "mreg.empty_hint: \"在终端运行 zerg-model probe", "line_hint": 469, "公开面对应件": "ui/locales/zh-CN.yml", "what": "UI 本地化：同一句引导（zh 面）"},
         {"file": "ui/locales/en.yml", "anchor": "mreg.empty_hint: \"Run zerg-model probe", "line_hint": 469, "公开面对应件": "ui/locales/en.yml", "what": "UI 本地化：同一句引导（en 面）"},
         {"file": "core/internal/modelreg/probe.go", "anchor": "本记录由 zerg-model probe 自动生成", "line_hint": 966, "公开面对应件": "core/internal/modelreg/probe.go", "what": "登记库自述：记录由 `zerg-model probe` 生成"},
-        {"file": "core/internal/modelreg/lineage.go", "anchor": "--parent <version> --base <id>", "line_hint": 21, "公开面对应件": "core/internal/modelreg/lineage.go", "what": "登记库：血缘取值由 `zerg-model probe` 的旗标显式传入"}
+        {"file": "core/internal/modelreg/lineage.go", "anchor": "--parent <version> --base <id>", "line_hint": 21, "公开面对应件": "core/internal/modelreg/lineage.go", "what": "登记库：血缘取值由 `zerg-model probe` 的旗标显式传入"},
+        {"file": "README.md", "anchor": "| zerg-model | 模型登记记录工具（标准 §三 的 manifests 布局——verify / probe / list）· **已归入命令面**：`zerg model record verify", "line_hint": 35, "公开面对应件": "不进公开面 ⇒ 该证据只在私有面成立", "what": "文档：组件清单那一行 ＋ 命令面入口（批 B6）"},
+        {"file": "docs/skills/zerg-overview.md", "anchor": "| zerg-model | 模型登记记录工具（标准 §三 的 manifests 布局——verify / probe / list）· **已归入命令面**：`zerg model record verify", "line_hint": 63, "公开面对应件": "不进公开面 ⇒ 该证据只在私有面成立", "what": "文档：同一行（skills 总览 · 批 B6）"},
+        {"file": "core/cmd/zerg/main.go", "anchor": "path:     []string{\"model\", \"record\", \"verify\"},", "line_hint": 1606, "公开面对应件": "core/cmd/zerg/main.go", "what": "**命令面登记行**（批 B6）：`zerg model record verify|probe|ls` 进命令树 ⇒ 同一套记录件工具有了 CLI 入口"},
+        {"file": "core/cmd/zerg/family_model_record.go", "anchor": "func cmdModelRecordVerify(inv *invocation, stdout, stderr io.Writer) int {", "line_hint": 171, "公开面对应件": "core/cmd/zerg/family_model_record.go", "what": "**实现件**（批 B6）：源件 `cmdVerify`/`cmdProbe`/`cmdList` 的逐面搬（旗标解析 → 判词 → 逐条输出 → 原子写/入目录/兄弟文件）"}
       ],
-      "verdict": "待拍（P13：与命令面的 `zerg model ls|opts|show` 是否有重叠面）"
+      "verdict": "**已归（2026-10-20 批 B6）**：`P13` 问的「与命令面的 `zerg model ls|opts|show` 是否有重叠面」由**现读事实**答完 —— 重叠面**存在但不撞语义**：`model ls` 打的是主控 `/api/fleet/models` 的机型投影，`model show/opts` 打的是单模型与适配器参数，而本件操作的是**记录件**（标准 §三 的 `manifests/` 布局 · `core/internal/modelreg`）⇒ 本件的 `verify`/`list` 与命令面同名动作**语义不同**（`model verify` 另有其人：四方一次对账）。故已归入命令面 `zerg model record verify|probe|ls`（实现在 `core/cmd/zerg/family_model_record.go` · 十六枚旗标逐字保留 · 三个子命令逐面搬），动作名挂 `record` 中间段收纳，**撞名的两条既有命令一字不动**、✗ 不新开顶层族。★ **双轨期不删不改** `core/cmd/zerg-model`（`P13` 的「拍板前不许删」照旧成立），且它的 `0/1/2/3/4`（2=记录不合标准 · 3=参数或环境错误 · 4=引擎不可达）是**组件自有码空间**（`exitcode-namespaces.json` 挂着号）⇒ 命令面把 3 拆成 2/1/14、把 4 改判 12（`unreachable`）—— 两条轨的码空间不同、不许互换。若 Mr2109 对归属另有安排（例如让 UI 的空态引导改走 `zerg model record probe --store`），那要先给 UI 三处文案改口径再改调用点"
     },
     {
       "id": "review",
