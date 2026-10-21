@@ -372,6 +372,10 @@ func (g *Gateway) currentConfig() *config.FleetConfig {
 }
 
 // SetCompressor 设置 LLMLingua-2 压缩器（V22，主控启动时调用，加载 ONNX 模型）。
+//
+// GAP-20261021-05：网关自身**不再**用这个实例做语义压缩（原先那个自动压缩调用已删 —— 它算出来的
+// 压缩结果从未写回任何请求，只是白烧 CPU）。此处的 `Load()` 仍必须保留：主控启动时用的是**同一个**
+// ONNX 实例，对话侧的压缩（main.go 的 chat.SetLinguaCompressor）靠它预热。
 func (g *Gateway) SetCompressor(c *compressor.Compressor) {
 	g.compMu.Lock()
 	g.comp = c
@@ -384,26 +388,6 @@ func (g *Gateway) SetCompressor(c *compressor.Compressor) {
 			}
 		}()
 	}
-}
-
-// compressWithLLMLingua2 用 LLMLingua-2 压缩文本（引擎无关，Go 进程内 ONNX 推理）。
-// 未加载或失败时返回 error，调用方 fallback 到 gemma 摘要。
-func (g *Gateway) compressWithLLMLingua2(text string) (string, error) {
-	g.compMu.RLock()
-	c := g.comp
-	g.compMu.RUnlock()
-	if c == nil {
-		return "", fmt.Errorf("compressor not configured")
-	}
-	compressed, _, _, err := c.Compress(text)
-	if err != nil {
-		return "", fmt.Errorf("LLMLingua-2 compression failed: %w", err)
-	}
-	if compressed == "" || len(compressed) >= len(text)*90/100 {
-		// 压缩无效或压缩率过低（<10%），视为失败（gemma 兜底）
-		return "", fmt.Errorf("LLMLingua-2 compression ratio too low")
-	}
-	return compressed, nil
 }
 
 // RegisterRoutes 注册路由到 chi 路由器。
@@ -810,9 +794,18 @@ func (g *Gateway) handleRequest(w http.ResponseWriter, r *http.Request) {
 			// 药引（真机逐字）：第 2–14 发只打了一行「本次不给输出额度（调用方原值仍按上限口径放行）」
 			// ⇒ 网关照发 ⇒ 引擎在 ctx 上硬切思考段 ⇒ 子代理把截断文本当「无工具调用的最终答复」⇒
 			// 判 completed ⇒ **状态假成功、产物 0 字节**。⇒ 必须把错误码回给调用方（fail-closed）。
-			log.Printf("⛔ outbudget fail-closed: model=%s code=%s | %s", model, bud.RejectCode, bud.RejectReason)
+			// ★ GAP-20261021-05 审计（一行）：预算裁决落 session/tokens/threshold/decision ——
+			// 自动压缩删除后，这是网关侧**唯一**的预算观测面（✗ 不恢复任何压缩逻辑）。
+			log.Printf("⛔ outbudget fail-closed: model=%s code=%s session=%s tokens=%d threshold=%d decision=reject | %s",
+				model, bud.RejectCode, sessionID, g.sessionTokens(sessionID), g.compactThreshold(model), bud.RejectReason)
 			adp.TransformError(w, http.StatusBadRequest, bud.RejectCode, bud.RejectReason)
 			return
+		}
+		// 截断（钳位）也要留审计行：ApplyTokenBudget 内部那行有 want/cap，但拿不到 session。
+		if bud.Limit.Clamped {
+			log.Printf("✂️ outbudget audit: model=%s session=%s tokens=%d threshold=%d decision=clamp want=%d value=%d cap=%d",
+				model, sessionID, g.sessionTokens(sessionID), g.compactThreshold(model),
+				bud.Limit.Want, bud.Limit.Value, bud.Limit.Cap)
 		}
 	}
 
@@ -978,8 +971,12 @@ func (g *Gateway) handleRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 6. 出站转换（后端响应 → 客户端格式，由适配器完成）
-	// V22 token 预算：内部累计 + 按模型窗口 50% 自动 compaction（不通知客户端）
-	// （autoCompact 逻辑不变；respBody 提到外层以便复用——丙批前缀命中率也读它）
+	// V22 token 预算：内部累计（只供 GET /v1/context/{id} 查询会话用量）。
+	//
+	// GAP-20261021-05：网关侧**不再**做语义压缩 —— 原先这里的自动压缩调用拿 body 只读不写、
+	// 压缩结果直接丢弃（LLMLingua-2 分支只打日志 + 重置计数），实测白烧掉 270 次 ONNX 推理、
+	// 进程 897% CPU。硬保护只保留 tokencap.ApplyTokenBudget（超窗 ⇒ 拒发 + 错误码 + 审计）。
+	// respBody 提到外层以便复用——丙批前缀命中率也读它
 	var respBody []byte
 	if sessionID != "" {
 		respBody, _ = io.ReadAll(resp.Body)
@@ -987,12 +984,6 @@ func (g *Gateway) handleRequest(w http.ResponseWriter, r *http.Request) {
 		resp.Body = io.NopCloser(bytes.NewReader(respBody))
 		if tok := extractUsageTokensFromBytes(respBody); tok > 0 {
 			g.addSessionTokens(sessionID, tok)
-			// 丙批 §4.2：网关侧是**安全网**（85% 兜底，且 history ≥ 4 条才动）——不与对话侧主压缩抢跑
-			if threshold := g.compactThreshold(model); threshold > 0 && g.sessionTokens(sessionID) > threshold && requestMessageCount(body) >= 4 {
-				slog.Info("session exceeded compaction threshold, auto-compacting", "session", sessionID, "tokens", g.sessionTokens(sessionID), "threshold", threshold)
-				log.Printf("♻️ session %s exceeded compaction threshold (%d/%d), auto-compacting", sessionID, g.sessionTokens(sessionID), threshold)
-				g.autoCompact(sessionID, model, body)
-			}
 		}
 	}
 	// 丙批 N4：前缀命中率闭环——解析上游缓存计量（非流式响应才缓冲；流式交给适配器直通，不破坏 SSE）
@@ -2095,118 +2086,6 @@ func (g *Gateway) compactThreshold(model string) int {
 		}
 	}
 	return maxSessionTokens * 85 / 100
-}
-
-// requestMessageCount — 请求体里的历史条数（网关安全网的 len(history)≥4 门槛用）
-func requestMessageCount(body []byte) int {
-	var req struct {
-		Messages []interface{} `json:"messages"`
-	}
-	if err := json.Unmarshal(body, &req); err != nil {
-		return 0
-	}
-	return len(req.Messages)
-}
-
-// autoCompact 自动压缩会话历史（超阈值时调用）。
-// 优先 LLMLingua-2（Go 进程内 ONNX，删除式保真，0.1s）；失败/未加载 → gemma 摘要兜底。
-// 引擎无关：不依赖 llama 特性。
-func (g *Gateway) autoCompact(sessionID, model string, body []byte) {
-	// 从请求 body 提取 messages（当前请求的上下文）
-	var req struct {
-		Messages []interface{} `json:"messages"`
-	}
-	if err := json.Unmarshal(body, &req); err != nil || len(req.Messages) == 0 {
-		return
-	}
-
-	// 优先：LLMLingua-2 压缩（Go 进程内，删除式，保真）
-	msgsJSON, _ := json.Marshal(req.Messages)
-	if compressed, err := g.compressWithLLMLingua2(string(msgsJSON)); err == nil {
-		log.Printf("🧠 session %s LLMLingua-2 compaction done (%d→%d chars), tokens reset", sessionID, len(msgsJSON), len(compressed))
-		g.resetSessionTokens(sessionID)
-		return
-	}
-
-	// 兜底：gemma 摘要（重写式，结构化 prompt 保针）
-	// 3c-补（2026-09-16）：首选压缩模型必须**真能路由到**才用 —— 光『在配置里』不够：
-	// gemma-4-12B 的唯一候选是预留机位 node-b（未部署），活性过滤排掉幽灵机后它无候选，
-	// 压缩整次失败（实测 16:14:40 "only candidate node-b has no heartbeat"）、会话 token 不复位。
-	// 口径：首选不可用 ⇒ 回退用本次请求的原模型（它必然有可用候选，否则请求自己也走不通）。
-	compactModel := "gemma-4-12B"
-	if _, ok := g.currentConfig().Models[compactModel]; !ok {
-		compactModel = model
-	} else if _, rerr := g.pickRoute(compactModel, "", ""); rerr != nil {
-		log.Printf("♻️ compact model %s unroutable (%v) — falling back to %s", compactModel, rerr, model)
-		compactModel = model
-	}
-
-	compactPrompt := BuildStructuredSummaryPrompt(string(msgsJSON))
-
-	compactBody := map[string]interface{}{
-		"model":      compactModel,
-		"messages":   []interface{}{map[string]interface{}{"role": "user", "content": compactPrompt}},
-		"max_tokens": 2000,
-	}
-	compactBodyJSON, _ := json.Marshal(compactBody)
-
-	route, err := g.pickRoute(compactModel, "", "")
-	if err != nil {
-		log.Printf("⚠️ autoCompact routing failed: %v", err)
-		return
-	}
-
-	var resp *http.Response
-	// 3c（2026-09-16）：原 `if route.Host == "local"` 分支已删（恒不成立）⇒ 一律走通用转发。
-	// 3c-补（2026-09-16）：**必须带子端认证头** —— 原实现 headers 传 nil ⇒ 没有 token ⇒ 子端回 401
-	// unauthorized（实测 16:34:08 "autoCompact upstream node-a returned 401"）。以前不暴露是因为压缩
-	// 走主控内置本机后端（不经 HTTP、不要 token）；本机角色退役后一律走真子端 ⇒ 必须带认证。
-	// 下游 forwardToBackend 会用 adapter.ExtractAuthToken 从这里取 token 并转成子端认的 X-Auth-Token。
-	compactHeaders := http.Header{}
-	compactHeaders.Set("X-Auth-Token", g.authToken)
-	compactHeaders.Set("Content-Type", "application/json")
-	resp, err = g.forwardToBackend(context.Background(), route, "/v1/chat/completions", compactBodyJSON, compactHeaders, nil)
-	if err != nil {
-		log.Printf("⚠️ autoCompact compaction failed: %v", err)
-		return
-	}
-	defer resp.Body.Close()
-
-	// 压缩成功 → token 重置（摘要替代历史，上下文变小）
-	respBody, _ := io.ReadAll(resp.Body)
-	// 2026-09-16 补：**必须检查上游状态码**。此前只看 JSON 形状 ⇒ 上游回 503/429 等错误体时
-	// 一律落到末尾的 "produced no result"，日志里看不出任何原因（实测 16:24:29：回退到 K2 后
-	// 同一秒就 produced no result，根因无从查起）。错误体前 200 字符入日志。
-	if resp.StatusCode != http.StatusOK {
-		msg := strings.TrimSpace(string(respBody))
-		if len(msg) > 200 {
-			msg = msg[:200]
-		}
-		log.Printf("⚠️ autoCompact upstream %s returned %d: %s", route.Host, resp.StatusCode, msg)
-		return
-	}
-	var obj map[string]interface{}
-	if err := json.Unmarshal(respBody, &obj); err == nil {
-		if choices, ok := obj["choices"].([]interface{}); ok && len(choices) > 0 {
-			if msg, ok := choices[0].(map[string]interface{})["message"].(map[string]interface{}); ok {
-				summary, _ := msg["content"].(string)
-				if summary == "" {
-					summary, _ = msg["reasoning_content"].(string)
-				}
-				if summary != "" {
-					summary = ParseStructuredSummary(summary)
-					log.Printf("♻️ session %s compaction done (summary %d chars), tokens reset", sessionID, len(summary))
-					g.resetSessionTokens(sessionID)
-					return
-				}
-			}
-		}
-	}
-	snippet := strings.TrimSpace(string(respBody))
-	if len(snippet) > 200 {
-		snippet = snippet[:200]
-	}
-	log.Printf("⚠️ autoCompact produced no result (upstream=%s body=%s)", route.Host, snippet)
 }
 
 // extractPrompt 从请求体提取 prompt 文本（拼接 messages 内容，用于前缀匹配）。

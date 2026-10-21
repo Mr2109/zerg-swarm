@@ -201,7 +201,13 @@ func TestApplyAdapterOverrides_DeclarationBagAndClamp(t *testing.T) {
 	// 调用方给了 999999（> 声明上限 262144）⇒ 钳到 262144（注意 mockAdapter 自己只声明 32768，
 	// 若 fleet 的声明没进袋，上限会退化成默认 32768 —— 用例据此分辨"声明有没有生效"）
 	body := []byte(`{"model":"deepseek-v4-flash","max_tokens":999999,"messages":[{"role":"user","content":"hi"}]}`)
-	out, _ := g.ApplyAdapterOverrides("deepseek-v4-flash", body, &mockAdapter{})
+	out, bud := g.ApplyAdapterOverrides("deepseek-v4-flash", body, &mockAdapter{})
+	// GAP-20261021-05：钳位（截断）的裁决必须**交回调用方** —— 网关侧那行审计日志
+	// （decision=clamp want/value/cap）就靠它；成功路径回零值 ⇒ 审计行永远不出现（静默失效）。
+	if !bud.Limit.Clamped || bud.Limit.Want != 999999 || bud.Limit.Value != 262144 || bud.Limit.Cap != 262144 {
+		t.Fatalf("成功/钳位路径必须带回裁决读数（clamped=%v want=%d value=%d cap=%d），"+
+			"否则网关的 decision=clamp 审计行永远打不出来", bud.Limit.Clamped, bud.Limit.Want, bud.Limit.Value, bud.Limit.Cap)
+	}
 	var obj map[string]any
 	if err := json.Unmarshal(out, &obj); err != nil {
 		t.Fatal(err)

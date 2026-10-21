@@ -117,17 +117,17 @@ var apiInternalEndpoints = []apiInternalEndpoint{
 		Why: "在访达中显示（只高亮不执行）｜设计稿 §5.1 #30", Origin: "core/cmd/zerg-core/main.go:409"},
 	// ── 网关协议面（6 条 · 设计稿 §5.1 #51/#71–#74/#76）─────────────────────────────
 	{Name: "gateway_chat_completions", Method: "POST", Path: "/v1/chat/completions", Class: apiInternalClassGateway,
-		Why: "OpenAI 兼容面（对外客户端）｜设计稿 §5.1 #71", Origin: "core/internal/gateway/gateway.go:416"},
+		Why: "OpenAI 兼容面（对外客户端）｜设计稿 §5.1 #71", Origin: "core/internal/gateway/gateway.go:400"},
 	{Name: "gateway_messages", Method: "POST", Path: "/v1/messages", Class: apiInternalClassGateway,
-		Why: "Anthropic 兼容面｜设计稿 §5.1 #74", Origin: "core/internal/gateway/gateway.go:419"},
+		Why: "Anthropic 兼容面｜设计稿 §5.1 #74", Origin: "core/internal/gateway/gateway.go:403"},
 	{Name: "gateway_responses", Method: "POST", Path: "/v1/responses", Class: apiInternalClassGateway,
-		Why: "OpenAI 兼容面（responses）｜设计稿 §5.1 #76", Origin: "core/internal/gateway/gateway.go:422"},
+		Why: "OpenAI 兼容面（responses）｜设计稿 §5.1 #76", Origin: "core/internal/gateway/gateway.go:406"},
 	{Name: "gateway_context_compact", Method: "POST", Path: "/v1/context/compact", Class: apiInternalClassGateway,
-		Why: "上下文压缩面｜设计稿 §5.1 #72", Origin: "core/internal/gateway/gateway.go:428"},
+		Why: "上下文压缩面｜设计稿 §5.1 #72", Origin: "core/internal/gateway/gateway.go:412"},
 	{Name: "gateway_context_query", Method: "GET", Path: "/v1/context/{session_id}", Class: apiInternalClassGateway,
-		Why: "上下文查询面｜设计稿 §5.1 #73", Origin: "core/internal/gateway/gateway.go:431"},
+		Why: "上下文查询面｜设计稿 §5.1 #73", Origin: "core/internal/gateway/gateway.go:415"},
 	{Name: "prefix_cache_metrics", Method: "GET", Path: "/api/metrics/prefix_cache", Class: apiInternalClassMetrics,
-		Why: "前缀命中率指标（供监控刮取）｜设计稿 §5.1 #51", Origin: "core/internal/gateway/gateway.go:435"},
+		Why: "前缀命中率指标（供监控刮取）｜设计稿 §5.1 #51", Origin: "core/internal/gateway/gateway.go:419"},
 }
 
 // apiEndpointKey —— 去重键：方法与路径一起（同一路径允许多个方法，故不能只按路径）。

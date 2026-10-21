@@ -1,4 +1,8 @@
-// compact_safetynet_test.go — 丙批 §4.2 验收④：网关侧是 85% 安全网（不再 50% 抢跑）+ history ≥ 4 门槛（2026-09-10）
+// compact_safetynet_test.go — compactThreshold 的阈值口径（ctx×85% 安全网，不是旧实现的 50% 抢跑）
+//
+// GAP-20261021-05：原先这里另有一条「history ≥ 4 才动」的门槛用例 —— 它服务的网关侧自动压缩
+// 已整段删除、那个解析函数也随之消失，故该用例一并删除。compactThreshold 仍被
+// GET /v1/context/{id} 用着，两条阈值用例保留。
 //
 // 运行：cd core && go test ./internal/gateway/ -run CompactSafetyNet -v
 
@@ -32,20 +36,4 @@ func TestCompactSafetyNetThresholdFallback(t *testing.T) {
 		t.Fatalf("未注册模型应退回全局 85%% = %d，实际 %d", want, got)
 	}
 	t.Logf("✓ 验收④-2：未注册模型 → 全局 85%% = %d", got)
-}
-
-// len(history) ≥ 4 门槛：3 条不动、4 条才允许
-func TestCompactSafetyNetHistoryGate(t *testing.T) {
-	three := []byte(`{"messages":[{"role":"user","content":"1"},{"role":"assistant","content":"2"},{"role":"user","content":"3"}]}`)
-	four := []byte(`{"messages":[{"role":"user","content":"1"},{"role":"assistant","content":"2"},{"role":"user","content":"3"},{"role":"assistant","content":"4"}]}`)
-	if n := requestMessageCount(three); n != 3 {
-		t.Fatalf("解析历史条数应为 3，实际 %d", n)
-	}
-	if n := requestMessageCount(four); n != 4 {
-		t.Fatalf("解析历史条数应为 4，实际 %d", n)
-	}
-	if requestMessageCount([]byte("不是 json")) != 0 {
-		t.Fatal("坏 JSON 应返回 0（宁可不动手）")
-	}
-	t.Log("✓ 验收④-3：history ≥ 4 门槛解析正确（坏 JSON → 0，不触发）")
 }

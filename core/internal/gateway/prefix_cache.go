@@ -11,7 +11,8 @@
 //  4. GET /api/metrics/prefix_cache 查询端点（见 gateway.go 的 RegisterRoutes）。
 //
 // 并发安全：所有可变状态由 tracker.mu 保护。
-// 不改动 autoCompact 逻辑（token 预算路径保持原样）。
+// 与预算/压缩判定无关：网关侧已无语义压缩（GAP-20261021-05 删掉了那个「算了不用」的调用），
+// 硬保护在 tokencap.go 的 ApplyTokenBudget。
 package gateway
 
 import (

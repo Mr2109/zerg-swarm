@@ -208,19 +208,6 @@ func BuildStructuredSummaryPrompt(msgsJSON string) string {
 ` + msgsJSON
 }
 
-// ParseStructuredSummary 从模型输出提取结构化摘要（去重包裹，保留原文结构）。
-// 兼容模型输出带/不带「」包裹。
-func ParseStructuredSummary(raw string) string {
-	if raw == "" {
-		return ""
-	}
-	// 去掉可能的思考前缀（<think> 或 Thinking Process）
-	if idx := strings.Index(raw, "「目标」"); idx >= 0 {
-		raw = raw[idx:]
-	}
-	return strings.TrimSpace(raw)
-}
-
 // ensureMap 确保 messages 解析为 []map[string]interface{}（供 TrimNoise 使用）。
 func ensureMap(messages []interface{}) []map[string]interface{} {
 	out := make([]map[string]interface{}, 0, len(messages))

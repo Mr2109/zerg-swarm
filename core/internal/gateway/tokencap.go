@@ -324,12 +324,16 @@ func (g *Gateway) ApplyAdapterOverrides(model string, forwardBody []byte, ada pl
 		res["max_tokens"] = fleetMax
 	}
 	// max_tokens 预算分支：只要袋子里有正数声明就进（适配器声明 或 fleet 声明）。
+	//
+	// bud 提到分支外：成功/钳位那条路也要把裁决交回调用方（GAP-20261021-05 的审计行要读
+	// Limit.Clamped / Want / Cap —— 此前成功时一律回零值，调用方看不出「被截断」）。判定逻辑一字未动。
+	var bud TokenBudgetResult
 	if mt0, ok0 := res["max_tokens"].(int); ok0 && mt0 > 0 {
 		ctxDecl, ctxSrc := g.resolveCtxWindow(model, res)
 		capTokens, capSrc := resolveTokenCap(model, fleetMax)
 		log.Printf("🎛️ adapter %s: max_tokens 声明值 %d（**上限**口径：调用方 ≤ 上限原样放行 / 没给用动态额度 / 超了钳到 %d[%s]）",
 			model, mt0, capTokens, capSrc)
-		bud := ApplyTokenBudget(TokenBudgetInput{
+		bud = ApplyTokenBudget(TokenBudgetInput{
 			Model:       model,
 			ForwardBody: forwardBody,
 			CtxWindow:   ctxDecl,
@@ -352,7 +356,8 @@ func (g *Gateway) ApplyAdapterOverrides(model string, forwardBody []byte, ada pl
 	if ts, ok := res["timeout_sec"].(int); ok && ts > 0 {
 		g.setRequestTimeout(model, ts)
 	}
-	return forwardBody, TokenBudgetResult{}
+	// bud 的零值 = 本次没进预算分支（与旧行为逐字同形）；进了分支则如实带回钳位读数。
+	return forwardBody, bud
 }
 
 // resolveCtxWindow 上下文来源三态（④）：档案(事实) > 声明(意图，已在声明袋里) > 默认。
