@@ -140,7 +140,9 @@ func TestGapPassthroughJudgeRefused(t *testing.T) {
 	// 负控（成对）：**纯只读判据仍放行** —— 两道闸都空串（✗ 别把只读面一起拦掉）。
 	for _, c := range []string{
 		"zerg gap ls --json id",
-		"zerg code show core/cmd/zerg/family_gap.go:544",
+		// ★ 缺口 `GAP-20261021-07`（本枚）：`code show <件>:<行>` 已归**现拿现读闸**（读码字节、rc
+		//   与修为无关 ⇒ 写侧当场拒）⇒ 本负控换一条同为**纯只读**却有鉴别力的判据（搜符号）。
+		"zerg code find gapBoilerplateWhy",
 		"zerg dev proposal list --json id",
 		"zerg gate check check-doc-name",
 	} {
@@ -155,7 +157,9 @@ func TestGapPassthroughJudgeRefused(t *testing.T) {
 	if rc := gapAddDryRunRC(t, "zerg gate run --step 'gofmt -l core' --only-step"); rc != 2 {
 		t.Errorf("透传型判据经 `gap add` 应拒收：rc=%d（要 2 · 改前为 0）", rc)
 	}
-	if rc := gapAddDryRunRC(t, "zerg code show core/cmd/zerg/family_gap.go:544"); rc != 0 {
+	// ★ 缺口 `GAP-20261021-07`：这一格原用 `code show <件>:<行>` 当「纯只读」样板 —— 该形态现属
+	//   **现拿现读**（写侧拒收 2）⇒ 换 `code find <真符号>`，本格判的仍是「只读判据别被写面闸拦掉」。
+	if rc := gapAddDryRunRC(t, "zerg code find gapBoilerplateWhy"); rc != 0 {
 		t.Errorf("纯只读判据经 `gap add` 应照旧收下：rc=%d（要 0）", rc)
 	}
 	// ★ 窄面负控：`gate check <写档判据名>` 的拒词仍走**写面**那一支（透传支不许顶替它）。

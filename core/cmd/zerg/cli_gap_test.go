@@ -28,6 +28,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -383,6 +384,57 @@ func TestGapFamily_BoilerplateRejected(t *testing.T) {
 	}
 	if n := len(gapReadLines(t, ledger)); n != 1 {
 		t.Errorf("真判据要落 1 行，得到 %d", n)
+	}
+}
+
+// ── 判据 ⑩′ 写侧现拿现读闸（缺口 GAP-20261021-07 靶心）───────────────────────────────────────
+//
+// 病（修前）：样板值闸闭集只认「通用（内省型）」4 词（`help` / `doctor` / `<族> ls` / `<族> status`）
+// ⇒ **读现成物**那一族漏网（现读实测）：`--verify-cmd 'zerg code show core/cmd/zerg/main.go:1'`
+// 与 `--verify-cmd 'zerg gap show GAP-…'` 都 rc=0 收下 —— 而这两类命令的 rc 只随「件 / 行在不在」
+// 变，与缺口修没修无关 ⇒ 永远判不了任何一条缺口。
+//
+// 两态（拒收）：① `code show <件>:<行>`（读包内文件某一行）② `gap show <id>`（读账上一行）⇒ 各 rc=2、
+// 点名「现拿现读」、真源不动。负控（放行）：`code find <真符号>`（搜符号 · 修没修真会翻 rc）与
+// `task ls --json id`（字段存在性是真信号：修前「未知字段」rc=2、修后 rc=0）⇒ rc=0 各落 1 行。
+func TestGapFamily_LiveReadRejected(t *testing.T) {
+	_, ledger, _ := gapEnv(t)
+
+	// ★ 每条夹具有**自己的** `--want-action`：同 fp 不同内容 ⇒ 14 冲突（防呆②），不是闸在判。
+	base := func(verify, tag string) []string {
+		return []string{"gap", "add", "--symptom", "现拿现读闸夹具", "--handmade", "手搓 h",
+			"--impact", "命令面", "--want-family", "gap", "--want-action", "ls-" + tag,
+			"--repro-cmd", "go test ./... -run X", "--verify-cmd", verify, "--yes"}
+	}
+
+	for i, v := range []string{
+		"zerg code show core/cmd/zerg/main.go:1",
+		"zerg code show core/cmd/zerg/main.go",
+		"zerg code show --batch core/cmd/zerg/main.go:1,core/cmd/zerg/main.go:2",
+		"zerg gap show GAP-20260925-01",
+	} {
+		rc, _, errb := gapRun(t, base(v, strconv.Itoa(i))...)
+		if rc != 2 {
+			t.Errorf("--verify-cmd %q 是现拿现读 ⇒ 2，得到 %d · %s", v, rc, errb)
+		}
+		if !strings.Contains(errb, "现拿现读") || !strings.Contains(errb, "--verify-cmd") {
+			t.Errorf("拒收判词要点名「现拿现读」与 --verify-cmd，得到 %q", errb)
+		}
+	}
+	// 拒收在任何盘面动作之前 —— 真源一个字节都不许建
+	if _, err := os.Stat(ledger); !os.IsNotExist(err) {
+		t.Errorf("现拿现读拒收不许动真源（%v）", err)
+	}
+
+	// 负控：好判据照旧放行（搜符号 / 新字段）
+	for i, v := range []string{"zerg code find gapBoilerplateWhy", "zerg task ls --json id"} {
+		rc, out, errb := gapRun(t, base(v, "neg"+strconv.Itoa(i))...)
+		if rc != 0 {
+			t.Fatalf("负控 %q 要放行 ⇒ 0，得到 %d · %s · %s", v, rc, out, errb)
+		}
+		if n := len(gapReadLines(t, ledger)); n != i+1 {
+			t.Errorf("负控 %q 要落 %d 行，得到 %d", v, i+1, n)
+		}
 	}
 }
 
