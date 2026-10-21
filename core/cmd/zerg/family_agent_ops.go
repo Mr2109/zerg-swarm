@@ -596,8 +596,23 @@ func cmdAgentRegistry(inv *invocation, stdout, stderr io.Writer) int {
 				"mem_gb": r.MemGB, "modality": r.Modality, "note": r.Note,
 			}, agentRegistryFields))
 		}
-		fmt.Fprintf(stderr, "%s: agent registry %s --list · 注册表件 %s（顶层键 %d 条 · 只读）\n",
-			progName, machine, regPath, len(rows))
+		// ★ 缺口 `GAP-20260926-03`（命令面 · 子端注册表「改盘静默不生效」）：
+		//   注册表在子端是**纯内存缓存**（`agent/internal/registry` 无 fsnotify / 无 watch）⇒
+		//   改盘上 `agent_models.yaml` **不会**自动吃到，而本面原先只报「顶层键 N 条」——
+		//   人看不出「我改了盘，它到底吃了没」。
+		//   修法（照账上收窄后的第二条方案）：把这两件事**印在这张表的头上** ——
+		//   ① 盘上件**读到的时刻**（mtime，给了「我读到的是哪一版」的凭据）；
+		//   ② 「改盘不自动生效、要以 `agent reload` 的回执为准」这一句明示。
+		//   ✗ 不新开旗标/端点、✗ 不把「静默」换成「假装已重载」。
+		stamp := ""
+		if fi, err := os.Stat(regPath); err == nil {
+			stamp = " · 件 mtime " + fi.ModTime().Format("2006-01-02T15:04:05-07:00")
+		}
+		fmt.Fprintf(stderr, "%s: agent registry %s --list · 注册表件 %s（顶层键 %d 条 · 只读%s）\n",
+			progName, machine, regPath, len(rows), stamp)
+		fmt.Fprintf(stderr, "%s: ⚠ 子端注册表是**内存缓存**（无文件监听）：改盘**不会**自动生效 ⇒ 改完须 `%s agent reload %s`，"+
+			"并以它回执的 `status` / `models` / `egg_profiles` 三格为「吃到没」的凭据（本面读的是盘上件，✗ 不代表子端已重载）\n",
+			progName, progName, machine)
 		return listCmd(inv, stdout, stderr, agentRegistryListDisplay, rows)
 	}
 
