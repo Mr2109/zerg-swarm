@@ -8,11 +8,11 @@
     "non_literal_read": "非字面量取空白规整化后的表达式文本"
   },
   "counts": {
-    "literals": 773,
-    "literal_sites": 1606,
+    "literals": 774,
+    "literal_sites": 1607,
     "non_literals": 14,
     "non_literal_sites": 89,
-    "sites_total": 1695
+    "sites_total": 1696
   },
   "literals": [
     {
@@ -3108,6 +3108,12 @@
       "value": "no_verify_forbidden",
       "sites": [
         "core/cmd/zerg/main.go:316"
+      ]
+    },
+    {
+      "value": "node_takes_no_positional",
+      "sites": [
+        "core/cmd/zerg/family_doctor_node.go:533"
       ]
     },
     {
