@@ -53,7 +53,7 @@ func TestNsjailRootfsIntegration(t *testing.T) {
 	if be.BaseDir == "" {
 		be.BaseDir = t.TempDir()
 	}
-	be.HostNetwork = true // 命令面的取法（茧内端口即宿主端口），与本格的四条断言无关
+	// 网络档不在这里设（T5：档位只从契约读）—— 本格的四条断言与网络无关，走缺省 net=none。
 
 	caps, err := be.Capabilities()
 	if err != nil {

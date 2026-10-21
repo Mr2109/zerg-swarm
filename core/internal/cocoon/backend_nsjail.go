@@ -25,10 +25,13 @@
 //	Ⅰc. 命令面（`cocoon open`）**已**把茧目录交给后端（`CocoonDirSetter.SetCocoonDir(<真源根>/<id>/)`
 //	   ⇒ 实例根 = 该目录下的 `<后端 id>/`，upper/work/merged/tmp 全在里面）；`close` 同样先设一遍
 //	   （跨进程时按盘上句柄收尾要靠它算茧根）。直接调后端（绕过命令面）时，调用方须自己设 BaseDir。
-//	Ⅰb. 网络两难：nsjail 缺省建**新** netns（茧断外网，但茧内回环只属于它 ⇒ 宿主与 broker
-//	   都够不着，端口面只能报「不可达」）；置 HostNetwork 位（命令面已置 true）共享宿主 netns
-//	   ⇒ 茧内端口即宿主端口（命令面要的就是这个），代价是**茧能出网** ——
-//	   「既断外网又能被宿主访问」需要 DNAT/代理，本件未接，照实登记。
+//	Ⅰb. 网络两档（T5：**缺省断网**，档位来自契约 `[茧].net`，后端无全局开关）：
+//	   ① net 缺省/"none" ⇒ 不传 `--disable_clone_newnet`，nsjail 建**新** netns：
+//	      茧内只有回环（自己 127.0.0.1:<port> 能通），**出不了网**，宿主与 broker 也够不着茧内端口。
+//	   ② net = "host" ⇒ 传 `--disable_clone_newnet`，共享宿主 netns：茧内端口即宿主端口，
+//	      代价是**茧能出网**。
+//	   `[[端口]]` 只在 ② 下合法（解析期就把 ①+[[端口]] 拒掉）；「既断外网又能被宿主访问」
+//	   需要 DNAT/代理，本件未接，照实登记。
 //	Ⅱ. 运行时未实测：开发机是 macOS，nsjail 起不来；本件只保证「参数拼装 + 结果契约
 //	   + 交叉编译」三格，真机跑通要等 Linux 主机。
 //	Ⅲ. 整树回收靠三条腿（killpg + pidns 拆除 + cgroup.kill），实测起决定作用的是 pidns
@@ -193,10 +196,11 @@ func (b *NsjailBackend) Exec(ctx context.Context, inst Instance, argv []string, 
 	}
 
 	args := nsjailExecArgvForPlan(spec, mounts, plan, opts.Dir, argv)
-	if b.HostNetwork {
-		// 共享宿主 netns（见字段注释）：茧内 127.0.0.1:<port> 就是宿主那一个端口。
-		args = nsjailWithHostNet(args)
-	}
+	// 网络档**只从契约读**（`[茧].net`）：host ⇒ 共享宿主 netns（茧内 127.0.0.1:<port> 就是
+	// 宿主那一个端口）；none（缺省）⇒ 不传这条，nsjail 自己建新 netns ⇒ 茧内只有回环、出不了网。
+	// ★ 这里曾经是 `b.HostNetwork`（命令面硬编码 true）：那是「为了让端口直通而默认把茧放上网」，
+	//   与「默认断网」正相反。现在没有后端级的开关 —— 一个后端实例服务多个茧，开关只能是**每份契约**的。
+	args = nsjailApplyNet(args, spec)
 
 	cmd := exec.Command(path, args...)
 	// 进程组：两条档的共同目标是「组号 == 子进程 pid」，这样 kill(-pid) 就是杀整棵树。

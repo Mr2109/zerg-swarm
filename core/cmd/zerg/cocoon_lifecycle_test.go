@@ -38,6 +38,7 @@ const ccLifeSpec = `[茧]
 name   = "shop"
 image  = "python:3.12-slim"
 digest = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+net    = "host"   # 有 [[端口]] ⇒ 必须显式要 host（T5：缺省 none = 断网档）
 
 [[服务]]
 name  = "api"
@@ -1173,5 +1174,86 @@ func TestCocoonAIUpstreamThreeTier(t *testing.T) {
 	// 名字本身也钉一下：茧内看到的就是 ZERG_AI_BASE（与 inject.go 的 EnvAIBase 同一格）。
 	if cocoonAIBaseEnv != cocoon.EnvAIBase {
 		t.Fatalf("cocoonAIBaseEnv = %q，want %q（与茧内 env 名同一个字）", cocoonAIBaseEnv, cocoon.EnvAIBase)
+	}
+}
+
+// ── 网络档（T5）：缺省断网 · net=host 要在 stderr 上说出来 · 端口面互斥 ──────
+
+// ccLifeSpecNoNet — 从 ccLifeSpec 里摘掉 `net` 与整段 `[[端口]]`（= 缺省断网档的契约）。
+func ccLifeSpecNoNet(t *testing.T) string {
+	t.Helper()
+	s := strings.Replace(ccLifeSpec, "net    = \"host\"   # 有 [[端口]] ⇒ 必须显式要 host（T5：缺省 none = 断网档）\n", "", 1)
+	i := strings.Index(s, "[[端口]]")
+	j := strings.Index(s, "[资源]")
+	if i < 0 || j < 0 || j < i {
+		t.Fatalf("夹具形状变了（找不到 [[端口]] / [资源]）：\n%s", ccLifeSpec)
+	}
+	return s[:i] + s[j:]
+}
+
+func TestCocoonOpenNetDefaultsToNone(t *testing.T) {
+	proj, _ := ccLifeSetup(t)
+	spec := ccLifeSpecNoNet(t)
+	if strings.Contains(spec, "net") && strings.Contains(spec, "host") {
+		t.Fatalf("夹具没摘干净（还留着 net=host）：\n%s", spec)
+	}
+	if err := os.WriteFile(filepath.Join(proj, cocoon.SpecFileName), []byte(spec), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rc, out, errs := ccLifeRun(t, cmdCocoonOpen, []string{"cocoon", "open"}, []string{proj}, nil, nil)
+	if rc != exitOK {
+		t.Fatalf("缺省档 open rc=%d · stderr=%s", rc, errs)
+	}
+	// 人面必须**明说**这条茧是断网的（不让「没写就是断网」只活在文档里）。
+	if !strings.Contains(out, "网络       : none") {
+		t.Fatalf("open 的 human 面没印出网络档 none：\n%s", out)
+	}
+	// 缺省档不许有开网警告（警告只能因「显式要 host」而出现）。
+	if strings.Contains(errs, "net=host") {
+		t.Fatalf("缺省档不该有开网警告：%s", errs)
+	}
+}
+
+func TestCocoonOpenNetHostWarns(t *testing.T) {
+	proj, _ := ccLifeSetup(t) // ccLifeSpec 显式写了 net = "host"
+
+	rc, out, errs := ccLifeRun(t, cmdCocoonOpen, []string{"cocoon", "open"}, []string{proj}, nil, nil)
+	if rc != exitOK {
+		t.Fatalf("net=host open rc=%d · stderr=%s", rc, errs)
+	}
+	// ★ 判据：stderr 上**必须**有一行说清代价（茧可出网 ∧ 端口与宿主共用）。
+	if !strings.Contains(errs, "警告：net=host ⇒ 茧可出网且端口与宿主共用") {
+		t.Fatalf("net=host 没在 stderr 上留警告行：%q", errs)
+	}
+	if !strings.Contains(out, "网络       : host") {
+		t.Fatalf("open 的 human 面没印出网络档 host：\n%s", out)
+	}
+}
+
+func TestCocoonOpenRejectsPortsWithoutHostNet(t *testing.T) {
+	proj, root := ccLifeSetup(t)
+	// 负控：把 net 那行摘掉，但**留着** [[端口]] ⇒ 解析期就该拒。
+	spec := strings.Replace(ccLifeSpec, "net    = \"host\"   # 有 [[端口]] ⇒ 必须显式要 host（T5：缺省 none = 断网档）\n", "", 1)
+	if !strings.Contains(spec, "[[端口]]") {
+		t.Fatalf("夹具没留住 [[端口]]：\n%s", spec)
+	}
+	if err := os.WriteFile(filepath.Join(proj, cocoon.SpecFileName), []byte(spec), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rc, _, errs := ccLifeRun(t, cmdCocoonOpen, []string{"cocoon", "open"}, []string{proj}, nil, nil)
+	if rc == exitOK {
+		t.Fatal("[[端口]] + 缺省 net=none 应当拒执，却 rc=0")
+	}
+	if rc != exitUsage {
+		t.Fatalf("契约错应退 %d（usage），得到 %d · stderr=%s", exitUsage, rc, errs)
+	}
+	if !strings.Contains(errs, "net=host") {
+		t.Fatalf("拒执文案必须点名 net=host：%q", errs)
+	}
+	// ★ 拒在写盘之前：状态根下不许有半个茧（「解析期就拒」不是「拒得早一点」的意思）。
+	if ents, err := os.ReadDir(root); err == nil && len(ents) != 0 {
+		t.Fatalf("解析期拒执却留下了 %d 项状态：%v", len(ents), ents)
 	}
 }

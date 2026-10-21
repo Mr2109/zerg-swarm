@@ -13,15 +13,19 @@
 //	--max_cpus              个数，0 = 不限
 //	--iface_no_lo           真义是「**不**把 lo 拉起来」⇒ 要回环就**不许**传
 //	--disable_proc          真义是「不挂 procfs」⇒ 语言运行时要用 /proc 就**不许**传
-//	--disable_clone_newnet  真义是「**不**建 netns，直接用宿主网络」⇒ 看 HostNetwork 位（见下）
+//	--disable_clone_newnet  真义是「**不**建 netns，直接用宿主网络」⇒ 由契约 `[茧].net` 决定（见下）
 //
 // 前两条「不传」是**有意为空**的：它们不是漏了，而是传了就与设计目标相反
 // （茧内要回环给 AI 端点、要有 /proc）。测试里逐条断言「不含」。
 //
-// ★ `--disable_clone_newnet` 与上面两条不同，它由 **NsjailBackend.HostNetwork** 决定
-// （缺省不传 = 茧有独立 netns ⇒ 断外网；命令面置 true = 共享宿主 netns ⇒ 茧内端口即宿主端口）。
-// 两条承诺互斥，只能选一条：要「能出网之外的隔离」就得接 DNAT/代理，本件未接
-// （见 backend_nsjail.go 文件头撞约束 Ⅰb）。
+// ★ `--disable_clone_newnet` 与上面两条不同，它由**契约**的 `[茧].net` 决定（T5）：
+//
+//	net 缺省 "none" ⇒ **不传**（nsjail 建新 netns ⇒ 茧内只有回环、出不了网）
+//	net = "host"    ⇒ 传（共享宿主 netns ⇒ 茧内端口即宿主端口，代价是茧能出网）
+//
+// 两条承诺互斥，只能选一条：要「既断外网又能被宿主访问」就得接 DNAT/代理，本件未接
+// （见 backend_nsjail.go 文件头撞约束 Ⅰb）。★ 后端**没有**任何全局网络开关：
+// 一个后端实例服务多个茧，档位只能来自每份契约（见 nsjailApplyNet）。
 package cocoon
 
 import (
@@ -88,13 +92,11 @@ type NsjailBackend struct {
 	CgroupMount string
 	// KillGrace — 超时后 SIGTERM → 宽限 → SIGKILL 的宽限（0 = 直接 SIGKILL）。
 	KillGrace time.Duration
-	// HostNetwork — 是否让茧**共享宿主 netns**（传 `--disable_clone_newnet`）。
-	//
-	// ★ 缺省 false（nsjail 自己建新 netns ⇒ 茧内只有 lo、出不了网，这是「运行期断外网」的
-	//   唯一现成实现）。置 true 时茧与宿主同一网络栈：茧内监听 127.0.0.1:<port> 就是宿主
-	//   127.0.0.1:<port>（⇒ 不需要也不存在端口映射），代价是**茧能出网**。
-	//   两边都要就得接 DNAT/代理，本件未接（见文件头撞约束 Ⅰb）。
-	HostNetwork bool
+	// ★ 这里**故意没有** HostNetwork 字段（T5）：网络档属于**契约**（`[茧].net`），
+	//   不属于后端。一个后端实例同时服务多个茧，任何后端级开关都会变成「全局把茧放上网」——
+	//   那正是「茧默认断网」要消灭的东西。拼旗标时问 `Spec.HostNet()`（见 Exec）。
+	//   语义照旧：none（缺省）= nsjail 建新 netns（茧内只有 lo、出不了网）；
+	//   host = 共享宿主 netns（茧内端口即宿主端口，代价是能出网；两边都要得接 DNAT/代理，未接）。
 
 	mu     sync.Mutex
 	nextID int
@@ -268,7 +270,8 @@ func nsjailArgs(spec *Spec) []string {
 		"--keep_env",
 	}
 	// ★ 有意为空的三条（传了就走反方向，见文件头）：--iface_no_lo / --disable_proc /
-	//   --disable_clone_newnet。
+	//   --disable_clone_newnet。★ 网络档**不在本函数里**：它属于契约而不是资源面，
+	//   由 Exec 按 `spec.HostNet()` 决定是否插 `--disable_clone_newnet`（见 backend_nsjail.go）。
 
 	if spec == nil {
 		return append(args, "--rlimit_nofile", strconv.Itoa(nsjailDefaultNoFile))
@@ -777,6 +780,20 @@ func nsjailExecArgv(spec *Spec, mounts map[string]nsjailMount, chroot, dir strin
 // 那种形态会把旗标塞进用户 argv —— 直接返回原样，让调用方看见「没生效」而不是悄悄改语义）。
 func nsjailWithHostNet(args []string) []string {
 	return nsjailInsertFlag(args, "--disable_clone_newnet")
+}
+
+// nsjailApplyNet — 网络档落地（**纯函数**：档位只来自契约，入参 argv 不被就地改）。
+//
+//	`[茧].net = "host"` ⇒ 插 `--disable_clone_newnet`（共享宿主 netns：茧内端口即宿主端口）
+//	其余（缺省 none）    ⇒ 原样返回（nsjail 建新 netns：茧内只有回环，出不了网）
+//
+// ★ 这是「茧默认断网」在**后端**唯一的落点：✗ 不许再有第二个开关（后端字段 / 环境变量 /
+// 命令面硬编码）能把它打开 —— 多个来源就是多一种「默认被偷偷改掉」的路径。
+func nsjailApplyNet(args []string, spec *Spec) []string {
+	if spec.HostNet() {
+		return nsjailWithHostNet(args)
+	}
+	return args
 }
 
 // nsjailInsertFlag — 把一个无值旗标插到 `--` 之前（`--` 之前是本层生成的旗标区）。

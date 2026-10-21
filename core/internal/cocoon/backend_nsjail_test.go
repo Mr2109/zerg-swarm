@@ -252,6 +252,51 @@ func TestNsjailHostNetworkFlag(t *testing.T) {
 	}
 }
 
+// ── ①c′ 网络档只来自契约（T5：默认断网，host 才共享宿主 netns）──────────
+
+// TestNsjailNetFromSpec — Exec 的那个纯函数落点：**同一份 argv、同一台后端**，
+// 只有 `[茧].net` 不同 ⇒ 旗标不同。这条测试守的是「没有后端级开关」这个性质本身。
+func TestNsjailNetFromSpec(t *testing.T) {
+	argv := []string{"/bin/sh", "-c", "true"}
+	base := nsjailExecArgv(nil, nil, "/", "", argv)
+
+	cases := []struct {
+		name string
+		spec *Spec
+		want int // 期望 `--disable_clone_newnet` 出现次数
+	}{
+		{"nil 契约（无档位信息）", nil, 0},
+		{"缺省（不写 net）", &Spec{}, 0},
+		{`显式 none`, &Spec{Cocoon: CocoonSpec{Net: NetNone}}, 0},
+		{`空串（笔误形态）`, &Spec{Cocoon: CocoonSpec{Net: ""}}, 0},
+		{`未知值（手搓 Spec）`, &Spec{Cocoon: CocoonSpec{Net: "bridge"}}, 0},
+		{`host`, &Spec{Cocoon: CocoonSpec{Net: NetHost}}, 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := nsjailApplyNet(base, tc.spec)
+			if n := argCount(got, "--disable_clone_newnet"); n != tc.want {
+				t.Fatalf("--disable_clone_newnet 出现 %d 次，want %d：%v", n, tc.want, got)
+			}
+			// 无论哪一档，茧内 argv 逐字不变、仍在 `--` 之后（网络档不许碰用户命令）。
+			sep := -1
+			for i, a := range got {
+				if a == "--" {
+					sep = i
+					break
+				}
+			}
+			if sep < 0 || !slices.Equal(got[sep+1:], argv) {
+				t.Fatalf("`--` 之后的 argv 被改动了：%v", got)
+			}
+			// 纯函数：不改入参。
+			if argCount(base, "--disable_clone_newnet") != 0 {
+				t.Fatalf("nsjailApplyNet 就地改了入参：%v", base)
+			}
+		})
+	}
+}
+
 // ── ①d argv[0] 解析（nsjail 不走 PATH，实测退 255）────────────────────
 
 func TestNsjailResolveArgv0(t *testing.T) {

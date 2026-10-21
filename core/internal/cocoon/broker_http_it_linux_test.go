@@ -225,8 +225,9 @@ func TestBrokerHTTPCocoonReachIntegration(t *testing.T) {
 	if be.BaseDir == "" {
 		be.BaseDir = t.TempDir()
 	}
-	be.HostNetwork = true // 命令面的取法：茧内 127.0.0.1 就是宿主 127.0.0.1
-	spec := &Spec{File: SpecFileName, Cocoon: CocoonSpec{Name: "t4b-http-it", Image: "debian:bookworm"}}
+	// 契约面显式要 host（T5）：茧内 127.0.0.1 就是宿主 127.0.0.1 ⇒ 茧内直连宿主 broker 的
+	// 回环端口才成立。★ 默认是 none（断网档）：茧内只有自己的回环，宿主 broker 够不着。
+	spec := &Spec{File: SpecFileName, Cocoon: CocoonSpec{Name: "t4b-http-it", Image: "debian:bookworm", Net: NetHost}}
 	inst, err := be.Provision(context.Background(), spec)
 	if err != nil {
 		t.Fatalf("Provision: %v", err)

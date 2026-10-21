@@ -29,6 +29,9 @@
 //	   并顺带产出**启动顺序**（Spec.Order，依赖在前），T3 直接照它起。
 //	④ 端口 `inner` ∈ 1..65535 且不重复；`host` 为 "auto" 或 1..65535 的数字；固定 host 端口之间
 //	   也不许撞（撞了就是两个茧抢同一个宿主端口，起第二个必失败，晚报不如早报）。
+//	⑤ `[茧].net` 只有 none（**缺省**，茧独立 netns、断外网）/ host（共享宿主 netns，能出网）两档；
+//	   空串按 none 算，未知值拒。**给了 [[端口]] 就必须 net = "host"**（端口直通的前提），
+//	   默认断网档下不给端口映射 —— 解析期直接拒，✗ 不静默跳过（T5）。
 //
 // ★ 错误一律是 *SpecError：带 File/Line/Field/Msg，Error() 形如
 //
@@ -80,8 +83,15 @@ const (
 	ArchARM64 = "arm64"
 	ArchAMD64 = "amd64"
 
+	// NetNone — 「断网」这一档。★ 三处共用同一个串，但语义各自成立：
+	// `[茧].net`（运行期网络档）· `[构建].net`（构建相位）· `[网络].mode`（历史字段）。
 	NetNone      = "none"
 	NetAllowlist = "allowlist"
+	// NetHost — `[茧].net = "host"`：茧**共享宿主 netns**（茧内端口即宿主端口，代价是能出网）。
+	//
+	// ★ 只给 `[茧].net` 用：`[构建].net` / `[网络].mode` 都只认 none/allowlist，
+	//   别把这个值放进去（那条路没有「共享宿主网络栈」的概念）。
+	NetHost = "host"
 
 	HostAuto = "auto"
 )
@@ -153,6 +163,19 @@ type CocoonSpec struct {
 	// ★ 只在给了 Rootfs 时才有意义：单独给它在解析期就拒（上层没有下层不是配置，是笔误）。
 	OverlayUpper string
 
+	// Net — 运行期网络档：NetNone（缺省）| NetHost。
+	//
+	//	`none`（**缺省**）—— 茧有自己的 netns：只有回环，出不了网，宿主也够不着茧内端口。
+	//	                    老契约（没写这个键）零变化，且这是**安全侧**。
+	//	`host`            —— 茧共享宿主 netns：茧内 `127.0.0.1:<port>` 就是宿主那个端口
+	//	                    （⇒ `[[端口]]` 直通的前提），代价是**茧能出网**。
+	//
+	// ★ 为什么缺省必须是 none：隔离是承诺，便利要人开口要。`net = "host"` 一写就要在
+	//   open 的 stderr 上留一行警告（见 cmd/zerg 的 cocoonNetNotice）—— 让人看见自己换走了什么。
+	// ★ 空串一律归一成 none（✗ 绝不许把「写了键但没给值」读成 host：那是把关闭隔离当成笔误的后果）。
+	// ★ 解析后恒为非空（none｜host），下游不必再判空串。
+	Net string
+
 	// AI — 可选：`[茧.ai]`（茧内 AI 能力的形状）。零值 = 不给 AI 能力（安全侧）。
 	AI AISpec
 
@@ -189,6 +212,25 @@ func (a AISpec) ModelOrDefault() string {
 	}
 	return a.Model
 }
+
+// NetMode — 归一化后的运行期网络档：空 ⇒ none（**唯一的归一化点**，✗ 别在调用点各判一次空串）。
+//
+// ★ 归一化只往「更隔离」那一侧走：任何非 `host` 的值（含空串）都读成 none。
+//
+//	与「未知值在解析期就拒」不冲突 —— 解析过的契约里只可能剩 none / host 两个值，
+//	这里兜的是「有人手搓 Spec 结构体」（测试桩）那条路。
+func (c CocoonSpec) NetMode() string {
+	if c.Net == NetHost {
+		return NetHost
+	}
+	return NetNone
+}
+
+// HostNet — 契约是否要共享宿主 netns（`net = "host"`）。缺省 / 空值 ⇒ false（安全侧）。
+func (c CocoonSpec) HostNet() bool { return c.NetMode() == NetHost }
+
+// HostNet — 整份契约是否要共享宿主 netns（后端拼旗标时只问这一个口）。
+func (s *Spec) HostNet() bool { return s != nil && s.Cocoon.HostNet() }
 
 // Readiness — 一个服务的就绪判据（v2 §D 里是行内表）。
 //
@@ -242,6 +284,10 @@ type BuildSpec struct {
 }
 
 // NetworkSpec — [网络]：运行期网络。v2 §D「运行期强制 none」⇒ 这里只接受 none。
+//
+// ★ 与 `[茧].net` 的分工（T5）：**运行期的网络档只在 `[茧].net`**（none 缺省 / host）。
+// 这一段是 v2 的历史面，只留「allowlist 不许出现在运行期」这条判据，不再承载档位选择 ——
+// 两处都能选档就是两个真源，迟早一处写 host 一处写 none 而没人知道以谁为准。
 type NetworkSpec struct {
 	Mode  string
 	Allow []string
@@ -485,10 +531,12 @@ func (d *specDecoder) decodeCocoon(t *tval) error {
 	if t.kind != tvTable {
 		return d.errf(t.line, f, "必须是表")
 	}
-	if err := d.checkKeys(t, f, "name", "image", "digest", "arch", "workdir", "rootfs", "overlay_upper", "ai"); err != nil {
+	if err := d.checkKeys(t, f, "name", "image", "digest", "arch", "workdir", "rootfs", "overlay_upper", "net", "ai"); err != nil {
 		return err
 	}
-	c := CocoonSpec{Line: t.line}
+	// ★ Net 的缺省值在这里落地（不是零值 ""）：解析完的契约里网络档恒为 none|host，
+	//   下游（后端 / 命令面 / inspect）不必再猜「空串算什么」。
+	c := CocoonSpec{Line: t.line, Net: NetNone}
 
 	name, _, err := d.strField(t, f, "name")
 	if err != nil {
@@ -608,6 +656,33 @@ func (d *specDecoder) decodeCocoon(t *tval) error {
 			return d.errf(t.tab["overlay_upper"].line, f+".overlay_upper", "解析成绝对路径失败：%v", aerr)
 		}
 		c.OverlayUpper = abs
+	}
+
+	// `net` — 运行期网络档（T5 定：**缺省断网**，要端口直通必须显式要 host）。
+	//
+	// ★ 三条口径（都是判据，不是文风）：
+	//   ① 缺省 / 空串 ⇒ none。空串**绝不**读成 host —— 「写了键没给值」与「关闭隔离」
+	//      是两件事，把前者当后者等于让一个笔误把茧放上网。
+	//   ② host 必须**显式写**出这个值，并在解析期留一条 Warning（open 还会往 stderr 打一行）：
+	//      茧能出网 ∧ 端口与宿主共用，是**换走隔离**换来的便利。
+	//   ③ 未知值一律拒（✗ 不许「不认识就当 none」的静默降级 —— 那会让人以为 host 生效了）。
+	netMode, hasNet, err := d.strField(t, f, "net")
+	if err != nil {
+		return err
+	}
+	if hasNet {
+		switch strings.TrimSpace(netMode) {
+		case "", NetNone:
+			c.Net = NetNone
+		case NetHost:
+			c.Net = NetHost
+			d.warnf(t.tab["net"].line, f+".net",
+				"net=host ⇒ 茧可出网且端口与宿主共用（共享宿主 netns；想要断网就别写这个键）")
+		default:
+			return d.errf(t.tab["net"].line, f+".net",
+				"只能是 %q 或 %q，得到 %q（缺省 %s；写空串也按 %s 算）",
+				NetNone, NetHost, netMode, NetNone, NetNone)
+		}
 	}
 
 	d.spec.Cocoon = c
@@ -932,6 +1007,18 @@ func (d *specDecoder) validateGraph(svcs []ServiceSpec) error {
 func (d *specDecoder) decodePorts(t *tval) error {
 	if t.kind != tvArray {
 		return d.errf(t.line, "端口", "必须写成数组表 [[端口]]")
+	}
+	// ★ 端口面与网络档的互斥（T5）：`[[端口]]` 的语义是「茧内端口即宿主端口」，
+	//   这只在**共享宿主 netns**（`[茧].net = "host"`）时成立。默认断网（net 缺省 none）
+	//   下茧有独立 netns，宿主侧根本没有那个监听面，DNAT/代理本版未接 ⇒
+	//   解析期直接拒，✗ 不许「跳过映射、嘴上说直连」那种静默降级
+	//   （那会让人以为端口在，实际 curl 出去是宿主自己的端口）。
+	if len(t.arr) > 0 && !d.spec.Cocoon.HostNet() {
+		return d.errf(t.line, "端口",
+			"端口直通需 net=host：给了 %d 条 [[端口]]，但 [茧].net 是 %q（默认断网档）；"+
+				"端口直通（茧内端口即宿主端口）只在共享宿主 netns 时成立，默认断网下未接代理 ⇒ "+
+				"要么在 [茧] 写 net = \"host\"（茧可出网），要么删掉 [[端口]]（茧内 127.0.0.1 回环照样可用）",
+			len(t.arr), d.spec.Cocoon.NetMode())
 	}
 	innerSeen := map[int]int{} // inner → 行号
 	hostSeen := map[int]int{}  // 固定 host 端口 → 行号

@@ -65,6 +65,7 @@ image   = "python:3.12-slim"
 digest  = "sha256:0123456789ABCDEF0123456789abcdef0123456789abcdef0123456789abcdef"
 arch    = "arm64"
 workdir = "/app"
+net     = "host"   # [[端口]] 直通的前提（缺省 none = 断网档，T5）
 
 [[服务]]
 name       = "api"
@@ -273,9 +274,13 @@ func TestSpecParseFullSample(t *testing.T) {
 		t.Fatalf("Env 多出键：%v", sp.Env)
 	}
 
-	// 有 digest ⇒ 不该有警告
-	if len(sp.Warnings) != 0 {
-		t.Fatalf("Warnings = %v，want 空", sp.Warnings)
+	// 有 digest ⇒ 不该有「缺 digest」那类警告；net=host 是**用户显式写的换档**，
+	// 必须留一条警告（换走隔离这件事不能悄悄发生）。
+	if len(sp.Warnings) != 1 {
+		t.Fatalf("Warnings = %v，want 恰 1 条（茧.net 的 net=host 警告）", sp.Warnings)
+	}
+	if w := sp.Warnings[0]; w.Field != "茧.net" || !strings.Contains(w.Msg, "出网") {
+		t.Fatalf("唯一那条警告应当是 net=host 的开网警告，得到 %+v", w)
 	}
 }
 
@@ -559,6 +564,7 @@ func TestSpecRejectsBadPorts(t *testing.T) {
 	head := `[茧]
 name  = "shop"
 image = "python:3.12-slim"
+net   = "host"   # 端口面要 host（T5）；本格验的是端口字段本身
 
 [[服务]]
 name  = "api"
@@ -652,6 +658,7 @@ func TestSpecDefaults(t *testing.T) {
 name  = "shop"
 image = "python:3.12-slim"
 digest = %q
+net   = "host"   # 下面有 [[端口]]（T5：端口直通需 net=host）
 
 [[服务]]
 name  = "api"
@@ -1258,4 +1265,150 @@ func TestSpecAIRejects(t *testing.T) {
 			"digest = \""+specValidDigest+"\"", "digest = \""+specValidDigest+"\"\nai     = \"on\"", 1)
 		wantSpecErr(t, src, "茧.ai", "必须是表", lineOf(src, "ai     ="))
 	})
+}
+
+// ── ⑯ [茧].net：缺省断网 · host 必须显式 · 端口面与网络档互斥（T5）────────
+
+// netSpec — 最小契约；netLine 拼进 [茧]（""= 不写这个键），ports 拼在末尾。
+//
+// ★ 分开拼是为了让每个负例只差「一个字段」：差得越少，红的时候越能一眼看出是哪条判据。
+func netSpec(netLine, ports string) string {
+	// ★ 锁上 digest：本组只验网络档，缺 digest 的警告会把「恰几条警告」的断言搅浑。
+	src := fmt.Sprintf(`[茧]
+name   = "shop"
+image  = "python:3.12-slim"
+digest = %q
+`, specValidDigest) + netLine + `
+
+[[服务]]
+name  = "api"
+entry = ["a"]
+
+[资源]
+cpu = 1
+mem_gb = 2
+disk_gb = 10
+`
+	if ports != "" {
+		src += "\n" + ports
+	}
+	return src
+}
+
+func TestSpecNetDefaultsToNone(t *testing.T) {
+	// ① 不写这个键 ⇒ none（**缺省断网**：隔离是承诺，便利要人开口要）。
+	sp := mustParseSpec(t, netSpec("", ""))
+	if sp.Cocoon.Net != NetNone {
+		t.Fatalf("缺省 Net = %q，want %q", sp.Cocoon.Net, NetNone)
+	}
+	if sp.Cocoon.HostNet() || sp.HostNet() {
+		t.Fatal("缺省不许是 host（那等于默认把茧放上网）")
+	}
+	if len(sp.Warnings) != 0 {
+		t.Fatalf("缺省档不该有任何警告：%v", sp.Warnings)
+	}
+
+	// ② 手搓 Spec（测试桩 / 老代码路径）：零值同样按 none 算。
+	if (&Spec{}).HostNet() || (CocoonSpec{}).HostNet() {
+		t.Fatal("零值 Spec 的 HostNet() 必须是 false（归一化只往更隔离的一侧走）")
+	}
+	if got := (CocoonSpec{Net: "  "}).NetMode(); got != NetNone {
+		t.Fatalf("未知/空值 NetMode() = %q，want %q", got, NetNone)
+	}
+}
+
+func TestSpecNetEmptyStringIsNone(t *testing.T) {
+	// ★ 空值一律当 none —— **绝不许**空值当 host（把关闭隔离的笔误当默认便利）。
+	sp := mustParseSpec(t, netSpec(`net   = ""`, ""))
+	if sp.Cocoon.Net != NetNone || sp.Cocoon.HostNet() {
+		t.Fatalf(`net = "" 必须读成 none，得到 Net=%q HostNet=%v`, sp.Cocoon.Net, sp.Cocoon.HostNet())
+	}
+	if len(sp.Warnings) != 0 {
+		t.Fatalf("none 档不该有开网警告：%v", sp.Warnings)
+	}
+}
+
+func TestSpecNetHostNeedsExplicitAndWarns(t *testing.T) {
+	sp := mustParseSpec(t, netSpec(`net   = "host"`, ""))
+	if sp.Cocoon.Net != NetHost || !sp.Cocoon.HostNet() {
+		t.Fatalf(`net = "host" 应解析成 host，得到 Net=%q HostNet=%v`, sp.Cocoon.Net, sp.Cocoon.HostNet())
+	}
+	// ★ 换走隔离必须留痕：恰一条警告，说的是「茧可出网且端口与宿主共用」。
+	if len(sp.Warnings) != 1 {
+		t.Fatalf("net=host 应留恰 1 条警告，得到 %v", sp.Warnings)
+	}
+	w := sp.Warnings[0]
+	if w.Field != "茧.net" || !strings.Contains(w.Msg, "出网") || !strings.Contains(w.Msg, "端口与宿主共用") {
+		t.Fatalf("警告文案没把代价说清（出网 / 端口与宿主共用）：%+v", w)
+	}
+	if w.Line != lineOf(netSpec(`net   = "host"`, ""), `net   = "host"`) {
+		t.Fatalf("警告行号 = %d，want 指向 net 那一行", w.Line)
+	}
+}
+
+func TestSpecNetRejectsUnknown(t *testing.T) {
+	// ③ 未知值一律拒：✗ 不许「不认识就当 none」的静默降级（那会让人以为 host 生效了）。
+	// ★ 只有空白差异不算未知值（`net = " host "` 按 host 收）；这里列的都是真的别的档位 / 类型。
+	for _, bad := range []string{`net = "bridge"`, `net = "HOST"`, `net = "hostx"`, `net = 1`} {
+		src := netSpec(bad, "")
+		_, err := ParseSpec([]byte(src))
+		if err == nil {
+			t.Fatalf("%s 应被拒，却解析成功", bad)
+		}
+		se, ok := AsSpecError(err)
+		if !ok {
+			t.Fatalf("%s 的错误不是 *SpecError：%T", bad, err)
+		}
+		if se.Field != "茧.net" {
+			t.Fatalf("%s 的错误字段 = %q，want 茧.net", bad, se.Field)
+		}
+		if se.Line != lineOf(src, bad) {
+			t.Fatalf("%s 的错误行号 = %d，want %d", bad, se.Line, lineOf(src, bad))
+		}
+	}
+}
+
+func TestSpecPortsRequireHostNet(t *testing.T) {
+	ports := "[[端口]]\ninner = 8000\n"
+
+	// ★ 负控：给了 [[端口]] 但没写 net=host ⇒ 解析期直接拒，文案必须点名 net=host。
+	for name, netLine := range map[string]string{
+		"缺省（不写 net）":   "",
+		`显式 none` + ``: `net   = "none"`,
+		`空串`:           `net   = ""`,
+	} {
+		src := netSpec(netLine, ports)
+		_, err := ParseSpec([]byte(src))
+		if err == nil {
+			t.Fatalf("[%s] [[端口]] + net≠host 应被拒，却解析成功", name)
+		}
+		se, ok := AsSpecError(err)
+		if !ok {
+			t.Fatalf("[%s] 错误不是 *SpecError：%T", name, err)
+		}
+		if se.Field != "端口" {
+			t.Fatalf("[%s] 错误字段 = %q，want 端口", name, se.Field)
+		}
+		if !strings.Contains(se.Msg, "net=host") {
+			t.Fatalf("[%s] 文案必须点名 net=host：%q", name, se.Msg)
+		}
+		if !strings.Contains(se.Msg, "代理") {
+			t.Fatalf("[%s] 文案要说明「默认断网下未接代理」：%q", name, se.Msg)
+		}
+		if se.Line != lineOf(src, "[[端口]]") {
+			t.Fatalf("[%s] 错误行号 = %d，want 指向第一条 [[端口]]", name, se.Line)
+		}
+	}
+
+	// 正控：显式 net = "host" 时端口面照旧解析（其余端口校验不受影响）。
+	sp := mustParseSpec(t, netSpec(`net   = "host"`, ports))
+	if len(sp.Ports) != 1 || sp.Ports[0].Inner != 8000 {
+		t.Fatalf("net=host 时端口应正常解析，得到 %+v", sp.Ports)
+	}
+
+	// 没有 [[端口]] 就不受这条互斥约束（断网茧照样能开）。
+	sp = mustParseSpec(t, netSpec("", ""))
+	if len(sp.Ports) != 0 {
+		t.Fatalf("没写 [[端口]] 却解析出 %d 条", len(sp.Ports))
+	}
 }

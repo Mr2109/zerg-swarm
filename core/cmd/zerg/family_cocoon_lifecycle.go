@@ -304,13 +304,11 @@ func cocoonBackendByName(name string) (cocoon.Backend, error) {
 				cocoon.HostPlatform(), cocoonBackendEnv, cocoonBackendFake, cocoonBackendAuto)
 		}
 		cocoonNsjailOnce.Do(func() {
-			nb := cocoon.NewNsjailBackend()
-			// ★ 共享宿主 netns：命令面承诺的是「茧内 127.0.0.1:<port> 就是宿主那个端口」
-			//   （Expose=false 的全部依据），也是「AI 端点走 127.0.0.1」的前提 —— nsjail 缺省
-			//   会建**新** netns，那样茧内回环是它自己的，宿主与 broker 都够不着。
-			//   ★ 代价如实登记：茧因此**能出网**（运行期 net=none 未接，见文件头）。
-			nb.HostNetwork = true
-			cocoonNsjail = nb
+			// ★ 网络档**不再在这里定**（T5）：`[茧].net` 缺省 none ⇒ nsjail 建新 netns、
+			//   茧断外网；只有契约显式写 net = "host" 才共享宿主 netns（茧内端口即宿主端口，
+			//   代价是能出网 —— WarnNet 会在 stderr 上说一行）。后端不持有全局网络开关：
+			//   一个后端实例服务多个茧，档位只能来自每份契约（见 NsjailBackend.Exec）。
+			cocoonNsjail = cocoon.NewNsjailBackend()
 		})
 		return cocoonNsjail, nil
 	}
@@ -647,6 +645,45 @@ func cocoonAIText(plan cocoon.AIPlan) string {
 
 // ── open ────────────────────────────────────────────────────────────────
 
+// cocoonNetText — 网络档的**机器可读短形**（stdout 的 human 面用它；日志/日报也用它）。
+func cocoonNetText(spec *cocoon.Spec) string {
+	if spec != nil && spec.Cocoon.HostNet() {
+		return "host（共享宿主 netns：茧可出网 · 茧内端口即宿主端口）"
+	}
+	return "none（断网：茧内只有回环 · 出不了网 · 宿主也够不着茧内端口）"
+}
+
+// cocoonNetNotice — 网络档的**警告行**（stderr）。
+//
+// ★ 为什么非打不可（T5 判据）：`net = "host"` 是「用能出网换端口直通」——
+// 用户必须在这一刻看见自己换走了什么，而不是等哪天茧里 curl 出去才发现。
+// ★ 只走 stderr：`--json` 时 stdout 是机器面，警告混进去会破坏它；stderr 是人面与日志面都收得住的地方。
+// ★ 干跑也打：计划件里藏着一个「开网」的决定，那就不叫计划件了。
+func cocoonNetNotice(stderr io.Writer, spec *cocoon.Spec) {
+	if spec == nil {
+		return
+	}
+	if spec.Cocoon.HostNet() {
+		fmt.Fprintf(stderr, "%s: 警告：net=host ⇒ 茧可出网且端口与宿主共用（[茧].net 显式写了 host；缺省是 none/断网）\n",
+			progName)
+		return
+	}
+	// net=none（默认断网）⇒ 茧有自己的 netns。readiness 探测是从**宿主回环**打过去的，
+	// 够不着茧内端口（本版未接「进茧探」）。说了比不说好：不然 open 会卡在就绪超时上，
+	// 而看输出的人不知道为什么。
+	var rd []string
+	for _, svc := range spec.Services {
+		if svc.Readiness != nil {
+			rd = append(rd, fmt.Sprintf("%s:%d", svc.Name, svc.Readiness.Port))
+		}
+	}
+	if len(rd) > 0 {
+		fmt.Fprintf(stderr, "%s: 注意：net=none（默认断网）⇒ 就绪探测从宿主回环打，探不到茧内端口（%s）；"+
+			"要探得通就给 [茧] 写 net = \"host\"（茧可出网），或删掉 readiness\n",
+			progName, strings.Join(rd, " · "))
+	}
+}
+
 // cmdCocoonOpen —— `zerg cocoon open <dir> [--dry-run]`。
 //
 // 真跑的顺序（每一步都先落盘再动，崩在哪一步盘上都看得见）：
@@ -719,10 +756,13 @@ func cmdCocoonOpen(inv *invocation, stdout, stderr io.Writer) int {
 		return exitFail
 	}
 
+	// 网络档警告（T5）：net=host ⇒ 一行警告；net=none 且有人写了 readiness ⇒ 一行注意。
+	// ★ 放在干跑分支之前：干跑的计划件里也有这个决定，藏起来就不叫计划件。
+	cocoonNetNotice(stderr, spec)
+
 	if inv.dryRun {
 		return cocoonOpenPlan(inv, stdout, stderr, dir, spec, backendName, caps)
 	}
-
 	id, err := cocoonAllocID(spec.Cocoon.Name)
 	if err != nil {
 		inv.setErr("failed", "id_alloc_failed", err.Error())
@@ -937,6 +977,7 @@ func cmdCocoonOpen(inv *invocation, stdout, stderr io.Writer) int {
 		cocoon.SpecShort(specSHA))
 	fmt.Fprintf(stdout, "后端       : %s · %s · 平台 %s%s\n", backendName, cocoonOrDash(caps.Isolation), caps.Platform,
 		map[bool]string{true: "（脚手架：不起进程 / 无隔离）", false: ""}[backendName == cocoonBackendFake])
+	fmt.Fprintf(stdout, "网络       : %s\n", cocoonNetText(spec))
 	fmt.Fprintf(stdout, "相位       : %s\n", m2.Phase)
 	pidNote := ""
 	if m2.PID == 0 {
@@ -1001,6 +1042,7 @@ func cocoonOpenPlan(inv *invocation, stdout, stderr io.Writer, dir string, spec 
 		strconv.FormatFloat(spec.Resources.MemGB, 'f', -1, 64),
 		strconv.FormatFloat(spec.Resources.DiskGB, 'f', -1, 64))
 	fmt.Fprintf(stdout, "  后端    : %s · %s · 平台 %s\n", backendName, cocoonOrDash(caps.Isolation), caps.Platform)
+	fmt.Fprintf(stdout, "  网络    : %s\n", cocoonNetText(spec))
 	if !caps.Expose {
 		fmt.Fprintf(stdout, "  端口面  : 后端不映射端口（%s）⇒ 上面这些 [[端口]] 会被**跳过**，readiness 探测直连 %s:<茧内端口>\n",
 			cocoonOrDash(caps.ExposeMechanism), cocoon.DefaultBind)
