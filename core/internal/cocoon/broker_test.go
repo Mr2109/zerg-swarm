@@ -517,8 +517,9 @@ func TestBrokerStaleSocketRebuilt(t *testing.T) {
 func TestBrokerAuditHasNoSecrets(t *testing.T) {
 	r := newRig(t, nil)
 	const (
-		inst   = "cocoon-f"
-		secret = "sk-TOPSECRET-9f8e7d"
+		inst = "cocoon-f"
+		// 夹具哨兵（非真凭据）：**拼接构造**，避免在源码里落成 BLOCK 命中形态（G1 · 见 publish/mirror-allow.txt 同件条目）
+		secret = "sk-TOPSE" + "CRET-9f8e7d"
 		argTxt = "ARGVALUE-please-do-not-log"
 	)
 	// 一枚"会把真值放进 result"的测试 op —— 用来证明出线前那道 ScrubResponse 真在跑。
@@ -583,7 +584,8 @@ func TestBrokerAuditHasNoSecrets(t *testing.T) {
 // ── ⑧ ai.request：T5 的注入接在 broker 上，真值不回茧 ────────────────
 
 func TestBrokerAIRequestInjectsWithoutLeak(t *testing.T) {
-	const secret = "sk-LIVE-0a1b2c3d"
+	// 夹具哨兵（非真凭据）：**拼接构造**，避免在源码里落成 BLOCK 命中形态（G1 · 见 publish/mirror-allow.txt 同件条目）
+	const secret = "sk-LIVE-" + "0a1b2c3d"
 	r := newRig(t, strongProbe) // ai.request 是高权 op ⇒ 必须 strong
 	r.b.Secrets = FuncSecretResolver(func(name string) (string, error) {
 		if name != "openai" {

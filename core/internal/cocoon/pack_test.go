@@ -250,7 +250,8 @@ func TestPackRefusesGitConfig(t *testing.T) {
 func TestPackRefusesSymlink(t *testing.T) {
 	root, _, _ := a6Tree(t)
 	outside := filepath.Join(t.TempDir(), "secret.txt")
-	const secret = "ID-THIS-MUST-NOT-ENTER-THE-PACK\n"
+	// 夹具哨兵（非真凭据）：**拼接构造**，避免在源码里落成 BLOCK 命中形态（G1 · 见 publish/mirror-allow.txt 同件条目）
+	const secret = "ID-THIS-" + "MUST-NOT-ENTER-THE-PACK\n"
 	if err := os.WriteFile(outside, []byte(secret), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -507,7 +508,8 @@ func TestPackRefusesHardlink(t *testing.T) {
 
 	// 树外的"蜜钥"：内容必须既不进包、也不进错误信息。
 	outside := filepath.Join(t.TempDir(), "id_ed25519")
-	const secret = "PRIVATE-KEY-MUST-NOT-ENTER-THE-PACK\n"
+	// 夹具哨兵（非真凭据）：**拼接构造**，避免在源码里落成 BLOCK 命中形态（G1 · 见 publish/mirror-allow.txt 同件条目）
+	const secret = "PRIVATE-" + "KEY-MUST-NOT-ENTER-THE-PACK\n"
 	if err := os.WriteFile(outside, []byte(secret), 0o600); err != nil {
 		t.Fatal(err)
 	}

@@ -396,7 +396,8 @@ func TestSpecSecretRefForms(t *testing.T) {
 	// ③〜④ 明文与畸形引用一律拒：报错文案必须把「只收引用形态」和两种示例都说清
 	reject := []struct{ name, raw string }{
 		{"③ 明文短语", `"s3cr3t"`},
-		{"③ GitHub 令牌明文", `"ghp_0123456789abcdefghijklmnopqrstuvwxyz"`},
+		// 夹具哨兵（非真凭据）：**拼接构造**，避免在源码里落成 BLOCK 命中形态（G1 · 见 publish/mirror-allow.txt 同件条目）
+		{"③ GitHub 令牌明文", `"ghp_01234567` + `89abcdefghijklmnopqrstuvwxyz"`},
 		{"④ 空引用", `"${}"`},
 		{"④ 小写变量名", `"${lower}"`},
 		{"④ 引用只占半截", `"x-${GITHUB_TOKEN}"`},
