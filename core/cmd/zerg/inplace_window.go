@@ -3,7 +3,7 @@
 //
 // ★ inproc 入口（本批新增 · 缺口 GAP-20260927-112 · 为「可接」补）：`ipwGateMain(stdout, stderr io.Writer, argv []string) int`
 // —— 名带 `GateMain`、签名逐字同 `gate_inproc_table.go` 的 `gateCheckGoEntry` 元素体例（接线批可挂
-// `gateCheckGoEntry["inplace-window"]`；★ 本件仍**不接线** —— 不碰 `gate_inproc_table.go`，归下一批）。
+// `gateCheckGoEntry["inplace-window"]`；★ 本件**已接线（inproc 表分派）**（`gate_inproc_table.go` 已登记本键 · 无需另批）。
 // argv 契约：**不含程序名**（首 token 即真参数，✗ 不照 py `sys.argv` 口径吃 `argv[0]`）；
 // 本件无 `os.Executable()` 自起重入 ⇒ 无「自检重入须带子命令前缀」那一坑。入口仅转发 `ipwMain`（单实现）。
 //
@@ -37,7 +37,7 @@
 //	    本件（落 `core/cmd/zerg/`）**不在自身的扫描/判据面内**。量化：全件零绝对私有路径字面量
 //	    （零 `/Volumes`、零 `/Users`）、退码仅 0/1/2/3（⊆ 真源退码表已登记集）、零「JSON 键名连续引号原串」。
 //
-// 本单边界（照实）：**只落码、不接线** —— 不注册命令、不删 py 原件、无调用点（M2 刻意状态）。
+// 本单边界（照实）：**已接线（inproc 表分派）** —— 不注册命令、不删 py 原件。
 // 形状①（库面）的**信号面**（INT/TERM/HUP/QUIT ⇒ 复原本次 run 再退出；SIGKILL 明写兜不住）
 // 未设对拍格（真信号需跨进程、不可逐字对拍）⇒ 见回执未覆盖面。
 package main

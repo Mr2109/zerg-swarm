@@ -20,11 +20,11 @@
 //	✗ 不选 `check-fields-face-parity.py` / `check-publish-layer-names.py`：要现跑真身制品。
 //	✗ 不选 `check-nodes-roster.py`：读本机 `~/.zerg` 名册（不入仓的外部树）。
 //
-// ⚠ 本单边界（照实）：只落码、不接线 ——
+// ⚠ 本单边界（照实）：已接线（inproc 表分派） ——
 //
-//	✗ 不在 `core/cmd/zerg/main.go` 注册命令（✗ 不进命令树 · ✗ 不改 `add_step`）；
+//	✗ 不在 `core/cmd/zerg/main.go` 注册命令（✗ 不进命令树 · `add_step` **已挂** `precommit-gates.sh:3281`（门㊱ · tri 档））；
 //	✗ 不删 py 原件（退场规则：对拍通过后才退场 · 逐件显式点名）；
-//	入口目前**无调用点**（M2-0 的刻意状态）。
+//	· **已接线**：入口 `anchorUniquenessGateMain` 由 `gateCheckGoEntry["check-anchor-uniqueness"]` 分派（`zerg gate check check-anchor-uniqueness`）· 原文此处断言与现读相反（只改文案 · 未改行为）。
 //
 // 入口签名（与 py 的 `main()` 逐字对齐）：
 //

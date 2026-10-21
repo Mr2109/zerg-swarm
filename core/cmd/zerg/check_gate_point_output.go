@@ -19,11 +19,11 @@
 //	  `datetime` / `random` / `socket` / `urllib`**。`tempfile.TemporaryDirectory` 本身**自带回收**
 //	  （`with` 形）⇒ **非** A 类泄漏形态（逐字保留其自回收语义）。
 //
-// 本单边界（照实）：本件**只落码、不接线** ——
+// 本单边界（照实）：本件**已接线（inproc 表分派）** ——
 //
-//	· **不**在 `core/cmd/zerg/main.go` 里注册命令（✗ 不进命令树 · ✗ 不改 add_step 表）；
+//	· **不**在 `core/cmd/zerg/main.go` 里注册命令（✗ 不进命令树 · `add_step` **已挂** `precommit-gates.sh:2841`（门? · tri-report 档））；
 //	· **不**删 `scripts/gates/check-gate-point-output.py` 原件（退场规则：对拍通过后才逐件点名退场）；
-//	· 入口 `checkGatePointOutputGateMain` 目前**无调用点**（M2 的刻意状态）；
+//	· **已接线**：入口 `checkGatePointOutputGateMain` 由 `gateCheckGoEntry["check-gate-point-output"]` 分派（`zerg gate check check-gate-point-output`）· 原文此处断言与现读相反（只改文案 · 未改行为）。
 //	· ✗ 不改登记面六面 · ✗ 不改任何 `family_*.go` / 已落旧件 / `gate_inproc_table.go`。
 //
 // 入口签名（与 py 的 `main()` 对齐）：

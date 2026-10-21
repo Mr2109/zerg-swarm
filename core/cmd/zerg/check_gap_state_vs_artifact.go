@@ -20,11 +20,11 @@
 //	  `subprocess` / `time` / `datetime` / `random` / `socket` / `urllib` / `glob`**（`shutil` /
 //	  `tempfile` 只在 `self_test()` 内用到）。
 //
-// 本单边界（照实）：本件**只落码、不接线** ——
+// 本单边界（照实）：本件**已接线（inproc 表分派）** ——
 //
 //	· **不**在 `core/cmd/zerg/main.go` 里注册命令（✗ 不进命令树 · ✗ 不改 `gate_inproc_table.go`）；
 //	· **不**删 `scripts/gates/check-gap-state-vs-artifact.py` 原件（退场规则：对拍通过后才逐件点名退场）；
-//	· 入口 `checkGapStateVsArtifactGateMain` 目前**无调用点**（M2 的刻意状态）；
+//	· **已接线**：入口 `checkGapStateVsArtifactGateMain` 由 `gateCheckGoEntry["check-gap-state-vs-artifact"]` 分派（`zerg gate check check-gap-state-vs-artifact`）· 原文此处断言与现读相反（只改文案 · 未改行为）。
 //	· ✗ 不改登记面六面 · ✗ 不改任何 `family_*.go` / 已落旧件。
 //
 // 入口签名（与 py 的 `main(argv)` 对齐）：

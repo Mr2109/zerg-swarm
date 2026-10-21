@@ -16,10 +16,10 @@
 //	  非 A 类泄漏）。**零 `subprocess` / `socket` / `urllib` / `time` / `datetime` / `random`** ·
 //	  默认档**零写面**（只有读 open）。退码仅 0/1/2 三档齐 · `git status` 现读不含它（无人正在改）。
 //
-// 边界与现状（照实）：本件原为 M2 的「只落码、不接线」中途态，**现已接线**（登记在
+// 边界与现状（照实）：本件原为 M2 的「已接线（inproc 表分派）」中途态，**现已接线**（登记在
 // `gate_inproc_table.go` 键 `check-build-selfclean`）—— 与件尾「退役态回落」同批收口：
 //
-//	· ✗ 不在 `core/cmd/zerg/main.go` 里注册**顶层命令**（✗ 不进命令树 · ✗ 不改 add_step 表）；
+//	· ✗ 不在 `core/cmd/zerg/main.go` 里注册**顶层命令**（✗ 不进命令树 · `add_step` **已挂** `precommit-gates.sh:3801`（门105 · tri-report 档））；
 //	· py 原件 `scripts/gates/check-build-selfclean.py` **已退场**（Go 半为唯一真源）；
 //	· 入口 `buildSelfcleanGateMain` **已有调用点**（inproc 表 · 上）；
 //	· 默认靶件 `scripts/build/build-all.sh` 为**将退件** ⇒ 退役态回落判四格于合成副本（DEV-2022）；

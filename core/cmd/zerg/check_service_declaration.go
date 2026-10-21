@@ -33,11 +33,11 @@
 //	  夹具（py 用 TemporaryDirectory 自查回收 ⇒ 本件同回收）。⇒ 除自检档外本件无写面。
 //	· ✗ 不静默绿：所有「取不到 / 判不了 / 空转」路径都退 2，无静默绿面。
 //
-// 本单边界（照实）：本件**只落码、不接线** ——
+// 本单边界（照实）：本件**已接线（inproc 表分派）** ——
 //
-//	· **不**在 `core/cmd/zerg/main.go` 注册命令（✗ 不进命令树 · ✗ 不改 add_step）；
+//	· **不**在 `core/cmd/zerg/main.go` 注册命令（✗ 不进命令树 · `add_step` **已挂** `precommit-gates.sh:2884`（门⑧ · tri 档））；
 //	· **不**删 `scripts/gates/check-service-declaration.py` 原件（退场规则：对拍通过后才退场）；
-//	· 入口 `checkServiceDeclarationGateMain` 目前**无调用点**（M2 的刻意状态）。
+//	· **已接线**：入口 `checkServiceDeclarationGateMain` 由 `gateCheckGoEntry["check-service-declaration"]` 分派（`zerg gate check check-service-declaration`）· 原文此处断言与现读相反（只改文案 · 未改行为）。
 //
 // ★★ 两条标准声明行：
 //

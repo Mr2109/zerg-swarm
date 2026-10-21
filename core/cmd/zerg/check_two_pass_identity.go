@@ -12,11 +12,11 @@
 //	J2 对象口径（只读 / 已封才出结论）：现调**判据自己的** `--json` `items[]`；有判红 ⇒ rc=1 · 有缺件 ⇒ rc=2。
 //	J3 可变件不许假装：对象集里有可变件 ⇒ 逐条「**无可比基准**」＋ 最终 rc=8（不许给绿）。
 //
-// 本单边界（照实）：本件**只落码、不接线** ——
+// 本单边界（照实）：本件**已接线（inproc 表分派）** ——
 //
-//	· **不**在 `core/cmd/zerg/main.go` 里注册命令（✗ 不进命令树 · ✗ 不改 `add_step`）；
+//	· **不**在 `core/cmd/zerg/main.go` 里注册命令（✗ 不进命令树 · `add_step` **已挂** `precommit-gates.sh:3340`（门㊵ · tri 档））；
 //	· **不**删 `scripts/gates/check-two-pass-identity.py` 原件（退场规则：**对拍通过后才**退场 · 逐件点名）；
-//	· 入口 `checkTwoPassIdentityGateMain` 目前**无调用点**（M2 的刻意状态）；
+//	· **已接线**：入口 `checkTwoPassIdentityGateMain` 由 `gateCheckGoEntry["check-two-pass-identity"]` 分派（`zerg gate check check-two-pass-identity`）· 原文此处断言与现读相反（只改文案 · 未改行为）。
 //	· ✗ 不改登记面六面 · ✗ 不改任何 `family_*.go` / 已落旧件 · ✗ 不删 py 原件。
 //
 // 入口签名（与 py 的 `main()` 对齐）：

@@ -53,12 +53,12 @@
 //	   改判 `ledger`（原判 `live` 与本门 cdrSuggest 自相矛盾）＋ 自检第 ④ 格加判类**成对负控**。
 //	⇒ 两旗标**默认关**（默认档一字未改）；cdrVersion 升 v1.3.0。
 //
-// 本单边界（照实）：本件**只落码、不接线命令行** ——
+// 本单边界（照实）：本件**已接线（命令行面经 inproc 表分派）** ——
 //
-//	· **不**在 `core/cmd/zerg/main.go` 里注册命令（✗ 不进命令树 · ✗ 不改 `add_step`）；
+//	· **不**在 `core/cmd/zerg/main.go` 里注册命令（✗ 不进命令树 · `add_step` **未挂**（`precommit-gates.sh` 现读零命中））；
 //	· **不**删 `scripts/gates/check-dangling-refs.py` 原件（退场规则：**对拍通过后才**退场）；
 //	· 入口 `checkDanglingRefsGateMain` 现读**已登记**进 `gate_inproc_table.go` 的 inproc 分发表
-//	  （`gateCheckGoEntry["check-dangling-refs"]`）；**未**进 `main.go` 命令树（M2 不接线主体）。
+//	  （`gateCheckGoEntry["check-dangling-refs"]`）；**未**进 `main.go` 命令树（M2 主体不注册顶层命令）。
 //
 // ★★ 两条标准声明行：
 //

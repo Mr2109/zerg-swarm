@@ -47,7 +47,7 @@
 //	这四处**都不含** `core/`，故本件自身不在其扫描面内。四形态自查：
 //	① 件内**零** `/Users/…` / `/Volumes/…` 一类仓内/私有**绝对路径字面量**（路径全由
 //	   cwd / `--root` / `--state` 运行期拼串）；② 无「会被他门扫到的形态」直写；③ 无 self-test
-//	   魔法环境变量串（本件**根本不读 env**）；④ 本件**未接线**（无调用点 · 不在任何步骤表内）。
+//	   魔法环境变量串（本件**根本不读 env**）。
 //	★ JSON 键名一律走「前缀 + 字面」拼串（`apvtKeyApproval` 等），**零** `"键": "值"` 形态直写
 //	  ⇒ 防被 `check-error-kinds` 的 R3 扫到（落件后已现读 R3 正则复核 = 0 命中）。
 //
@@ -62,11 +62,11 @@
 //	  决定（只经 `first_commit_at_or_after` 取「该次提交」），但仍按 git log 原序（新在前）遍历。
 //	★ git log 的**输出序**由 git 决定（本件不排序）；`git log --format=%H%x09%cI` 默认新→旧。
 //
-// ⚠ 本单边界（照实）：只落码、不接线 ——
+// ⚠ 本单边界（照实）：已接线（inproc 表分派） ——
 //
-//	✗ 不在 `core/cmd/zerg/main.go` 注册命令（✗ 不进命令树 · ✗ 不改 `add_step`）；
+//	✗ 不在 `core/cmd/zerg/main.go` 注册命令（✗ 不进命令树 · `add_step` **已挂** `precommit-gates.sh:2986`（门⑯ · tri 档））；
 //	✗ 不删 py 原件（退场规则：对拍通过后才退场 · 逐件显式点名）；
-//	✗ 不碰登记面；入口目前**无调用点**（M2 的刻意状态）。
+//	✗ 不碰登记面；**已接线**：入口 `checkApproveTimeGateMain` 由 `gateCheckGoEntry["check-approve-time"]` 分派（`zerg gate check check-approve-time`）· 原文此处断言与现读相反（只改文案 · 未改行为）。
 //
 // ★ 真口子（照搬保留 · 交回入账）：A 类 tempdir —— py `self_test` 用 `mkdtemp` 但
 // `finally: shutil.rmtree(tmp, ignore_errors=True)` **确有回收** ⇒ **本件非 A 类泄漏件**

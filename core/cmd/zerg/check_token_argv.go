@@ -20,11 +20,11 @@
 //	  （`script -q <transcript> sh -c …`）＋ `subprocess` 真起子进程 ＋ `time.time()` 计时读数 ⇒ 三条都在
 //	  M2 明文出局面上，**无逐字可复现性**。（详见回执「选件」面。）
 //
-// 本单边界（照实）：本件**只落码、不接线** ——
+// 本单边界（照实）：本件**已接线（inproc 表分派）** ——
 //
-//	· **不**在 `main.go` 里注册命令（✗ 不进命令树 · ✗ 不改 `add_step` · ✗ 不接闸）；
+//	· **不**在 `main.go` 里注册命令（✗ 不进命令树 · `add_step` **已挂** `precommit-gates.sh:3440`（门52 · tri 档 · 已接闸））；
 //	· **不**删 `scripts/gates/check-token-argv.py` 原件（退场规则：**对拍通过后才**退场 · 逐件点名）；
-//	· 入口 `checkTokenArgvGateMain` 目前**无调用点**（M2 的刻意状态）；
+//	· **已接线**：入口 `checkTokenArgvGateMain` 由 `gateCheckGoEntry["check-token-argv"]` 分派（`zerg gate check check-token-argv`）· 原文此处断言与现读相反（只改文案 · 未改行为）。
 //	· ✗ 不改登记面六面 · ✗ 不改任何 `family_*.go` / 已落旧件。
 //
 // 入口签名（与 py 的 `main()` 对齐）：

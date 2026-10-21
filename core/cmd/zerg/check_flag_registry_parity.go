@@ -22,12 +22,11 @@
 //	✗ 不选 `check-manifest-freshness*.py`：起 `git` 子进程（外部命令面）⇒ 非纯静态。
 //	✗ 不选 `check-parser-discipline.py`（441 行）：扫描面走目录遍历（遍历序对拍会假差）。
 //
-// ⚠ 本单边界（照实）：本件**只落码、不接线** ——
+// ⚠ 本单边界（照实）：本件**已接线（inproc 表分派）** ——
 //
-//	· **不**在 `core/cmd/zerg/main.go` 里注册任何命令（✗ 不进命令树 · ✗ 不改 `add_step`）；
+//	· **不**在 `core/cmd/zerg/main.go` 里注册任何命令（✗ 不进命令树 · `add_step` **已挂** `precommit-gates.sh:3598`（门73 · tri 档））；
 //	· **不**删 `scripts/gates/check-flag-registry-parity.py` 原件（退场规则 4.3：**对拍通过后才**退场，且逐件显式点名）；
-//	· 入口 `flagRegistryParityGateMain` 目前**无调用点** —— 这是 M2-0 的**刻意**状态：
-//	  先证明「搬得逐字相同」，接线与命令注册是后一单的事。
+//	· **已接线**：入口 `flagRegistryParityGateMain` 由 `gateCheckGoEntry["check-flag-registry-parity"]` 分派（`zerg gate check check-flag-registry-parity`）· 原文此处断言与现读相反（只改文案 · 未改行为）。
 //
 // ★ v1.1.0 增补（**非** py 真搬面 · py 原件已退役 ⇒ 无从对拍 · 照实声明）：
 //

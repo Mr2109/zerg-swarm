@@ -37,11 +37,11 @@
 //	· 零会悬空的仓内相对路径字面量（唯一仓内相对串 = deploy/服务声明.tsv，真仓在盘）；
 //	· 复核 0/0（self-ref sweep 见回执）。
 //
-// 本单边界（照实）：只落码、不接线 ——
+// 本单边界（照实）：已接线（inproc 表分派） ——
 //
 //	· 不在 core/cmd/zerg/main.go 注册命令（✗ 不进命令树 · ✗ 不改 gate_inproc_table.go）；
 //	· 不删 scripts/svc/decl-label.sh 原件（退场规则：对拍通过后才逐件点名退场）；
-//	· 入口 declLabelGateMain 目前无调用点（M2 的刻意状态）；
+//	· **已接线**：入口 `declLabelGateMain` 由 `gateCheckGoEntry["decl-label"]` 分派（`zerg gate check decl-label`）· 原文此处断言与现读相反（只改文案 · 未改行为）。
 //	· ✗ 不改任何登记面 / family_*.go / 已在仓旧件 / scripts/**。
 //
 // 入口签名（与原件 `$@` 对齐）：

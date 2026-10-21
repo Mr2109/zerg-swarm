@@ -41,11 +41,11 @@
 //	    不会自伤；尽管如此本件**仍全用解释型字符串、✗ 不用反引号原串直写**标记（参 `check_wall_layer.go` 血证），
 //	    以免日后扫描面扩到 `core/cmd/zerg/*.go` 时自伤。
 //
-// ⚠ 本单边界（照实）：本件**只落码、不接线** ——
+// ⚠ 本单边界（照实）：本件**已接线（inproc 表分派）** ——
 //
-//	· **不**在 `core/cmd/zerg/main.go` 里注册任何命令（✗ 不进命令树 · ✗ 不改 `add_step`）；
+//	· **不**在 `core/cmd/zerg/main.go` 里注册任何命令（✗ 不进命令树 · `add_step` **已挂** `precommit-gates.sh:3667`（门80 · tri 档））；
 //	· **不**删 `scripts/gates/gate-check-health.py` 原件（退场规则 4.3：**对拍通过后才**退场，且逐件显式点名）；
-//	· 入口 `gateCheckHealthMain` 目前**无调用点** —— 这是 M2 的**刻意**状态：先证明「搬得逐字相同」。
+//	· **已接线**：入口 `gateCheckHealthMain` 由 `gateCheckGoEntry["gate-check-health"]` 分派（`zerg gate check gate-check-health`）· 原文此处断言与现读相反（只改文案 · 未改行为）。
 //	· 缺口承接：`GAP-20261001-13`（M2 真搬 Go 线 · 在册 · 本单引为 `--evidence`）· ✗ 不新占号。
 //
 // 入口签名（与 py 的 `main()` 逐字对齐）：

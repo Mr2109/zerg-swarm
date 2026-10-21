@@ -18,11 +18,11 @@
 //	  （加载既有件保原序、新键追加到末尾）⇒ 本件零 Go map 迭代进输出。
 //	· 外部真源真身路径 = 无（本件不吃仓外树；--cache / --inputs 全走显式入参）。
 //
-// 本单边界（照实）：本件只落码、不接线 ——
+// 本单边界（照实）：本件已接线（inproc 表分派） ——
 //
-//	· 不在 core/cmd/zerg/main.go 里注册命令（✗ 不进命令树 · ✗ 不改 add_step）；
+//	· 不在 core/cmd/zerg/main.go 里注册命令（✗ 不进命令树 · `add_step` **未挂**（`precommit-gates.sh` 现读零命中））；
 //	· 不删 scripts/gates/input-fingerprint.py 原件（退场规则：对拍通过后才退场 · 逐件点名）；
-//	· 入口 inputFingerprintGateMain 目前无调用点（M2 的刻意状态）；
+//	· **已接线**：入口 `inputFingerprintGateMain` 由 `gateCheckGoEntry["input-fingerprint"]` 分派（`zerg gate check input-fingerprint`）· 原文此处断言与现读相反（只改文案 · 未改行为）。
 //	· ✗ 不改登记面六面 · ✗ 不改任何 family_*.go / 已落旧件。
 //
 // 入口签名（与 py 的 main() 对齐）：

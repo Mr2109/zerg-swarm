@@ -42,11 +42,11 @@
 //	  / `check-approve-backfill.py`（683）/ `check-exit-codes.py`（649）—— **已列重件 / 越限**。
 //	✗ 8 件 `doc-*` / `check-docs-orphans-links.py` / `check-affected-reprove.py` —— 共享件 / **另一路在改**。
 //
-// ⚠ 本单边界（照实）：本件**只落码、不接线** ——
+// ⚠ 本单边界（照实）：本件**已接线（inproc 表分派）** ——
 //
-//	· **不**在 `core/cmd/zerg/main.go` 里注册任何命令（✗ 不进命令树 · ✗ 不改任何 `add_step`）；
+//	· **不**在 `core/cmd/zerg/main.go` 里注册任何命令（✗ 不进命令树 · `add_step` **已挂** `precommit-gates.sh:3418`（门㊺ · tri 档））；
 //	· **不**删 `scripts/gates/check-compat-manifest.py` 原件（退场规则 §4.3：**对拍通过后才**退场）；
-//	· 入口 `compatManifestGateMain` 目前**无调用点** —— 这是 M2 的**刻意**状态。
+//	· **已接线**：入口 `compatManifestGateMain` 由 `gateCheckGoEntry["check-compat-manifest"]` 分派（`zerg gate check check-compat-manifest`）· 原文此处断言与现读相反（只改文案 · 未改行为）。
 //
 // 入口签名（与 py 的 `main()` 逐字对齐）：
 //
@@ -176,7 +176,7 @@ func cmHelpText() string {
 
 // ── 入口（= py `main()`）────────────────────────────────────────────────────
 
-// compatManifestGateMain —— py `main()` 的 Go 真搬（不接线 · 无调用点）。
+// compatManifestGateMain —— py `main()` 的 Go 真搬（已接线：`gateCheckGoEntry["check-compat-manifest"]` · `precommit-gates.sh:3418` 门㊺）。
 func compatManifestGateMain(stdout, stderr io.Writer, argv []string) int {
 	// ① `Q-176` 同族：**先于** argparse —— 给了 `--json` 而本门无机器读面 ⇒ rc=2（与 py 同序）。
 	if rc := cmRefuseJSON(argv, stderr); rc != nil {

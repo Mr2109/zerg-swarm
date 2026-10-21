@@ -20,11 +20,11 @@
 //	    符合 M2 选件「纯静态」条，**不需换件**。py 名里的 `curl` 是**被判对象**，不是**执行对象**。
 //	✗ 不选 `check-exit-codes.py` / `audit_go_logs.py`：扫描根靠 `os.walk` 且带外部子进程 / 非确定面。
 //
-// 本单边界（照实）：本件**只落码、不接线** ——
+// 本单边界（照实）：本件**已接线（inproc 表分派）** ——
 //
-//	· **不**在 `core/cmd/zerg/main.go` 里注册命令（✗ 不进命令树 · ✗ 不改 `add_step`）；
+//	· **不**在 `core/cmd/zerg/main.go` 里注册命令（✗ 不进命令树 · `add_step` **已挂** `precommit-gates.sh:3486`（门62 · tri-report 档））；
 //	· **不**删 `scripts/gates/check-curl-timeout.py` 原件（退场规则：**对拍通过后才**退场 · 逐件点名）；
-//	· 入口 `checkCurlTimeoutGateMain` 目前**无调用点**（M2 的刻意状态）；
+//	· **已接线**：入口 `checkCurlTimeoutGateMain` 由 `gateCheckGoEntry["check-curl-timeout"]` 分派（`zerg gate check check-curl-timeout`）· 原文此处断言与现读相反（只改文案 · 未改行为）。
 //	· ✗ 不改登记面六面 · ✗ 不改任何 `family_*.go` / 已落旧件。
 //
 // 入口签名（与 py 的 `main()` 对齐）：

@@ -8,12 +8,11 @@
 //	本件 = M2-0 批（无外部树依赖 · 纯静态检查的判据）的一枚：
 //	验收判据 = 对同一件跑两态（原件 ↔ 新入口），**stdout / stderr / 退码三面逐字相同**（4.2）。
 //
-// ⚠ 本单边界（照实）：本件**只落码、不接线** ——
+// ⚠ 本单边界（照实）：本件**已接线（inproc 表分派）** ——
 //
-//	· **不**在 `core/cmd/zerg/main.go` 里注册任何命令（✗ 不进命令树 · ✗ 不改 `add_step`）；
+//	· **不**在 `core/cmd/zerg/main.go` 里注册任何命令（✗ 不进命令树 · `add_step` **已挂** `precommit-gates.sh:3712`（门85 · tri 档））；
 //	· **不**删 `scripts/gates/check-judge-ledger.py` 原件（退场规则 4.3：**对拍通过后才**退场，且逐件显式点名）；
-//	· 入口 `judgeLedgerGateMain` 目前**无调用点** —— 这是 M2-0 的**刻意**状态：
-//	  先证明「搬得逐字相同」，接线与命令注册是后一单的事。
+//	· **已接线**：入口 `judgeLedgerGateMain` 由 `gateCheckGoEntry["check-judge-ledger"]` 分派（`zerg gate check check-judge-ledger`）· 原文此处断言与现读相反（只改文案 · 未改行为）。
 //
 // 入口签名（与 py 的 `main()` 逐字对齐）：
 //

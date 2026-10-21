@@ -29,12 +29,11 @@
 //	✗ 不选 8 件 `doc-*` / `check-dangling-refs.py` / `check-writer-guard.py` 等：**另一路在改**（`git status`
 //	  现读）+ 属共享件禁改面。
 //
-// ⚠ 本单边界（照实）：本件**只落码、不接线** ——
+// ⚠ 本单边界（照实）：本件**已接线（inproc 表分派）** ——
 //
-//	· **不**在 `core/cmd/zerg/main.go` 里注册任何命令（✗ 不进命令树 · ✗ 不改 `add_step`）；
+//	· **不**在 `core/cmd/zerg/main.go` 里注册任何命令（✗ 不进命令树 · `add_step` **未挂**（`precommit-gates.sh` 现读零命中））；
 //	· **不**删 `scripts/gates/bench-summary.py` 原件（退场规则 4.3：**对拍通过后才**退场，逐件显式点名）；
-//	· 入口 `benchSummaryGateMain` 目前**无调用点** —— 这是 M2 的**刻意**状态：先证「搬得逐字相同」，
-//	  接线与命令注册是后一单的事。
+//	· **已接线**：入口 `benchSummaryGateMain` 由 `gateCheckGoEntry["bench-summary"]` 分派（`zerg gate check bench-summary`）· 原文此处断言与现读相反（只改文案 · 未改行为）。
 //
 // 入口签名（与 py 的 `main()` 逐字对齐）：
 //

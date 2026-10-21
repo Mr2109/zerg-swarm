@@ -12,9 +12,9 @@
 //	· 依赖 `git`（子进程）**确定读面**：`git -C <root> show <rev>:<rel>` 读 base 版本（输入确定 ⇒ 输出可逐字对拍）。
 //	· 退码 0/1/2 三档齐 · 无网络 / 无 TTY / 无计时 / 无随机。
 //
-// 本单边界（照实）：**只落码、不接线** —— ✗ 不在 `main.go` 注册命令 · ✗ 不删 py 原件 · ✗ 不改登记面六面 ·
+// 本单边界（照实）：**已接线（inproc 表分派）** —— ✗ 不在 `main.go` 注册命令 · ✗ 不删 py 原件 · ✗ 不改登记面六面 ·
 // ✗ 不碰 `gate_inproc_table.go` / `precommit-gates.sh` / `family_*.go` / `core/internal/**` / `check-py-go-pairing-drift.py`。
-// 入口 `checkDelegationSelfreportGateMain` 目前**无调用点**（M2 的刻意状态）。
+// **已接线**：入口 `checkDelegationSelfreportGateMain` 由 `gateCheckGoEntry["check-delegation-selfreport"]` 分派（`zerg gate check check-delegation-selfreport`）· 原文此处断言与现读相反（只改文案 · 未改行为）。
 //
 // 入口签名（与 py `main()` 对齐）：
 //

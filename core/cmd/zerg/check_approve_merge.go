@@ -28,7 +28,8 @@
 //	    `/Users/…`、`/Volumes/…` 一类仓内/私有**绝对路径字面量**（全部路径由 cwd / `--state` / `--fixtures`
 //	    运行期拼串）；② 夹具/自检标记串（`本机` / `localhost` / `.local` / `Mr2109` / `<机型>`）是**判据常量**
 //	    （与 py 现读逐字一致），非「会被他门扫到的形态」直写；③ self-test 无「魔法环境变量串」；
-//	    ④ 本件**未接线**（无调用点 · 不在任何 `add_step` 步骤表内）。
+//	    ④ 本件**已接线**（`gateCheckGoEntry["check-approve-merge"]` 分派）· `add_step` 已挂
+//	       `precommit-gates.sh:3482`（门60 · tri-report 档）。
 //	    ★ `"kind"` 一类 JSON 键名按「前缀 + 字面」拼串（`apmKeyKind`），防被 `check-error-kinds` 的 R3 扫到。
 //	    另：本件 read-only，**零写面**（无 `open(...,'w')` / 无 mkdir / 无临时件）⇒ 即使被别门扫到也不改他门读数。
 //
@@ -44,11 +45,11 @@
 //	★ **输出行序的最终决定者** = ① 的 approvals 名序 ＋ 各 `--source` 的**命令行次序**（sources 切片保序）
 //	  ＋ 每个来源件内的**行序**；`groups`（冲突分组）用**切片保插入序**、✗ 零 Go map 迭代进输出。
 //
-// ⚠ 本单边界（照实）：只落码、不接线 ——
+// ⚠ 本单边界（照实）：已接线（inproc 表分派） ——
 //
-//	✗ 不在 `core/cmd/zerg/main.go` 注册命令（✗ 不进命令树 · ✗ 不改 `add_step`）；
+//	✗ 不在 `core/cmd/zerg/main.go` 注册命令（✗ 不进命令树 · `add_step` **已挂** `precommit-gates.sh:3482`（门60 · tri-report 档））；
 //	✗ 不删 py 原件（退场规则：对拍通过后才退场 · 逐件显式点名）；
-//	✗ 不碰登记面六面；入口目前**无调用点**（M2 的刻意状态）。
+//	✗ 不碰登记面六面；**已接线**：入口 `checkApproveMergeGateMain` 由 `gateCheckGoEntry["check-approve-merge"]` 分派（`zerg gate check check-approve-merge`）· 原文此处断言与现读相反（只改文案 · 未改行为）。
 //
 // Go-only 注入旋钮（**与 py 不可合同** ⇒ 当场单列点名）：`--now <RFC3339>` / env `ZERG_NOW`。
 // py 无此旗标 ⇒ 传给 py 会被判「未知旗标 rc=2」。用途：`--json` 档里的 `generated_at` 不可复现

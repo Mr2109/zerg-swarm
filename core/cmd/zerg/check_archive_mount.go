@@ -21,11 +21,11 @@
 //	  ③ **取不到一律 rc=2，✗ 不静默绿**：仓根 `--root` 取不到 / 不是目录、挂载表读不到 / 0 行、两处读数打架、
 //	     旋钮指空的树根 —— 四档全 2（仓根档走空集守卫，stderr `BLOCKED …` 与 py `require_domain` 逐字同）。
 //
-// 本单边界（照实）：本件**只落码、不接线** ——
+// 本单边界（照实）：本件**已接线（inproc 表分派）** ——
 //
-//	· **不**在 `core/cmd/zerg/main.go` 里注册命令（✗ 不进命令树 · ✗ 不改 `add_step`）；
+//	· **不**在 `core/cmd/zerg/main.go` 里注册命令（✗ 不进命令树 · `add_step` **已挂** `precommit-gates.sh:3194`（门㉛ · tri 档））；
 //	· **不**删 `scripts/gates/check-archive-mount.py` 原件（退场规则：**对拍通过后才**退场）；
-//	· 入口 `checkArchiveMountGateMain` 目前**无调用点**（M2 的刻意状态）。
+//	· **已接线**：入口 `checkArchiveMountGateMain` 由 `gateCheckGoEntry["check-archive-mount"]` 分派（`zerg gate check check-archive-mount`）· 原文此处断言与现读相反（只改文案 · 未改行为）。
 //
 // ★★ 两条标准声明行：
 //

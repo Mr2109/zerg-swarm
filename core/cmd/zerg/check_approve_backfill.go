@@ -15,11 +15,11 @@
 //	  带 `--yes` 才做「等长最小文本替换 + 仓外备份」。对拍时写面一律指向**仓外夹具**
 //	  （见回执「状态目录摆位处理」），✗ 绝不碰真仓原件。
 //
-// ⚠ 本单边界（照实）：只落码、不接线 ——
+// ⚠ 本单边界（照实）：已接线（inproc 表分派） ——
 //
-//	✗ 不在 `core/cmd/zerg/main.go` 注册命令（✗ 不进命令树 · ✗ 不改 `add_step`）；
+//	✗ 不在 `core/cmd/zerg/main.go` 注册命令（✗ 不进命令树 · `add_step` **已挂** `precommit-gates.sh:2999`（门⑰ · tri 档））；
 //	✗ 不删 py 原件（退场规则：对拍通过后才退场 · 逐件显式点名）；
-//	入口目前**无调用点**（M2 的刻意状态）；✗ 不碰登记面六面。
+//	· **已接线**：入口 `checkApproveBackfillGateMain` 由 `gateCheckGoEntry["check-approve-backfill"]` 分派（`zerg gate check check-approve-backfill`）· 原文此处断言与现读相反（只改文案 · 未改行为）。
 //
 // 入口签名（与 py 的 `main()` 逐字对齐）：
 //
@@ -41,7 +41,7 @@
 //	    `check_approve_backfill.go`，不被任何一面的逐字串匹配。四形态自查：① 件内**无**仓内绝对路径原串
 //	    （全文只有相对 `core/cmd/zerg/…` 串，读点是 `cafbPyJoin(repo, rel)`）；② 夹具/自检标记串
 //	    （`backfill-selftest-scan-`、`backfill-const-selftest-`、`ttl_seconds` 等）**均为运行期拼串**，
-//	    ✗ 不以「会被扫到的形态」直写他门扫描面；③ self-test 无「魔法环境变量串」；④ 本件**未接线**、
+//	    ✗ 不以「会被扫到的形态」直写他门扫描面；③ self-test 无「魔法环境变量串」；④ 本件**已接线（inproc 表分派）**、
 //	    不在任何 `add_step` 步骤表内。
 //	    前瞻消解（三条已跟踪面，逐条按「一旦被跟踪」消解 —— ★ 以下描述**故意不写触发子串**：
 //	    三条门都是**正则扫源码文本**，注释**不豁免** ⇒ 把触发形态写进注释 = 自投罗网，

@@ -1,5 +1,5 @@
 // check_ghost_decl_diff.go —— 门禁件 `scripts/gates/check-ghost-decl-diff.py` 的 **Go 真搬样板**
-// （v2.5.14 · M2 新口径「幽灵声明差异族」· 不接线）。
+// （v2.5.14 · M2 新口径「幽灵声明差异族」· 已接线（inproc 表分派））。
 //
 // 入口签名（与 py `main()` 同形）：
 //

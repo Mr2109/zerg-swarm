@@ -1,7 +1,7 @@
 // check_exec_two_condition.go —— 判据件 `scripts/gates/check-exec-two-condition.py`（366 行）的 **Go 真搬**
 // （M2 · ③ 类搬运 · 入口 `checkExecTwoConditionGateMain`）。
 //
-// 本件只落码、不接线：不在 main.go 注册命令、不删 py 原件、入口暂无调用点（M2 的刻意状态）。
+// 本件已接线（inproc 表分派）：不在 main.go 注册命令、不删 py 原件、 **已接线**：入口 `checkExecTwoConditionGateMain` 由 `gateCheckGoEntry["check-exec-two-condition"]` 分派（`zerg gate check check-exec-two-condition`）· 原文此处断言与现读相反（只改文案 · 未改行为）。
 //
 // 入口签名（与 py `main()` 对齐）：
 //

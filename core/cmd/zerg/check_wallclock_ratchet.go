@@ -5,7 +5,7 @@
 // **两态逐字对拍**（rc / stdout / stderr 三面逐字节 + 写面产物字节）。本件已挂
 // `gateCheckGoEntry["check-wallclock-ratchet"]`（`zerg gate check` 走 inproc）：
 //
-//	· ✗ 不在 main.go 注册任何命令（✗ 不进命令树 · ✗ 不改 add_step）；
+//	· ✗ 不在 main.go 注册任何命令（✗ 不进命令树 · `add_step` **已挂** `precommit-gates.sh:2830`（门77 · tri 档））；
 //	· ✗ 不删 py 原件（退场规则：对拍通过后才退场 · 逐件点名）；
 //
 // 入口签名（与 py 的 main() 对齐）：

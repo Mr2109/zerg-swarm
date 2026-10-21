@@ -4,8 +4,8 @@
 // 为什么有这件（M2 = 按价值真搬 Go · 落点 core/cmd/zerg/）：
 //
 //	验收判据 = 对同一 argv 跑两态（py 原件 ⟷ 本入口），stdout / stderr / 退码三面逐字相同
-//	（除下列**显式声明**的口径差面与未覆盖面）。本件**只落码、不接线**（✗ 不注册命令 ·
-//	✗ 不删 py 原件 · 入口暂无调用点）。
+//	（除下列**显式声明**的口径差面与未覆盖面）。本件**已接线（inproc 表分派）**（✗ 不注册命令 ·
+//	✗ 不删 py 原件 · **已接线**：入口 `checkModelSizeAnchorGateMain` 由 `gateCheckGoEntry["check-model-size-anchor"]` 分派（`zerg gate check check-model-size-anchor`）· 原文此处断言与现读相反（只改文案 · 未改行为）。
 //
 // 本门 = 「名册 size_bytes 锚 ⟷ 盘上现读」（本机层 · 只读）+「fleet 行 ⟷ registry 记录接线（棘轮）」。
 // 读面：仓内 gateway 的 fleet 件 · 仓内真源 json · 本机模型目录 manifests 列举 · 本机 stat ——

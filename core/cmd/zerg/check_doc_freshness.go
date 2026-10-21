@@ -21,7 +21,7 @@
 //	   「任一取不到」扩成红。
 //	④ 取不到一律 rc=2，✗ 不读成「0 件＝干净」。
 //
-// 本单边界（照实）：**只落码、不接线** —— ✗ 不注册命令 · ✗ 删 py 原件 · 入口无调用点（M2 刻意）。
+// 本单边界（照实）：**已接线（inproc 表分派）** —— ✗ 不注册命令 · ✗ 删 py 原件 · **已接线**：入口 `checkDocFreshnessGateMain` 由 `gateCheckGoEntry["check-doc-freshness"]` 分派（`zerg gate check check-doc-freshness`）· 原文此处断言与现读相反（只改文案 · 未改行为）。
 //
 // ★ 两条标准声明行：
 //
@@ -33,7 +33,7 @@
 //	    ② 落在 `check-hardcoded-private-paths`（扫 `core/`）· `check-error-kinds`（扫 `core/cmd/zerg/*.go`）·
 //	    `check-wall-layer`（扫 `core/cmd/zerg/*.go`）扫描面内 ⇒ **是** ⇒ 正文零私有绝对路径字面量、
 //	    不写被扫错误构造调用原串、self-test 夹具魔法串只在运行时建在 TMPDIR 下。
-//	    ③ 见交付读数（他门实跑 rc 未翻红）。④ 不接线 ⇒ 不进任何命令树/用法面。
+//	    ③ 见交付读数（他门实跑 rc 未翻红）。④ 已接线（inproc 表分派） ⇒ 不进任何命令树/用法面。
 //
 // py 原件真口子（✗ 不自行修 · 交回入账）：
 //
@@ -3374,7 +3374,7 @@ optional arguments:
   --verbose
 `
 
-// checkDocFreshnessGateMain —— 真搬入口（M2 刻意无调用点）。
+// checkDocFreshnessGateMain —— 真搬入口（已接线：`gateCheckGoEntry["check-doc-freshness"]` 分派）。
 func checkDocFreshnessGateMain(stdout, stderr io.Writer, argv []string) int {
 	if rc, done := cdfRefuseJSON(argv, stderr); done {
 		return rc

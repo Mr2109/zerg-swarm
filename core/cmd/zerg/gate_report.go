@@ -67,11 +67,11 @@
 //	  ⇒ 未触发；Unicode 数字面写进未覆盖面。
 //	· 本件**不重算任何门禁判据**：只取真退码 + 计时 + 捞关键行（:11-15 件头自述）。
 //
-// 本单边界（照实）：本件**只落码、不接线** ——
+// 本单边界（照实）：本件**已接线（inproc 表分派）** ——
 //
-//	· **不**在 core/cmd/zerg/main.go 里注册命令（✗ 不进命令树 · ✗ 不改 add_step）；
+//	· **不**在 core/cmd/zerg/main.go 里注册命令（✗ 不进命令树 · `add_step` **已挂** `precommit-gates.sh:3458`（门56 · tri 档））；
 //	· **不**删 scripts/gates/gate-report.py 原件（退场规则：**对拍通过后才**退场）；
-//	· 入口 `gateReportMain` 目前**无调用点**（M2 的刻意状态）。
+//	· **已接线**：入口 `gateReportMain` 由 `gateCheckGoEntry["gate-report"]` 分派（`zerg gate check gate-report`）· 原文此处断言与现读相反（只改文案 · 未改行为）。
 package main
 
 import (

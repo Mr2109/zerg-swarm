@@ -1,5 +1,5 @@
 // check_mutation_residue.go —— 门禁件 `scripts/gates/check-mutation-residue.py`（门72「变异残态」）的
-// **Go 真搬样板**（v2.5.14 · M2-0 批 · 不接线）。
+// **Go 真搬样板**（v2.5.14 · M2-0 批 · 已接线（inproc 表分派））。
 //
 // 为什么有这件（不是「顺手 Go 化」）：
 //
@@ -28,12 +28,11 @@
 //	  遍历序与 mtime 面**非确定**（Go `WalkDir` 字典序 ≠ py `scandir` inode 序）；且它正是**预期红**的门74
 //	  ⇒ 现读读数不可作对拍基线。
 //
-// ⚠ 本单边界（照实）：本件**只落码、不接线** ——
+// ⚠ 本单边界（照实）：本件**已接线（inproc 表分派）** ——
 //
-//	· **不**在 `core/cmd/zerg/main.go` 里注册任何命令（✗ 不进命令树 · ✗ 不改任何 `add_step`）；
+//	· **不**在 `core/cmd/zerg/main.go` 里注册任何命令（✗ 不进命令树 · `add_step` **已挂** `precommit-gates.sh:3577`（门72 · tri 档））；
 //	· **不**删 `scripts/gates/check-mutation-residue.py` 原件（退场规则 4.3：**对拍通过后**才退场，且逐件显式点名）；
-//	· 入口 `mutationResidueGateMain` 目前**无调用点** —— 这是 M2-0 的**刻意**状态：
-//	  先证明「搬得逐字相同」，接线与命令注册是后一单的事。
+//	· **已接线**：入口 `mutationResidueGateMain` 由 `gateCheckGoEntry["check-mutation-residue"]` 分派（`zerg gate check check-mutation-residue`）· 原文此处断言与现读相反（只改文案 · 未改行为）。
 //
 // 入口签名（与 py 的 `main()` 逐字对齐）：
 //

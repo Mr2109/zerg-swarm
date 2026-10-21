@@ -17,11 +17,11 @@
 //	✗ 本批其余候选（`check-gap-ledger-view.py` 1030 行等）多为「行数偏重 / 读 git 现跑 /
 //	  os.walk 遍历序 / 写面」⇒ 不属本单。
 //
-// ⚠ 本单边界（照实）：本件**只落码、不接线** ——
+// ⚠ 本单边界（照实）：本件**已接线（inproc 表分派）** ——
 //
-//	· **不**在 `core/cmd/zerg/main.go` 里注册任何命令（✗ 不进命令树 · ✗ 不改 `add_step`）；
+//	· **不**在 `core/cmd/zerg/main.go` 里注册任何命令（✗ 不进命令树 · `add_step` **已挂** `precommit-gates.sh:3268`（门㉟ · tri 档））；
 //	· **不**删 `scripts/gates/check-gap-ledger-face.py` 原件（退场规则：对拍通过后才退场，逐件点名）；
-//	· 入口 `checkGapLedgerFaceGateMain` 目前**无调用点** —— 这是 M2 的**刻意**状态。
+//	· **已接线**：入口 `checkGapLedgerFaceGateMain` 由 `gateCheckGoEntry["check-gap-ledger-face"]` 分派（`zerg gate check check-gap-ledger-face`）· 原文此处断言与现读相反（只改文案 · 未改行为）。
 //
 // 入口签名（与 py 的 `main()` 对齐）：
 //

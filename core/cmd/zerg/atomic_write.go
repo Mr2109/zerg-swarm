@@ -1,5 +1,5 @@
 // atomic_write.go —— 件 scripts/dev/atomic-write.sh（263 行）的 Go 真搬
-// （非 gates 面 · M2-0 工具档 · 入口 atomicWriteGateMain · 不接线 / 不注册 / 不删原件）。
+// （非 gates 面 · M2-0 工具档 · 入口 atomicWriteGateMain · 已接线（inproc 表分派） / 不注册 / 不删原件）。
 //
 // 为什么有这件（逐处现读 scripts/dev/atomic-write.sh 现值 · 非按件名推断）：
 //
@@ -30,11 +30,11 @@
 //	· 零连续「引号 + 键名 + 引号」原串 / 零错误登记函数的括弧引号形态；
 //	· 零命令树层级字面量（本件不进命令树）。
 //
-// 本单边界（照实）：只落码、不接线 ——
+// 本单边界（照实）：已接线（inproc 表分派） ——
 //
 //	· 不在 core/cmd/zerg/main.go 注册命令（✗ 不进命令树 · ✗ 不改 gate_inproc_table.go）；
 //	· 不删 scripts/dev/atomic-write.sh 原件（退场规则：对拍通过后才逐件点名退场）；
-//	· 入口 atomicWriteGateMain 目前无调用点（M2 的刻意状态）。
+//	· **已接线**：入口 `atomicWriteGateMain` 由 `gateCheckGoEntry["atomic-write"]` 分派（`zerg gate check atomic-write`）· 原文此处断言与现读相反（只改文案 · 未改行为）。
 //
 // ★ 自检缝合点（照拄原件）：环境变量 ATOMIC_WRITE_DROP_REL（留档落点覆盖）与
 // ATOMIC_WRITE_NEG（负控：mutate_target / corrupt_archive）—— 本件在**顶层入口**读这两枚，

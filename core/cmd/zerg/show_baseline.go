@@ -20,12 +20,11 @@
 //	✗ 不选 `seal-ledger.py`（531 行）/ `two-states-gate-mutate.py`：带真写面（`--seal` / 就地改坏再还原）。
 //	✗ 不选 `real-gates.sh` / `redaction-probes.sh` / `shard-go-test.sh`：跑测试/流程，非纯静态判据。
 //
-// ⚠ 本单边界（照实）：本件**只落码、不接线** ——
+// ⚠ 本单边界（照实）：本件**已接线（inproc 表分派）** ——
 //
-//	· **不**在 `core/cmd/zerg/main.go` 里注册任何命令（✗ 不进命令树 · ✗ 不改 `add_step`）；
+//	· **不**在 `core/cmd/zerg/main.go` 里注册任何命令（✗ 不进命令树 · `add_step` **未挂**（`precommit-gates.sh` 现读零命中））；
 //	· **不**删 `scripts/gates/show-baseline.py` 原件（退场规则 4.3：**对拍通过后才**退场，且逐件显式点名）；
-//	· 入口 `showBaselineGateMain` 目前**无调用点** —— 这是 M2-0 的**刻意**状态：
-//	  先证明「搬得逐字相同」，接线与命令注册是后一单的事。
+//	· **已接线**：入口 `showBaselineGateMain` 由 `gateCheckGoEntry["show-baseline"]` 分派（`zerg gate check show-baseline`）· 原文此处断言与现读相反（只改文案 · 未改行为）。
 //
 // 入口签名（与 py 的 `main()` 逐字对齐）：
 //

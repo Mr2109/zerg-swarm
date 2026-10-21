@@ -540,7 +540,7 @@ func jlkIndexOfHoldFlag(argv []string) int {
 	return -1
 }
 
-// ── 入口（`<名>GateMain` 形状 · ✗ 不接线 / ✗ 不注册命令）──────────────────────
+// ── 入口（`<名>GateMain` 形状 · 已接线：`gateCheckGoEntry["judge-lock"]` · 顶层命令不注册）──────────────
 
 func judgeLockGateMain(stdout, stderr io.Writer, argv []string) int {
 	args := append([]string(nil), argv...)

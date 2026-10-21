@@ -1,7 +1,7 @@
 // check_gate_coverage.go —— 门覆盖自检（治「假绿」本体那一层）的 Go 真搬（M2 · 甲案）。
 //
 // 真源件：scripts/gates/check-gate-coverage.py（1411 行）。
-// 入口：checkGateCoverageGateMain —— M2 刻意状态：**不接线 / 不注册命令 / 不删原件 / 不改登记面**。
+// 入口：checkGateCoverageGateMain —— M2 刻意状态：**已接线（inproc 表分派） / 不注册命令 / 不删原件 / 不改登记面**。
 //
 // 旋钮（名照 py 的同名旗标，✗ 不另起名）：
 //
@@ -2785,7 +2785,7 @@ func cgcRunMain(stdout, stderr io.Writer, argv []string) int {
 	return rep.rc
 }
 
-// checkGateCoverageGateMain：M2 入口（不接线 / 不注册命令 / 不删原件）。
+// checkGateCoverageGateMain：M2 入口（已接线：`gateCheckGoEntry["check-gate-coverage"]` · `precommit-gates.sh:2796` 门①；顶层命令不注册 / 不删原件）。
 func checkGateCoverageGateMain(stdout, stderr io.Writer, argv []string) int {
 	return cgcRunMain(stdout, stderr, argv)
 }

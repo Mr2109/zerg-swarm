@@ -21,11 +21,11 @@
 // 出厂声明 (b) 自指检查：本件确落在 core/cmd/zerg 全件扫描面内 ⇒ 逐条消解：件内零绝对路径字面量、
 // 零形如「引号 + 键名 + 引号」的协议原串、零会悬空的仓内相对路径字面量（复核 0/0，见回执）。
 //
-// 本单边界（照实）：本件只落码、不接线 ——
+// 本单边界（照实）：本件已接线（inproc 表分派） ——
 //
-//	· 不在 core/cmd/zerg/main.go 注册命令（✗ 不进命令树 · ✗ 不改 add_step）；
+//	· 不在 core/cmd/zerg/main.go 注册命令（✗ 不进命令树 · `add_step` **未挂**（`precommit-gates.sh` 现读零命中））；
 //	· 不删 scripts/evals/compare.py 原件（退场规则：对拍通过后才逐件点名退场）；
-//	· 入口 evalCompareGateMain 目前无调用点（M2 的刻意状态）；
+//	· **已接线**：入口 `evalCompareGateMain` 由 `gateCheckGoEntry["compare"]` 分派（`zerg gate check compare`）· 原文此处断言与现读相反（只改文案 · 未改行为）。
 //	· ✗ 不改任何登记面 / family_*.go / 已落旧件。
 //
 // 入口签名（与 py 的 main() 对齐）：

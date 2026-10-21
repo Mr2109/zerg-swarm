@@ -1,8 +1,8 @@
 // check_git_path_outlet.go —— 门禁件 `scripts/gates/check-git-path-outlet.py` 的 Go 真搬（M2 · 甲案 C 类第 8 枚）。
 //
-// 本单边界（照实）：只落码、不接线、不注册命令、不删 py 原件。
+// 本单边界（照实）：已接线（inproc 表分派）、不注册命令、不删 py 原件。
 //
-//	· 入口 `gitPathOutletGateMain` 目前无调用点 —— M2 的刻意状态（先证逐字相同，接线另批）。
+//	· **已接线**：入口 `gitPathOutletGateMain` 由 `gateCheckGoEntry["check-git-path-outlet"]` 分派（`zerg gate check check-git-path-outlet`）· 原文此处断言与现读相反（只改文案 · 未改行为）。
 //	· 入口签名与 py `main()` 对齐：func gitPathOutletGateMain(stdout, stderr io.Writer, argv []string) int
 //	  argv 与 py `sys.argv[1:]` 同形（不含程序名）；退码 0 判到 / 1 rc 档有命中 / 2 不给结论。
 //

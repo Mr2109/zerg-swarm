@@ -19,11 +19,11 @@
 //	  `check-approve-time.py`：均含 `subprocess`（真起子进程）⇒ 同族里**只有 tier 与 freeze** 是纯静态，
 //	  tier 已由上一段排除。`check-approve-backfill.py`（683 行）同为纯静态但行数更大 ⇒ 取 freeze。
 //
-// ⚠ 本单边界（照实）：只落码、不接线 ——
+// ⚠ 本单边界（照实）：已接线（inproc 表分派） ——
 //
-//	✗ 不在 `core/cmd/zerg/main.go` 注册命令（✗ 不进命令树 · ✗ 不改 `add_step`）；
+//	✗ 不在 `core/cmd/zerg/main.go` 注册命令（✗ 不进命令树 · `add_step` **已挂** `precommit-gates.sh:2975`（门⑮ · tri 档））；
 //	✗ 不删 py 原件（退场规则：对拍通过后才退场 · 逐件显式点名）；
-//	入口目前**无调用点**（M2 的刻意状态）；✗ 不碰登记面六面。
+//	· **已接线**：入口 `checkApproveFreezeGateMain` 由 `gateCheckGoEntry["check-approve-freeze"]` 分派（`zerg gate check check-approve-freeze`）· 原文此处断言与现读相反（只改文案 · 未改行为）。
 //
 // 入口签名（与 py 的 `main()` 逐字对齐）：
 //
@@ -44,7 +44,7 @@
 //	    相对 `core/cmd/zerg/…` 串，读点是 `cafrPyJoin(repo, rel)`）；② 夹具/自检标记串（`导出-命令面帮助-`、
 //	    九键名、`R-11`、`G-\p{Nd}\p{Nd}`）**均为运行期拼串 / 正则**，✗ 不以「会被扫到的形态」直写他门扫描面
 //	    （九键名是 F1/F2 的**判据常量**，与 `family_approve.go` 现读一致，属**跨件口径**而非自指）；
-//	    ③ self-test 无「魔法环境变量串」；④ 本件**未接线**、不在任何 `add_step` 步骤表内。
+//	    ③ self-test 无「魔法环境变量串」；④ 本件**已接线（inproc 表分派）**、不在任何 `add_step` 步骤表内。
 //	    另：本件 read-only，**零写面** ⇒ 即使被别门扫到也不改他门读数（见回执 (b) 一节）。
 //
 // 遍历 / 排序点（★ 逐处交代 · 保 py 原序）：

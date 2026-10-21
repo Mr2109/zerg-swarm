@@ -44,8 +44,8 @@
 // ③ `errors="replace"` 的替换粒度差（py 按非法序列、Go 按 run 各一 U+FFFD）；④ list repr 对含
 // 单引号/反斜杠的串的转义未复刻（本件实面为路径/键名，不触发）。
 //
-// 本单边界（照实）：**只落码、不接线** —— 不在 `main.go` 注册命令；不删 py 原件；
-// 入口 `i18nAuditGateMain` 目前**无调用点**（M2 刻意状态）。
+// 本单边界（照实）：**已接线（inproc 表分派）** —— 不在 `main.go` 注册命令；不删 py 原件；
+// **已接线**：入口 `i18nAuditGateMain` 由 `gateCheckGoEntry["i18n-audit"]` 分派（`zerg gate check i18n-audit`）· 原文此处断言与现读相反（只改文案 · 未改行为）。
 package main
 
 import (

@@ -20,10 +20,10 @@
 //	  （自检真起子进程）⇒ 非「纯静态只读单件」；`check-dryrun-yes-conflict-coverage`(170) 自检两处
 //	  `mkdtemp` 无回收（A 类泄漏）⇒ 写面**不自回收** ⇒ 不适格。
 //
-// 本单边界（照实）：本件**只落码、不接线** ——
+// 本单边界（照实）：本件**已接线（inproc 表分派）** ——
 //
 //	· **不**在 `main.go` 里注册命令（✗ 不进命令树）· **不**删 `scripts/gates/check-env-knobs.py` 原件
-//	  （退场规则：**对拍通过后才**退场 · 逐件点名）；入口 `checkEnvKnobsGateMain` 目前**无调用点**（M2 刻意状态）。
+//	  （退场规则：**对拍通过后才**退场 · 逐件点名）；**已接线**：入口 `checkEnvKnobsGateMain` 由 `gateCheckGoEntry["check-env-knobs"]` 分派（`zerg gate check check-env-knobs`）· 原文此处断言与现读相反（只改文案 · 未改行为）。
 //	· ✗ 不改登记面六面 · ✗ 不改任何 `family_*.go` / 已落旧件 / `main.go` / `gate_inproc_table.go`。
 //
 // 入口签名（与 py 的 `main()` 对齐）：

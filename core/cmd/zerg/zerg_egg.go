@@ -17,9 +17,9 @@
 //
 // ---- M2 落件纪律（照 `check_archive_mount.go` 的同款中间态）----------------------------------
 //
-//	· **只落码、不接线** —— ✗ 不在 `core/cmd/zerg/main.go` 注册命令（✗ 不进命令树 · ✗ 不改 add_step）；
+//	· **已接线（inproc 表分派）** —— ✗ 不在 `core/cmd/zerg/main.go` 注册命令（✗ 不进命令树 · `add_step` **未挂**（`precommit-gates.sh` 现读零命中））；
 //	· **不删** `scripts/node-a/zerg-egg.py` 原件（退场规则：**对拍通过后才**逐件点名退场）；
-//	· 入口 `zergEggGateMain` 目前**无调用点**（M2 的刻意状态）。
+//	· **已接线**：入口 `zergEggGateMain` 由 `gateCheckGoEntry["zerg-egg"]` 分派（`zerg gate check zerg-egg`）· 原文此处断言与现读相反（只改文案 · 未改行为）。
 //
 // ---- 两条出厂声明行 -------------------------------------------------------------------------
 //
@@ -40,7 +40,7 @@
 //     `created_at` 钉成定值，使 `pack` 产物可**逐字节 sha256 对拍**（py 侧 `created_at = datetime.now(utc)`）
 //     —— py **不认**该旗标 ⇒ 属「旋钮面不合同」，只用于对拍台，✗ 不影响对拍格的 stdout/rc。
 //
-// ---- 出厂声明结束。入口 `zergEggGateMain` 无调用点。
+// ---- 出厂声明结束。 **已接线**：入口 `zergEggGateMain` 由 `gateCheckGoEntry["zerg-egg"]` 分派（`zerg gate check zerg-egg`）· 原文此处断言与现读相反（只改文案 · 未改行为）。
 package main
 
 import (

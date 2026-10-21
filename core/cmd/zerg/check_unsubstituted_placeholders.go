@@ -31,13 +31,13 @@
 //	  `check-two-pass-identity.py` / `check-tty-output-contract.py` / `check-token-argv.py`）：要
 //	  `bin/zerg` 现跑或读生成物（外部制品 + 子进程）⇒ 非「纯静态检查」。本轮**未跨区**取样。
 //
-// ⚠ 本单边界（照实）：本件**只落码、不接线** ——
+// ⚠ 本单边界（照实）：本件**已接线（inproc 表分派）** ——
 //
-//	· **不**在 `core/cmd/zerg/main.go` 里注册任何命令（✗ 不进命令树 · ✗ 不改 `add_step`）；
+//	· **不**在 `core/cmd/zerg/main.go` 里注册任何命令（✗ 不进命令树 · `add_step` **未挂**（`precommit-gates.sh` 现读零命中））；
 //	· **不**删 `scripts/gates/check-unsubstituted-placeholders.py` 原件（退场规则 4.3：**对拍通过后才**退场）；
 //	· **不**改任何登记面（`公开标记.tsv` / `mirror-public-lib.py` / `publish-public.sh` /
 //	  `gate-coverage.config.json` / `judge-registry.json` / `dryrun-semantics.json`）；
-//	· 入口 `unsubstitutedPlaceholdersGateMain` 目前**无调用点** —— 这是 M2-0 的**刻意**状态。
+//	· **已接线**：入口 `unsubstitutedPlaceholdersGateMain` 由 `gateCheckGoEntry["check-unsubstituted-placeholders"]` 分派（`zerg gate check check-unsubstituted-placeholders`）· 原文此处断言与现读相反（只改文案 · 未改行为）。
 //
 // 入口签名（与 py 的 `main()` 逐字对齐）：
 //

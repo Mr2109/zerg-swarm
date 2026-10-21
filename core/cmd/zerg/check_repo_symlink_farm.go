@@ -16,10 +16,12 @@ package main
 //	✗ 不选同批纯静态候选：`check-loose-exit-registry`(221) 用 `ast` 解析 Python ⇒ Go 无对等解析器；
 //	  `check-verify-cmd-real`(510) / `check-write-face-gate`(481) 带写面/`atexit`；`check-gap-state-vs-artifact`(569) 更大。
 //
-// 本单边界（照实）：本件**只落码、不接线** ——
+// 本单边界（照实）：本件**已接线**（`gateCheckGoEntry["check-repo-symlink-farm"]` 分派 ·
+// `precommit-gates.sh:3792` 门104 · tri-report 档）——
 //
 //	· **不**在 `main.go` 里注册命令（✗ 不进命令树）· **不**删 `scripts/gates/check-repo-symlink-farm.py` 原件
-//	  （退场规则：**对拍通过后才**退场 · 逐件点名）；入口 `checkRepoSymlinkFarmGateMain` 目前**无调用点**（M2 刻意状态）。
+//	  （退场规则：**对拍通过后才**退场 · 逐件点名）；入口 `checkRepoSymlinkFarmGateMain` 已有调用点
+//	  （`zerg gate check check-repo-symlink-farm` ⇒ inproc 表分派）。
 //	· ✗ 不改登记面 · ✗ 不改任何 `family_*.go` / 已落旧件 / `main.go` / `gate_inproc_table.go` / `precommit-gates.sh` / `scripts/**`。
 //
 // 入口签名（与 py 的 `main()` 对齐）：
@@ -39,7 +41,7 @@ package main
 //	(b) **自指检查** —— 本件**不在**任何他门的扫描面内（四形态逐条 · 量化）：
 //	     ① 本件 = `core/cmd/zerg/check_repo_symlink_farm.go`；本门自身扫面 = **`$HOME` 浅层**（不是源码树）⇒ 不入。
 //	     ② `check-selftest-knobs.py` 的 `core/cmd/zerg/*.go` 面只判「提交链件」（件基本名须逐字出现在
-//	        `precommit-gates.sh` 里）⇒ 现读本件名**命中 0**（不接线）。
+//	        `precommit-gates.sh` 里）⇒ 现读本件名**命中 1**（`:3792` 门104 · 原「命中 0 / 不接线」与现读相反）。
 //	     ③ 件头/正文零绝对私有路径字面量（卷名与家目录名一律未出现）⇒ 不触发私有路径门。
 //	     ④ 件内不写成错误构造 API 的调用形态连续字面 ⇒ 不触发 error.kind 的 R3 用法面。
 //

@@ -22,11 +22,11 @@
 //	     （也支持 `--out -` 落 stdout）。**判据档 `--check` 与默认档（无参）零写盘** —— 本件按原样搬
 //	     `--emit` 的写面，✗ 不偷偷去掉（去掉＝语义不全）；落仓/对拍一律用 `--out <仓外件>`。
 //
-// 本单边界（照实）：本件**只落码、不接线** ——
+// 本单边界（照实）：本件**已接线（inproc 表分派）** ——
 //
-//	· **不**在 `core/cmd/zerg/main.go` 里注册命令（✗ 不进命令树 · ✗ 不改 `add_step`）；
+//	· **不**在 `core/cmd/zerg/main.go` 里注册命令（✗ 不进命令树 · `add_step` **已挂** `precommit-gates.sh:3711`（门84 · tri 档））；
 //	· **不**删 `scripts/gates/check-affected-map.py` 原件（退场规则：**对拍通过后才**退场）；
-//	· 入口 `checkAffectedMapGateMain` 目前**无调用点**（M2 的刻意状态）。
+//	· **已接线**：入口 `checkAffectedMapGateMain` 由 `gateCheckGoEntry["check-affected-map"]` 分派（`zerg gate check check-affected-map`）· 原文此处断言与现读相反（只改文案 · 未改行为）。
 //
 // ★★ 两条标准声明行：
 //

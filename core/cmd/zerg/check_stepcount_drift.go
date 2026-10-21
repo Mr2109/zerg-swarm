@@ -18,11 +18,11 @@
 //	  （subprocess+mkdtemp）· `check-verify-cmd-real.py` / `check-write-face-gate.py`（mkdtemp+写面）·
 //	  `repo-diffstat-check.py`（与在仓 `family_repo_diffstat.go` 同套 ⇒ 走退场，不搬）。
 //
-// 本单边界（照实）：本件**只落码、不接线** ——
+// 本单边界（照实）：本件**已接线（inproc 表分派）** ——
 //
-//	· **不**在 `core/cmd/zerg/main.go` 里注册命令（✗ 不进命令树 · ✗ 不改 add_step 表）；
+//	· **不**在 `core/cmd/zerg/main.go` 里注册命令（✗ 不进命令树 · `add_step` **已挂** `precommit-gates.sh:3752`（门96 · tri-report 档））；
 //	· **不**删 `scripts/gates/check-stepcount-drift.py` 原件（退场规则：对拍通过后才逐件点名退场）；
-//	· 入口 `stepcountDriftGateMain` 目前**无调用点**（M2 的刻意状态）；
+//	· **已接线**：入口 `stepcountDriftGateMain` 由 `gateCheckGoEntry["check-stepcount-drift"]` 分派（`zerg gate check check-stepcount-drift`）· 原文此处断言与现读相反（只改文案 · 未改行为）。
 //	· ✗ 不改登记面六面 · ✗ 不改任何 `family_*.go` / 已落旧件 / `gate_inproc_table.go`。
 //
 // 入口签名（与 py 的 `main()` 对齐）：

@@ -32,12 +32,11 @@
 //	✗ 不选 8 件 `check-doc-*.py` / `check-dangling-refs.py` / `check-writer-guard.py` /
 //	  `check-judge-*.py` / `judge-lock.py` 等：**共享件/禁碰面**（另一路在改）。
 //
-// ⚠ 本单边界（照实）：本件**只落码、不接线** ——
+// ⚠ 本单边界（照实）：本件**已接线（inproc 表分派）** ——
 //
-//	· **不**在 `core/cmd/zerg/main.go` 里注册任何命令（✗ 不进命令树 · ✗ 不改 `add_step`）；
+//	· **不**在 `core/cmd/zerg/main.go` 里注册任何命令（✗ 不进命令树 · `add_step` **已挂** `precommit-gates.sh:3209`（门㉜ · tri 档））；
 //	· **不**删 `scripts/gates/check-symbol-delete-ripple.py` 原件（退场规则：**对拍通过后才**退场）；
-//	· 入口 `symbolDeleteRippleGateMain` 目前**无调用点** —— 这是 M2-0 的**刻意**状态：
-//	  先证明「搬得逐字相同」，接线与命令注册是后一单的事。
+//	· **已接线**：入口 `symbolDeleteRippleGateMain` 由 `gateCheckGoEntry["check-symbol-delete-ripple"]` 分派（`zerg gate check check-symbol-delete-ripple`）· 原文此处断言与现读相反（只改文案 · 未改行为）。
 //
 // 入口签名（与 py 的 `main()` 逐字对齐）：
 //

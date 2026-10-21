@@ -8,12 +8,12 @@
 //	本件 = M2「缺口账两轴对账」的一枚：验收判据 = 对同一件跑两态（py 原件 ↔ 本件入口），
 //	stdout / stderr / 退码三面逐字相同（对拍输入集见回执 · 未覆盖面见下）。
 //
-// ⚠ 本单边界（照实）：本件**只落码、不接线** ——
+// ⚠ 本单边界（照实）：本件**已接线（inproc 表分派）** ——
 //
-//	· **不**在 `core/cmd/zerg/main.go` 里注册任何命令（✗ 不进命令树 · ✗ 不改 add_step）；
+//	· **不**在 `core/cmd/zerg/main.go` 里注册任何命令（✗ 不进命令树 · `add_step` **已挂** `precommit-gates.sh:3630`（门75 · tri 档））；
 //	· **不**删 `scripts/gates/check-gap-axis-reconcile.py` 原件（退场规则：对拍通过后才退场）；
 //	· **不**碰任何登记面（judge-registry / gate-coverage / 公开标记.tsv 等）；
-//	· 入口 `checkGapAxisReconcileGateMain` 目前**无调用点** —— 这是 M2 的**刻意**状态。
+//	· **已接线**：入口 `checkGapAxisReconcileGateMain` 由 `gateCheckGoEntry["check-gap-axis-reconcile"]` 分派（`zerg gate check check-gap-axis-reconcile`）· 原文此处断言与现读相反（只改文案 · 未改行为）。
 //
 // 入口签名（与 py 的 `main()` 对齐）：
 //

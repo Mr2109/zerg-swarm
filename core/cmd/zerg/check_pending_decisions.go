@@ -23,11 +23,11 @@
 //	     其它件不在盘」算取不到 —— 那会让真仓恒红（那些件不在本件判面）。取不到一律 rc=2、**不当绿**
 //	     （✗ 不把「查不到」静默读成「不存在」）。真仓现读：树上两件**都在盘** ⇒ 本档不触发（已对拍）。
 //
-// 本单边界（照实）：本件**只落码、不接线** ——
+// 本单边界（照实）：本件**已接线（inproc 表分派）** ——
 //
-//	· **不**在 `core/cmd/zerg/main.go` 里注册命令（✗ 不进命令树 · ✗ 不改 `add_step`）；
+//	· **不**在 `core/cmd/zerg/main.go` 里注册命令（✗ 不进命令树 · `add_step` **已挂** `precommit-gates.sh:3298`（门㊲ · tri 档））；
 //	· **不**删 `scripts/gates/check-pending-decisions.py` 原件（退场规则：**对拍通过后才**退场）；
-//	· 入口 `checkPendingDecisionsGateMain` 目前**无调用点**（M2 的刻意状态）。
+//	· **已接线**：入口 `checkPendingDecisionsGateMain` 由 `gateCheckGoEntry["check-pending-decisions"]` 分派（`zerg gate check check-pending-decisions`）· 原文此处断言与现读相反（只改文案 · 未改行为）。
 //
 // ★ 两条标准声明行：
 //

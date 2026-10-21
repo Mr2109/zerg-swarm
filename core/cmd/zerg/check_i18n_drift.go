@@ -43,8 +43,8 @@ package main
 // 机制不同 —— 属「第二类·运行时可表达性差」，仅自检档豁免）；③ 非 UTF-8 输入件 / 读失败（`grep -c` 报错）
 // 的 stderr 正文；④ 脚本 `-h` 只印前 40 行 `^#`（本件钉死该 40 行；脚本后续增删注释会漂）。
 //
-// 本单边界（照实）：**只落码 · 不接线** —— 不在 `main.go` 注册命令、不删件原件；入口
-// `checkI18nDriftGateMain` 目前**无调用点**（M2 刻意状态）。
+// 本单边界（照实）：**已接线**（`gateCheckGoEntry["check-i18n-drift"]` 分派）—— 不在 `main.go` 注册命令、
+// 不删件原件；入口 `checkI18nDriftGateMain` 已有调用点（原「只落码 · 无调用点」与现读相反）。
 
 import (
 	"bytes"

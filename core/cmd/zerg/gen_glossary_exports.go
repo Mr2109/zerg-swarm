@@ -29,11 +29,11 @@
 //	    「JSON 键名连续引号原串」的写法（一律描述式）· 退码仅 0/1/2（⊆ 真源退码表已登记集）·
 //	    零绝对私有路径字面量。
 //
-// 本单边界（照实）：**只落码、不接线** ——
+// 本单边界（照实）：**已接线（inproc 表分派）** ——
 //
 //	· 不在 `core/cmd/zerg/main.go` 注册命令（✗ 不进命令树）；
 //	· 不删 py 原件（退场规则：对拍通过后才逐件点名退场）；
-//	· 入口 `genGlossaryExportsGateMain` 目前**无调用点**（M2 刻意状态）。
+//	· **已接线**：入口 `genGlossaryExportsGateMain` 由 `gateCheckGoEntry["gen-glossary-exports"]` 分派（`zerg gate check gen-glossary-exports`）· 原文此处断言与现读相反（只改文案 · 未改行为）。
 package main
 
 import (

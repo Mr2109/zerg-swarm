@@ -4,11 +4,11 @@
 // 外加只报告档扫 `docs/**` 与仓根 md；**不起子进程 · 不联网 · 不计时 · 不取运行期读数 · 默认档不写盘**。
 // 自检档在仓库外临时目录里造合成夹具，跑完回收。⇒ 属 M2-0「无输入物料、纯静态检查」档，适格。
 //
-// 落件边界（照实）：**只落码、不接线** ——
+// 落件边界（照实）：**已接线（inproc 表分派）** ——
 //
-//	· 不在 core/cmd/zerg/main.go 注册命令（不进命令树）；不改任何 add_step 步骤表；
+//	· 不在 core/cmd/zerg/main.go 注册命令（不进命令树）；`add_step` **已挂** `precommit-gates.sh:2797`（门② · tri 档） 步骤表；
 //	· 不删 scripts/gates/check-version-sources.py 原件（退场另批逐件点名）；
-//	· 入口 checkVersionSourcesGateMain 目前无调用点 —— M2 的刻意状态。
+//	· **已接线**：入口 `checkVersionSourcesGateMain` 由 `gateCheckGoEntry["check-version-sources"]` 分派（`zerg gate check check-version-sources`）· 原文此处断言与现读相反（只改文案 · 未改行为）。
 //
 // 入口签名：func checkVersionSourcesGateMain(stdout, stderr io.Writer, argv []string) int
 //

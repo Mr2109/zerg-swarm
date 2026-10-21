@@ -10,7 +10,7 @@
 //
 // 验收判据 = 对同一 argv 跑两态（py 原件 ⟷ 本入口），stdout / stderr / 退码**三面逐字相同**。
 //
-// ★ 本件只落码、不接线（不改 main.go 命令树 · 不删 py 原件）。inproc 键登记见 gate_inproc_table.go。
+// ★ 本件已接线（inproc 表分派）（不改 main.go 命令树 · 不删 py 原件）。inproc 键登记见 gate_inproc_table.go。
 //
 // 退码（与 py 逐字同）：0 无**新**悬空（存量棘轮内） · 1 有新悬空（tri-report ⇒ 落 REPORT） ·
 //

@@ -32,11 +32,11 @@
 //	✗ 不选 `judge-lock.py` / `check-help-shape.py` / `check-newcmd-followup.py` / `check-judge-ledger.py` /
 //	  8 件 `doc-*` / `precommit-gates.sh`：属**共享件**（本单禁碰，另一路在改）。
 //
-// ⚠ 本单边界（照实）：本件**只落码、不接线** ——
+// ⚠ 本单边界（照实）：本件**已接线（inproc 表分派）** ——
 //
-//	· **不**在 `core/cmd/zerg/main.go` 里注册任何命令（✗ 不进命令树 · ✗ 不改 `add_step`）；
+//	· **不**在 `core/cmd/zerg/main.go` 里注册任何命令（✗ 不进命令树 · `add_step` **已挂** `precommit-gates.sh:3371`（门㊷ · tri 档））；
 //	· **不**删 `scripts/gates/check-private-path-forms.py` 原件（退场规则：对拍通过后才退场，且逐件显式点名）；
-//	· 入口 `privatePathFormsGateMain` 目前**无调用点** —— 这是 M2-0 的**刻意**状态。
+//	· **已接线**：入口 `privatePathFormsGateMain` 由 `gateCheckGoEntry["check-private-path-forms"]` 分派（`zerg gate check check-private-path-forms`）· 原文此处断言与现读相反（只改文案 · 未改行为）。
 //
 // 入口签名（与 py 的 `main()` 对齐）：
 //

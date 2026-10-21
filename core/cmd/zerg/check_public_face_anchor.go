@@ -976,7 +976,7 @@ func cpfaListRules(stdout io.Writer) int {
 		fmt.Fprintf(stdout, "   · %s —— %s\n", e.File, e.Reason)
 	}
 	fmt.Fprintf(stdout, "扫面：%s（仓根相对 · `--face` 可换）· 只判 `*.md`\n", cpfaFaceDefault)
-	fmt.Fprint(stdout, "**不接闸**：未进 `precommit-gates.sh` · 未进 `scripts/公开标记.tsv` · 未进任何台账\n")
+	fmt.Fprint(stdout, "**已接闸**：`scripts/gates/precommit-gates.sh:3423` 门㊿（tri-report · 只报告 · 不阻断）· 未进 `scripts/公开标记.tsv` · 未进任何台账\n")
 	return 0
 }
 

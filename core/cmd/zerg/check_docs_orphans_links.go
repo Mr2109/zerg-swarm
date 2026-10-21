@@ -26,11 +26,11 @@
 //	④ 取不到一律**不给结论**、✗ 不静默绿：任一格的域取不到 ⇒ 该格打印 `判不了`＋原因（绝不读成
 //	   「0 件」＝干净）；本件是把「查不到」当「不存在」的那类静默绿的**反例**。
 //
-// 本单边界（照实）：本件**只落码、不接线** ——
+// 本单边界（照实）：本件**已接线（inproc 表分派）** ——
 //
-//	· **不**在 `core/cmd/zerg/main.go` 里注册命令（✗ 不进命令树 · ✗ 不改 `add_step`）；
+//	· **不**在 `core/cmd/zerg/main.go` 里注册命令（✗ 不进命令树 · `add_step` **未挂**（`precommit-gates.sh` 现读零命中））；
 //	· **不**删 `scripts/gates/check-docs-orphans-links.py` 原件（退场规则：**对拍通过后才**退场）；
-//	· 入口 `checkDocsOrphansLinksGateMain` 目前**无调用点**（M2 的刻意状态）。
+//	· **已接线**：入口 `checkDocsOrphansLinksGateMain` 由 `gateCheckGoEntry["check-docs-orphans-links"]` 分派（`zerg gate check check-docs-orphans-links`）· 原文此处断言与现读相反（只改文案 · 未改行为）。
 //
 // ★ 两条标准声明行：
 //
@@ -61,7 +61,7 @@
 //	      · self-test 夹具里的魔法串（`coan-selftest-` / `gone.md` 一族）只落**运行时建在 TMPDIR 下**的
 //	        夹具件正文，**不落本件正文**的连续被扫形态。
 //	    ③ **证明处理有效**：落仓前后跑上述他门同一命令，命中数与输出 sha16 **逐字不变**（见交付读数）。
-//	    ④ 本件**不接线** ⇒ 不进任何命令树/用法面 ⇒ 无「他门用法面」新增字面量。
+//	    ④ 本件**已接线（inproc 表分派）** ⇒ 不进任何命令树/用法面 ⇒ 无「他门用法面」新增字面量。
 //
 // py 原件真口子（★ 不自行改 py · **本件 Go 侧已修 · 与 py 有意分叉**）：
 //

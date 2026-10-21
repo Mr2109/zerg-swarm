@@ -1,7 +1,7 @@
 // check_doc_name.go —— 判据件 `scripts/gates/check-doc-name.py`（1071 行）的 **Go 真搬**（M2 · 甲案 C 类第 7 枚）。
 //
-// 入口 `checkDocNameGateMain(stdout, stderr io.Writer, argv []string) int`（M2 刻意无调用点：不接线 / 不注册命令 /
-// 不删 py 原件）。验收判据 = 同 argv 跑两态（py 原件 ⟷ 本入口），stdout / rc **逐字节相同**（差异面见下）。
+// 入口 `checkDocNameGateMain(stdout, stderr io.Writer, argv []string) int`（已接线：`gateCheckGoEntry["check-doc-name"]`
+// 分派 · 顶层命令不注册 / 不删 py 原件；原「刻意无调用点」与现读相反）。验收判据 = 同 argv 跑两态（py 原件 ⟷ 本入口），stdout / rc **逐字节相同**（差异面见下）。
 //
 // ★ 两条标准声明行：
 //
@@ -1831,7 +1831,7 @@ func cdnPrintHelp(w io.Writer) {
 	fmt.Fprintln(w, "命名规范化门（只报告不改）—— Go 真搬；正文见 py 原件件头。")
 }
 
-// checkDocNameGateMain —— 真搬入口（M2 刻意无调用点）。
+// checkDocNameGateMain —— 真搬入口（已接线：`gateCheckGoEntry["check-doc-name"]` 分派）。
 func checkDocNameGateMain(stdout, stderr io.Writer, argv []string) int {
 	a, perr := cdnParseArgs(argv)
 	if a != nil && a.help {

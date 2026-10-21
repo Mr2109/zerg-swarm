@@ -18,7 +18,7 @@
 //	   `check-error-kinds` 的 R3 扫 `core/cmd/zerg/*.go`）⇒ 处置：本件**零私有绝对路径字面量**（盘根 /
 //	   家目录一律运行时取；无盘根前缀、无家目录前缀），且不写错误构造调用原串。
 //	③ self-test 魔法串连续字面落地 ⇒ 本件夹具串只落在**运行时建在临时目录下**的夹具件正文里，✗ 不落本件正文。
-//	④ 本件**不接线** ⇒ 不进命令树 / 用法面 ⇒ 无新增被扫字面量。
+//	④ 本件**已接线（inproc 表分派）** ⇒ 不进命令树 / 用法面 ⇒ 无新增被扫字面量。
 //
 // py 原件边界（✗ 不自行改 · 交回入账）：
 //
@@ -1283,7 +1283,7 @@ func cpfcJSONLine(want []string, d *cpfcData) string {
 	return "{" + strings.Join(parts, ", ") + "}"
 }
 
-// ── 入口（= py `main()`）· ✗ 不接线 / ✗ 不注册命令 ─────────────────────────────
+// ── 入口（= py `main()`）· 已接线（`gateCheckGoEntry["check-public-face-commands"]`）· 顶层命令不注册 ────────
 
 func checkPublicFaceCommandsGateMain(stdout, stderr io.Writer, argv []string) int {
 	if rc, bad := cpfcRefuseUnknownJSONFields(stderr, argv); bad {

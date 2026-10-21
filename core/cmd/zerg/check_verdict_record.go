@@ -6,11 +6,11 @@
 //	M2 = 按价值**真搬 Go**（落点 `core/cmd/zerg/`）。本件 = M2 的一枚：门㊳「算不算过」的机器读落点 + 稳定指纹。
 //	验收判据 = 对同一件跑两态（原件 ↔ 新入口），**stdout / stderr / 退码三面逐字相同**。
 //
-// ⚠ 本单边界（照实）：本件**只落码、不接线** ——
+// ⚠ 本单边界（照实）：本件**已接线（inproc 表分派）** ——
 //
-//	· **不**在 `core/cmd/zerg/main.go` 里注册任何命令（✗ 不进命令树 · ✗ 不改任何 `add_step`）；
+//	· **不**在 `core/cmd/zerg/main.go` 里注册任何命令（✗ 不进命令树 · `add_step` **已挂** `precommit-gates.sh:3317`（门㊳ · tri 档））；
 //	· **不**删 `scripts/gates/check-verdict-record.py` 原件（退场规则：**对拍通过后才**退场，且逐件显式点名）；
-//	· 入口 `checkVerdictRecordGateMain` 目前**无调用点** —— 这是 M2 的**刻意**状态。
+//	· **已接线**：入口 `checkVerdictRecordGateMain` 由 `gateCheckGoEntry["check-verdict-record"]` 分派（`zerg gate check check-verdict-record`）· 原文此处断言与现读相反（只改文案 · 未改行为）。
 //
 // 入口签名（与 py 的 `main()` 逐字对齐）：
 //

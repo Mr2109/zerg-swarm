@@ -21,11 +21,11 @@
 //	     注：py **无**这两个旗标（只有同名环境变量）⇒ 凡带旋钮的输入格 py 侧落 argparse「未知旗标」
 //	     档（rc 相同=2、stderr 不同），该面**不属逐字对齐承诺**（见未覆盖面①）。
 //
-// 本单边界（照实）：本件**只落码、不接线** ——
+// 本单边界（照实）：本件**已接线（inproc 表分派）** ——
 //
-//	· **不**在 `core/cmd/zerg/main.go` 里注册命令（✗ 不进命令树 · ✗ 不改 `add_step`）；
+//	· **不**在 `core/cmd/zerg/main.go` 里注册命令（✗ 不进命令树 · `add_step` **已挂** `precommit-gates.sh:3448`（门55 · tri 档））；
 //	· **不**删 `scripts/gates/who-references.py` 原件（退场规则：**对拍通过后才**退场）；
-//	· 入口 `whoReferencesGateMain` 目前**无调用点**（M2 的刻意状态）。
+//	· **已接线**：入口 `whoReferencesGateMain` 由 `gateCheckGoEntry["who-references"]` 分派（`zerg gate check who-references`）· 原文此处断言与现读相反（只改文案 · 未改行为）。
 //
 // ★ 两条标准声明行：
 //

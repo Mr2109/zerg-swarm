@@ -16,11 +16,11 @@
 //	· `git status` 现读**不含它**（无人正在改）。
 //	✗ 不选同族更小件：本单「A 类纯静态 6 件」中它行数最小（191 行）。
 //
-// 本单边界（照实）：本件**只落码、不接线** ——
+// 本单边界（照实）：本件**已接线（inproc 表分派）** ——
 //
-//	· **不**在 `main.go` 里注册命令（✗ 不进命令树 · ✗ 不改 `add_step`）；
+//	· **不**在 `main.go` 里注册命令（✗ 不进命令树 · `add_step` **未挂**（`precommit-gates.sh` 现读零命中））；
 //	· **不**删 `scripts/gates/check_docs.py` 原件；
-//	· 入口 `checkDocsGateMain` 目前**无调用点**（M2 的刻意状态）；
+//	· **已接线**：入口 `checkDocsGateMain` 由 `gateCheckGoEntry["check_docs"]` 分派（`zerg gate check check_docs`）· 原文此处断言与现读相反（只改文案 · 未改行为）。
 //	· ✗ 不改登记面六面 · ✗ 不改任何 `family_*.go` / 已落旧件。
 //
 // 入口签名（与 py 的 `main()` 对齐）：

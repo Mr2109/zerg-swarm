@@ -4,8 +4,8 @@
 // 为什么有这件（M2 = 按价值真搬 Go · 落点 core/cmd/zerg/）：
 //
 //	验收判据 = 对同一 argv 跑两态（py 原件 ⟷ 本入口），stdout / stderr / 退码三面逐字相同
-//	（除下列**显式声明**的口径差面与未覆盖面）。本件**只落码、不接线**（✗ 不注册命令 ·
-//	✗ 不删 py 原件 · 入口暂无调用点）。
+//	（除下列**显式声明**的口径差面与未覆盖面）。本件**已接线（inproc 表分派）**（✗ 不注册命令 ·
+//	✗ 不删 py 原件 · **已接线**：入口 `checkNodesRosterGateMain` 由 `gateCheckGoEntry["check-nodes-roster"]` 分派（`zerg gate check check-nodes-roster`）· 原文此处断言与现读相反（只改文案 · 未改行为）。
 //
 // 本门 = 「机器名册真源唯一」的核对门：读本机名册（~/.zerg 下，不入仓）+ 仓内 gateway 的
 // fleet 件 + deploy 的 plist + 在跑的 agentd（`ps` 只读），判 B/C/D/E/F/G 六条。

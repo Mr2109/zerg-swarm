@@ -1,5 +1,5 @@
 // writer_lock.go —— 件 scripts/dev/writer-lock.sh（260 行）的 Go 真搬
-// （非 gates 面 · M2-0 生成器/工具档 · 入口 writerLockGateMain · 不接线 / 不注册 / 不删原件）。
+// （非 gates 面 · M2-0 生成器/工具档 · 入口 writerLockGateMain · 已接线（inproc 表分派） / 不注册 / 不删原件）。
 //
 // 为什么有这件（逐处现读 scripts/dev/writer-lock.sh 现值 · 非按件名推断）：
 //
@@ -25,11 +25,11 @@
 //	· 零连续「引号 + 键名 + 引号」原串 / 零错误登记函数的括弧引号形态；
 //	· 复核 0/0（见回执）。
 //
-// 本单边界（照实）：只落码、不接线 ——
+// 本单边界（照实）：已接线（inproc 表分派） ——
 //
 //	· 不在 core/cmd/zerg/main.go 注册命令（✗ 不进命令树 · ✗ 不改 gate_inproc_table.go）；
 //	· 不删 scripts/dev/writer-lock.sh 原件（退场规则：对拍通过后才逐件点名退场）；
-//	· 入口 writerLockGateMain 目前无调用点（M2 的刻意状态）。
+//	· **已接线**：入口 `writerLockGateMain` 由 `gateCheckGoEntry["writer-lock"]` 分派（`zerg gate check writer-lock`）· 原文此处断言与现读相反（只改文案 · 未改行为）。
 //
 // ★ --self-test 走**进程内**调用（本件无接线二进制，不做 os.Executable 重入）⇒ 与原件「复制自身再
 // 起 bash 子进程」是两种手段，但 18 格断言与文案逐字同构；夹具临时目录路径属非确定面。

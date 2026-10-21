@@ -21,11 +21,11 @@
 //	  ④ **写面**：本件**零写盘**（除自检在系统临时目录里建一枚合成夹具、用完即删 —— 见「自检自回收」节）。
 //	     判据路径**不写任何文件**、不落状态目录、不自我改写。
 //
-// 本单边界（照实）：本件**只落码、不接线** ——
+// 本单边界（照实）：本件**已接线（inproc 表分派）** ——
 //
-//	· **不**在命令树里注册命令（✗ 不进 `commands` 表 · ✗ 不改 `add_step`）；
+//	· **不**在命令树里注册命令（✗ 不进 `commands` 表 · `add_step` **已挂** `precommit-gates.sh:3470`（门58 · tri 档））；
 //	· **不**删 py 原件（退场规则：**对拍通过后**才逐件点名退场）；
-//	· 入口 `checkFieldsFaceParityGateMain` 目前**无调用点**（M2 的刻意状态）。
+//	· **已接线**：入口 `checkFieldsFaceParityGateMain` 由 `gateCheckGoEntry["check-fields-face-parity"]` 分派（`zerg gate check check-fields-face-parity`）· 原文此处断言与现读相反（只改文案 · 未改行为）。
 //
 // ★★ 两条标准声明行：
 //

@@ -37,10 +37,10 @@
 //	外部树走显式旋钮 `--root`（缺省 = cwd，与 py `a.root or os.getcwd()` 逐字同构）。
 //	退码 0/1/2 三档齐 · 现读 py import 面：argparse / json / os / re / sys / tempfile。
 //
-// 本单边界（照实）：本件**只落码、不接线** ——
+// 本单边界（照实）：本件**已接线（inproc 表分派）** ——
 //
 //	· ✗ 不在 `main.go` 里注册命令 · ✗ 不改 `gate_inproc_table.go` · ✗ 删 py 原件；
-//	· 入口 `checkDryrunYesConflictCoverageGateMain` 目前**无调用点**（M2 的刻意状态）；
+//	· **已接线**：入口 `checkDryrunYesConflictCoverageGateMain` 由 `gateCheckGoEntry["check-dryrun-yes-conflict-coverage"]` 分派（`zerg gate check check-dryrun-yes-conflict-coverage`）· 原文此处断言与现读相反（只改文案 · 未改行为）。
 //	· ✗ 不改登记面 / `family_*.go` / 已落旧件。
 //
 // ═══════════════════ ★ 两条出厂声明 ═══════════════════

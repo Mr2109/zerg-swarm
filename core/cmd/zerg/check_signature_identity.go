@@ -18,11 +18,11 @@
 //	· ⚠ **版本面差风险**：不同 macOS 版本 `codesign -dvvv` 的**行集合**可能不同（例如多/少 `CandidateCDHash` 一族）；
 //	  本件**只吃**三格 + `CDHash`/`Authority`/`Executable`，其余行任一态都无视 ⇒ 版本面差**落在未覆盖面**（见下）。
 //
-// 本单边界（照实）：本件**只落码、不接线** ——
+// 本单边界（照实）：本件**已接线（inproc 表分派）** ——
 //
-//	· **不**在 `core/cmd/zerg/main.go` 里注册命令（✗ 不进命令树 · ✗ 不改 `add_step`）；
+//	· **不**在 `core/cmd/zerg/main.go` 里注册命令（✗ 不进命令树 · `add_step` **已挂** `precommit-gates.sh:3393`（门㊸ · tri 档））；
 //	· **不**删 `scripts/gates/check-signature-identity.py` 原件（退场规则：**对拍通过后才**退场 · 逐件点名）；
-//	· 入口 `checkSignatureIdentityGateMain` 目前**无调用点**（M2 的刻意状态）；
+//	· **已接线**：入口 `checkSignatureIdentityGateMain` 由 `gateCheckGoEntry["check-signature-identity"]` 分派（`zerg gate check check-signature-identity`）· 原文此处断言与现读相反（只改文案 · 未改行为）。
 //	· ✗ 不改登记面六面 · ✗ 不改任何 `family_*.go` / 已落旧件。
 //
 // 入口签名（与 py 的 `main()` 对齐）：

@@ -1,4 +1,4 @@
-// doc_index_gen.go —— 独立件 `tools/doc_index_gen.py` 的 **Go 真搬**（M2 · v2.5.14 · **不接线 / 不注册 / 不删原件**）。
+// doc_index_gen.go —— 独立件 `tools/doc_index_gen.py` 的 **Go 真搬**（M2 · v2.5.14 · **已接线（inproc 表分派） / 不注册 / 不删原件**）。
 //
 // 入口签名（与 py `main()` 同形）:
 //

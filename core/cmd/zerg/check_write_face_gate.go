@@ -27,11 +27,11 @@
 //	（`check_write_authz.go`）—— 单一定义、无第二实现、无第二条真源。py 的 `_cwa is None` 兜底支
 //	（加载失败 ⇒ 实现面空集 ⇒ 全部写面判不出）在 Go 里**不可达**（编译期链接），列入未覆盖面。
 //
-// 本单边界（照实）：本件**只落码、不接线** ——
+// 本单边界（照实）：本件**已接线（inproc 表分派）** ——
 //
 //	· **不**在 main.go 里注册命令（✗ 不进命令树 · ✗ 不改 gate_inproc_table.go）；
 //	· **不**删 `scripts/gates/check-write-face-gate.py` 原件（退场规则：对拍通过后才逐件点名退场）；
-//	· 入口 `checkWriteFaceGateGateMain` 目前**无调用点**（M2 的刻意状态）；
+//	· **已接线**：入口 `checkWriteFaceGateGateMain` 由 `gateCheckGoEntry["check-write-face-gate"]` 分派（`zerg gate check check-write-face-gate`）· 原文此处断言与现读相反（只改文案 · 未改行为）。
 //	· ✗ 不改登记面 · ✗ 不改任何 family_*.go / 已落旧件。
 //
 // 入口签名（与 py 的 main(argv) 对齐）：

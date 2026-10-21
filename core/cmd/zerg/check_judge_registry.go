@@ -51,8 +51,8 @@
 //	  · 退码   —— 0 绿 / 1 红 / 2 不给结论（与 py 三码逐字对齐）
 //	  · 输出   —— stdout/stderr 与 py 逐字节对齐（见下「已对拍面 / 未覆盖面」）
 //
-// ⚠ 本单边界（照实）：只落码、不接线 —— 本件不新增命令树项（门79 的 Go 入口**早已**接进转发壳
-// `gateCheckGoEntry` 的 `check-judge-registry` 一格）· 不改 `add_step` · 不删 py 原件。
+// ⚠ 本单边界（照实）：已接线（inproc 表分派） —— 本件不新增命令树项（门79 的 Go 入口**早已**接进转发壳
+// `gateCheckGoEntry` 的 `check-judge-registry` 一格）· `add_step` **已挂** `precommit-gates.sh:3658`（门79 · tri 档） · 不删 py 原件。
 //
 // 未覆盖面（✗ 不声称逐字对齐）：
 //

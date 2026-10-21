@@ -1,7 +1,7 @@
 // check_exit_codes.go —— 门⑨「退码表：一张表 + 同数字不再两义」的 Go 真搬（M2 · 新口径：外部树走显式入参旋钮）。
 //
 // 真源件：scripts/gates/check-exit-codes.py（649 行）。
-// 入口：checkExitCodesGateMain —— M2 刻意状态：**不接线 / 不注册命令 / 不删原件 / 不改登记面**。
+// 入口：checkExitCodesGateMain —— M2 刻意状态：**已接线（inproc 表分派） / 不注册命令 / 不删原件 / 不改登记面**。
 //
 // 旋钮（名照 py 的同名旗标/位置参数，✗ 不另起名）：
 //

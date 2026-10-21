@@ -17,7 +17,8 @@
 //	手工旗标面的「拒执面」以字面词表（未知/不认/unrecognized/unknown）识别；argparse 面
 //	（`ArgumentParser(` 且未 `add_help=False` 且 `parse_args(` 且未 `parse_known_args`）自带给两面。
 //
-// ★ 本件只落码、不改命令树（不改 main.go · 不删 py 原件）。inproc 键登记见 gate_inproc_table.go。
+// ★ 本件已接线（inproc 键 `check-genflag-surface` · `precommit-gates.sh:3906` 门117 tri-report 档）、
+// 顶层命令树不改（不改 main.go · 不删 py 原件）。键登记见 gate_inproc_table.go。
 //
 // 退码（与 py 逐字同）：0 无**新**命中（存量棘轮内） · 1 有新命中（tri-report ⇒ 落 REPORT） ·
 //

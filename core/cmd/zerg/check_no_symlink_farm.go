@@ -13,11 +13,11 @@
 //	✓ 目标件**存在**（39838 字节 / 678 行）· 退码 0/1/2 三档齐 · 默认档**只读**（纪律行写死「只读」）。
 //	✓ 与已落 Go 件**无同套实现**（`core/cmd/zerg/` 现读无 `check_no_symlink_farm.go` · 前缀 `cnsf` 无撞名）。
 //
-// 本单边界（照实）：本件**只落码、不接线** ——
+// 本单边界（照实）：本件**已接线（inproc 表分派）** ——
 //
-//	· **不**在 `core/cmd/zerg/main.go` 里注册命令（✗ 不进命令树 · ✗ 不改 `add_step`）；
+//	· **不**在 `core/cmd/zerg/main.go` 里注册命令（✗ 不进命令树 · `add_step` **已挂** `precommit-gates.sh:3444`（门54 · tri 档））；
 //	· **不**删 `scripts/gates/check-no-symlink-farm` `.py` 原件（退场规则：**对拍通过后才**退场 · 逐件点名）；
-//	· 入口 `checkNoSymlinkFarmGateMain` 目前**无调用点**（M2 的刻意状态）；
+//	· **已接线**：入口 `checkNoSymlinkFarmGateMain` 由 `gateCheckGoEntry["check-no-symlink-farm"]` 分派（`zerg gate check check-no-symlink-farm`）· 原文此处断言与现读相反（只改文案 · 未改行为）。
 //	· ✗ 不改登记面六面 · ✗ 不改任何 `family_*.go` / 已落旧件。
 //
 // 入口签名（与 py 的 `sys.argv[1:]` 对齐）：

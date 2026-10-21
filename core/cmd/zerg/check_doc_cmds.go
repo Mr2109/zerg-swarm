@@ -26,11 +26,11 @@
 //	④ 取不到一律**不给结论**（rc=2），✗ 不读成「0 件＝干净」；本件把 py 那四条 blocked 分支与
 //	   「命令树读不出来 / baseline 解不动」两份 blocked 一并逐字保留。
 //
-// 本单边界（照实）：本件**只落码、不接线** ——
+// 本单边界（照实）：本件**已接线（inproc 表分派）** ——
 //
-//	· **不**在 `core/cmd/zerg/main.go` 里注册命令（✗ 不进命令树 · ✗ 不改 `add_step`）；
+//	· **不**在 `core/cmd/zerg/main.go` 里注册命令（✗ 不进命令树 · `add_step` **未挂**（`precommit-gates.sh` 现读零命中））；
 //	· **不**删 `scripts/gates/check-doc-cmds.py` 原件（退场规则：**对拍通过后才**退场）；
-//	· 入口 `checkDocCmdsGateMain` 目前**无调用点**（M2 的刻意状态）。
+//	· **已接线**：入口 `checkDocCmdsGateMain` 由 `gateCheckGoEntry["check-doc-cmds"]` 分派（`zerg gate check check-doc-cmds`）· 原文此处断言与现读相反（只改文案 · 未改行为）。
 //
 // ★ 两条标准声明行：
 //
@@ -61,7 +61,7 @@
 //	      · self-test 夹具里的魔法串（`doc-cmds-selftest-` 一族）只在**运行时建在 TMPDIR 下**的
 //	        夹具件正文里，✗ 不落本件正文的连续被扫形态。
 //	    ③ **证明处理有效**：落仓前后跑上述他门同一命令，命中数与输出 sha16 **逐字不变**（见交付读数）。
-//	    ④ 本件**不接线** ⇒ 不进任何命令树/用法面 ⇒ 无「他门用法面」新增字面量。
+//	    ④ 本件**已接线（inproc 表分派）** ⇒ 不进任何命令树/用法面 ⇒ 无「他门用法面」新增字面量。
 //
 // py 原件真口子（★ 不自行修 · 逐字保留 · **交回入账**）：
 //
@@ -1028,7 +1028,7 @@ func dcmdParseArgs(argv []string, stdout, stderr io.Writer) ([]string, bool, str
 	return scopes, selfTest, rootArg, only, 0, false
 }
 
-// checkDocCmdsGateMain —— 真搬入口（M2 刻意无调用点）。
+// checkDocCmdsGateMain —— 真搬入口（已接线：`gateCheckGoEntry["check-doc-cmds"]` 分派）。
 func checkDocCmdsGateMain(stdout, stderr io.Writer, argv []string) int {
 	dcmdReadFails = nil // ★ 自清：包级登记面不许跨调用残留（残留会让下一次一进门就被 BLOCKED）
 	// ── Q-176：本门无机器读面 ⇒ 给了 --json 不许沉默（先于 argparse）────────────────────

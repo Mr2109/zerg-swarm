@@ -55,12 +55,11 @@
 //	对拍面（本次新增 · 仓外夹具两态逐字）：R5a 红格（单页早于件级账起点 ⇒ 不上判 · 两页且后页该窗零写轮 ⇒ 红）·
 //	R5b 空窗格（件级账最新写轮晚于最新回执 ⇒ 2）· sibling 行不上判格 · 空件级账格。
 //
-// ⚠ 本单边界（照实）：本件**只落码、不接线** ——
+// ⚠ 本单边界（照实）：本件**已接线（inproc 表分派）** ——
 //
-//	· **不**在 `core/cmd/zerg/main.go` 里注册任何命令（✗ 不进命令树 · ✗ 不改任何 `add_step`）；
+//	· **不**在 `core/cmd/zerg/main.go` 里注册任何命令（✗ 不进命令树 · `add_step` **已挂** `precommit-gates.sh:2949`（门⑬ · tri 档））；
 //	· **不**删 `scripts/gates/check-ai-direct-edits.py` 原件（退场规则 4.3：**对拍通过后才**退场，且逐件显式点名）；
-//	· 入口 `aidirecteditsGateMain` 目前**无调用点** —— 这是 M2-0 的**刻意**状态：
-//	  先证明「搬得逐字相同」，接线与命令注册是后一单的事。
+//	· **已接线**：入口 `aidirecteditsGateMain` 由 `gateCheckGoEntry["check-ai-direct-edits"]` 分派（`zerg gate check check-ai-direct-edits`）· 原文此处断言与现读相反（只改文案 · 未改行为）。
 //
 // 入口签名（与 py 的 `main()` 逐字对齐）：
 //

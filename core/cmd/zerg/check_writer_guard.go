@@ -3,7 +3,7 @@
 // 真源：`scripts/gates/check-writer-guard.py`（521 行 · 纯只读 · rc 0/1/2 · 人面 + `--json` 机器面）。
 // 入口：`checkWriterGuardGateMain(stdout, stderr io.Writer, argv []string) int`（argv = py `sys.argv[1:]`）。
 //
-// ★ 本件只落码，**不接线**：不注册命令、不改 `main.go` / `gate.go` / `family_*.go` / 任何 `add_step`；
+// ★ 本件已接线（inproc 表分派）**：不注册命令、不改 `main.go` / `gate.go` / `family_*.go` / 任何 `add_step`；
 // 不删 py 原件（退场对拍通过后才逐件点名）。
 //
 // 未覆盖面（✗ 不声称逐字对齐 · 详单见伴随测试件与交付报）：

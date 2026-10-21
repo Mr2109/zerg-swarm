@@ -18,11 +18,11 @@
 //	✓ 与**已落仓**的 Go 件 `check_token_argv.go`（兄弟门 `check-token-argv.py` 的搬运）同族：本件 py
 //	  `:14` 逐字写明「同族门 `check-token-argv.py` 只管令牌面」⇒ 同族先例已在仓，非「重选已搬项」。
 //
-// 本单边界（照实）：本件**只落码、不接线** ——
+// 本单边界（照实）：本件**已接线（inproc 表分派）** ——
 //
-//	· **不**在 `core/cmd/zerg/main.go` 里注册命令（✗ 不进命令树 · ✗ 不改 `add_step` · ✗ 不接闸）；
+//	· **不**在 `core/cmd/zerg/main.go` 里注册命令（✗ 不进命令树 · `add_step` **已挂** `precommit-gates.sh:3442`（门53 · tri 档 · 已接闸））；
 //	· **不**删 `scripts/gates/check-password-argv.py` 原件（退场规则：**对拍通过后才**退场 · 逐件点名）；
-//	· 入口 `checkPasswordArgvGateMain` 目前**无调用点**（M2 的刻意状态）；
+//	· **已接线**：入口 `checkPasswordArgvGateMain` 由 `gateCheckGoEntry["check-password-argv"]` 分派（`zerg gate check check-password-argv`）· 原文此处断言与现读相反（只改文案 · 未改行为）。
 //	· ✗ 不改登记面六面 · ✗ 不改任何 `family_*.go` / 已落旧件。
 //
 // 入口签名（与 py 的 `main()` 对齐）：

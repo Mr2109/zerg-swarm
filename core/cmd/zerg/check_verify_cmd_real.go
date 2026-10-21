@@ -16,11 +16,11 @@
 //	· 退码 0/1/2 三档齐 · 无外部树（`--root/--ledger/--matrix` 三旋钮显式入参）。
 //	· `git status` 现读不含它（无人正在改）。
 //
-// 本单边界（照实）：本件**只落码、不接线** ——
+// 本单边界（照实）：本件**已接线（inproc 表分派）** ——
 //
-//	· **不**在 core/cmd/zerg/main.go 注册命令（✗ 不进命令树 · ✗ 不改 add_step 步骤表）；
+//	· **不**在 core/cmd/zerg/main.go 注册命令（✗ 不进命令树 · `add_step` **未挂**（`precommit-gates.sh` 现读零命中） 步骤表）；
 //	· **不**删 scripts/gates/check-verify-cmd-real.py 原件（退场规则：对拍通过后才逐件点名退场）；
-//	· 入口 `checkVerifyCmdRealGateMain` 目前**无调用点**（M2 的刻意状态）；
+//	· **已接线**：入口 `checkVerifyCmdRealGateMain` 由 `gateCheckGoEntry["check-verify-cmd-real"]` 分派（`zerg gate check check-verify-cmd-real`）· 原文此处断言与现读相反（只改文案 · 未改行为）。
 //	· ✗ 不改登记面六面 · ✗ 不改任何 family_*.go / 已落旧件 / gate_inproc_table.go。
 //
 // 入口签名（与 py 的 `main()` 对齐）：

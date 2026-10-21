@@ -61,11 +61,11 @@
 // 落仓顺序：**本件与命令页四件同笔**（`--emit` 产物必须与判据同批落地，否则提交期的
 // `gen-cli-reference --check` 自相矛盾）；窄集变更后第一次收口需**干净重编 + `--emit`**。
 //
-// 本单边界（照实）：**只落码、不接线** ——
+// 本单边界（照实）：**已接线（inproc 表分派）** ——
 //
 //	· 不在 `core/cmd/zerg/main.go` 注册命令（✗ 不进命令树）；
 //	· 不删 py 原件（退场规则：对拍通过后才逐件点名退场）；
-//	· 入口 `genCliReferenceGateMain` 目前**无调用点**（M2 刻意状态）。
+//	· **已接线**：入口 `genCliReferenceGateMain` 由 `gateCheckGoEntry["gen-cli-reference"]` 分派（`zerg gate check gen-cli-reference`）· 原文此处断言与现读相反（只改文案 · 未改行为）。
 package main
 
 import (

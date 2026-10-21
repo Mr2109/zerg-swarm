@@ -17,11 +17,11 @@
 //	  `check-exec-two-condition.py` / `check-delegation-selfreport.py` / `check-gap-state-vs-artifact.py` /
 //	  `check-model-size-anchor.py` 均带 `subprocess`（真起子进程取读数）⇒ 出局。
 //
-// ⚠ 本单边界（照实）：本件**只落码、不接线** ——
+// ⚠ 本单边界（照实）：本件**已接线（inproc 表分派）** ——
 //
-//	· **不**在 `core/cmd/zerg/main.go` 里注册任何命令（✗ 不进命令树 · ✗ 不改任何 `add_step`）；
+//	· **不**在 `core/cmd/zerg/main.go` 里注册任何命令（✗ 不进命令树 · `add_step` **已挂** `precommit-gates.sh:3744`（门95 · tri-report 档））；
 //	· **不**删 `scripts/gates/check-mkdir-temp-cleanup.py` 原件（退场规则：对拍通过后才逐件点名退场）；
-//	· 入口 `checkMkdirTempCleanupGateMain` 目前**无调用点** —— 这是 M2 的刻意状态。
+//	· **已接线**：入口 `checkMkdirTempCleanupGateMain` 由 `gateCheckGoEntry["check-mkdir-temp-cleanup"]` 分派（`zerg gate check check-mkdir-temp-cleanup`）· 原文此处断言与现读相反（只改文案 · 未改行为）。
 //
 // 入口签名（与 py 的 `main()` 对齐）：
 //
