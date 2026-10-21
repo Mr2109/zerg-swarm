@@ -1473,7 +1473,10 @@ var (
 	chsecFixSlack = "xoxb-" + strings.Repeat("0", 12)
 	chsecFixHome  = "/Users/" + "ms" + "01"
 	// ★ 等价形态夹具（缺口 GAP-20260925-38 · 四种「绕得过」的变形）：一律**拼装/转义写**，源码里不留完整形态。
-	chsecFixFW  = "\uFF0F\uFF35\uFF53\uFF45\uFF52\uFF53\uFF0F\uFF4D\uFF53\uFF10\uFF11"      // 全角 ／Ｕｓｅｒｓ／ｍｓ０１（规则只枚举 ASCII 形）
+	// ★ 拆成两段相邻字面量（GAP-20261021-10）：本门自己会先解 `\uXXXX` 再折全角，整串字面量
+	//   经自身归一化即成阻断形 ⇒ 门把门自己判红、逐提交硬门禁跑不出结论。运行时值逐字节不变。
+	//   ✗ 不许合并回一个字符串：合并后本件源文本又会被 ⑮ 的判据吃掉。
+	chsecFixFW  = "\uFF0F\uFF35\uFF53\uFF45\uFF52\uFF53\uFF0F" + "\uFF4D\uFF53\uFF10\uFF11" // 全角同形字形的家目录：／Ｕｓｅｒｓ／ 后面接 ｍｓ０１（规则只枚举 ASCII 形）
 	chsecFixZW  = "10.0." + "\u200b" + "0.5"                                                // 真 U+200B 插在地址中（规则未枚举）
 	chsecFixESC = "10.0." + "\\u200b" + "0.5"                                               // 源码里的转义写法（6 个 ASCII 字符 · 规则未枚举）
 	chsecFixB64 = base64.StdEncoding.EncodeToString([]byte("10.0." + "0" + ".5" + ":port")) // base64 载荷（第四变形）
@@ -1686,7 +1689,7 @@ func chsecSelfTest(stdout, stderr io.Writer) int {
 		naiveEsc && !strings.Contains(naive, cjkRel),
 		fmt.Sprintf("转义形态 %s · 原样名 %s（期望：有转义 / 无原样）", inDisp(naiveEsc), inDisp(strings.Contains(naive, cjkRel))))
 
-	fmt.Fprint(stdout, "[判据] 等价形态·全角同形字：`／Users／ｆｕｚｚ０１` 经 NFKC 折回 `/Users/ms"+"01` ⇒ 判红\n")
+	fmt.Fprint(stdout, "[判据] 等价形态·全角同形字：`／Users／ｍｓ"+"０１` 经 NFKC 折回 `/Users/ms"+"01` ⇒ 判红\n")
 	fw := chsecMkFixtureRepo(d, "fullwidth", []chsecFixtureFile{{"src/fw.py", `H = "` + chsecFixFW + `"` + "\n"}}, "夹具：初始提交", chsecFixWL)
 	rc, text = chsecRunCLI(fw)
 	caseFn("⑮全角同形", "白名单内全角路径形 ⇒ rc=1 且点名「用户家目录路径」",

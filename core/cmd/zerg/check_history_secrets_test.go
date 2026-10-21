@@ -125,3 +125,29 @@ func TestCheckHistorySecretsGate_NoSelfLeak(t *testing.T) {
 		t.Errorf("AWS 判据拼装后无法匹配真形态")
 	}
 }
+
+// ③′ 自指（真口径 · GAP-20261021-10）：③ 只拿原始源文本比 BLOCK 正则，看不见「解 \uXXXX →
+// 折全角」之后才凑成的形态；而 ⑮⑰ 的牙恰在这一手 ⇒ 门自己的夹具能把门判红。本格按**运行时同一条
+// 管线**（替换规则 → normalize_forms）再扫一遍本件，命中即红；并留反向牙：去串接不许把 ⑮ 的牙拔掉。
+func TestCheckHistorySecretsGate_NoSelfLeakNormalized(t *testing.T) {
+	src, err := os.ReadFile("check_history_secrets.go")
+	if err != nil {
+		t.Skipf("读不到本件源文本（跳过自指面）：%v", err)
+	}
+	root := chsecRepoRoot()
+	lits, regexes, _ := chsecLoadRules(chsecRulesPath(root))
+	if len(lits)+len(regexes) == 0 {
+		t.Fatalf("判不了：读不到替换规则真源（%s）⇒ 自指面不许空跑当绿", chsecRulesPath(root))
+	}
+	text := chsecNormalizeForms(chsecApplyRules(string(src), lits, regexes, nil, ""))
+	specs := chsecCompileSpecs(chsecBlockSpecs)
+	for _, c := range specs {
+		if m := c.rx.FindString(text); m != "" {
+			t.Errorf("自指命中（归一化后）：BLOCK 档 %q 在本件源文本命中 %q", c.why, chsecMask(m))
+		}
+	}
+	fw := chsecNormalizeForms(chsecApplyRules(chsecFixFW, lits, regexes, nil, ""))
+	if !specs[1].rx.MatchString(fw) {
+		t.Errorf("反向牙失效：全角夹具归一化后不再命中家目录档（去串接把用例的牙拔掉了）")
+	}
+}
