@@ -1472,6 +1472,20 @@
    "语义": "dryrun.v1",
    "零副作用判据": "测试自身不写状态目录：只用 fake 后端与 t.TempDir()；`--dry-run` 档断言零副作用且在非 linux 上拒绝 nsjail",
    "备注": "M1（第八十二笔）新增"
+  },
+  {
+   "file": "core/cmd/zerg/family_cocoon_broker.go",
+   "类": "命令面三态（`cocoon broker start|stop --dry-run` 的计划件 · 与 guard.go 同一套语义）—— 真站点：`inv.dryRun` 在 `start`/`stop` 里**真读**，`status` 显式拒执",
+   "语义": "dryrun.v1",
+   "零副作用判据": "`bin/zerg cocoon broker start --dry-run` ⇒ 退码 0 · stdout 只有计划件（实际将用的 addr ＋ 它的来源 `default|env:ZERG_BROKER_ADDR|env:ZERG_BROKER_HTTP_ADDR` / 茧内 base / 上游 / 模型 / pid 件 / 状态件 / 日志路径）＋ stderr 一行「（--dry-run … 零副作用）」· **不绑端口、不写 pid 件与状态件、不起子进程、不写日志**（现跑对拍：跑后 `<状态目录>/broker` 目录**不存在**、该 addr `dial` 不通）；`cocoon broker stop --dry-run` ⇒ 退码 0 · stdout 只有计划件（目标 pid / 地址 / 信号序：SIGTERM→宽限→SIGKILL）· **不发任何信号、不删任何件**（现跑对拍：靶进程仍活、状态件逐字节不变）；`cocoon broker status --dry-run` ⇒ 退码 2（只读面本来零副作用，✗ 不用干跑冒充）。",
+   "备注": "T4c 新增（宿主 broker 命令面 · 缺省 127.0.0.1:8092 · 单旋钮 ZERG_BROKER_ADDR）"
+  },
+  {
+   "file": "core/cmd/zerg/cocoon_broker_test.go",
+   "类": "判据件（成对负控：动作词闭集 / 干跑零副作用 / 端口被占点名不假成功 / status 四态 / stop 不碰别人的进程）—— 本件只**断言** dry-run 的零副作用，不新立语义",
+   "语义": "dryrun.v1",
+   "零副作用判据": "`TestCocoonBrokerStartDryRunZeroSideEffects` 现跑 `start --dry-run` ⇒ rc=0 且 `<状态目录>/broker` 目录**不存在**、三个落点件都不在、该 addr `dial` 不通（任一条破了就红）；`TestCocoonBrokerStopKillsOwnedPid` 先跑 `stop --dry-run` 对真实子进程 ⇒ 靶子仍活、状态件仍在，之后真跑才收。",
+   "备注": "T4c 新增（上件的测试伴生件）"
   }
  ]
 }

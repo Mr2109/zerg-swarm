@@ -52,7 +52,8 @@
 //	`enabled = true` ⇒ `open` 给茧内注入三个 env，**一个字节的真值都没有**：
 //
 //	  ZERG_AI_BASE       = 宿主 broker 的回环 base（`[茧.ai].base` ＞ `ZERG_AI_BASE` ＞ 内置回环
-//	                       `http://127.0.0.1:8082`，与 `cocoon.DefaultBrokerHTTPAddr` 同一个真源）
+//	                       `http://` ＋ `cocoon.ResolveBrokerAddr()`）；★ 缺省这一级与 broker 的
+//	                       监听地址**同一个真源** —— `ZERG_BROKER_ADDR` 一处旋钮同时改两处
 //	  ZERG_AI_MODEL      = `[茧.ai].model`（缺省 Nemotron-3.5-Super-VL-120B-A12B）
 //	  ZERG_AI_TOKEN_FILE = 茧内一个**只读件**的路径，内容恒为占位符 `zerg-broker`
 //
@@ -70,14 +71,12 @@
 //	  不是目录」，✗ 不假装我们替你拉了镜像；上层盘还必须支持叠层（tmpfs/ext4/xfs 可以，
 //	  overlay-on-overlay 不行，见 core/internal/cocoon/backend_nsjail_rootfs.go）。
 //	· 伪终端（ExecOpts.TTY=true 一律拒）· VZ/HCS 两个后端 · 令牌真值落点（本版只签发并在输出里给脱敏形）。
-//	· ★ **broker 的命令面**：茧内拿到的只是「指向 broker 的 base」＋「占位符」，真值的交接在
-//	  `cocoon.Broker`：unix 面的 `ai.request` op（先 Authorize、再 RewriteRequest 换值），
-//	  以及 **HTTP 回环面**（T4b：`ListenHTTP` 的 `/health` ＋ `POST /v1/chat/completions`
-//	  透传，真令牌只在 broker 进程内加进出站请求头 —— 茧内 `curl $ZERG_AI_BASE/health` 因此
-//	  能真通）。⇒ **还缺的是「起 broker 的命令面」**：本仓现读没有 `zerg ai inject` /
-//	  `zerg ai call` / `zerg cocoon broker` 这一类命令（`grep -rn '"ai ' core/cmd/zerg` 命中 0）
-//	  ⇒ 茧内那两条 HTTP 路径**通不通，取决于宿主上有没有人起 broker**（`NewBroker` ＋
-//	  `ListenHTTP` ＋ `Serve`）。这一段是缺口，✗ 不许把它写成"命令面已接上"。
+//	· **broker 的命令面**（T4c 已接）：`zerg cocoon broker <start|stop|status>` 在宿主上真起/收/看
+//	  那个 `cocoon.Broker`（`NewBroker` ＋ `Listen`（unix 面）＋ `ListenHTTP`（回环面）＋ `Serve`），
+//	  落件 `family_cocoon_broker.go`。⇒ 茧内 `curl $ZERG_AI_BASE/health` 的**前置条件**从此可满足：
+//	  宿主先 `zerg cocoon broker start`（缺省 `127.0.0.1:8092`，与 `zerg-core` 网关的 8082 不再撞车）。
+//	  ★ 仍未接的面照实登记：**broker 的多茧共享**（本版一个宿主一份 broker、`/health` 的
+//	  `token_mode` 全局一格）与**per-cocoon 监听**（见 `broker_http.go` 的「未接的面」）。
 package main
 
 import (
@@ -110,15 +109,17 @@ const (
 	cocoonBackendEnv = "ZERG_COCOON_BACKEND"
 	// cocoonTokenEnv —— `inspect` 的令牌面：只回**脱敏形**（真值不进 stdout / argv / 日志）。
 	cocoonTokenEnv = "ZERG_COCOON_TOKEN"
-	// cocoonAIBaseEnv / cocoonDefaultAIUpstream —— 注入面的宿主 broker 回环 base。
+	// cocoonAIBaseEnv —— 注入面的宿主 broker 回环 base 的 env 名。
 	//
 	// ★ env 名是 `ZERG_AI_BASE`，**不是** `ZERG_AI_UPSTREAM`：后者已归 broker 用（`cocoon.EnvAIUpstream`
 	// = 真上游地址，缺省 `http://127.0.0.1:9400`）。两个名字混用等于让宿主想「把 broker 指向模型」
 	// 的那条配置顺手把**茧内的 base 也带走** —— 茧就绕过 broker 直连模型，占位符那一跳白做。
-	// ★ 缺省值直接由 `cocoon.DefaultBrokerHTTPAddr` 拼出来：两处各写一份 8082，迟早会有
-	// 一处改了、另一处没改，症状就是 T4 的 ECONNREFUSED。
-	cocoonAIBaseEnv         = "ZERG_AI_BASE"
-	cocoonDefaultAIUpstream = "http://" + cocoon.DefaultBrokerHTTPAddr
+	//
+	// ★ 缺省那一级**没有**本件自己的常量：它是 `cocoonDefaultAIUpstream()`（下面的函数），
+	//   真源 = `cocoon.ResolveBrokerAddr` ／ `cocoon.BrokerAIBase` —— 与 broker 的监听地址同一处。
+	//   （T4 是「两处各写一份 8082」，T4b 又撞上 `zerg-core` 网关；T4c 起只留**一个旋钮**：
+	//   `ZERG_BROKER_ADDR`，旧名 `ZERG_BROKER_HTTP_ADDR` 当同义回退。）
+	cocoonAIBaseEnv = "ZERG_AI_BASE"
 
 	cocoonBackendFake   = "fake"
 	cocoonBackendNsjail = "nsjail"
@@ -582,14 +583,24 @@ func cocoonOpenUsage(inv *invocation, stderr io.Writer, why string) int {
 // ★ 为什么 env 这一级不是 `ZERG_AI_UPSTREAM`：那个名字是 broker 的**真上游**（`cocoon.EnvAIUpstream`，
 // 缺省 9400）。混用会把"宿主让 broker 指向模型"读成"让茧直连模型" —— 茧内就能绕过 broker
 // 换值那一跳，占位符形同虚设。两个 env 各管一段，是本件的一条判据（测试逐条打）。
-func cocoonAIUpstream(ai cocoon.AISpec) string {
+//
+// ★ 第三级（内置回环）**不在本件拼**：它走 `cocoon.BrokerAIBase()`，与 broker 的监听地址
+// 同一个真源 ⇒ `ZERG_BROKER_ADDR` 一处旋钮同时改两处（T4c）。
+// 旋钮非法（不是 host:port / 不是回环）⇒ **上抛错误**、由调用方拒执：编一个「看起来能用」
+// 的地址会让茧指着一扇没人开的门（那正是 T4 的病），比当场退 1 更坏。
+func cocoonAIUpstream(ai cocoon.AISpec) (string, error) {
 	if b := strings.TrimSpace(ai.Base); b != "" {
-		return b
+		return b, nil
 	}
 	if v := strings.TrimSpace(os.Getenv(cocoonAIBaseEnv)); v != "" {
-		return v
+		return v, nil
 	}
-	return cocoonDefaultAIUpstream
+	base, _, err := cocoon.BrokerAIBase()
+	if err != nil {
+		return "", fmt.Errorf("茧内缺省 base 算不出来（宿主 broker 地址旋钮 %s／%s 非法）：%w",
+			cocoon.EnvBrokerAddr, cocoon.EnvBrokerHTTPAddr, err)
+	}
+	return base, nil
 }
 
 // cocoonAIInject — 按契约算出「要注入给茧内的三件东西」＋需要的那条挂载项。
@@ -604,7 +615,11 @@ func cocoonAIInject(instID, tokenHost string, spec *cocoon.Spec) (cocoon.AIPlan,
 	if spec == nil || !spec.Cocoon.AI.Enabled {
 		return cocoon.AIPlan{}, nil, nil
 	}
-	plan, err := cocoon.BuildAIEnvChecked(instID, spec.Cocoon.AI.ModelOrDefault(), cocoonAIUpstream(spec.Cocoon.AI))
+	base, berr := cocoonAIUpstream(spec.Cocoon.AI)
+	if berr != nil {
+		return cocoon.AIPlan{}, nil, berr
+	}
+	plan, err := cocoon.BuildAIEnvChecked(instID, spec.Cocoon.AI.ModelOrDefault(), base)
 	if err != nil {
 		return cocoon.AIPlan{}, nil, err
 	}
@@ -626,8 +641,8 @@ func cocoonAIInject(instID, tokenHost string, spec *cocoon.Spec) (cocoon.AIPlan,
 func cocoonAIText(plan cocoon.AIPlan) string {
 	return fmt.Sprintf("base=%s · model=%s · 令牌件=%s（内容恒为占位符 %s · 真值不在茧内 · "+
 		"茧内直连 %s 的 /health 与 /v1/chat/completions，由宿主 broker 换真令牌再拨上游；"+
-		"本版**没有起 broker 的命令面** ⇒ 宿主不起 broker 时茧内 curl 得到连接失败）",
-		plan.Base, plan.Model, plan.TokenFile, cocoon.AITokenPlaceholder, plan.Base)
+		"前置条件：宿主先 `%s cocoon broker start`，否则茧内 curl 得到连接失败）",
+		plan.Base, plan.Model, plan.TokenFile, cocoon.AITokenPlaceholder, plan.Base, progName)
 }
 
 // ── open ────────────────────────────────────────────────────────────────

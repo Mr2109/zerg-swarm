@@ -2,7 +2,7 @@
 //
 // ★ 为什么要有这一面（T4b 的起因，T4 实测）：`Broker` 原来只有 unix socket 监听，而茧内拿到的
 // `ZERG_AI_BASE` 必须是 http(s) 回环 URL（`CheckAIUpstream` 的硬校验）⇒ 茧内
-// `curl $ZERG_AI_BASE/health` 到不了 broker（实测 `dial 127.0.0.1:8082` ⇒ ECONNREFUSED）。
+// `curl $ZERG_AI_BASE/health` 到不了 broker（实测 `dial 127.0.0.1:<broker 端口>` ⇒ ECONNREFUSED）。
 // 本件补的就是那一段，形状是「**茧内只用 HTTP，真令牌只在 broker 进程内**」：
 //
 //	茧内（占位符 zerg-broker） → 127.0.0.1:<broker 端口> → broker（换真令牌） → 真上游
@@ -32,6 +32,7 @@ package cocoon
 
 import (
 	"bytes"
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
@@ -46,11 +47,25 @@ import (
 )
 
 const (
-	// DefaultBrokerHTTPAddr — 茧内 AI 面的缺省监听地址。★ 与 `cocoonDefaultAIUpstream`
-	// （命令面注入给茧内的 `ZERG_AI_BASE`）必须同一个值：两处各写一份就等于让茧去敲一扇
-	// 没人开的门（T4 的 ECONNREFUSED 就是这么来的）。
-	DefaultBrokerHTTPAddr = "127.0.0.1:8082"
-	// EnvBrokerHTTPAddr — 覆盖监听地址（宿主机 env；茧内不需要也不该看到它）。
+	// DefaultBrokerHTTPAddr — 茧内 AI 面的缺省监听地址（**一处真源**）。
+	//
+	// ★ 8092 而不是 8082（T4c）：8082 是 `zerg-core` 网关的**正式端口**
+	// （`core/cmd/zerg-core/main.go` 的 `gw.Start(8082)` ＋ 就绪探测 `127.0.0.1:8082`）⇒
+	// 缺省撞车时本机 `net.Listen` 直接 `EADDRINUSE`，broker **开箱起不来**（T4b 实测）。
+	// 已探空闲的同族端口：8083 / 8092 / 9410 / 8582 ⇒ 取 8092（与 8082 同段、不与任何既有面重叠）。
+	DefaultBrokerHTTPAddr = "127.0.0.1:8092"
+	// EnvBrokerAddr — **单一旋钮**（只收 `host:port`，**不含 scheme**）。
+	//
+	// ★ 它同时决定**两处**，且两处都只经 `ResolveBrokerAddr` 取：
+	//  ① 本面的监听地址（`ListenHTTP`）；
+	//  ② 命令面注入给茧内的缺省 `ZERG_AI_BASE` 的 host:port（`BrokerAIBase`）。
+	//  两处各读一次 env 就是让它们漂 —— 那正是 T4/T4b 的 ECONNREFUSED 病根。
+	EnvBrokerAddr = "ZERG_BROKER_ADDR"
+	// EnvBrokerHTTPAddr — 旧名（**兼容输入**，不是第二套变量）。
+	//
+	// ★ 它只在 `ResolveBrokerAddr` 里当 `EnvBrokerAddr` 的**同义回退**读，解析结果同样喂给
+	//   上面两个消费点 ⇒ 用旧名的部署**也不会**让「监听」与「茧内 base」漂成两个端口。
+	//   两个都设且值不同 ⇒ 以 `ZERG_BROKER_ADDR` 为准（新名优先，人面照实报来源）。
 	EnvBrokerHTTPAddr = "ZERG_BROKER_HTTP_ADDR"
 	// EnvAIUpstream — 真上游地址（宿主机 env；茧内看到的是 `ZERG_AI_BASE` = broker 自己）。
 	EnvAIUpstream = "ZERG_AI_UPSTREAM"
@@ -85,11 +100,13 @@ var (
 	ErrHTTPBadUpstream = errors.New("cocoon: AI 上游 base 形态非法（要 http(s)://host[:port][/path]，不带 userinfo/query）")
 	// ErrHTTPNilBroker — 零值 Broker 上开会话面。
 	ErrHTTPNilBroker = errors.New("cocoon: broker 为空（HTTP 面无从挂载）")
+	// ErrHTTPFaceNotOpen — 还没 `ListenHTTP` 就要跑 HTTP 面（先开后跑，✗ 不自动替调用方 bind）。
+	ErrHTTPFaceNotOpen = errors.New("cocoon: broker HTTP 面还没开（先 ListenHTTP 再 ServeHTTPFace）")
 )
 
 // BrokerHTTPOptions — 茧内 AI 回环面的配置。零值 ⇒ 全部取缺省（env ＞ 内置常量）。
 type BrokerHTTPOptions struct {
-	// Addr — 监听地址。空 ⇒ `ZERG_BROKER_HTTP_ADDR` ⇒ `DefaultBrokerHTTPAddr`。
+	// Addr — 监听地址。空 ⇒ `ZERG_BROKER_ADDR` ⇒ `ZERG_BROKER_HTTP_ADDR`（旧名）⇒ `DefaultBrokerHTTPAddr`。
 	Addr string
 	// Upstream — 真上游 base。空 ⇒ `ZERG_AI_UPSTREAM` ⇒ `DefaultAIUpstream`。
 	Upstream string
@@ -171,29 +188,82 @@ func (o BrokerHTTPOptions) resolved() (brokerHTTPState, error) {
 	return st, nil
 }
 
-// resolveBrokerHTTPAddr — 监听地址的三级真源 ＋ **回环硬闸**。
+// ── 单一真源：`ZERG_BROKER_ADDR` ─────────────────────────────────────────
 //
-// ★ 空 host（`:8082`）也拒：它的语义是「绑全部网卡」，而 Go 的 `net.Listen("tcp", ":8082")`
-// 会**成功** —— 不判这一条，「只绑回环」就只是注释。
-func resolveBrokerHTTPAddr(addr string) (string, error) {
-	s := strings.TrimSpace(addr)
-	if s == "" {
-		s = strings.TrimSpace(os.Getenv(EnvBrokerHTTPAddr))
+// ★ 为什么要有**一层**解析函数而不是各调用点自己读 env：本仓有两处消费同一份地址 ——
+// `ListenHTTP` 的 bind，与命令面注入给茧内的缺省 `ZERG_AI_BASE`。两处各写一份就等于
+// 「broker 监听 A、茧内敲 B」（T4 的 ECONNREFUSED 就是这么来的，T4b 又在 8082 上撞了网关）。
+// ⇒ 两个消费点都只调 `ResolveBrokerAddr` / `BrokerAIBase`，一处改、两处同改。
+
+// BrokerAddrSourceOption / …EnvNew / …EnvOld / …Default —— `ResolveBrokerAddr` 报出来的来源
+// （人面/机器面用来回答「这个 addr 是谁给的」；✗ 不回显非法原值 —— 它可能带凭据样串）。
+const (
+	BrokerAddrSourceOption  = "option"
+	BrokerAddrSourceEnvNew  = "env:" + EnvBrokerAddr
+	BrokerAddrSourceEnvOld  = "env:" + EnvBrokerHTTPAddr
+	BrokerAddrSourceDefault = "default"
+)
+
+// ResolveBrokerAddr — **茧内 AI 面地址的唯一真源**：返回 (监听用 host:port, 来源, error)。
+//
+// 优先级（★ 旧名是**同义回退**、不是第二套旋钮）：
+//
+//	`ZERG_BROKER_ADDR` ＞ `ZERG_BROKER_HTTP_ADDR`（旧名）＞ `DefaultBrokerHTTPAddr`
+//
+// 两条硬约束都在这一个点上（改这里先读 `verifyLoopbackListener` 与 `ErrHTTPNotLoopback` 的注释）：
+//
+//	① 形态必须是 `host:port`（空 port 拒）—— `net.SplitHostPort` 判；
+//	② host 必须是回环（`127.0.0.0/8` · `::1` · `localhost`），**空 host 也拒**：
+//	   空 host 的语义是「绑全部网卡」，而 `net.Listen("tcp", ":8092")` 会**成功** ——
+//	   不判这一条，「只绑回环」就只是注释。
+func ResolveBrokerAddr() (addr, source string, err error) {
+	return resolveBrokerAddrFrom("")
+}
+
+// BrokerAIBase — 茧内缺省 `ZERG_AI_BASE`（`http://` ＋ `ResolveBrokerAddr` 的 host:port）。
+//
+// ★ 与 `ListenHTTP` **同一个真源**：这就是「一个旋钮同时改两处」的那条线。命令面
+// （`cocoon open` 的注入面）与 broker 自己都走这里 ⇒ 旋钮只设一处，两处一起动。
+// 错误（旋钮非法）**原样上抛**：调用方要么拒执、要么退回缺省，✗ 不许在这里编一个「看起来能用」的地址。
+func BrokerAIBase() (base, source string, err error) {
+	addr, source, err := ResolveBrokerAddr()
+	if err != nil {
+		return "", source, err
 	}
+	return "http://" + addr, source, nil
+}
+
+// resolveBrokerAddrFrom — 三级真源 ＋ 回环硬闸（`explicit` 非空 ⇒ 参数优先，供 `BrokerHTTPOptions.Addr` 用）。
+func resolveBrokerAddrFrom(explicit string) (string, string, error) {
+	s := strings.TrimSpace(explicit)
+	src := BrokerAddrSourceOption
 	if s == "" {
-		s = DefaultBrokerHTTPAddr
+		if v := strings.TrimSpace(os.Getenv(EnvBrokerAddr)); v != "" {
+			s, src = v, BrokerAddrSourceEnvNew
+		} else if v := strings.TrimSpace(os.Getenv(EnvBrokerHTTPAddr)); v != "" {
+			// 旧名：**兼容输入**。解析结果与用新名时逐字同形 ⇒ 两处消费点不漂。
+			s, src = v, BrokerAddrSourceEnvOld
+		} else {
+			s, src = DefaultBrokerHTTPAddr, BrokerAddrSourceDefault
+		}
 	}
 	host, port, err := net.SplitHostPort(s)
 	if err != nil {
-		return "", fmt.Errorf("%w: %q", ErrHTTPBadAddr, s)
+		return "", src, fmt.Errorf("%w: %q", ErrHTTPBadAddr, s)
 	}
 	if strings.TrimSpace(port) == "" {
-		return "", fmt.Errorf("%w: %q（缺端口）", ErrHTTPBadAddr, s)
+		return "", src, fmt.Errorf("%w: %q（缺端口）", ErrHTTPBadAddr, s)
 	}
 	if host == "" || !isLoopbackHost(host) {
-		return "", fmt.Errorf("%w: host=%q（地址 %q）", ErrHTTPNotLoopback, host, s)
+		return "", src, fmt.Errorf("%w: host=%q（地址 %q）", ErrHTTPNotLoopback, host, s)
 	}
-	return net.JoinHostPort(host, port), nil
+	return net.JoinHostPort(host, port), src, nil
+}
+
+// resolveBrokerHTTPAddr — `BrokerHTTPOptions.Addr` 那一档的薄壳（真源仍是 `resolveBrokerAddrFrom`）。
+func resolveBrokerHTTPAddr(addr string) (string, error) {
+	a, _, err := resolveBrokerAddrFrom(addr)
+	return a, err
 }
 
 // resolveAIUpstream — 真上游的三级真源（参数 ＞ env ＞ 缺省）＋ 形态校验。
@@ -225,11 +295,18 @@ func resolveAIUpstream(raw string) (string, error) {
 	return u.Scheme + "://" + u.Host + strings.TrimSuffix(u.Path, "/"), nil
 }
 
+// ResolveAIUpstream — `resolveAIUpstream` 的导出薄壳。
+//
+// 为什么要露出来：命令面（`zerg cocoon broker status|start`）要能**在 broker 没起时**
+// 也报出「它会拨哪个上游」。那一格的取值口径必须与 `ListenHTTP` 逐字同源 ——
+// 让命令面自己再读一遍 `ZERG_AI_UPSTREAM` ＋ 再拼一次缺省，就是 T4 那条「两处各写一份」的老病。
+func ResolveAIUpstream(raw string) (string, error) { return resolveAIUpstream(raw) }
+
 // ListenHTTP — 开茧内 AI 的 HTTP 回环面，返回**实际**监听地址（`127.0.0.1:0` 时是内核挑的端口）。
 //
 // ★ 三步都 fail-closed：配置算不出来 ⇒ 不 bind；bind 之后现读内核实际绑的 IP 再判一次；
-// 端口被占（例如与 zerg-core 网关同抢 8082）⇒ 原样报出 `bind:` 那句，✗ 不静默换端口
-// （换了端口，茧内的 `ZERG_AI_BASE` 就指向虚空 —— 那正是 T4 的病）。
+// 端口被占（例如与 `zerg-core` 网关的 8082 同抢 —— T4c 已把缺省让到 8092）⇒ 原样报出 `bind:` 那句，
+// ✗ 不静默换端口（换了端口，茧内的 `ZERG_AI_BASE` 就指向虚空 —— 那正是 T4 的病）。
 func (b *Broker) ListenHTTP(opts BrokerHTTPOptions) (string, error) {
 	if b == nil {
 		return "", ErrHTTPNilBroker
@@ -588,6 +665,50 @@ type httpFace struct {
 	state brokerHTTPState
 	ln    net.Listener
 	srv   *http.Server
+}
+
+// ServeHTTPFace — **只跑茧内 AI 的 HTTP 回环面**（✗ 不开 unix 面），ctx 取消即停；返回 nil = 正常收工。
+//
+// 为什么要这一口：宿主上的「起 broker」命令面（`zerg cocoon broker start`）只需要
+// `/health` ＋ `POST /v1/chat/completions` 这两条**回环**路径。unix 面是「每茧独立 uid / peer 判据」
+// 才需要的那一层，它的授权面（`TokenManager` ＋ `Ops`）是另一张契约 ⇒ 本版命令面**不接**它，
+// 也就不许假装接了（`/health` 的 `peer_identity` 那格照旧按 `none` 记）。
+//
+// ★ 与 `Serve` 的关系：`Serve` 仍是「unix ＋ HTTP 两条面同一个生命周期」，一字不动；
+// 本函数是**只开 HTTP 那一半**的入口，供不需要 unix 面的调用方用。
+//
+// ★ 收工语义与 `Serve` 一致：ctx 取消 ⇒ `Close()`（幂等）⇒ 本函数返回 nil。
+// HTTP 面自己出错 ⇒ 原样上抛（✗ 不吞成「正常收工」）。
+func (b *Broker) ServeHTTPFace(ctx context.Context) error {
+	if b == nil {
+		return ErrHTTPNilBroker
+	}
+	b.mu.Lock()
+	face := b.http
+	closed := b.closed
+	b.mu.Unlock()
+	if closed {
+		return ErrNotListening
+	}
+	if face == nil {
+		return ErrHTTPFaceNotOpen
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		select {
+		case <-ctx.Done():
+			b.Close()
+		case <-done:
+		}
+	}()
+	if err := face.srv.Serve(face.ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return fmt.Errorf("cocoon: broker HTTP 面停止: %w", err)
+	}
+	return nil
 }
 
 // startHTTP — `Serve` 起客前把 HTTP 面挂上（没 ListenHTTP ⇒ 什么都不做，老行为零变化）。

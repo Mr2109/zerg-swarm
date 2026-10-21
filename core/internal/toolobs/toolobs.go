@@ -35,26 +35,27 @@ const (
 // 口径：一条 deny 事件必带恰好一个原因码；原因码是**判定类别**，不是错误原文
 // （原文走既有 Trace/Error 与 OBS-3 的 result，不进本事件——防高基数爆表 + 防隐私外泄）。
 const (
-	ReasonGateBlock       = "gate_block"             // 安全门（ToolGater）拦截：权限
-	ReasonGateError       = "gate_error"             // 安全门本身报错（未能判定 ⇒ 不执行）
-	ReasonGateApproval    = "gate_approval_required" // 安全门要求审批（无审批通道 ⇒ 本轮不执行）
-	ReasonPathOutside     = "path_outside_workspace" // 路径不在工作区/白名单内（沙箱边界）
-	ReasonCwdOutside      = "cwd_outside_workspace"  // bash cwd 出域（bash 沙盒=工作区）
-	ReasonDangerousCmd    = "dangerous_command"      // 危险命令黑名单命中（rm -rf /、mkfs…）
-	ReasonObfuscatedCmd   = "obfuscated_command"     // 解码/eval 动态执行链（base64 -d | sh、eval $()）
-	ReasonRmHome          = "rm_home_guard"          // rm 目标命中家目录/根目录保护
-	ReasonRmOutOfScope    = "rm_out_of_scope"        // rm 目标不在允许删除域（工作区/tmp/白名单）
-	ReasonBashPokaYoke    = "bash_pokayoke"          // bash 结构性防呆（空命令/裸交互命令/引号未闭合/末尾 &）
-	ReasonParamMissing    = "param_missing"          // 必填参数缺失/为空（参数不合法：形态）
-	ReasonParamContract   = "param_contract"         // 参数不合 schema 约定（enum/x-zerg-format：值域）
-	ReasonUnknownTool     = "unknown_tool"           // 工具名不在注册表
-	ReasonAmbiguousTool   = "ambiguous_tool_name"    // 工具名歧义（只差大小写 ⇒ 拒，不猜）
-	ReasonPlaceholderTool = "placeholder_tool_name"  // 把教学示例里的占位词当工具名
-	ReasonPathIsDir       = "path_is_directory"      // write 目标指向目录
-	ReasonContentTooLarge = "content_too_large"      // 写入内容超上限（防 OOM/巨型误写）
-	ReasonNonTextTarget   = "non_text_target"        // write/edit 目标是非文本类（防毁结构）
-	ReasonToolHidden      = "tool_hidden"            // 工具被系统隐藏（连续失败 ⇒ 本轮不执行）
-	ReasonUnsupported     = "unsupported_target"     // 本工具不执行该目标（read 图像/音视频/二进制；能力缺失如 spawn_agent 无父上下文）
+	ReasonGateBlock         = "gate_block"             // 安全门（ToolGater）拦截：权限
+	ReasonGateError         = "gate_error"             // 安全门本身报错（未能判定 ⇒ 不执行）
+	ReasonGateApproval      = "gate_approval_required" // 安全门要求审批（无审批通道 ⇒ 本轮不执行）
+	ReasonPathOutside       = "path_outside_workspace" // 路径不在工作区/白名单内（沙箱边界）
+	ReasonCwdOutside        = "cwd_outside_workspace"  // bash cwd 出域（bash 沙盒=工作区）
+	ReasonDangerousCmd      = "dangerous_command"      // 危险命令黑名单命中（rm -rf /、mkfs…）
+	ReasonObfuscatedCmd     = "obfuscated_command"     // 解码/eval 动态执行链（base64 -d | sh、eval $()）
+	ReasonRmHome            = "rm_home_guard"          // rm 目标命中家目录/根目录保护
+	ReasonRmOutOfScope      = "rm_out_of_scope"        // rm 目标不在允许删除域（工作区/tmp/白名单）
+	ReasonBashPokaYoke      = "bash_pokayoke"          // bash 结构性防呆（空命令/裸交互命令/引号未闭合/末尾 &）
+	ReasonParamMissing      = "param_missing"          // 必填参数缺失/为空（参数不合法：形态）
+	ReasonParamContract     = "param_contract"         // 参数不合 schema 约定（enum/x-zerg-format：值域）
+	ReasonUnknownTool       = "unknown_tool"           // 工具名不在注册表
+	ReasonAmbiguousTool     = "ambiguous_tool_name"    // 工具名歧义（只差大小写 ⇒ 拒，不猜）
+	ReasonPlaceholderTool   = "placeholder_tool_name"  // 把教学示例里的占位词当工具名
+	ReasonPathIsDir         = "path_is_directory"      // write 目标指向目录
+	ReasonContentTooLarge   = "content_too_large"      // 写入内容超上限（防 OOM/巨型误写）
+	ReasonNonTextTarget     = "non_text_target"        // write/edit 目标是非文本类（防毁结构）
+	ReasonToolHidden        = "tool_hidden"            // 工具被系统隐藏（连续失败 ⇒ 本轮不执行）
+	ReasonUnsupported       = "unsupported_target"     // 本工具不执行该目标（read 图像/音视频/二进制；能力缺失如 spawn_agent 无父上下文）
+	ReasonCommandNotAllowed = "command_not_allowed"    // 命令不在硬白名单闭集（fs run 首词/子命令 fail-closed 拒执）
 )
 
 // Decision — 一次工具调用的判定事件（allow|deny + 拒绝原因 + 参数摘要 + 会话）。

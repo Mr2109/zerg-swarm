@@ -1567,6 +1567,19 @@ func (ec *ExecContext) ExecuteTool(ctx context.Context, toolName string, args ma
 	return res
 }
 
+// isFsRunReject — 判定本次 zerg 工具调用是否为 `fs run` 被二进制侧白名单拒执。
+// 只依据命令参数与返回文本的 rc 首行：`zerg fs run …` 且 rc=2（fail-closed 拒执；子命令
+// 真运行失败返回 rc≠2，不属「拒执」，不在此补审计）。不解析 stderr 原文——原文只走
+// stderr，不落盘，本函数只负责把「被拒执」这条事实与会话号落进观测面。
+func isFsRunReject(args map[string]any, content string) bool {
+	cmd, _ := args["command"].(string)
+	f := strings.Fields(cmd)
+	if len(f) < 3 || f[0] != "zerg" || f[1] != "fs" || f[2] != "run" {
+		return false
+	}
+	return strings.HasPrefix(content, "rc=2\n")
+}
+
 func (ec *ExecContext) executeToolInner(ctx context.Context, toolName string, args map[string]any, gate ToolGater) ToolCallResult {
 	// P4-50 工具帮助体系: help:true → 读 tools/<名>.md（提示词只说"不确定先 help"——按需看详细用法）
 	if h, ok := args["help"].(bool); ok && h {
@@ -1831,6 +1844,12 @@ func (ec *ExecContext) executeToolInner(ctx context.Context, toolName string, ar
 			content, err := et.Fn(args, ec.WorkDir)
 			if err != nil {
 				return ToolCallResult{Error: err.Error()}
+			}
+			// `fs run` 拒执审计：二进制侧白名单拒执只把原因写进 stderr、不落盘（GAP-20261017-16 的盲区）。
+			// 补一条 decision=deny 并带 ec.Session，与 obsEndCall 的 allow 互斥（一次调用只一条判定）。
+			// 检测只依据命令参数与返回文本的 rc 首行，不解析 stderr 原文。
+			if isFsRunReject(args, content) {
+				ec.obsDeny(toolobs.ReasonCommandNotAllowed)
 			}
 			return ToolCallResult{Content: content}
 		}

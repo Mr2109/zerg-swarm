@@ -2610,6 +2610,25 @@ func init() {
 			endpoint: "本机：状态根 <id>/meta.json（写 egg 一格）",
 			run:      cmdCocoonBind,
 		},
+		// ---- 虫茧沙箱 · 宿主 broker 的命令面（T4c · 2026-10-21）------------------------------
+		// ★ 为什么要有这一条（T4b 实测的两个「开箱即坏」）：
+		//   ① broker 缺省 `127.0.0.1:8082` 与 `zerg-core` 网关**撞车**（`gw.Start(8082)`）⇒
+		//      本机 bind 直接 EADDRINUSE ⇒ 缺省起不来。T4c 让到 `127.0.0.1:8092`
+		//      （`cocoon.DefaultBrokerHTTPAddr`，一处真源）。
+		//   ② 此前**没有起 broker 的命令面** ⇒ 茧内拿到的 `ZERG_AI_BASE` 指向一扇没人开的门。
+		// ★ 只留**一个旋钮** `ZERG_BROKER_ADDR`（旧名 `ZERG_BROKER_HTTP_ADDR` 当同义回退）：
+		//   它同时决定 ① 监听地址 ② 茧内缺省 base 的 host:port —— 两处都走 `cocoon.ResolveBrokerAddr`。
+		{
+			path:     []string{"cocoon", "broker"},
+			kind:     "CocoonBroker",
+			summary:  "宿主 broker 的起/收/看（start 后台脱钩起 · 等 /health 真 200 才回 0 · 端口被占点名占用进程；stop 按 pid 收并事后验端口；status 一行 + --json；地址旋钮 ZERG_BROKER_ADDR 同时定监听与茧内 ZERG_AI_BASE）",
+			usage:    "zerg cocoon broker <start|stop|status> [--dry-run] [--json <字段>]",
+			args:     []string{"动作（start | stop | status）"},
+			arity:    "any",
+			fields:   cocoonBrokerFields,
+			endpoint: "本机回环 <ZERG_BROKER_ADDR|ZERG_BROKER_HTTP_ADDR|127.0.0.1:8092> 的 /health ＋ POST /v1/chat/completions（真上游 ZERG_AI_UPSTREAM，缺省 http://127.0.0.1:9400）",
+			run:      cmdCocoonBroker,
+		},
 		// ---- A 档 批 1（换件面）· A12：卵的**单文件封装**（`*.egg`）工具 —— 从「虫卵」归名到「虫茧」（决-13）----
 		// 依据：`~/.zerg/state/拍板落定-所有稿-20261007.md` 决-13（Mr2109「拍 按你推荐」）。
 		// 底层唯一实现 = `core/cmd/zerg/zerg_egg.go`（`scripts/<机型>/zerg-egg.py` 的 Go 真搬体 · DEV-1798）——

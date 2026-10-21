@@ -240,6 +240,8 @@ func TestBrokerHTTPListenLoopbackOnly(t *testing.T) {
 // TestBrokerHTTPAddrResolution — 三级真源（参数 ＞ env ＞ 内置）与缺省值的口径。
 func TestBrokerHTTPAddrResolution(t *testing.T) {
 	// 缺省：与茧内 base 同一真源（T4 的 ECONNREFUSED 就是这两处不一致来的）。
+	// ★ 两个 env 名都要清：新名（`ZERG_BROKER_ADDR`）优先，宿主机上留着一个就会盖住这一格。
+	t.Setenv(EnvBrokerAddr, "")
 	t.Setenv(EnvBrokerHTTPAddr, "")
 	if got, err := resolveBrokerHTTPAddr(""); err != nil || got != DefaultBrokerHTTPAddr {
 		t.Fatalf("缺省地址 = %q (%v)，want %q", got, err, DefaultBrokerHTTPAddr)
@@ -272,6 +274,106 @@ func TestBrokerHTTPAddrResolution(t *testing.T) {
 			t.Fatalf("上游 %q 本该被拒", bad)
 		}
 	}
+}
+
+// TestBrokerAddrSingleKnob — **一个旋钮同时改两处**（T4c 的核心判据）。
+//
+// 两条消费点各打一遍、逐条对齐：
+//
+//	① `ResolveBrokerAddr()` —— broker 的监听地址（`ListenHTTP` 用它 bind）；
+//	② `BrokerAIBase()`      —— 茧内缺省 `ZERG_AI_BASE`（命令面用它注入）。
+//
+// 判据（缺一条这一单就等于没做）：
+//
+//	甲 缺省 = `DefaultBrokerHTTPAddr` = `127.0.0.1:8092`，且**不是** 8082（`zerg-core` 网关的正式端口）；
+//	乙 新名 `ZERG_BROKER_ADDR` 一设，①②同时跟着动（同一份 host:port）；
+//	丙 旧名 `ZERG_BROKER_HTTP_ADDR` 作为兼容输入，同样①②同时动（**不许**让两处漂）；
+//	丁 两个都给且不同 ⇒ 新名赢，且①②仍一致（✗ 一处读新名、一处读旧名）；
+//	戊 回环硬闸对新名同样有效（`0.0.0.0` / 空 host / 非 host:port 一律拒，①②一起拒）。
+func TestBrokerAddrSingleKnob(t *testing.T) {
+	// 甲：缺省值 + 「不是 8082」这条负控（写死字面量：8082 是**别人**的端口，本包不许再出现它）。
+	t.Run("甲 缺省 8092 且两处一致", func(t *testing.T) {
+		t.Setenv(EnvBrokerAddr, "")
+		t.Setenv(EnvBrokerHTTPAddr, "")
+		addr, src, err := ResolveBrokerAddr()
+		if err != nil {
+			t.Fatalf("ResolveBrokerAddr: %v", err)
+		}
+		// ★ 两个字面量分开判（`addr != A || addr != B` 在 A≠B 时是永假式 —— 写不出判力）。
+		if DefaultBrokerHTTPAddr != "127.0.0.1:8092" {
+			t.Fatalf("DefaultBrokerHTTPAddr = %q，want 127.0.0.1:8092（T4c 定的缺省）", DefaultBrokerHTTPAddr)
+		}
+		if addr != DefaultBrokerHTTPAddr {
+			t.Fatalf("缺省监听 = %q，want %q", addr, DefaultBrokerHTTPAddr)
+		}
+		if addr == "127.0.0.1:8082" {
+			t.Fatal("缺省还是 8082 —— 那是 zerg-core 网关的正式端口，开箱必 EADDRINUSE")
+		}
+		if src != BrokerAddrSourceDefault {
+			t.Fatalf("来源 = %q，want %q", src, BrokerAddrSourceDefault)
+		}
+		base, bsrc, berr := BrokerAIBase()
+		if berr != nil {
+			t.Fatalf("BrokerAIBase: %v", berr)
+		}
+		if base != "http://"+addr {
+			t.Fatalf("茧内 base = %q，want http://%s（与监听同一个真源）", base, addr)
+		}
+		if bsrc != src {
+			t.Fatalf("两处来源不一致：监听 %q / base %q", src, bsrc)
+		}
+	})
+
+	// 乙丙丁：新名 / 旧名 / 两者并存。
+	cases := []struct {
+		name    string
+		newVal  string
+		oldVal  string
+		want    string
+		wantSrc string
+	}{
+		{"乙 新名同时改两处", "127.0.0.1:18092", "", "127.0.0.1:18092", BrokerAddrSourceEnvNew},
+		{"丙 旧名（兼容）同样同时改两处", "", "127.0.0.1:18093", "127.0.0.1:18093", BrokerAddrSourceEnvOld},
+		{"丁 两个都给 ⇒ 新名赢且两处一致", "127.0.0.1:18094", "127.0.0.1:18095", "127.0.0.1:18094", BrokerAddrSourceEnvNew},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Setenv(EnvBrokerAddr, c.newVal)
+			t.Setenv(EnvBrokerHTTPAddr, c.oldVal)
+			addr, src, err := ResolveBrokerAddr()
+			if err != nil {
+				t.Fatalf("ResolveBrokerAddr: %v", err)
+			}
+			if addr != c.want {
+				t.Fatalf("监听 = %q，want %q", addr, c.want)
+			}
+			if src != c.wantSrc {
+				t.Fatalf("来源 = %q，want %q", src, c.wantSrc)
+			}
+			base, _, berr := BrokerAIBase()
+			if berr != nil {
+				t.Fatalf("BrokerAIBase: %v", berr)
+			}
+			// ★ 这条是「两处不漂」的机器判据：茧内 base 的 host:port 逐字等于监听地址。
+			if got := strings.TrimPrefix(base, "http://"); got != addr {
+				t.Fatalf("茧内 base 的 host:port = %q ≠ 监听 %q —— 两处漂了", got, addr)
+			}
+		})
+	}
+
+	// 戊：回环硬闸对新名同样生效；①②**一起**拒（不许一处拒一处放行）。
+	t.Run("戊 回环硬闸对新名同样有效", func(t *testing.T) {
+		for _, bad := range []string{"0.0.0.0:18092", ":18092", "::1", "127.0.0.1", "http://127.0.0.1:18092"} {
+			t.Setenv(EnvBrokerAddr, bad)
+			t.Setenv(EnvBrokerHTTPAddr, "")
+			if _, _, err := ResolveBrokerAddr(); err == nil {
+				t.Fatalf("新名写 %q 本该被拒", bad)
+			}
+			if _, _, err := BrokerAIBase(); err == nil {
+				t.Fatalf("新名写 %q：监听拒了、base 却放行 ⇒ 两处不同判", bad)
+			}
+		}
+	})
 }
 
 // ── ② /health ─────────────────────────────────────────────────────────

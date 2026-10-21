@@ -929,8 +929,9 @@ func TestCocoonOpenInjectsAIPlaceholder(t *testing.T) {
 		if !ok {
 			t.Fatal("假后端没记下这次 Exec（判据无从落地）")
 		}
-		if got := last.Opts.Env["ZERG_AI_BASE"]; got != "http://127.0.0.1:8082" {
-			t.Fatalf("ZERG_AI_BASE = %q，want 宿主缺省真源（契约 [环境] 那句必须被盖掉）", got)
+		if got := last.Opts.Env["ZERG_AI_BASE"]; got != "http://"+cocoon.DefaultBrokerHTTPAddr {
+			t.Fatalf("ZERG_AI_BASE = %q，want 宿主缺省真源 http://%s（契约 [环境] 那句必须被盖掉）",
+				got, cocoon.DefaultBrokerHTTPAddr)
 		}
 		if got := last.Opts.Env["ZERG_AI_MODEL"]; got != cocoon.DefaultCocoonAIModel {
 			t.Fatalf("ZERG_AI_MODEL = %q，want %q", got, cocoon.DefaultCocoonAIModel)
@@ -973,8 +974,8 @@ func TestCocoonOpenInjectsAIPlaceholder(t *testing.T) {
 		if len(irows) != 1 {
 			t.Fatalf("inspect 该回一行：%s", out3)
 		}
-		if got := ccLifeCell(irows[0], "ai_base"); got != "http://127.0.0.1:8082" {
-			t.Fatalf("inspect ai_base = %q，want 与 open 同一份形状", got)
+		if got := ccLifeCell(irows[0], "ai_base"); got != "http://"+cocoon.DefaultBrokerHTTPAddr {
+			t.Fatalf("inspect ai_base = %q，want http://%s（与 open 同一份形状）", got, cocoon.DefaultBrokerHTTPAddr)
 		}
 		if got := ccLifeCell(irows[0], "ai_model"); got != cocoon.DefaultCocoonAIModel {
 			t.Fatalf("inspect ai_model = %q", got)
@@ -1113,23 +1114,60 @@ func ccLifeGrepTree(t *testing.T, dir, needle string) []string {
 func TestCocoonAIUpstreamThreeTier(t *testing.T) {
 	t.Setenv(cocoonAIBaseEnv, "")
 	t.Setenv("ZERG_AI_UPSTREAM", "http://127.0.0.1:9400")
+	// ★ 两个 addr 旋钮都要显式清：新名（`ZERG_BROKER_ADDR`）优先，宿主机上留着一个就会盖住缺省那一格。
+	t.Setenv(cocoon.EnvBrokerAddr, "")
+	t.Setenv(cocoon.EnvBrokerHTTPAddr, "")
 
-	// ① 缺省与 broker 缺省监听地址逐字对齐。
-	if got, want := cocoonAIUpstream(cocoon.AISpec{}), "http://"+cocoon.DefaultBrokerHTTPAddr; got != want {
-		t.Fatalf("缺省 base = %q，want %q（要与 broker 的 HTTP 面同一真源）", got, want)
+	// ① 缺省与 broker 缺省监听地址逐字对齐（同一个真源 `cocoon.BrokerAIBase`）。
+	def, derr := cocoonAIUpstream(cocoon.AISpec{})
+	if derr != nil {
+		t.Fatalf("缺省 base 算不出来：%v", derr)
+	}
+	if want := "http://" + cocoon.DefaultBrokerHTTPAddr; def != want {
+		t.Fatalf("缺省 base = %q，want %q（要与 broker 的 HTTP 面同一真源）", def, want)
 	}
 	// ③ 负控：只有真上游 env 时，茧内 base 不许被它带走。
-	if got := cocoonAIUpstream(cocoon.AISpec{}); strings.Contains(got, ":9400") {
-		t.Fatalf("ZERG_AI_UPSTREAM 把茧内 base 带到了 %q —— 茧会绕过 broker 直连模型", got)
+	if strings.Contains(def, ":9400") {
+		t.Fatalf("ZERG_AI_UPSTREAM 把茧内 base 带到了 %q —— 茧会绕过 broker 直连模型", def)
 	}
+
+	// ①b ★ 「一个旋钮同时改两处」：新名一设，缺省 base 的 host:port 必须跟着动。
+	t.Setenv(cocoon.EnvBrokerAddr, "127.0.0.1:18092")
+	knob, kerr := cocoonAIUpstream(cocoon.AISpec{})
+	if kerr != nil {
+		t.Fatalf("旋钮档 base 算不出来：%v", kerr)
+	}
+	if knob != "http://127.0.0.1:18092" {
+		t.Fatalf("ZERG_BROKER_ADDR=127.0.0.1:18092 时缺省 base = %q，want http://127.0.0.1:18092（旋钮没同时改两处）", knob)
+	}
+	// 旧名当兼容输入，同样要改到这一处（✗ 只改监听不改 base）。
+	t.Setenv(cocoon.EnvBrokerAddr, "")
+	t.Setenv(cocoon.EnvBrokerHTTPAddr, "127.0.0.1:18093")
+	legacy, lerr := cocoonAIUpstream(cocoon.AISpec{})
+	if lerr != nil {
+		t.Fatalf("旧名档 base 算不出来：%v", lerr)
+	}
+	if legacy != "http://127.0.0.1:18093" {
+		t.Fatalf("旧名 ZERG_BROKER_HTTP_ADDR 下缺省 base = %q，want http://127.0.0.1:18093", legacy)
+	}
+	// ①c 负控：旋钮非法（不是回环）⇒ **拒**，✗ 不静默退回缺省（退回等于让茧指着虚空）。
+	t.Setenv(cocoon.EnvBrokerHTTPAddr, "0.0.0.0:18093")
+	if got, gerr := cocoonAIUpstream(cocoon.AISpec{}); gerr == nil {
+		t.Fatalf("旋钮写 0.0.0.0 时该拒，却算出了 %q", got)
+	}
+	// 但契约显式给了 base ⇒ 与旋钮无关，照给（旋钮只管「缺省」那一级）。
+	if got, gerr := cocoonAIUpstream(cocoon.AISpec{Base: "http://127.0.0.1:19000"}); gerr != nil || got != "http://127.0.0.1:19000" {
+		t.Fatalf("契约 base 在旋钮非法时仍该照给，实得 %q (%v)", got, gerr)
+	}
+	t.Setenv(cocoon.EnvBrokerHTTPAddr, "")
 
 	// ② env 覆盖缺省；契约再盖过 env。
 	t.Setenv(cocoonAIBaseEnv, "http://127.0.0.1:18082")
-	if got, want := cocoonAIUpstream(cocoon.AISpec{}), "http://127.0.0.1:18082"; got != want {
-		t.Fatalf("ZERG_AI_BASE 覆盖 = %q，want %q", got, want)
+	if got, err := cocoonAIUpstream(cocoon.AISpec{}); err != nil || got != "http://127.0.0.1:18082" {
+		t.Fatalf("ZERG_AI_BASE 覆盖 = %q (%v)，want http://127.0.0.1:18082", got, err)
 	}
-	if got, want := cocoonAIUpstream(cocoon.AISpec{Base: "http://127.0.0.1:19000"}), "http://127.0.0.1:19000"; got != want {
-		t.Fatalf("契约 base 该盖过 env，实得 %q", got)
+	if got, err := cocoonAIUpstream(cocoon.AISpec{Base: "http://127.0.0.1:19000"}); err != nil || got != "http://127.0.0.1:19000" {
+		t.Fatalf("契约 base 该盖过 env，实得 %q (%v)", got, err)
 	}
 
 	// 名字本身也钉一下：茧内看到的就是 ZERG_AI_BASE（与 inject.go 的 EnvAIBase 同一格）。
