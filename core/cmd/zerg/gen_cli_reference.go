@@ -27,6 +27,40 @@
 //	    的扫描面 ⇒ 件内**零**形如「JSON 键名连续引号原串」的写法（一律描述式）· 退码仅
 //	    具名常量 0/1/2（⊆ 真源退码表已登记集）· 零绝对私有路径字面量。
 //
+// ── 身份判据收窄（`Q-211` 方案 B）──────────────────────────────────────
+//
+// 旧判据 = 页内身份行与现跑件**逐字相等**（含 `build_time`）+ 整目录 `core/cmd/zerg` diff ⇒
+// 任何一笔 `core/**` 提交都逼着重编 + 重生成（命令页随无关改动翻红）。收窄后：
+//
+//	· **窄集** = `main.go` + `exitcodes.go` + `export.go` + `core/internal/version`（`gcrSourceFaceRels`）；
+//	· **判据** = 页内 commit 是 HEAD **祖先** ∧ **窄集**自该 commit **零改动**（`gcrPageCommitVerdict`）；
+//	· `build_time` **不比**（每次编译都变）；`commit` 也**不再**要求逐字相等。
+//	· **保留**：产物 drift 逐字节 · 命令名对拍（读 `main.go` 源码）· 禁 `+dirty` · 窄集工作树
+//	  未提交改动判红 · 祖先/查无此提交判红。
+//
+// **剩余盲窗（照实点名 · ✗ 装作没有 · 已实测）**：`main.go` 的树条目里有**按标识符引用**的
+// 字面量（如 `fields: gateRunStepFields` · `usage: <常量名>`），它们的**定义**落在窄集外的
+// `family_*.go` 里。改这类定义（如给某命令的 `--json` 字段表加一格）**不碰 `main.go`**，
+// 而该列只经 `zerg help export` 从**制品**读出（源码侧没有第二读法）⇒ 若这笔提交**既不重编
+// `bin/`、也不 `--emit`**，本门仍是绿（页与旧制品自洽）。实测：`family_gate_run_step.go` 的
+// `gateRunStepFields` 加一格 ⇒ 本门 rc=0（绿）；重编一次 ⇒ 四件产物 drift 全红（牙回来了）。
+// 收窄前这一格靠「整目录 diff」间接兜住（代价是全员翻红）。兜底门（收窄后必须一起在场，
+// ✗ 只靠本门）：
+//
+//	① **命令名/用法串源码侧对拍**（本件内建 · 已现读，不靠窄集）：新命令必须改 `main.go`
+//	   的 `commands = []*command{…}` ⇒ 名字对拍红；usage 常量改了 ⇒ `gcrConstUsages` 现读
+//	   包内全部 `*.go`，与 `zerg help` 现跑逐字比 ⇒ `两处真源不一致` rc=2；
+//	② **`zerg gate check cli-contract --verify-live`（R-6 逐格现跑）** 与 **`check-newcmd-followup`**
+//	   （命令树条数 ⟷ 基线）：读的是**现编制品** ⇒ 新命令/新旗标没登记就红；
+//	③ **`check-help-shape`**（门69）冻结 `help`/`help dangerous` 的行数/字节/表尾 ⇒ 导出面那几列
+//	   变了必然对不上（其基线由**源码现编件** `--emit-baseline` 取数）；
+//	④ **发布前 `publish-preflight.sh` ⑧e** 调本门 `--check`，但它的 `$ZERGCLI` 是**当次新编**
+//	   制品 ⇒ 真实发布路径上「制品 vs 页」的 drift 一定被比到（盲窗只在「不重编也不生成」的
+//	   本地/提交期存在）。
+//
+// 落仓顺序：**本件与命令页四件同笔**（`--emit` 产物必须与判据同批落地，否则提交期的
+// `gen-cli-reference --check` 自相矛盾）；窄集变更后第一次收口需**干净重编 + `--emit`**。
+//
 // 本单边界（照实）：**只落码、不接线** ——
 //
 //	· 不在 `core/cmd/zerg/main.go` 注册命令（✗ 不进命令树）；
@@ -70,10 +104,30 @@ const (
 )
 
 var (
-	gcrSourceFaceRels = []string{"core/cmd/zerg", "core/internal/version"}
-	gcrTargetSuffix   = [][2]string{{".zh-CN.md", "zh"}, {".en.md", "en"}}
-	gcrLayers         = []string{"host", "node", "space"}
-	gcrCountsMarkers  = []string{"> **现读真源数**", "> **Counts as read**"}
+	// gcrSourceFaceRels —— **窄集**（`Q-211` 方案 B）：只有这四件能改变「本页所描述的那张面」。
+	//
+	//	· `core/cmd/zerg/main.go`      —— 命令树本体（命令名 / usage / 说明 / `--json` 字段 / 端点 / 茧壁层级）
+	//	· `core/cmd/zerg/exitcodes.go` —— 退码表（本页那张表的唯一真源）
+	//	· `core/cmd/zerg/export.go`    —— `zerg help export` 的导出面（本页四列逐字取自它）
+	//	· `core/internal/version`      —— 身份串（版本 / commit / build_time）
+	//
+	// ★ **✗ 整个 `core/cmd/zerg` 目录**：目录里还有上百件 `family_*.go` / `check_*.go` —— 改它们
+	//   动实现体与判据体、不动本页，旧判据（逐字相等 + 整目录 diff）却把每一笔这样的提交判成红
+	//   ⇒ 无关改动也逼着重编 + 重生成（收窄前的真实成本：命令页随每一次 `core/**` 提交翻红）。
+	//   收窄后的判据 = 页内 commit 是 HEAD 祖先 ∧ 窄集自该提交零改动（`gcrPageCommitVerdict`），
+	//   ✗ 不再是逐字相等；`build_time` 每次编译都变 ⇒ 也✗ 再逐字比。
+	// ★ 窄集外仍能漂的那一面（见「剩余盲窗」注释）由本件别的牙兜：命令名对拍读的是 `main.go`
+	//   **源码**（✗ 不看制品）· 用法串与 `zerg help` 现跑逐字对拍（`gcrConstUsages` 现读包内
+	//   全部 `*.go`——窄集外的 usage 常量也逃不掉）⇒「命令面动了」在源码侧就红，不靠这四件。
+	gcrSourceFaceRels = []string{
+		gcrMainRel,                   // core/cmd/zerg/main.go
+		"core/cmd/zerg/exitcodes.go", // 退码表
+		"core/cmd/zerg/export.go",    // 导出面
+		"core/internal/version",      // 身份串
+	}
+	gcrTargetSuffix  = [][2]string{{".zh-CN.md", "zh"}, {".en.md", "en"}}
+	gcrLayers        = []string{"host", "node", "space"}
+	gcrCountsMarkers = []string{"> **现读真源数**", "> **Counts as read**"}
 
 	gcrCitationRE = regexp.MustCompile("[（(][^（）()]*§[^（）()]*[）)]")
 	gcrPathRE     = regexp.MustCompile(`path:\s*\[\]string\{([^}]*)\}`)
@@ -151,8 +205,9 @@ type gcrFace struct {
 	sha         string
 	dirtySuffix bool
 	head        string
-	moved       []string
-	// workDirty —— 源码面**工作树**里未提交的改动（含未跟踪件 · 只看 gcrSourceFaceRels）。
+	// moved —— 窄集自 `sha` 到 HEAD 的**已提交**改动（✗ 不是整个 `core/cmd/zerg` 目录）。
+	moved []string
+	// workDirty —— 窄集在**工作树**里未提交的改动（含未跟踪件）。
 	// `git diff <sha>..HEAD` 只看得见已提交历史 ⇒ 这一格补上未提交漂移（GAP-20261014-64）。
 	workDirty []string
 }
@@ -174,6 +229,8 @@ type gcrData struct {
 	nHelpAgree int
 	liveIdent  gcrIdent
 	sourceFace gcrFace
+	// pageCommits —— 页里读到的那几枚 commit（去重保序 · `gcrCheck` 现读填 · 只为收尾那行人话）。
+	pageCommits []string
 }
 
 type gcrPages struct {
@@ -1050,6 +1107,84 @@ func gcrLivePieceIdentity(root string) (gcrIdent, string) {
 	return f, ""
 }
 
+// gcrGitNarrowDiff —— 窄集自 `<sha>` 到 HEAD 的**已提交**改动（件名 · 顺序照 git）。
+func gcrGitNarrowDiff(root, sha string) ([]string, string) {
+	args := []string{"-C", root, "-c", "core.quotepath=false", "diff", "--name-only", sha + "..HEAD", "--"}
+	args = append(args, gcrSourceFaceRels...)
+	rc, out, errOut := gcrRunCmd("git", args)
+	if rc != 0 {
+		return nil, fmt.Sprintf("`git diff %s..HEAD` 退码 %d（%s）⇒ 那个提交取不到，判不了",
+			sha, rc, gcrRuneHead(gcrPyStrip(gcrCoalesce(errOut, out)), 200))
+	}
+	var moved []string
+	for _, l := range gcrPySplitlines(out) {
+		if s := gcrPyStrip(l); s != "" {
+			moved = append(moved, s)
+		}
+	}
+	return moved, ""
+}
+
+// gcrGitCommitExists —— `<sha>` 在本仓里是不是一枚提交（`rev-parse --verify --quiet`：
+// 查不到 ⇒ rc=1 且**不打印**，与「真出错」分得开）。
+func gcrGitCommitExists(root, sha string) (bool, string) {
+	rc, out, errOut := gcrRunCmd("git",
+		[]string{"-C", root, "rev-parse", "--verify", "--quiet", sha + "^{commit}"})
+	switch rc {
+	case 0:
+		return gcrPyStrip(out) != "", ""
+	case 1:
+		return false, ""
+	}
+	return false, fmt.Sprintf("`git rev-parse --verify %s^{commit}` 退码 %d（%s）⇒ 页内 commit 判不了",
+		sha, rc, gcrRuneHead(gcrPyStrip(gcrCoalesce(errOut, out)), 200))
+}
+
+// gcrPageCommitVerdict —— 页里那一枚 commit 还作不作数（`Q-211` **方案 B** 的收窄判据）。
+//
+// 三格缺一不可：
+//
+//	① **形态**：`+dirty` **不许** —— 脏树制品不对应任何提交，正式面不承载它；
+//	② **祖先**：那枚 commit 必须是 HEAD 的祖先 ⇒ 页出自本仓这条历史（不是别处搬来 / 历史被改写）；
+//	③ **窄集零改动**：自那枚 commit 到 HEAD，窄集四件**一件都没动** ⇒ 页所描述的那张面与现读
+//	   源码面是**同一个面**。★ 逐字相等**不再**要求；`build_time` **不比**（每次编译都变）。
+//
+// 返回 `""` = 通过；否则一句人话（判红）。第二返回 `true` = **判不了**（git plumbing 出事 ⇒ rc=2）。
+func gcrPageCommitVerdict(root, commit, head string) (string, bool) {
+	if strings.HasSuffix(commit, "+dirty") {
+		return fmt.Sprintf("页内 commit 带 `+dirty`（%s）⇒ 正式面不承载**脏树产物**（先提交，再 `--only-cli` 重编 + 重生成）",
+			gcrPyStrRepr(commit)), false
+	}
+	sha := strings.Split(commit, "+")[0]
+	exists, why := gcrGitCommitExists(root, sha)
+	if why != "" {
+		return why, true
+	}
+	if !exists {
+		return fmt.Sprintf("页内 commit `%s` 在本仓历史里**查不到** ⇒ 祖先判定无从谈起（页不是从本仓这条历史生成的）", sha), false
+	}
+	rc, out, errOut := gcrRunCmd("git", []string{"-C", root, "merge-base", "--is-ancestor", sha, "HEAD"})
+	switch rc {
+	case 0:
+		// 是祖先 ⇒ 继续判窄集。
+	case 1:
+		return fmt.Sprintf("页内 commit `%s` **不是** HEAD（`%s`）的祖先 ⇒ 页出自另一条历史（被改写/搬来的页），收窄判据不认",
+			sha, head), false
+	default:
+		return fmt.Sprintf("`git merge-base --is-ancestor %s HEAD` 退码 %d（%s）⇒ 祖先判定判不了",
+			sha, rc, gcrRuneHead(gcrPyStrip(gcrCoalesce(errOut, out)), 200)), true
+	}
+	moved, why := gcrGitNarrowDiff(root, sha)
+	if why != "" {
+		return why, true
+	}
+	if len(moved) > 0 {
+		return fmt.Sprintf("页内 commit `%s` 之后**窄集**又动过 %d 件（%s）⇒ 命令页所描述的那张面已漂（该重编 + `--emit`）",
+			sha, len(moved), strings.Join(gcrHead3(moved), " / ")), false
+	}
+	return "", false
+}
+
 func gcrSourceFaceState(root, commit string) (gcrFace, string) {
 	sha := strings.Split(commit, "+")[0]
 	fact := gcrFace{sha: sha, dirtySuffix: strings.HasSuffix(commit, "+dirty")}
@@ -1062,28 +1197,20 @@ func gcrSourceFaceState(root, commit string) (gcrFace, string) {
 			rc, gcrRuneHead(gcrPyStrip(gcrCoalesce(errOut, out)), 200))
 	}
 	fact.head = gcrPyStrip(out)
-	args := []string{"-C", root, "-c", "core.quotepath=false", "diff", "--name-only", sha + "..HEAD", "--"}
-	args = append(args, gcrSourceFaceRels...)
-	rc, out, errOut = gcrRunCmd("git", args)
-	if rc != 0 {
-		return gcrFace{}, fmt.Sprintf("`git diff %s..HEAD` 退码 %d（%s）⇒ 那个提交取不到，判不了",
-			sha, rc, gcrRuneHead(gcrPyStrip(gcrCoalesce(errOut, out)), 200))
+	var why string
+	if fact.moved, why = gcrGitNarrowDiff(root, sha); why != "" {
+		return gcrFace{}, fmt.Sprintf("%s ⇒ 源码面判不了", why)
 	}
-	for _, l := range gcrPySplitlines(out) {
-		if s := gcrPyStrip(l); s != "" {
-			fact.moved = append(fact.moved, s)
-		}
-	}
-	// ── 源码面**工作树**（未提交改动 · 含未跟踪件 · GAP-20261014-64）────────────
-	// 上面那条 `git diff <sha>..HEAD` 只比**已提交**历史 —— 工作树里未提交的源码改动
+	// ── 窄集**工作树**（未提交改动 · 含未跟踪件 · GAP-20261014-64）──────────────────
+	// 上面那条 `git diff <sha>..HEAD` 只比**已提交**历史 —— 工作树里未提交的窄集改动
 	// （改了命令面却既没提交、也没重编 `bin/`）在旧判定里是盲区 ⇒ 命令页相对新源码
 	// 已陈旧却仍报绿（陈旧假绿）。这里把 `git status --porcelain -uall` 现读算进源码面：
-	// **源码面工作树不干净 ⇒ 不许报绿**（✗ 不放宽）。
+	// **窄集工作树不干净 ⇒ 不许报绿**（✗ 不放宽）。
 	//
-	//	· 只认源码面路径（gcrSourceFaceRels）；运行期落点（如
+	//	· 只认窄集路径（gcrSourceFaceRels）；运行期落点（如
 	//	  scripts/gates/judge-run-ledger.jsonl · 每跑一门就追加）不在此列 ⇒ 不误红。
 	//	· `-c core.quotepath=false` 免疫件名转义（门68 口径 · 五类件名面须带免疫开关）。
-	args = []string{"-C", root, "-c", "core.quotepath=false", "status", "--porcelain", "-uall", "--"}
+	args := []string{"-C", root, "-c", "core.quotepath=false", "status", "--porcelain", "-uall", "--"}
 	args = append(args, gcrSourceFaceRels...)
 	rc, out, errOut = gcrRunCmd("git", args)
 	if rc != 0 {
@@ -1469,8 +1596,10 @@ func gcrSetEq(a, b map[string]bool) bool {
 	return true
 }
 
-func gcrCheck(root string, pages *gcrPages, targets []string) []string {
+// gcrCheck —— 判据面。第二返回 `true` = 有「判不了」的格子（调用方须退 **2**，✗ 混进红）。
+func gcrCheck(root string, pages *gcrPages, targets []string) ([]string, bool) {
 	var errs []string
+	blk := false
 	for _, lr := range [][2]string{{"zh", gcrZHRel}, {"en", gcrENRel}} {
 		loc, rel := lr[0], lr[1]
 		p := gcrPyJoin(root, rel)
@@ -1484,6 +1613,7 @@ func gcrCheck(root string, pages *gcrPages, targets []string) []string {
 	}
 	d := pages.data
 	live := d.liveIdent
+	face := d.sourceFace
 	for _, lr := range [][2]string{{"zh", gcrZHRel}, {"en", gcrENRel}} {
 		rel := lr[1]
 		p := gcrPyJoin(root, rel)
@@ -1501,28 +1631,38 @@ func gcrCheck(root string, pages *gcrPages, targets []string) []string {
 				errs = append(errs, fmt.Sprintf("身份行对拍（`Q-211`）：%s 的身份行形状不认（%s ⇒ 期望 `<件> <版本> <commit> <build_time>` 四段）", rel, gcrPyStrRepr(v)))
 				continue
 			}
-			if f.commit != live.commit || f.buildTime != live.buildTime {
-				errs = append(errs, fmt.Sprintf("身份行对拍（`Q-211`）：%s 的身份行与**现跑件**不是同一枚 —— 页内 %s · 现跑 %s（`commit` + `build_time` 必须逐字相等）", rel, gcrPyStrRepr(v), gcrPyStrRepr(live.line)))
+			// ★ `Q-211` 方案 B：判据 = 页内 commit **是 HEAD 祖先** ∧ **窄集自该提交零改动**
+			//   （✗ 不再逐字相等；`build_time` ✗ 不比 —— 每次编译都变，逐字比只会逼着重生成）。
+			if !gcrContains(d.pageCommits, f.commit) {
+				d.pageCommits = append(d.pageCommits, f.commit)
+			}
+			msg, unjudged := gcrPageCommitVerdict(root, f.commit, face.head)
+			if unjudged {
+				blk = true
+			}
+			if msg != "" {
+				errs = append(errs, fmt.Sprintf("身份行对拍（`Q-211` 方案 B）：%s 的%s", rel, msg))
 			}
 		}
 	}
+	// 导出物抬头 ⟷ `bin/zerg version`：同一次现跑的两条读法**自己**不许打架。
+	// ★ `commit` 仍逐字比（同一枚件两处报不同 commit = 判据面自相矛盾）；`build_time` ✗ 不比。
 	if exp, ok := gcrIdentFields(d.ident); ok {
-		if exp.commit != live.commit || exp.buildTime != live.buildTime {
+		if exp.commit != live.commit {
 			errs = append(errs, fmt.Sprintf("身份行对拍（`Q-211`）：导出物抬头与 `bin/zerg version` **两读不一致**（导出 %s · 现跑 %s）—— 判据面的两条读法自己打架，不猜", gcrPyStrRepr(d.ident), gcrPyStrRepr(live.line)))
 		}
 	}
-	face := d.sourceFace
 	if face.dirtySuffix {
 		errs = append(errs, fmt.Sprintf("身份行对拍（`Q-211`）：现跑件身份第三格带 `+dirty`（%s）⇒ 该件是**脏树产物**、不对应任何提交 —— 正式面不承载它（先提交，再 `--only-cli` 重编 + 重生成）", gcrPyStrRepr(live.commit)))
 	}
 	if len(face.moved) > 0 {
-		errs = append(errs, fmt.Sprintf("身份行对拍（`Q-211`）：现跑件那个提交（`%s`）之后**源码面**又动过 %d 件（%s）⇒ `bin/` 旧了（页与现跑件**同源过期** —— 这一格就是它的牙：重编 + 重生成）",
+		errs = append(errs, fmt.Sprintf("身份行对拍（`Q-211` 方案 B）：现跑件那个提交（`%s`）之后**窄集**又动过 %d 件（%s）⇒ `bin/` 旧了（页与现跑件**同源过期** —— 这一格就是它的牙：重编 + 重生成）",
 			face.sha, len(face.moved), strings.Join(gcrHead3(face.moved), " / ")))
 	}
 	// GAP-20261014-64：`git diff <sha>..HEAD` 只看得见**已提交**历史 ⇒ 工作树里未提交的
-	// 源码改动（旧判定盲区）在此判红 —— 命令页顶多与**现跑件**同源，证明不了与**源码面**一致。
+	// 窄集改动（旧判定盲区）在此判红 —— 命令页顶多与**现跑件**同源，证明不了与**源码面**一致。
 	if len(face.workDirty) > 0 {
-		errs = append(errs, fmt.Sprintf("身份行对拍（`Q-211`）：现跑件那个提交（`%s`）之后**源码面工作树**还有 %d 处**未提交**改动（%s）⇒ 命令页只能证明与**现跑件**同源，不能证明与**源码面**一致（源码已漂 · 须先提交/或确认无源码漂移，再 `--only-cli` 重编 + 重生成）",
+		errs = append(errs, fmt.Sprintf("身份行对拍（`Q-211` 方案 B）：现跑件那个提交（`%s`）之后**窄集工作树**还有 %d 处**未提交**改动（%s）⇒ 命令页只能证明与**现跑件**同源，不能证明与**源码面**一致（源码已漂 · 须先提交/或确认无源码漂移，再 `--only-cli` 重编 + 重生成）",
 			face.sha, len(face.workDirty), strings.Join(gcrHead3(face.workDirty), " / ")))
 	}
 	pageSet := map[string]bool{}
@@ -1575,7 +1715,7 @@ func gcrCheck(root string, pages *gcrPages, targets []string) []string {
 	if len(targets) > 0 {
 		errs = append(errs, gcrInjectTargets(root, d, targets, false, io.Discard)...)
 	}
-	return errs
+	return errs, blk
 }
 
 func (p *gcrPages) forLoc(loc string) string {
@@ -1780,18 +1920,22 @@ func gcrRun(stdout, stderr io.Writer, argv []string) int {
 		fmt.Fprintf(stdout, "  命令树 %d 条 = 已开放 %d + 危险动作 %d · 退码 %d 格 · 用法串 %d 条（其中 %d 条与 `zerg help` 的用法块逐字一致）\n",
 			len(d.namesTree), d.nOpen, d.nDanger, len(d.exit), len(d.usage), d.nHelpAgree)
 		errs := gcrInjectTargets(root, d, targets, true, stdout)
-		errs = append(errs, gcrCheck(root, pages, targets)...)
+		cerrs, blk := gcrCheck(root, pages, targets)
+		errs = append(errs, cerrs...)
 		if len(errs) > 0 {
 			fmt.Fprint(stdout, "⇒ 生成后立刻复判就有问题（rc=1）：\n")
 			for _, e := range errs {
 				fmt.Fprintf(stdout, "  ✗ %s\n", e)
 			}
+			if blk {
+				return gcrRCblocked
+			}
 			return gcrRCfail
 		}
-		fmt.Fprint(stdout, "⇒ 已生成并复判通过（drift 0 · 命令名对拍 0 差）rc=0\n")
+		fmt.Fprint(stdout, "⇒ 已生成并复判通过（drift 0 · 命令名对拍 0 差 · 窄集身份对拍 0 差）rc=0\n")
 		return gcrRCok
 	}
-	errs := gcrCheck(root, pages, targets)
+	errs, blk := gcrCheck(root, pages, targets)
 	fmt.Fprintf(stdout, "参考-命令行 · 仓根 %s\n", root)
 	fmt.Fprintf(stdout, "  现跑：命令树 %d 条（页 %d 条）· 退码 %d 格 · 用法串 %d 条（%d 条与 `zerg help` 逐字一致）\n",
 		len(d.namesTree), len(d.namesPage), len(d.exit), len(d.usage), d.nHelpAgree)
@@ -1822,8 +1966,14 @@ func gcrRun(stdout, stderr io.Writer, argv []string) int {
 	if d.sourceFace.dirtySuffix {
 		dirty = "有"
 	}
-	fmt.Fprintf(stdout, "  身份行对拍（`Q-211`）：现跑件 %s · 源码面自 `%s` 起 已提交 %s · 工作树未提交 %s · 脏树后缀 %s\n",
+	fmt.Fprintf(stdout, "  身份行对拍（`Q-211` 方案 B）：现跑件 %s · 窄集自 `%s` 起 已提交 %s · 工作树未提交 %s · 脏树后缀 %s\n",
 		d.liveIdent.line, d.sourceFace.sha, movedStr, workStr, dirty)
+	pageStr := "（页里一行身份行都没有）"
+	if len(d.pageCommits) > 0 {
+		pageStr = strings.Join(d.pageCommits, " · ")
+	}
+	fmt.Fprintf(stdout, "    页内 commit（判据 = HEAD 祖先 ∧ 窄集零改动 ∧ 无 `+dirty`；`build_time` 不比）：%s · 窄集 %d 件\n",
+		pageStr, len(gcrSourceFaceRels))
 	for _, lr := range [][2]string{{"zh", gcrZHRel}, {"en", gcrENRel}} {
 		loc, rel := lr[0], lr[1]
 		p := gcrPyJoin(root, rel)
@@ -1845,13 +1995,20 @@ func gcrRun(stdout, stderr io.Writer, argv []string) int {
 		fmt.Fprintf(stdout, "  %s drift=%s\n", gcrPadRight(rel, 28), drift)
 	}
 	if len(errs) > 0 {
-		fmt.Fprint(stdout, "⇒ 判红（rc=1）：逐条看上面\n")
+		if blk {
+			fmt.Fprint(stdout, "⛔ 不给结论（rc=2）：下面有判不了的格子（✗ 不混进红 · 更不当绿）\n")
+		} else {
+			fmt.Fprint(stdout, "⇒ 判红（rc=1）：逐条看上面\n")
+		}
 		for _, e := range errs {
 			fmt.Fprintf(stdout, "  ✗ %s\n", e)
 		}
+		if blk {
+			return gcrRCblocked
+		}
 		return gcrRCfail
 	}
-	fmt.Fprint(stdout, "⇒ 全过（rc=0）：产物与现跑逐字节一致 · 命令名与命令树 0 差\n")
+	fmt.Fprint(stdout, "⇒ 全过（rc=0）：产物与现跑逐字节一致 · 命令名与命令树 0 差 · 页内 commit 在窄集上仍等于现读源码面\n")
 	return gcrRCok
 }
 

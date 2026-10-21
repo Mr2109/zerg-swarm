@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -231,5 +232,100 @@ func TestGcrLiveDataFailClosedNoBin(t *testing.T) {
 	_, err := gcrLiveData(dir)
 	if err == "" || !strings.Contains(err, "找不到 bin/zerg") {
 		t.Fatalf("缺 bin/zerg 应 fail-closed（不给结论），实得 err=%q", err)
+	}
+}
+
+// ── `Q-211` 方案 B：页内 commit 的**收窄**判据（祖先 ∧ 窄集零改动 ∧ 无 +dirty）──────
+//
+// 成对负控（合成仓 · 不碰真仓 · 不读 `bin/`）：
+//
+//	① 窄集**没动**的后续提交（改 `other.go`）⇒ 页仍作数（绿）—— 这就是收窄买到的宽松；
+//	② 窄集**动了**的后续提交（改 `main.go`）⇒ 红（牙还在）；
+//	③ 页内 commit 在窄集上干净、但在**另一条历史**上（不是 HEAD 祖先）⇒ 红；
+//	④ 本仓历史里**查不到**的 commit ⇒ 红（不是「判不了」）；
+//	⑤ `+dirty` ⇒ 红（脏树制品不对应任何提交）；
+//	⑥ `build_time` **不比** ⇒ 页内 `build_time` 与现跑不同仍绿（口径 3）。
+func TestGcrPageCommitVerdictNarrow(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("本机无 git ⇒ 收窄判据测不了")
+	}
+	dir := t.TempDir()
+	git := func(args ...string) string {
+		base := []string{"-C", dir, "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+			"-c", "commit.gpgsign=false"}
+		rc, out, errOut := gcrRunCmd("git", append(base, args...))
+		if rc != 0 {
+			t.Fatalf("git %v rc=%d out=%q err=%q", args, rc, out, errOut)
+		}
+		return gcrPyStrip(out)
+	}
+	write := func(rel, body string) {
+		p := filepath.Join(dir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	commit := func(msg string) string {
+		git("add", "-A")
+		git("commit", "-q", "-m", msg)
+		return git("rev-parse", "--short", "HEAD")
+	}
+	git("init", "-q")
+
+	// 收窄集里的四件（只为让 git 有路径可 diff，内容不重要）。
+	write(gcrMainRel, "package main\n// v1\n")
+	write("core/cmd/zerg/exitcodes.go", "package main\n")
+	write("core/cmd/zerg/export.go", "package main\n")
+	write("core/internal/version/version.go", "package version\n")
+	c1 := commit("c1 · 窄集首版")
+
+	// ① 窄集外改动 ⇒ 页仍作数。
+	write("core/cmd/zerg/family_zz.go", "package main\n// impl only\n")
+	c2 := commit("c2 · 只动窄集外的实现件")
+
+	// ② 窄集动了 ⇒ 页作废。
+	write(gcrMainRel, "package main\n// v2 · 说明面改了\n")
+	c4 := commit("c4 · 动 main.go")
+
+	// ③ 另一条历史：从 **c4**（窄集内容与 HEAD 相同）拉一支再提交 ⇒ c3 的窄集与 HEAD 逐字相同，
+	//    唯有「祖先」这一格能判它红 —— 这一枚就是祖先判定的判别性负控。
+	git("checkout", "-q", "-b", "side", c4)
+	write("core/cmd/zerg/family_side.go", "package main\n// side only\n")
+	c3 := commit("c3 · 侧枝（窄集与 c4 同）")
+	git("checkout", "-q", "-")
+	git("checkout", "-q", c4)
+
+	if msg, blk := gcrPageCommitVerdict(dir, c1, c4); msg == "" || blk {
+		t.Fatalf("② 反过来：HEAD=c4（动过 main.go）⇒ c1 必须红；实得 msg=%q blk=%v", msg, blk)
+	}
+	// 收窄该宽松的那一格：c2 时点窄集未动。
+	git("checkout", "-q", c2)
+	if msg, blk := gcrPageCommitVerdict(dir, c1, c2); msg != "" || blk {
+		t.Fatalf("① 收窄该宽松的那一格：c1→c2 只动窄集外件，应绿；实得 msg=%q blk=%v", msg, blk)
+	}
+	// ⑥ `build_time` 不比 —— 判据只看 commit，函数签名里根本没有 build_time 这一格；
+	//   这里用同一 commit 直接再判一次，确认判定与时间无关（页内时间已由调用方剥离）。
+	if msg, blk := gcrPageCommitVerdict(dir, c1, c2); msg != "" || blk {
+		t.Fatalf("⑥ build_time 不进判据：应绿；实得 msg=%q blk=%v", msg, blk)
+	}
+	git("checkout", "-q", c4)
+	if msg, blk := gcrPageCommitVerdict(dir, c1, c4); msg == "" || blk {
+		t.Fatalf("② 窄集（main.go）自 c1 起动过 ⇒ 必须红；实得 msg=%q blk=%v", msg, blk)
+	}
+	if msg, blk := gcrPageCommitVerdict(dir, c3, c4); msg == "" || blk {
+		t.Fatalf("③ 侧枝 commit 不是 HEAD 祖先 ⇒ 必须红；实得 msg=%q blk=%v", msg, blk)
+	}
+	if msg, blk := gcrPageCommitVerdict(dir, "deadbee", c4); msg == "" || blk {
+		t.Fatalf("④ 查不到的 commit ⇒ 必须红（不是判不了）；实得 msg=%q blk=%v", msg, blk)
+	}
+	if msg, blk := gcrPageCommitVerdict(dir, c1+"+dirty", c4); msg == "" || blk {
+		t.Fatalf("⑤ `+dirty` ⇒ 必须红；实得 msg=%q blk=%v", msg, blk)
+	}
+	// 正控：c4 自己 ⟷ HEAD=c4 ⇒ 零改动 ⇒ 绿（否则「收了窄就永远红」也测不出来）。
+	if msg, blk := gcrPageCommitVerdict(dir, c4, c4); msg != "" || blk {
+		t.Fatalf("正控：页内 commit == HEAD ⇒ 应绿；实得 msg=%q blk=%v", msg, blk)
 	}
 }
