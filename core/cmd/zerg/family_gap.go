@@ -283,6 +283,13 @@ func gapLedgerErr(inv *invocation, reason, msg, path string) {
 	if inv.err != nil {
 		inv.err.Meta = map[string]string{"reason": reason, "ledger_path": path}
 	}
+	// ★ 缺口 `GAP-20261021-06`（**假零命中**）：这一格是「读不到 ≠ 正文为空」的机器面抓手。
+	//   `ZERG_STATE_DIR` 指到不存在 / 错路目录时，包封的 `items` 是 `[]` ⇒ 读方拿「一行都没列」
+	//   当「正文为空」，而不当「真源没读到」（今天两路据此误判）。只在这里落一格声明
+	//   `meta.readable=false`，`errEnvelope` 照这一格把 `items` 出成 **`null`**（不是 `[]`）——
+	//   `[]` 从此**只剩**「真源读得到、只是筛出 0 条」一档（`gap ls` 零命中 / rc=1）。
+	//   ✗ 不动退码（仍 `8`）、✗ 不动 `error.kind`（仍 `blocked`）、✗ 不新增顶层键。
+	inv.metaAddJSON("readable", "false")
 }
 
 // gapLedgerErrFirstLine —— stderr 的**首行固定前缀短语**（机器可 grep）。

@@ -256,6 +256,12 @@ func helpErrors() string {
 }
 
 // errEnvelope 渲染带 `error` 块的包封（`items` 恒为空数组 —— 失败时没有结果面 · §九 M6 I3）。
+//
+// ★ 缺口 `GAP-20261021-06`（假零命中）：**唯一的例外** —— 调用方声明过「真源读不到」
+// （`meta.readable:false`，见 `family_gap.go` 的 `gapLedgerErr`）时，`items` 落 **`null`** 而不是 `[]`。
+// 为什么非改不可：`[]` 与「读到了、只是 0 条」在机器面**同一个形状** ⇒ 读方（含两路自动化）
+// 把「读不到」读成「正文为空」。顶层六键**一个不改**（`envelopeKeys`：`items` 键仍在，只是值为
+// `null`）· 退码不动 · `error` 块不动 ⇒ 只让这一格从「假空」变成「明说没有结果面」。
 func errEnvelope(cmd *command, e *cliError, envMeta []envMetaKV) string {
 	kind := ""
 	if cmd != nil {
@@ -268,12 +274,27 @@ func errEnvelope(cmd *command, e *cliError, envMeta []envMetaKV) string {
 	if cmd != nil && cmd.endpoint != "" {
 		src = cmd.endpoint
 	}
-	out := "{\"schema\":" + jstr(contractID) + ",\"kind\":" + jstr(kind) + ",\"items\":[]," +
+	itemsJSON := "[]"
+	if envMetaReadableFalse(envMeta) {
+		itemsJSON = "null"
+	}
+	out := "{\"schema\":" + jstr(contractID) + ",\"kind\":" + jstr(kind) + ",\"items\":" + itemsJSON + "," +
 		"\"meta\":{\"count\":0,\"source\":" + jstr(src) + metaSubkeysJSON(e) + envMetaSubkeysJSON(envMeta) + "},\"warnings\":[],\"truncated\":false"
 	if ej := e.errJSON(); ej != "" {
 		out += ",\"error\":" + ej
 	}
 	return out + "}\n"
+}
+
+// envMetaReadableFalse —— 调用方有没有声明「真源读不到」（`meta.readable:false`，缺口 `GAP-20261021-06`）。
+// 只认这一枚子键的**精确值**（`Val` 是已序列化的 JSON ⇒ 布尔假字面就是 `false`）；别的格一概不认。
+func envMetaReadableFalse(envMeta []envMetaKV) bool {
+	for _, kv := range envMeta {
+		if kv.Key == "readable" && kv.Val == "false" {
+			return true
+		}
+	}
+	return false
 }
 
 // metaSubkeysJSON —— `cliError.Meta` 的按需子键（**键名排序** ⇒ 同一跑形状稳定 · 空 ⇒ 逐字空串）。
