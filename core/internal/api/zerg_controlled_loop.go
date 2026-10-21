@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os/exec"
 	"time"
+	"unicode/utf8"
 )
 
 // ControlledLoop 受控循环配置（边界参数——程序定——确定性）
@@ -107,9 +108,19 @@ func (c *ControlledLoop) RunStep(step string, callModel func(step, feedback stri
 }
 
 // truncateStr 截断字符串（超长——保留头尾）
+// 2026-10-21：预算仍是 n 字节（头 n/2 + 尾 n/2），两处切口都退到 UTF-8 字符起始
+// （✗ 不改 rune 口径——n 是上下文账上的字节预算，不是字数）
 func truncateStr(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	return s[:n/2] + "..." + s[len(s)-n/2:]
+	head := n / 2 // 头：预算 n/2 字节
+	for head > 0 && !utf8.RuneStart(s[head]) {
+		head-- // 切口落在字中 ⇒ 向左退
+	}
+	tail := len(s) - n/2 // 尾：预算 n/2 字节
+	for tail < len(s) && !utf8.RuneStart(s[tail]) {
+		tail++ // 切口落在字中 ⇒ 向右推（只丢 0–3 字节，后缀仍 ≤n/2）
+	}
+	return s[:head] + "..." + s[tail:]
 }

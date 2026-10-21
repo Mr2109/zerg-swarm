@@ -200,12 +200,28 @@ func toolNames(tools []ToolDef) []string {
 	return names
 }
 
-// truncate — 输出截断（工具输出 > 2000 字符截断 + 提示）
+// truncate — 输出截断（工具输出超过 limit **字节**截断 + 提示）
+//
+// ★ 口径：预算按**字节**算（上下文预算是字节账，不换成 rune 上限——那会把同一份预算
+// 在中文上放大 3 倍）。但切口必须**退回 UTF-8 字符起始**：直接 s[:limit] 会把中文/emoji/
+// 生僻字切在字符中间，产出非法 UTF-8（实测 limit=20 的中文串尾出 `这是一个很长\xe7\x9a`）。
+// 退边界的手法与 internal/gateway/compactor.go 的 runeStartBackward 同源——那里记过
+// 「不 clamp 就 s[:i] 越界 panic」的事故，故此处 limit 先夹到 [0, len(s)]。
 func truncate(s string, limit int) string {
+	if limit < 0 { // s[:负数] 亦属越界 panic，同一条口径一并夹住
+		limit = 0
+	}
 	if len(s) <= limit {
 		return s
 	}
-	return s[:limit] + fmt.Sprintf("\n...(output truncated — %d chars total)", len(s))
+	cut := limit
+	if cut > len(s) { // 防御性 clamp：与 compactor.go 同一事故口径（此处早退已挡住，留作重构护栏）
+		cut = len(s)
+	}
+	for cut > 0 && s[cut]&0xC0 == 0x80 { // 0x80==续字节 ⇒ 正落在字符中间，退到起始
+		cut--
+	}
+	return s[:cut] + fmt.Sprintf("\n...(output truncated — %d bytes total)", len(s))
 }
 
 // containsTool 已废弃（2026-08-13——已用导出版 ContainsTools——见 chat.go）

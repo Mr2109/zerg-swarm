@@ -112,9 +112,8 @@ func (o *Orchestrator) callReferenceWithRetry(ctx context.Context, model string,
 			if resp.Reasoning != "" {
 				out = resp.Reasoning
 			}
-			if len(out) > cfg.RefMaxTokens {
-				out = out[:cfg.RefMaxTokens]
-			}
+			// 预算单位不变（字节）；切口退到 UTF-8 字符起始——中文/emoji 不被切半个字
+			out = truncateBytesAtRune(out, cfg.RefMaxTokens)
 			return strings.TrimSpace(out), nil
 		}
 		lastErr = err
@@ -149,4 +148,26 @@ func (o *Orchestrator) AggregateMoA(ctx context.Context, request string, refs []
 	aggCtx, cancel := context.WithTimeout(ctx, o.config.Timeout)
 	defer cancel()
 	return o.executor.ExecuteWithResponse(aggCtx, moaCfg.AggregatorModel, joined.String(), maxTokens)
+}
+
+// truncateBytesAtRune — 按字节预算截断，但切口退回最近的 UTF-8 字符起始。
+//
+// 预算单位仍是**字节**（RefMaxTokens 同时是参考模型的 max_tokens，聚合器 prompt 的
+// 上下文账也按字节算），所以不改预算单位、只改切口：保证返回的前缀是合法 UTF-8 ——
+// 否则中文/emoji 会被切在字符中间，聚合器收到半个字（模型侧表现为乱码或替换符）。
+//
+// ASCII 永不满足续字节判据 ⇒ cut 恒等于 limit，旧行为逐字不变；
+// 多字节档只会比 limit 少 0–3 字节（永不超预算）。
+func truncateBytesAtRune(s string, limit int) string {
+	if limit >= len(s) {
+		return s
+	}
+	if limit <= 0 {
+		return ""
+	}
+	cut := limit
+	for cut > 0 && s[cut]&0xC0 == 0x80 { // 0x80==续字节 ⇒ 正落在字符中间
+		cut--
+	}
+	return s[:cut]
 }

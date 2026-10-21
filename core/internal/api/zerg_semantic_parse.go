@@ -215,8 +215,14 @@ func ExecuteAction(act *Action) (string, error) {
 		}
 		content := string(data)
 		// 截断保护（超长文件只返回头部+尾部——防上下文爆炸）
+		// 头尾两刀都退到字符起始（预算仍是字节：前 2000 + 后 1000）：
+		// 头部向左退到字符起始（≤2000），尾部向右推进到字符起始（≤1000）——
+		// 否则中文/emoji 会被切在字符中间，模型拿到半个字。
 		if len(content) > 4000 {
-			return fmt.Sprintf("文件内容（共 %d 字——前 2000 + 后 1000）:\n%s\n...\n%s", len(content), content[:2000], content[len(content)-1000:]), nil
+			headEnd := runeStartBackward(content, 2000)
+			tailStart := runeStartForward(content, len(content)-1000)
+			return fmt.Sprintf("文件内容（共 %d 字节——前 2000 + 后 1000）:\n%s\n...\n%s",
+				len(content), content[:headEnd], content[tailStart:]), nil
 		}
 		return fmt.Sprintf("文件内容:\n%s", content), nil
 	case "search":
@@ -331,4 +337,28 @@ func checkDangerousCommand(cmd string) (bool, string) {
 		return true, "管道执行网络脚本（未知代码）"
 	}
 	return false, ""
+}
+
+// runeStartBackward — 把切口 i 向前退到最近的 UTF-8 字符起始（≤ i）。
+// 用于「取前缀」：保证 content[:h] 是合法 UTF-8。与 gateway/compactor.go 同源。
+func runeStartBackward(s string, i int) int {
+	if i > len(s) {
+		i = len(s)
+	}
+	for i > 0 && s[i]&0xC0 == 0x80 { // 0x80==续字节 ⇒ 正落在字符中间
+		i--
+	}
+	return i
+}
+
+// runeStartForward — 把切口 i 向后推到最近的 UTF-8 字符起始（≥ i）。
+// 用于「取后缀」：保证 content[t:] 是合法 UTF-8，且后缀字节数 ≤ 预算（只减不增）。
+func runeStartForward(s string, i int) int {
+	if i < 0 {
+		i = 0
+	}
+	for i < len(s) && s[i]&0xC0 == 0x80 {
+		i++
+	}
+	return i
 }

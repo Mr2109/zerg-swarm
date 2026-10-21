@@ -337,7 +337,7 @@ func summarizeRound(msgs []Message) string {
 		case "assistant":
 			content := m.Content
 			if len(content) > 300 {
-				content = content[:300] + "…"
+				content = content[:runeStartBackward(content, 300)] + "…"
 			}
 			if content != "" {
 				sb.WriteString(fmt.Sprintf("决策: %s\n", content))
@@ -348,13 +348,13 @@ func summarizeRound(msgs []Message) string {
 		case "tool":
 			res := m.Content
 			if len(res) > 150 {
-				res = res[:150] + "…"
+				res = res[:runeStartBackward(res, 150)] + "…"
 			}
 			sb.WriteString(fmt.Sprintf("工具结果: %s\n", res))
 		case "user":
 			c := m.Content
 			if len(c) > 150 {
-				c = c[:150] + "…"
+				c = c[:runeStartBackward(c, 150)] + "…"
 			}
 			sb.WriteString(fmt.Sprintf("用户: %s\n", c))
 		}
@@ -371,7 +371,7 @@ func truncateArgs(args map[string]any) string {
 	for k, v := range args {
 		s := fmt.Sprintf("%v", v)
 		if len(s) > 60 {
-			s = s[:60] + "…"
+			s = s[:runeStartBackward(s, 60)] + "…"
 		}
 		sb.WriteString(fmt.Sprintf("%s=%s ", k, s))
 	}
@@ -404,4 +404,20 @@ func (a *Agent) maybeCompact() {
 				nil, "", "", "")
 		}
 	}
+}
+
+// runeStartBackward — 把切口 i 向前退到最近的 UTF-8 字符起始（≤ i）。
+//
+// 摘要侧四个截断点（300/150/150/60）的预算都是**字节**（estimateTextTokens 用 len(s)，
+// 上下文账按字节估），所以预算单位不动；只把切口退回字符起始，保证前缀是合法 UTF-8 ——
+// 否则中文/emoji 被切在字符中间，摘要区里留下半个字（非法 UTF-8 随 prompt 一起发给模型）。
+// 与 gateway/compactor.go 的同名助手同源。
+func runeStartBackward(s string, i int) int {
+	if i > len(s) {
+		i = len(s)
+	}
+	for i > 0 && s[i]&0xC0 == 0x80 { // 0x80==续字节 ⇒ 正落在字符中间
+		i--
+	}
+	return i
 }

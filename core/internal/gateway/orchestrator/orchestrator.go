@@ -18,6 +18,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Mr2109/zerg-swarm/core/internal/agentstate"
 )
@@ -200,11 +201,16 @@ func (o *Orchestrator) Execute(ctx context.Context, request string, maxTokens in
 }
 
 // truncate 截断字符串（状态文件 objective 用）
+// 2026-10-21：预算仍是 n 字节；切口退到 UTF-8 字符起始（不切半个字进状态文件）
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	return s[:n]
+	cut := n
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut-- // 切口落在字中 ⇒ 向左退（≤n 字节，严格不超预算）
+	}
+	return s[:cut]
 }
 
 // countSuccess 统计成功参考数

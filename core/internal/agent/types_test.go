@@ -307,7 +307,7 @@ func TestTruncate_Short(t *testing.T) {
 func TestTruncate_Long(t *testing.T) {
 	long := strings.Repeat("a", 300)
 	got := truncate(long, 100)
-	if !strings.Contains(got, "...(output truncated — 300 chars total)") {
+	if !strings.Contains(got, "...(output truncated — 300 bytes total)") {
 		t.Errorf("expected truncation suffix, got %q", got)
 	}
 	// truncated output = prefix + suffix (suffix itself ~38 chars) — relaxed to limit+60

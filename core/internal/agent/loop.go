@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Mr2109/zerg-swarm/core/internal/agentstate"
 	"github.com/Mr2109/zerg-swarm/core/internal/compressor"
@@ -540,11 +541,21 @@ func (ls *loopState) persistOversized(toolName, content string) (string, error) 
 		return "", err
 	}
 	// 截断预览（头 3000 + 尾 1000——中间截断——但完整在文件）
+	// 2026-10-21：字节预算不变（头 3000 + 尾 1000），两处切口各退到 UTF-8 字符起始
+	//（✗ 不改 rune 口径——中文/emoji 走 rune 会把预览放大 3–4 倍）
 	preview := content
 	if len(preview) > 4000 {
-		preview = preview[:3000] + "\n…[中间省略 " + fmt.Sprintf("%d", len(content)-4000) + " 字符]…\n" + preview[len(content)-1000:]
+		headEnd := 3000 // 头：预算 3000 字节
+		for headEnd > 0 && !utf8.RuneStart(content[headEnd]) {
+			headEnd-- // 切口落在字中 ⇒ 向左退（前缀只会更短，不超预算）
+		}
+		tailStart := len(content) - 1000 // 尾：预算 1000 字节
+		for tailStart < len(content) && !utf8.RuneStart(content[tailStart]) {
+			tailStart++ // 切口落在字中 ⇒ 向右推（只丢 0–3 字节，后缀仍 ≤1000）
+		}
+		preview = content[:headEnd] + "\n…[中间省略 " + fmt.Sprintf("%d", len(content)-4000) + " 字节]…\n" + content[tailStart:]
 	}
-	return fmt.Sprintf("[超大输出 %d 字符——已持久化到 %s]\n%s\n[完整内容在上述文件——需要时用 read 读取该文件]", len(content), fpath, preview), nil
+	return fmt.Sprintf("[超大输出 %d 字节——已持久化到 %s]\n%s\n[完整内容在上述文件——需要时用 read 读取该文件]", len(content), fpath, preview), nil
 }
 
 // 无进展检测
