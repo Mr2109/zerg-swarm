@@ -10,6 +10,10 @@ package api
 // 2026-10-03 GAP-20261003-04 刀1（T-07）: 恢复四分区（History/Queue/Running/Waiting）与两处 fail-closed
 // 白名单判据正确对待新终态 cancelled 与正交标记 closed_*（设计 §2.5 / §4.3 D）——可恢复集 ∩ 终态集 == 空集;
 // 非白名单项不再静默丢弃 ⇒ 保留进 history（未知态降级: 不 panic、不丢件、不复活）。
+// 2026-10-21 任务状态机修——三条落盘不变式（由 normalizeTaskTime 与分区去重强制）:
+//   I1 时间与状态自洽: 非终态 ⟹ completed_at 为零值（终态时刻只由 applyStatus 写）；
+//   I2 created_at 只补零值、**永不覆写**（原「重启时间作为新创建」把创建时间改成本次重启时刻）；
+//   I3 同一 ID 只落一个分区: queue/running/waiting 与 history **互不相交**（原同在途又留档 ⇒ 双份）。
 
 import (
 	"container/heap"
@@ -71,12 +75,57 @@ func tasksReadPath() string {
 }
 
 // persistedTasks 落盘结构（完整版——history + queue + running + waiting）
+//
+// ★ 分区不变式（2026-10-21 任务状态机修 · I3）: 四个分区是**同一 ID 空间的一个划分**——
+// 同一个任务 ID 在一次落盘里**只出现在一个分区**（在途: queue/running/waiting；留档: history）。
+// 原先 history 与 queue 各存一份（同一指针、内容相同）⇒ 252 原始条 / 175 去重 / 77 件重复，
+// 文件体积虚增近一倍，且「同一件两处读回」走两条不同恢复路径（queue 重新派发 vs history 原样保留）。
+// 为什么保留 history 分区而不是删掉: 它是 UI 列表与「最近 100 件」上限的载体
+// （ListTasksHandler / TaskDetailHandler 读它），删分区要连带改消费者；「只落一份」零改动达同一目的。
+// 为什么保留四个分区而不是并成一个 map: 恢复动作按分区不同（queue 重派 / waiting 继续等 /
+// running 标 failed / history 原样保留）——分区就是「怎么恢复」的判据，与 classifyTaskStatus 白名单一一对应（§2.5）。
 type persistedTasks struct {
 	SavedAt time.Time        `json:"saved_at"`
 	History map[string]*Task `json:"history"`
 	Queue   []*Task          `json:"queue"`   // 排队中任务（重启恢复重新派发）
 	Running map[string]*Task `json:"running"` // 运行中任务（重启标 failed——无法恢复执行——但记录）
 	Waiting map[string]*Task `json:"waiting"` // v2.5.6 故障自愈: 环境故障挂起任务（重启恢复——继续等）
+}
+
+// dupHistorySkipLogged 分区去重的告警只打一次（否则每次落盘刷一行）。
+var dupHistorySkipLogged bool
+
+// normalizeTaskTime 时间字段不变式（**唯一兜底口** · 2026-10-21 任务状态机修）。
+// 只做「不让脏值出去」，不发明历史:
+//   - 非终态（queued/paused/running/waiting_retry）⇒ CompletedAt **一律清零**；
+//   - waiting_retry ⇒ WaitingSince 缺失时按序回退: 旧 CompletedAt → now（等待窗计时源）；
+//   - 终态 ⇒ 不强补 CompletedAt（存量件缺就缺——补一个假时刻比缺更坏）；
+//   - CreatedAt 为零的旧件补 now（**只补零值，绝不覆写**）；
+//   - classUnknown 原样放过（未知态不猜、不动——T-07 不丢件）。
+func normalizeTaskTime(t *Task, now time.Time) {
+	if t == nil || classifyTaskStatus(t.Status) == classUnknown {
+		return
+	}
+	if t.CreatedAt.IsZero() {
+		t.CreatedAt = now
+	}
+	if t.IsTerminal() {
+		t.WaitingSince = nil
+		return
+	}
+	if t.Status == StatusWaitingRetry {
+		if t.WaitingSince == nil {
+			ws := now
+			if !t.CompletedAt.IsZero() {
+				ws = t.CompletedAt // 旧件兼容: 旧实现把挂起时刻写在 completed_at 上
+			}
+			t.WaitingSince = &ws
+		}
+		t.CompletedAt = time.Time{}
+		return
+	}
+	t.CompletedAt = time.Time{}
+	t.WaitingSince = nil
 }
 
 // saveTasksLocked 保存任务状态（调用方持锁）
@@ -96,11 +145,8 @@ func saveTasksLocked(queue TaskQueue, running map[string]*Task, history map[stri
 		Running: make(map[string]*Task, len(running)),
 		Waiting: make(map[string]*Task),
 	}
-	for id, t := range history {
-		data.History[id] = t
-	}
-	// 队列（heap 遍历——按优先级序）
-	// 注: queue 是**切片头按值传**，此处的 Pop/Push 只作用于局部副本，调用方的 s.queue 全程未动。
+	// ① 在途件先落（queue → running → waiting）——先定「谁算在途」，history 再据此避重
+	// 注: queue 是**切片头按值传**，此处的 Pop 只作用于局部副本，调用方的 s.queue 全程未动。
 	for queue.Len() > 0 {
 		t := queue.Pop().(*Task)
 		data.Queue = append(data.Queue, t)
@@ -108,11 +154,58 @@ func saveTasksLocked(queue TaskQueue, running map[string]*Task, history map[stri
 	for id, t := range running {
 		data.Running[id] = t
 	}
-	// waiting（可选参数——兼容旧调用）
 	if len(waiting) > 0 {
 		for id, t := range waiting[0] {
 			data.Waiting[id] = t
 		}
+	}
+	// ② history 只收「不在途」的件——同一 ID 只落一份（I3）
+	live := make(map[string]*Task, len(data.Queue)+len(data.Running)+len(data.Waiting))
+	for _, t := range data.Queue {
+		if t != nil {
+			live[t.ID] = t
+		}
+	}
+	for id, t := range data.Running {
+		live[id] = t
+	}
+	for id, t := range data.Waiting {
+		live[id] = t
+	}
+	skipped := 0
+	for id, t := range history {
+		live0, dup := live[id]
+		if !dup {
+			data.History[id] = t
+			continue
+		}
+		skipped++ // 只落一份（在途侧）——恢复时从在途分区回队列
+		// ★ 但丢掉的那一份里可能有**在途那份已经丢掉的信息**: 旧实现每次重启都把在途件的
+		//   created_at 覆写成「现在」，而留档副本没人碰 ⇒ 留档那份才是真创建时间
+		//   （真机 77 件重复**逐字段比对只差 created_at**，全部是留档侧更早）。
+		//   重启只会把 created_at 往后推，故取较早者必是未被覆写的原值——不是发明数据。
+		if t != nil && live0 != nil && !t.CreatedAt.IsZero() &&
+			(live0.CreatedAt.IsZero() || t.CreatedAt.Before(live0.CreatedAt)) {
+			live0.CreatedAt = t.CreatedAt
+		}
+	}
+	if skipped > 0 && !dupHistorySkipLogged {
+		dupHistorySkipLogged = true
+		log.Printf("🧹 任务持久化: %d 件同时在途且留档 —— 按分区不变式只落一份（在途侧；本进程只报一次）\n", skipped)
+	}
+	// 时间字段兜底归一（与内存是**同一批指针** ⇒ 修完盘上，内存同步；见 normalizeTaskTime）
+	now := data.SavedAt
+	for _, t := range data.Queue {
+		normalizeTaskTime(t, now)
+	}
+	for _, t := range data.Running {
+		normalizeTaskTime(t, now)
+	}
+	for _, t := range data.Waiting {
+		normalizeTaskTime(t, now)
+	}
+	for _, t := range data.History {
+		normalizeTaskTime(t, now)
 	}
 	buf, err := json.Marshal(data)
 	if err != nil {
@@ -211,9 +304,8 @@ func (s *MasterScheduler) parkUnrecovered(t *Task, from string) {
 	case classTerminal:
 		// 原样保留——不改 status（覆写会丢「到底成没成」/退场语义——§O-8 / T-05）。
 	case classTransitional:
-		t.Status = "failed"
 		t.FailReason = "主控重启——运行中任务中断（未完成）"
-		t.CompletedAt = time.Now()
+		t.applyStatus(StatusFailed, time.Now())
 	case classRecoverQueue, classRecoverWait:
 		log.Printf("⚠️ 任务持久化恢复: %s 分区项 %s 状态 %q 属可恢复集却落在非对应分区 —— 保守保留进 history（不派发、不跨分区重路由）\n", from, t.ID, t.Status)
 	default: // classUnknown
@@ -250,8 +342,8 @@ func (s *MasterScheduler) loadPersistedHistory() {
 		if _, exists := s.history[id]; !exists {
 			// v2.5.6 2026-08-28: 重启时运行中任务无法恢复执行——标 failed（防 UI 残留 running 误导）
 			if t.Status == "running" {
-				t.Status = "failed"
 				t.FailReason = "重启中断（运行中任务无法恢复——重新触发）"
+				t.applyStatus(StatusFailed, time.Now())
 			}
 			// T-07（设计 §4.3 B）: 未知态降级——不当作 queued、不 panic、不丢件; 原样保留 + 响亮告警。
 			if classifyTaskStatus(t.Status) == classUnknown {
@@ -271,7 +363,12 @@ func (s *MasterScheduler) loadPersistedHistory() {
 		}
 		if t.Status == "queued" || t.Status == "paused" {
 			t.Status = "queued"
-			t.CreatedAt = time.Now() // 重启时间作为新创建（避免时长异常）
+			// 2026-10-21 修: 原先此处「重启时间作为新创建（避免时长异常）」把 CreatedAt **覆写**成本次重启时刻
+			// ⇒ 采样里出现 completed 比 created 早 24 天（存量 85 件）、UI 耗时算出负数。
+			// 耗时的根因是 completed_at 被写进非终态（见 runTask），不在 created_at——创建时间首次写入后不可覆写。
+			if t.CreatedAt.IsZero() {
+				t.CreatedAt = time.Now() // 只补旧件零值——绝不覆写
+			}
 			heap.Push(&s.queue, t)
 			restored++
 			continue
@@ -301,6 +398,20 @@ func (s *MasterScheduler) loadPersistedHistory() {
 			continue
 		}
 		s.parkUnrecovered(t, "waiting")
+	}
+	// 2026-10-21: 恢复面统一校正时间字段（非终态清 completed_at / 旧挂起件补 WaitingSince / 零 created_at 补齐）
+	nowRestore := time.Now()
+	for _, t := range s.queue {
+		normalizeTaskTime(t, nowRestore)
+	}
+	for _, t := range s.running {
+		normalizeTaskTime(t, nowRestore)
+	}
+	for _, t := range s.waiting {
+		normalizeTaskTime(t, nowRestore)
+	}
+	for _, t := range s.history {
+		normalizeTaskTime(t, nowRestore)
 	}
 	if len(data.History) > 0 || restored > 0 || waitingRestored > 0 {
 		log.Printf("📜 恢复任务: 历史 %d + 排队 %d + 挂起 %d（持久化完整版——重启不丢）\n", len(data.History), restored, waitingRestored)

@@ -1027,11 +1027,13 @@ func (s *MasterScheduler) finishTask(task *Task, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.running, task.ID)
-	task.CompletedAt = time.Now()
+	// 2026-10-21 任务状态机修: 原先在此**无条件**写 CompletedAt——环境故障挂起（waiting_retry）
+	// 也带着完成时间落盘。完成时间只由终态分支的 applyStatus 写；挂起计时走 WaitingSince。
+	now := time.Now()
 	if err != nil {
 		if isEnvFault(err) {
 			// 环境故障——挂起等恢复（不标 failed——不消耗重试次数——任务永远在队列里等机会）
-			task.Status = "waiting_retry"
+			task.applyStatus(StatusWaitingRetry, now)
 			task.FailReason = "环境故障（" + err.Error() + "）——等待机器恢复自动重派"
 			log.Printf("⏳ scheduler: task %s suspended on environment failure (waiting_retry): %v", task.ID, err)
 			s.waiting[task.ID] = task
@@ -1042,7 +1044,7 @@ func (s *MasterScheduler) finishTask(task *Task, err error) {
 			s.dispatchLocked()
 			return
 		}
-		task.Status = "failed"
+		task.applyStatus(StatusFailed, now)
 		task.FailReason = err.Error()
 		s.history[task.ID] = task
 		log.Printf("❌ scheduler: task %s program-driven run failed: %v", task.ID, err)
@@ -1056,7 +1058,7 @@ func (s *MasterScheduler) finishTask(task *Task, err error) {
 		}
 		verifyDir := taskDirForTask(task)
 		if vres := VerifyTaskOutput(verifyDir, reportPath, task.Description); !vres.Pass {
-			task.Status = "failed"
+			task.applyStatus(StatusFailed, now)
 			task.FailReason = "确定性验证不过: " + strings.Join(vres.Failures, "; ")
 			s.history[task.ID] = task
 			log.Printf("❌ scheduler: task %s failed deterministic validation (fake-completion blocked): %s", task.ID, strings.Join(vres.Failures, "; "))
@@ -1064,7 +1066,7 @@ func (s *MasterScheduler) finishTask(task *Task, err error) {
 			log.Printf("✅ scheduler: task %s deterministic validation passed (%d checks) — sending to review", task.ID, len(vres.Checks))
 			// ② 跨家族模型复查（模型复查）——复查任务完成时 handleReviewDoneLocked 决策
 			// 执行任务状态: 待复查（复查通过才 done——Mr2109: 成功与否由复查模型决定）
-			task.Status = "reviewing"
+			task.applyStatus("reviewing", now)
 			s.history[task.ID] = task
 			s.submitReviewTaskLocked(task, reportPath, "")
 		}

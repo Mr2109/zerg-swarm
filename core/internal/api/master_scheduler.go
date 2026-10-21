@@ -132,7 +132,11 @@ type Task struct {
 	ClaimedAt   *time.Time `json:"claimed_at,omitempty"`   // 领取时刻（派发即写）
 	ClaimedBy   string     `json:"claimed_by,omitempty"`   // 领取者（本机主控单槽 ⇒ "local"）
 	HeartbeatAt *time.Time `json:"heartbeat_at,omitempty"` // 最近心跳（起跑/存活期刷新）
-	cmd         *exec.Cmd  // 运行中的 CA 进程（打断发信号用——非导出）
+	// WaitingSince 进入 waiting_retry 的时刻（30 分钟等待窗的**唯一**计时源）。
+	// ★ 不许拿 CompletedAt 顶替: 修后 CompletedAt 只在终态写、回队/挂起即清零，
+	//   拿它计时就会「一清零 ⇒ 立刻判超 30 分钟 ⇒ 整批弃件」。旧件无本字段 ⇒ 回退读 CompletedAt（见 sinceWaiting）。
+	WaitingSince *time.Time `json:"waiting_since,omitempty"`
+	cmd          *exec.Cmd  // 运行中的 CA 进程（打断发信号用——非导出）
 }
 
 // TaskQueue 优先级队列（container/heap）
@@ -263,7 +267,7 @@ func (s *MasterScheduler) recoverWaitingLocked() {
 	var expired []*Task    // 超上限——降级 failed
 	var candidates []*Task // 待 ping 探测
 	for _, task := range s.waiting {
-		if now.Sub(task.CompletedAt) > maxWaitRetry {
+		if now.Sub(sinceWaiting(task, now)) > maxWaitRetry {
 			expired = append(expired, task)
 		} else {
 			candidates = append(candidates, task)
@@ -283,7 +287,7 @@ func (s *MasterScheduler) recoverWaitingLocked() {
 	// 回锁——处理结果
 	s.mu.Lock()
 	for _, task := range expired {
-		task.Status = "failed"
+		task.applyStatus(StatusFailed, time.Now())
 		task.FailReason = "环境故障持续超过 30 分钟——自动放弃（需人工介入）: " + task.FailReason
 		delete(s.waiting, task.ID)
 		s.history[task.ID] = task
@@ -291,7 +295,7 @@ func (s *MasterScheduler) recoverWaitingLocked() {
 	}
 	for _, task := range recovered {
 		delete(s.waiting, task.ID)
-		task.Status = "queued"
+		task.applyStatus(StatusQueued, time.Now())
 		heap.Push(&s.queue, task)
 		log.Printf("♻️ scheduler: task %s environment recovered — re-queued (awaiting re-dispatch)", task.ID)
 	}
@@ -432,7 +436,7 @@ func (s *MasterScheduler) pauseInternalsLocked() {
 				_ = task.cmd.Process.Kill()
 			}
 			// 挂起任务重新入队（外部完——恢复时重派——重新执行）
-			task.Status = "queued"
+			task.applyStatus(StatusQueued, time.Now())
 			heap.Push(&s.queue, task)
 			delete(s.running, id)
 		}
@@ -617,23 +621,13 @@ func (s *MasterScheduler) runTask(task *Task) {
 	defer s.mu.Unlock()
 	task.cmd = nil
 	delete(s.running, task.ID)
-	// v2.5.5 虫族UI: 完成/失败任务存历史（UI 列表显示——不丢）
-	task.CompletedAt = time.Now()
-	s.history[task.ID] = task
-	// 历史上限（防无限增长——保留最近 100 个）
-	if len(s.history) > 100 {
-		oldest := ""
-		var oldestTime time.Time
-		for id, t := range s.history {
-			if oldest == "" || t.CompletedAt.Before(oldestTime) {
-				oldest = id
-				oldestTime = t.CompletedAt
-			}
-		}
-		if oldest != "" {
-			delete(s.history, oldest)
-		}
-	}
+	// 2026-10-21 任务状态机修（CompletedAt 污染 / 双份写）:
+	//   原实现此处**无条件** `task.CompletedAt = time.Now()` 且**无条件** `s.history[task.ID] = task`，
+	//   且都在「成功/失败分支之前」⇒ ① 失败回队（queued）与挂起（waiting_retry）带着完成时间落盘；
+	//   ② 同一件同时躺在 history 与 queue，落盘两份同 ID（存量 252 原始条 / 175 去重）。
+	//   现在: 完成时间与 history 都只属于**真终态**（各分支走 applyStatus；入档见下方 IsTerminal 守卫）。
+	//   历史上限抽成 trimHistoryLocked()，只在该件确认为终态后调用。
+	now := time.Now() // 本次收尾的唯一时间源（各分支不再各取一次 time.Now）
 
 	// 资源信任度（2026-08-21 Mr2109）: 任务完成→模型使用计数（成功）/失败→故障计数
 	if task.Model != "" {
@@ -645,13 +639,13 @@ func (s *MasterScheduler) runTask(task *Task) {
 	}
 
 	if err != nil {
-		task.Status = "failed"
+		task.applyStatus(StatusFailed, now)
 		log.Printf("🔄 scheduler: task %s failed: %v\n%s", task.ID, err, tail(string(out), 500))
 		task.RetryCount++
 		// 2026-09-09(诊断 R3): 模型/后端类失败(exit 3=ReasonModelError——熔断/超时/实例挂死)
 		// 进 waiting_retry(环境恢复自动重派 30s 扫描)——不秒级热重试烧次数——治"卡 queued/秒 failed"连锁
 		if isBackendExit(err) && task.RetryCount <= 3 {
-			task.Status = "waiting_retry"
+			task.applyStatus(StatusWaitingRetry, now)
 			task.FailReason = fmt.Sprintf("model/backend unavailable (attempt %d — %v) — waiting for environment recovery to auto-retry", task.RetryCount, err)
 			s.waiting[task.ID] = task
 			if err := saveTasksLocked(s.queue, s.running, s.history, s.waiting); err != nil {
@@ -664,7 +658,7 @@ func (s *MasterScheduler) runTask(task *Task) {
 		// v2.5.5 失败自动重跑（Mr2109 2026-08-20）: 失败任务自动重排队（同 ID——不新建记录）
 		// 瞬时故障（熔断/网络——大概率恢复）——重跑 3 次仍失败才放执行完成标 failed
 		if task.RetryCount <= 3 {
-			task.Status = "queued"
+			task.applyStatus(StatusQueued, now)
 			// v2.5.5 修复（2026-08-24 Mr2109）: 同一个任务不换模型——重跑保持原模型
 			// 之前换模型（nextModelForRetry）导致: 每次换模型→node-a 加载切换窗口→请求失败→熔断累计→node-a 误熔断
 			// 失败根因是系统（加载切换/超时）不是模型——换模型反而引入新失败点——保持原模型重跑（同配置同后端——恢复概率高）
@@ -676,12 +670,15 @@ func (s *MasterScheduler) runTask(task *Task) {
 			log.Printf("❌ scheduler: task %s still failing after 3 retries — releasing as finished (investigate)", task.ID)
 		}
 	} else {
-		task.Status = "done"
+		task.applyStatus(StatusDone, now)
 		log.Printf("🔄 scheduler: task %s done", task.ID)
 		// v2.5.5 任务git全生命周期（阶段2——设计-20260820）: 复查任务完成 → 决策（通过/打回）
 		if task.Type == "review" {
 			s.handleReviewDoneLocked(task)
 			// 复查任务本身不进确定性验证（复查是判断——不是执行）
+			// 终态才留档: history 与 queue/running/waiting 是**互不相交**的分区（落盘只一份）
+			s.history[task.ID] = task
+			s.trimHistoryLocked()
 			if err := saveTasksLocked(s.queue, s.running, s.history); err != nil {
 				log.Printf("⚠️ 任务落盘失败: %v\n", err)
 			}
@@ -708,13 +705,13 @@ func (s *MasterScheduler) runTask(task *Task) {
 			vres = VerifyTaskOutput(verifyDir, reportPath, task.Description)
 		}
 		if !vres.Pass {
-			task.Status = "failed"
+			task.applyStatus(StatusFailed, now)
 			task.FailReason = "确定性验证不过: " + strings.Join(vres.Failures, "; ")
 			log.Printf("❌ scheduler: task %s failed deterministic validation (fake-completion blocked): %s", task.ID, strings.Join(vres.Failures, "; "))
 			// v2.5.5 失败自动重跑（Mr2109 2026-08-20）: 验证不过也自动重跑（可能瞬时模型问题——重跑恢复）
 			task.RetryCount++
 			if task.RetryCount <= 3 {
-				task.Status = "queued"
+				task.applyStatus(StatusQueued, now)
 				task.FailReason = fmt.Sprintf("auto-retry %d after validation failure (last: %s)", task.RetryCount, strings.Join(vres.Failures, "; "))
 				heap.Push(&s.queue, task)
 				log.Printf("🔁 scheduler: task %s auto-retry after validation failure (attempt %d/3 — same ID)", task.ID, task.RetryCount)
@@ -730,6 +727,11 @@ func (s *MasterScheduler) runTask(task *Task) {
 		}
 	}
 	// v2.5.5 P1-5 补: 任务状态落盘（重启后保留——UI 早上能看到所有任务）
+	// 只有真终态才进 history（回队/挂起件只活在 queue/waiting 里——见 persistedTasks 的分区不变式）
+	if task.IsTerminal() {
+		s.history[task.ID] = task
+		s.trimHistoryLocked()
+	}
 	if err := saveTasksLocked(s.queue, s.running, s.history); err != nil {
 		log.Printf("⚠️ 任务落盘失败: %v\n", err)
 	}
@@ -1001,7 +1003,7 @@ func (s *MasterScheduler) TerminateTask(taskID string) error {
 		s.mu.Unlock()
 		return fmt.Errorf("task %s is not running (only running tasks can be stopped)", taskID)
 	}
-	t.Status = "failed"
+	t.applyStatus(StatusFailed, time.Now())
 	t.FailReason = "用户手动终止（右键）"
 	// v2.5.6 修复（2026-08-28 实证）: 终止后必须删除 running + 派发下一个——
 	// 之前只标 failed 不删 running → 调度器认为并发满 → 排队任务永不派发（任务队列卡死）
@@ -1037,7 +1039,7 @@ func (s *MasterScheduler) RequeueTask(taskID string) error {
 		s.mu.Unlock()
 		return fmt.Errorf("task %s is not running (only running tasks can be re-queued)", taskID)
 	}
-	t.Status = "queued"
+	t.applyStatus(StatusQueued, time.Now())
 	t.FailReason = ""
 	s.queue = append(s.queue, t)
 	delete(s.running, taskID)
@@ -1089,7 +1091,7 @@ func (s *MasterScheduler) CancelTask(taskID, reason, note string) (outcome strin
 			return "", fmt.Errorf("task %s status %s cannot be cancelled (only queued/paused tasks can be cancelled)", taskID, st)
 		}
 		// ② 改态
-		t.Status = StatusCancelled
+		t.applyStatus(StatusCancelled, time.Now())
 		// ③ 迁容器: 从 queue 摘出 → 落 history（血证 §2.6——只改态不摘容器 ⇒ 并发满 ⇒ 队列卡死）
 		s.queue = append(s.queue[:i], s.queue[i+1:]...)
 		heap.Init(&s.queue)
@@ -1468,13 +1470,12 @@ func (s *MasterScheduler) reclaimDeadLettersAfter(timeout time.Duration) []strin
 		t.cmd = nil
 		t.RetryCount++
 		if t.RetryCount > 3 {
-			t.Status = StatusFailed
 			t.FailReason = fmt.Sprintf("死信：心跳超时 %s 无刷新且进程已丢（已重派 %d 次）—— 标 failed 待查", timeout, t.RetryCount)
-			t.CompletedAt = now
+			t.applyStatus(StatusFailed, now)
 			s.history[t.ID] = t
 			log.Printf("☠️ scheduler: task %s dead-letter → failed (%s no heartbeat, process gone, retries %d)", t.ID, timeout, t.RetryCount)
 		} else {
-			t.Status = StatusQueued
+			t.applyStatus(StatusQueued, now)
 			t.FailReason = fmt.Sprintf("死信回收：心跳超时 %s 且进程已丢 —— 回队重派（attempt %d/3）", timeout, t.RetryCount)
 			heap.Push(&s.queue, t)
 			log.Printf("♻️ scheduler: task %s dead-letter reclaim → re-queued (%s no heartbeat, attempt %d/3)", t.ID, timeout, t.RetryCount)
@@ -1576,7 +1577,7 @@ func (s *MasterScheduler) RetryTask(taskID string) error {
 	defer s.mu.Unlock()
 	for _, t := range s.history {
 		if t.ID == taskID && t.Status == "failed" {
-			t.Status = "queued"
+			t.applyStatus(StatusQueued, time.Now())
 			t.RetryCount = 0
 			t.FailReason = ""
 			heap.Push(&s.queue, t)
@@ -1706,6 +1707,69 @@ func (t *Task) IsTerminal() bool {
 		return true
 	}
 	return false
+}
+
+// applyStatus 改态**唯一入口**（2026-10-21 任务状态机修）——只保证一件事: 「状态」与「时间字段」永远自洽。
+//
+// 不变式（落盘面另由 normalizeTaskTime 兜底）:
+//   - 终态 done/failed ⇒ CompletedAt = now、WaitingSince = nil；
+//   - 终态 cancelled  ⇒ 不写 CompletedAt（已撤 ≠ 已完成 · 拍板 2026-10-21）、WaitingSince = nil；
+//   - waiting_retry             ⇒ CompletedAt 清零、WaitingSince = now；
+//   - 其余 queued/paused/running/reviewing ⇒ 两个时刻都清零。
+//
+// ★ 病根: runTask / finishTask 原先在「成功/失败分支**之前**」无条件写 CompletedAt ⇒
+// 失败回队（queued）与挂起（waiting_retry）也带着完成时间落盘（存量 87 件 queued 带 completed_at）。
+func (t *Task) applyStatus(status string, now time.Time) {
+	t.Status = status
+	if t.IsTerminal() {
+		if status == StatusCancelled {
+			// ★ 拍板（2026-10-21）: cancelled 是「退场」不是「完成」—— completed_at 一个字都不写；
+			//   残留值一并清零（否则「cancelled 必无 completed_at」这条读不出来；T5 只对 done/failed 有意义）。
+			t.CompletedAt = time.Time{}
+		} else {
+			t.CompletedAt = now
+		}
+		t.WaitingSince = nil
+		return
+	}
+	t.CompletedAt = time.Time{}
+	if status == StatusWaitingRetry {
+		t.WaitingSince = &now
+		return
+	}
+	t.WaitingSince = nil
+}
+
+// sinceWaiting 挂起起始时刻。旧件没有 WaitingSince ⇒ 回退用当时的 CompletedAt
+// （旧实现正是把挂起时刻写在 completed_at 上）；再没有 ⇒ now（本次不判超时——宁可多等、不放件）。
+func sinceWaiting(t *Task, now time.Time) time.Time {
+	if t.WaitingSince != nil {
+		return *t.WaitingSince
+	}
+	if !t.CompletedAt.IsZero() {
+		return t.CompletedAt
+	}
+	return now
+}
+
+// trimHistoryLocked 历史上限（防无限增长——保留最近 100 个）。调用方持锁。
+// 只在**终态件入档之后**调用——排序键 CompletedAt 现有不变式保证「终态必有时刻、非终态必无」。
+func (s *MasterScheduler) trimHistoryLocked() {
+	const maxHistory = 100
+	if len(s.history) <= maxHistory {
+		return
+	}
+	oldest := ""
+	var oldestTime time.Time
+	for id, t := range s.history {
+		if oldest == "" || t.CompletedAt.Before(oldestTime) {
+			oldest = id
+			oldestTime = t.CompletedAt
+		}
+	}
+	if oldest != "" {
+		delete(s.history, oldest)
+	}
 }
 
 // IsClosed 是否已结案（正交面）: closed_at 非空即已结案（T-06「非空即已结案」）。

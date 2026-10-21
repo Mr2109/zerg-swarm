@@ -143,7 +143,7 @@ func (s *MasterScheduler) handleReviewDoneLocked(reviewTask *Task) {
 		// 上限: 执行-复查 3 次 + Replan 总 5 次（VeriMAP 默认——防死循环）——超限标 failed
 		execTask.ReviewCount++
 		if execTask.ReviewCount > 5 || execTask.ReplanCount >= 3 {
-			execTask.Status = "failed"
+			execTask.applyStatus(StatusFailed, time.Now())
 			execTask.FailReason = fmt.Sprintf("review rejected %d times over limit (reworked %d times): %s", execTask.ReviewCount, execTask.ReplanCount, shortReason(reportPath))
 			log.Printf("🔁 scheduler: review %s rejected task %s over limit (reviews %d / reworks %d) — marking failed", reviewTask.ID, execTask.ID, execTask.ReviewCount, execTask.ReplanCount)
 		} else {
@@ -178,7 +178,7 @@ func (s *MasterScheduler) handleReviewDoneLocked(reviewTask *Task) {
 		log.Printf("✅ scheduler: review %s passed task %s (exec model %s — review model %s)", reviewTask.ID, execTask.ID, execTask.Model, reviewTask.Model)
 		// v2.5.6 修复（2026-08-29 Mr2109——zerg 流程复查）: 执行任务状态 reviewing → done（复查通过才算完成）
 		if execTask.Status == "reviewing" {
-			execTask.Status = "done"
+			execTask.applyStatus(StatusDone, time.Now())
 			log.Printf("✅ scheduler: task %s passed review — officially done", execTask.ID)
 		}
 		if execTask.RefWorktree != "" {
