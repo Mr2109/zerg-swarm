@@ -299,16 +299,18 @@ m = re.search(r"EXCLUDES=\((.*?)\n\)", t, re.S)
 ex = [l.split("#")[0].strip().strip('"').strip("'") for l in m.group(1).split("\n")
       if l.strip() and not l.strip().startswith("#")]
 ex = [e for e in ex if e]
-need = ["scripts/gates/check-hardcoded-private-paths.py", "scripts/build/publish-public.sh"]
-retired_py = "scripts/gates/check-history-secrets.py"
-retired_go = "core/cmd/zerg/check_history_secrets.go"
-mirror_lib = pathMirrorLibPy
+need = ["scripts/build/publish-public.sh"]
+retired = [("scripts/gates/check-history-secrets.py", "core/cmd/zerg/check_history_secrets.go"),
+           ("scripts/gates/check-hardcoded-private-paths.py", "core/cmd/zerg/check_hardcoded_private_paths.go")]
+mirror_lib = "@@MIRROR_LIB_PY@@"
 missing = [n for n in need if n not in ex]
-if retired_py in ex:
-    missing.append(retired_py + "\uff08\u9000\u5f79\u4ef6\u4ecd\u5728 EXCLUDES \u2014\u2014 \u5e94\u4e0b\u67b6\uff09")
-for rel in (retired_go, mirror_lib):
-    if not os.path.exists(os.path.join(repo, rel)):
-        missing.append(rel + "\uff08\u4e0d\u5728\u76d8\uff09")
+for rp, rg in retired:
+    if rp in ex:
+        missing.append(rp + "\uff08\u9000\u5f79\u4ef6\u4ecd\u5728 EXCLUDES \u2014\u2014 \u5e94\u4e0b\u67b6\uff09")
+    if not os.path.exists(os.path.join(repo, rg)):
+        missing.append(rg + "\uff08\u4e0d\u5728\u76d8\uff09")
+if not os.path.exists(os.path.join(repo, mirror_lib)):
+    missing.append(mirror_lib + "\uff08\u4e0d\u5728\u76d8\uff09")
 print("  \u6392\u9664\u9879 %d \u6761\uff1b\u53d1\u5e03\u673a\u5236\u811a\u672c\u767b\u8bb0\u9f50\u5168: %s" % (len(ex), "\u662f" if not missing else "\u7f3a %s" % missing))
 sys.exit(1 if missing else 0)
 `
@@ -502,7 +504,7 @@ func publishVerifyRun(stdout, stderr io.Writer) int {
 		bad("4 过滤口径不对称（见 parity.log）")
 	}
 	// 4b 排除项来自旧器脚本（单一真源）
-	if rc := ppPython(publishVerifyBytes, []string{root}, stdout, stderr); rc == 0 {
+	if rc := ppPython(strings.ReplaceAll(publishVerifyBytes, "@@MIRROR_LIB_PY@@", pathMirrorLibPy), []string{root}, stdout, stderr); rc == 0 {
 		ok("4b 发布机制自身已在 EXCLUDES 里统一登记（镜像器解析同一份 ⇒ 不会两处漂移）")
 	} else {
 		bad("4b EXCLUDES 里缺发布机制脚本")

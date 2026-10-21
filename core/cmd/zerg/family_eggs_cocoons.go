@@ -1212,6 +1212,107 @@ func eggPlanLines(action, eggID, model, machine, eggMaxS string, cands []eggCand
 	return lines
 }
 
+// eggSlotPreflight —— 计划件里的「槽位预言」两行（缺口 `GAP-20260926-09`）。
+//
+// 症状（账上原文）：干跑只印一句泛泛的「占内存/槽位」，**不点名这会挤掉当前那台引擎** ——
+// 单槽机上装第二枚模型时，人看不出谁会被顶掉，只能事后 `ps` 看。
+//
+// 数据只从**现成只读面**取：`GET /api/resources/ledger` 的 `machines[].resident[]`
+// （`alias` / `state` / `managed` / `pinned` / `pin_ttl_s`）—— 与 `zerg resource ledger`
+// **同一份口径**，✗ 不新开端点、✗ 不另算一套内存账。
+//
+// 读不到 ⇒ 两行都印「不给结论」（✗ 绝不把「读不到」印成「谁也不会被挤掉」——
+// 那是拿未知冒充安全；与 §3.2 诚实原则同一条）。
+func eggSlotPreflight(c *client, inv *invocation, stderr io.Writer, machine, model string) []string {
+	var ledger jsonObj
+	if err := c.getJSON("/api/resources/ledger", &ledger); err != nil {
+		inv.warnf("槽位预言读不到 `/api/resources/ledger`（%v）⇒ 不点名会挤掉谁", err)
+		fmt.Fprintf(stderr, "%s: 槽位预言读不到 `/api/resources/ledger`（%v）⇒ 不点名会挤掉谁（✗ 不编）· 复核：`%s resource ledger`\n",
+			progName, err, progName)
+		return []string{
+			fmt.Sprintf("本机驻留 : 读不到（`/api/resources/ledger`：%v）⇒ 不给结论", err),
+			"本次装载会挤掉 : 不给结论（驻留面读不到 —— ✗ 不编「谁也不会被挤掉」）",
+		}
+	}
+	// `machines` 现读是**数组**（`/api/resources/ledger` 的 `buildResourceMachines` 返回
+	// 排序过的切片）；对象形态也认（同一格不许两套读法），拿不到就照实空着（不编）。
+	var self jsonObj
+	for _, it := range asList(ledger["machines"]) {
+		if o := asObj(it); o != nil && cell(o["machine"]) == machine {
+			self = o
+			break
+		}
+	}
+	if self == nil {
+		if o := asObj(asObj(ledger["machines"])[machine]); o != nil {
+			self = o
+		}
+	}
+	all, others := []string{}, []string{}
+	selfResident := false
+	if self != nil {
+		for _, it := range asList(self["resident"]) {
+			o := asObj(it)
+			if o == nil {
+				continue
+			}
+			alias := cell(o["alias"])
+			if alias == "" {
+				continue // 名字拿不到的条目不进预言（✗ 不拿 file/digest 冒充别名）
+			}
+			if alias == model {
+				selfResident = true
+				continue
+			}
+			extras := []string{}
+			if st := cell(o["state"]); st != "" {
+				extras = append(extras, "state="+st)
+			}
+			if cell(o["managed"]) == "true" {
+				extras = append(extras, "managed")
+			}
+			if cell(o["pinned"]) == "true" {
+				extras = append(extras, "pinned")
+			}
+			if ttl := cell(o["pin_ttl_s"]); ttl != "" && cell(o["pinned"]) == "true" {
+				// TTL 是浮点秒 ⇒ 进人面只取整（✗ 不印 974.998289134 这种伪精度）。
+				if f, err := strconv.ParseFloat(ttl, 64); err == nil {
+					ttl = strconv.FormatFloat(f, 'f', 0, 64)
+				}
+				extras = append(extras, "pin_ttl_s="+ttl)
+			}
+			all = append(all, alias)
+			named := alias
+			if len(extras) > 0 {
+				named += "（" + strings.Join(extras, " · ") + "）"
+			}
+			others = append(others, named)
+		}
+		if len(all) == 0 {
+			// 该模型自己驻留时也要把它算进「本机驻留」那一格（人要知道这台机现在跑的是什么）。
+			for _, it := range asList(self["resident"]) {
+				if o := asObj(it); o != nil {
+					if alias := cell(o["alias"]); alias != "" {
+						all = append(all, alias)
+					}
+				}
+			}
+		}
+	}
+	residentLine := fmt.Sprintf("本机驻留 : %s ⇒ 无（`/api/resources/ledger` 上这台机没有驻留明细）", machine)
+	if len(all) > 0 {
+		residentLine = fmt.Sprintf("本机驻留 : %s ⇒ %s", machine, strings.Join(all, " · "))
+	}
+	evictLine := "本次装载会挤掉 : 无（该机账本上没有别的引擎驻留）"
+	switch {
+	case len(others) > 0:
+		evictLine = fmt.Sprintf("本次装载会挤掉 : %s", strings.Join(others, " · "))
+	case selfResident:
+		evictLine = "本次装载会挤掉 : 无（该模型已驻留在该机 ⇒ 本次是复用，不挤掉别人）"
+	}
+	return []string{residentLine, evictLine}
+}
+
 // eggWriteGate —— 写档三态的唯一判口（照 `routeWriteGate` 的同一张表 · 措辞按卵面）。
 //
 // `--json` 面：人读的计划件走 **stderr**（机器面 stdout 只许剩包封 —— `A3-b` 案的先例）。
@@ -1430,6 +1531,12 @@ func eggAct(inv *invocation, stdout, stderr io.Writer, action string) int {
 	// ⑤ 干跑：计划件已在校验之后 ⇒ 把**核对过的**目标与候选一并印出来（零请求）。
 	// `--json` 面：人读计划件走 stderr、机器面 stdout 只出包封（不混）。
 	if inv.dryRun {
+		// ★ 缺口 `GAP-20260926-09`：干跑不许只印一句「占内存/槽位」——
+		//   把那台机**现在驻留着什么**与**这次会挤掉谁**点名（读 `/api/resources/ledger`，
+		//   与 `zerg resource ledger` 同一份口径）。只读面拿不到 ⇒ 印「不给结论」。
+		if action == eggActLoad {
+			plan = append(plan, eggSlotPreflight(c, inv, stderr, machine, model)...)
+		}
 		eggWriteGate(inv, stdout, stderr, act, eggID, machine, endpoint, effect, plan)
 		changed := false
 		inv.changed = &changed

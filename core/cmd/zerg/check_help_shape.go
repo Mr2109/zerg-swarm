@@ -1251,8 +1251,20 @@ var chsBaseline = chsBaselineSet{
 	//   `cocoon broker` 不进危险表 —— 它只在自己机器上起/收**一个回环 broker 进程**（可逆：`stop` 即收），
 	//   端口缺省 8092 且由 `ZERG_BROKER_ADDR` 一处旋钮给定（理由写在 `family_cocoon_broker.go` 件头与
 	//   main.go 那一格的注释里）⇒ 这是「没有顺手放宽」的反证，不是省了没量。
-	"help --all":     {HasLines: true, Lines: 501, HasBytes: true, Bytes: 261999},
-	"help":           {HasLines: true, Lines: 375, HasBytes: true, Bytes: 96456, HasLast: true, Last: "      非交互用 `--token-stdin`；详见 `zerg help credentials`）。"},
+	// ★ 2026-10-21（本单 · 段5 `GAP-20260926-194`：`doctor node` 一条**挂既有 `doctor` 族**）：
+	//   族数**不变**（`doctor` 族本来就在 ⇒ 1 → 2 条动作），一条新动作 ⇒ `help --all` 与裸 `help`
+	//   各 **+2 行**（用法行 + 该族段里那一行）。字节与行数由现跑
+	//   `zerg gate check check-help-shape --emit-baseline` 取数照抄（**禁手写** —— 件头纪律）：
+	//   `help --all` 501 → 503 行 / 261999 → 262476 字节 · 裸 `help` 375 → 377 行 / 96456 → 96933 字节。
+	//   ★ 同日中性化改名（`doctor edge-node` ⇒ `doctor node [--machine <机>]`：公开面不许有机型名字面量）——
+	//   行数**不变**（503 / 377），字节随用法串与说明各 **+47** ⇒ 由现跑重取：
+	//   `help --all` 503 行 / 262476 → **262523** 字节 · 裸 `help` 377 行 / 96933 → **96980** 字节。
+	//   危险档面（`help dangerous` 128 行 / 49360 字节 · 116 条）与 `help config`（21 / 1748）**一分未变**：
+	//   `doctor node` 不进危险表 —— 它**只读**（一条 ssh / 本机 `sh -s` + 只读命令；`git status` 带
+	//   `--no-optional-locks` 免得刷索引），✗ 不写盘、✗ 不改服务、✗ 不提权（见 `family_doctor_node.go`
+	//   件头）⇒ 这一格是「没有顺手放宽」的反证，不是省了没量。
+	"help --all":     {HasLines: true, Lines: 503, HasBytes: true, Bytes: 262523},
+	"help":           {HasLines: true, Lines: 377, HasBytes: true, Bytes: 96980, HasLast: true, Last: "      非交互用 `--token-stdin`；详见 `zerg help credentials`）。"},
 	"help dangerous": {HasLines: true, Lines: 128, HasBytes: true, Bytes: 49360, HasRows: true, Rows: 116, HasTail: true, Tail: "上表 116 条：**已开放 103 条**（确认档齐就真执行 —— 逐条见上行标记）；**未开放 13 条**（真跑一律**拒执**、退码 2 = 不给结论，只有 `--dry-run` 出计划件 = 退码 0）。"},
 	"help config":    {HasLines: true, Lines: 21, HasBytes: true, Bytes: 1748},
 }

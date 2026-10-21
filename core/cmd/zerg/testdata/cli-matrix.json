@@ -5,6 +5,18 @@
  "cases": [
   {
    "argv": [
+    "doctor",
+    "node",
+    "--nosuchflag-zz"
+   ],
+   "command": "doctor node",
+   "id": "doctor node#未知旗标",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标（也**不 ssh** —— 只读体检的入口一道门都不许先动）"
+  },
+  {
+   "argv": [
     "gate",
     "seal",
     "verify",

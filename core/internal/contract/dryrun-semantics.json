@@ -1486,6 +1486,20 @@
    "语义": "dryrun.v1",
    "零副作用判据": "`TestCocoonBrokerStartDryRunZeroSideEffects` 现跑 `start --dry-run` ⇒ rc=0 且 `<状态目录>/broker` 目录**不存在**、三个落点件都不在、该 addr `dial` 不通（任一条破了就红）；`TestCocoonBrokerStopKillsOwnedPid` 先跑 `stop --dry-run` 对真实子进程 ⇒ 靶子仍活、状态件仍在，之后真跑才收。",
    "备注": "T4c 新增（上件的测试伴生件）"
+  },
+  {
+   "file": "core/cmd/zerg/cli_publish_run_paths_test.go",
+   "类": "`publish run` 两路档（默认=逐提交镜像器 / `--legacy`=已弃用压平器）的计划件面判据（缺 GAP-20260926-22）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "`publish run --dry-run`（默认档）与 `publish run --legacy --dry-run` 两档 ⇒ 退码 0 · 只出计划面（它会执 / 档位 / 走哪一路 / 会发·跳过·空指 / 规则指纹）· **仓根逐件 sha256 前后不变**（零副作用判据 = 逐件对拍，不是「没报错就算」）；全部判据跑在 `t.TempDir()` 的**仓外合成仓**（`ZERG_REPO` + 合成 `HOME` 名册），本件自己不真发布、不推远端、不联网",
+   "备注": "缺口 `GAP-20260926-22`（发布双路对拍）：`--dry-run` 字样只出现在被断言的那两档里；另含 `--out` 裸值退 2、`--legacy` 不归别族（退 2）两条负控"
+  },
+  {
+   "file": "core/cmd/zerg/cli_egg_slot_preflight_test.go",
+   "类": "判据件（卵槽预检干跑面）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "只跑 --dry-run：断言计划件多出「本机驻留 / 本次装载会挤掉」两行，且不落任何盘；读不到驻留账时须印「不给结论」而非冒充安全",
+   "备注": "egg-slot（GAP-20260926-09）新增"
   }
  ]
 }

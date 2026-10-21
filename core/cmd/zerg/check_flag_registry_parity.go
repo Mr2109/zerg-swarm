@@ -286,7 +286,6 @@ var frpEXEMPT = map[frpKey]string{
 	{Face: frpFaceNoUsage, Flag: "--path", Where: "model/set"}:                    "真 usage 缺列（✗ 非误报）：fleetYAMLPath（family_config.go）按取值读了 --path、该命令用法串未列 ⇒ 本版冻结不修（修点 = 用法串 · 本单禁区）",
 	{Face: frpFaceNoUsage, Flag: "--root", Where: "model/set"}:                    "真 usage 缺列（✗ 非误报）：fleetYAMLPath（family_config.go）按取值读了 --root、该命令用法串未列 ⇒ 本版冻结不修（修点 = 用法串 · 本单禁区）",
 	{Face: frpFaceNoUsage, Flag: "--target", Where: "plan"}:                       "真 usage 缺列（✗ 非误报）：cmdPlan（family_fusion.go）按取值读了 --target、该命令用法串未列 ⇒ 本版冻结不修（修点 = 用法串 · 本单禁区）",
-	{Face: frpFaceNoUsage, Flag: "--remote", Where: "publish/run"}:                "真 usage 缺列（✗ 非误报）：cmdPublishRun（family_publish_run.go）按取值读了 --remote、该命令用法串未列 ⇒ 本版冻结不修（修点 = 用法串 · 本单禁区）",
 	{Face: frpFaceNoUsage, Flag: "--limit", Where: "repo/status"}:                 "真 usage 缺列（✗ 非误报）：repoStatusOne（family_repo.go）按取值读了 --limit、该命令用法串未列 ⇒ 本版冻结不修（修点 = 用法串 · 本单禁区）",
 	{Face: frpFaceNoUsage, Flag: "--docs-root", Where: "script/inventory/verify"}: "真 usage 缺列（✗ 非误报）：scriptInvDocsRoot（family_script_inventory.go）按取值读了 --docs-root、该命令用法串未列 ⇒ 本版冻结不修（修点 = 用法串 · 本单禁区）",
 }

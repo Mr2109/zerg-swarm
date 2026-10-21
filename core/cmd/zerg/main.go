@@ -410,6 +410,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 	if inv.hasFlag("--fail-on-hit") && !usageDeclaresFlag(cmd, "--fail-on-hit") {
 		inv.unknown = append(inv.unknown, "--fail-on-hit")
 	}
+	if inv.hasFlag("--legacy") && !usageDeclaresFlag(cmd, "--legacy") {
+		inv.unknown = append(inv.unknown, "--legacy")
+	}
 	// ★ 同一条数据驱动收口（缺口账 `GAP-20260927-259` · 本枚）：`--notes` 在解析面刚上户口
 	//   （`valueFlagName`）⇒ **全族共用**；若不在此收口，别族（usage 未列它的命令）真给它
 	//   会从「未知旗标 2」退化成**静默吞**（硬约束⑤：既有命令的退码与输出一字不动）。形状逐字
@@ -884,6 +887,21 @@ func init() {
 			optFields: []string{"credential_consistency"},
 			endpoint:  "",
 			run:       cmdDoctor,
+		},
+		{
+			// ── 缺口 `GAP-20260926-194`：目标机只读体检入口（**不新开族** —— 落 `doctor` 名下的动作面）───
+			// 真身 = `family_doctor_node.go:cmdDoctorNode`。只读：一条 ssh（本机那一台直接 `sh -s`）+ 只读命令；
+			// 判定词沿用 doctor 五值闭集（PASS/FAIL/BLOCKED/REPORT），「未接」= REPORT（结构性缺席，只报告、不进退码）。
+			// ★ 机名是**运行期数据**（`--machine <机>` · 缺省按本机名册名解析）：命令名 / kind / 件名一律中性，
+			//   ✗ 不把任何具体机型名写进命令面（公开面不许有机型名字面量）。
+			path:     []string{"doctor", "node"},
+			kind:     "DoctorNode",
+			summary:  "目标机只读体检（版本/sha · 单元 · 端口 · 模型/卵 · 磁盘 —— 一条只读探针 · ✗ 不写盘/不改服务/不提权；读不到的格照实标「未接」· 机名缺省取本机）",
+			usage:    "zerg doctor node [--machine <机>]",
+			arity:    "none",
+			endpoint: "",
+			opened:   true,
+			run:      cmdDoctorNode,
 		},
 		{
 			path:    []string{"context", "ls"},
@@ -2313,7 +2331,7 @@ func init() {
 			opened:  true,
 			kind:    "PublishRun",
 			summary: "出公开镜像树（**本地** dist/<版本>/release · 白名单+排除项+脱敏 · 不出网、不推送）",
-			usage:   "zerg publish run [--node <机>] [--check-excludes-parity] [--dry-run | --confirm=<主机名> --yes]",
+			usage:   "zerg publish run [--node <机>] [--legacy] [--check-excludes-parity] [--dry-run | --confirm=<主机名> --yes]",
 			// 本版已开放（Mr2109 2026-09-25「脱敏推」授权）：真跑只写**本地**产物目录。
 			// 「推远端」不在命令面 —— 不可逆动作按规矩等 Mr2109 发话后单独执行（不另开执行路径）。
 			run: cmdPublishRun,
@@ -2332,6 +2350,7 @@ func init() {
 			summary: "两器产出一致性验收（**本地** · 不出网、不推送 · 真身 `family_publish_verify_native.go:publishVerifyRun`；入口只转发）",
 			usage:   "zerg publish verify",
 			arity:   "none",
+			opened:  true,
 			run:     cmdPublishVerifyFamily,
 		},
 		{
@@ -5825,6 +5844,13 @@ func parseInvocation(args []string) (*invocation, error) {
 		//   它的命令 ⇒ 真给即退 2「未知旗标」）。★ **✗ 不进 `valueFlagName`**（那是**取值**名表）：布尔名
 		//   登进去会让门73 判据丙「形态」判红。必须在下面「未知旗标」兜底**之前**上户口。
 		case a == "--check-excludes-parity":
+			inv.kvSet(a, "true")
+		// ★ 本笔（缺口 `GAP-20260926-22`）：`--legacy` —— `publish run` 的**应急通道档**（直调已弃用的
+		//   压平器 `scripts/build/publish-public.sh` · 语义在 `family_publish_run.go` 的 `legacy` 分支）。
+		//   与上面 `--check-excludes-parity` 同一种形态：布尔档 ⇒ `kvSet` 上户口；dispatch 的
+		//   数据驱动收口（`run` 里那条 `usageDeclaresFlag` 判）看得见 —— 别族 usage 未列它 ⇒ 真给即退 2。
+		//   ★ **✗ 不进 `valueFlagName`**（那是取值名表；布尔名登进去会让门73 判据丙「形态」判红）。
+		case a == "--legacy":
 			inv.kvSet(a, "true")
 		// ★ 本单（缺口 `GAP-20260929-28` 剩面 · 本枚）：`gate find --uncertain` —— 把「解析不确定」
 		//   清单从 stderr 侧信道提到**正门** stdout / 机器面（`family_gate_find.go` 的

@@ -25,9 +25,11 @@ import (
 //     不出网、不推送 ⇒ 设 D3 三态确认。
 // **「推远端」不在命令面**：不可逆动作按规矩等 Mr2109 发话后单独执行（不另开执行路径）。
 //
-// ★ 诚实标注（2026-09-26 现读对拍结论 · 逐字见 `publishRunPathNotice`）：**本入口走的是压平快照器
-//   （已弃用 · 非公开面真源）；真源 = `publish/mirror-public.sh`（规则指纹/全树模式长在它身上）**。
-//   ⇒ 真跑出的树只当**本地素材**看，不许当「公开面那一份」的证据；切换主路要人拍（本笔不切）。
+// ★ 诚实标注（缺口 `GAP-20260926-22` 已解 · 逐字见 `publishRunPathNotice`）：**默认档走真源
+//   `publish/mirror-public.sh`（逐提交镜像器）**；旧压平快照器降为 `--legacy` 应急通道（已弃用、
+//   v2.6.0 计划删除、运行时打弃用警告）。两路的产出**不是同一条路**⇒ 逐件对拍走 `zerg publish verify`
+//   （真身 `family_publish_verify_native.go:publishVerifyRun` · 树内容逐路径 blob sha + 模式 + 契约）。
+//   **推远端仍不在命令面**：不可逆动作等 Mr2109 发话后单独执行。
 //
 // ★ 缺口 `GAP-20260926-21`（2026-09-26 落账 · 2026-10-04 拍板）—— 「`publish run --dry-run` 只打
 //   静态文案、根本不落到发布器」：干跑过去**纯静态**（8 行写死的 `fmt.Fprintf` + `return exitOK`）⇒
@@ -43,6 +45,8 @@ import (
 //     自报非零副作用）⇒ **退码 8 · stdout 一行都不出**（计划件不许建在不洁读数上）。
 // ★ 本笔**只动干跑档**：真跑执行路径仍走压平快照器（切真源 = `GAP-20260926-22` · 另一笔）⇒
 //   `走哪一路` 那条诚实标注**保留**（执行面事实未变）；切主路那一笔里它自会消失。
+// ★ 追记（`GAP-20260926-22` 本笔已解）：执行面已切真源镜像器 ⇒ 上面那条注的「仍走压平快照器」**作废**；
+//   `走哪一路` 保留下来，改成「默认 / `--legacy`」两档的逐字标注（同一份文字两个位置共用）。
 //
 // ★ 发布链 Go 半优先（本批第二件 · 2026-10-09 · 上件 = 预检 `family_publish_preflight_native.go`）：
 //   真跑执行路径已从「exec 旧壳」改为**进程内 Go 真身**（`family_publish_public_native.go`）——
@@ -51,11 +55,18 @@ import (
 
 // publishRunPathNotice —— 「本入口走哪一路」的**逐字**标注（两个位置共用同一份文字 · 不许含糊）。
 // 两个位置：① `--dry-run` 计划件里那一行；② 真跑执行前 stderr 那一行。
-const publishRunPathNotice = "本入口走：压平快照器（已弃用 · **非公开面真源**）；真源 = `publish/mirror-public.sh`（规则指纹/全树模式长在它身上）"
+const publishRunPathNotice = "默认走：`publish/mirror-public.sh`（逐提交镜像器，正式发布通道）；`--legacy` 直调 `scripts/build/publish-public.sh`（已弃用压平器，v2.6.0 计划删除，仅应急/对照；运行时打弃用警告）"
 
-// publishRunDefaultOut —— 底脚本（`scripts/build/publish-public.sh`）**不给 `--out` 时的默认落点**
+// publishRunDefaultOut —— **旧压平器**（`scripts/build/publish-public.sh`）**不给 `--out` 时的默认落点**
 // （逐字照它第 63 行；`<时间戳>` 是脚本自己的 `TS`，不由本命令编）。
+// ★ 只属 `--legacy` 档：默认档走镜像器，默认落点是 `publishRunMirrorDefaultOut`（两条路的缺省落点**不同名**，
+//
+//	照旧文案印 /tmp/zerg-public-… 会指错地方 ⇒ 两档各印各的）。
 const publishRunDefaultOut = "/tmp/zerg-public-<时间戳>"
+
+// publishRunMirrorDefaultOut —— **逐提交镜像器**（`publish/mirror-public.sh`）不给 `--out` 时的默认落点
+// （逐字照 `family_mirror_public_native.go:mirrorPublicNative` 的 `out = "/tmp/zerg-mirror-" + ts`）。
+const publishRunMirrorDefaultOut = "/tmp/zerg-mirror-<时间戳>"
 
 // publishRunListOnlyPrefix —— 真源只读预演末尾那行机器面的**逐字前缀**（`mirror-public-lib.py`
 // `list_only_report()` 打印；本件按它取数，✗ 不解析人面散文）。
@@ -150,19 +161,30 @@ func cmdPublishPreflight(inv *invocation, stdout, stderr io.Writer) int {
 
 // cmdPublishRun —— `zerg publish run [--out <目录>] [--dry-run | --confirm=<主机名> --yes]`：本地出公开镜像树。
 func cmdPublishRun(inv *invocation, stdout, stderr io.Writer) int {
-	const script = "scripts/build/publish-public.sh"
-	// 落点口径 = **实落**（三修之二）：旧文案写 `dist/<版本>/release`，而脚本实落
-	// `/tmp/zerg-public-<时间戳>`（给 `--out` 则用给的那个）⇒ 照错落点去找件 = 白跑一趟。
+	// `--legacy` 选旧压平器（已弃用，仅应急/对照）；**默认走逐提交镜像器** `publish/mirror-public.sh`
+	// （缺口 `GAP-20260926-22`：真源 = 镜像器；旧压平器的产出与它**不是同一条路** ⇒ 默认档切真源、旧件留档）。
+	legacy := inv.hasFlag("--legacy")
+	script := "publish/mirror-public.sh"
+	defaultOut := publishRunMirrorDefaultOut
+	if legacy {
+		script = "scripts/build/publish-public.sh"
+		defaultOut = publishRunDefaultOut
+	}
+	// 落点口径 = **实落**（三修之二）：旧文案写 `dist/<版本>/release`，而两条路实落的缺省点都在
+	// `/tmp/zerg-{public,mirror}-<时间戳>`（给 `--out` 则用给的那个）⇒ 照错落点去找件 = 白跑一趟。
 	out := strings.TrimSpace(inv.flagVal("--out"))
-	landing := publishRunDefaultOut
+	landing := defaultOut
 	if out != "" {
 		landing = out
 	}
-	effect := fmt.Sprintf("在**本地** `%s` 生成公开镜像树（白名单 + 排除项 + 脱敏替换 —— 底脚本不给 `--out` 时的默认落点就是 `%s`）—— **不出网、不推送**",
-		landing, publishRunDefaultOut)
 	scriptArgs := ""
 	if out != "" {
 		scriptArgs = " --out " + out
+	}
+	effect := fmt.Sprintf("在**本地** `%s` 生成公开镜像树（由 `%s` 编排；白名单 + 排除项 + 脱敏替换 —— 该底脚本不给 `--out` 时的默认落点就是 `%s`）—— **不出网、不推送**",
+		landing, script, defaultOut)
+	if legacy {
+		fmt.Fprintf(stderr, "%s: ⚠️  `--legacy` 走**已弃用**压平器 `%s`（本次走的是**应急通道** · v2.6.0 计划删除 · 仅应急/对照）\n", progName, script)
 	}
 	// ★ ★ 先决（缺口 `GAP-20260926-75`）：下面这个「裸值守卫」依赖 **parser 归一口径** ——
 	//   `inv.hasFlag` / `inv.flagVal` 读的是同一套归一结果（`--out x` 与 `--out=x` 同形；缺值与“没给”分家）。
@@ -202,7 +224,7 @@ func cmdPublishRun(inv *invocation, stdout, stderr io.Writer) int {
 		return publishPublicNative(inv, stdout, stderr, ppRunOpts{Out: out, CheckParity: true})
 	}
 	if inv.dryRun {
-		return publishRunDryRun(inv, stdout, stderr, script, scriptArgs, effect)
+		return publishRunDryRun(inv, stdout, stderr, script, scriptArgs, effect, legacy)
 	}
 	root := repoRoot()
 	if root == "" {
@@ -236,15 +258,19 @@ func cmdPublishRun(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
 		return exitUsage
 	}
-	// ★ 发布链 Go 半优先（本批第二件）：压平快照器编排搬进**进程内 Go 真身**（见 family_publish_public_native.go）。
-	//   旧壳 `scripts/build/publish-public.sh` **暂留全量**（✗ 不退化：退化会 bin/zerg→壳→bin/zerg 递归，须与 bin/ 重编同批）。
-	//   ★ 这里**不打** `publishRunPathNotice`（旧壳也不打）—— 报话由真身按旧壳逐字出（保两态三面逐字同）。
-	push := inv.hasFlag("--push")
-	remote := strings.TrimSpace(inv.flagVal("--remote"))
-	if remote == "" {
-		remote = strings.TrimSpace(os.Getenv("ZERG_PUBLIC_REMOTE"))
+	// ★ 发布链 Go 半优先（本批第二件）：
+	//   默认走逐提交镜像器 `publish/mirror-public.sh`（正式发布通道 · 扣 `GAP-20260926-22`）；
+	//   `--legacy` 走旧压平器的 Go 真身（与 `scripts/build/publish-public.sh` 逐字对齐，已弃用，仅应急/对照）。
+	//   两档都**只写本地产物目录**，不出网、不推送。
+	fmt.Fprintf(stderr, "%s: 走哪一路 —— %s\n", progName, publishRunPathNotice)
+	if legacy {
+		return publishPublicNative(inv, stdout, stderr, ppRunOpts{Out: out})
 	}
-	return publishPublicNative(inv, stdout, stderr, ppRunOpts{Out: out, Push: push, Remote: remote})
+	argv := []string{}
+	if out != "" {
+		argv = append(argv, "--out", out)
+	}
+	return mirrorPublicNative(root, stdout, stderr, argv)
 }
 
 // publishRunDryRun —— `zerg publish run --dry-run`：**真源只读预演 + 计划件**（零副作用）。
@@ -255,7 +281,7 @@ func cmdPublishRun(inv *invocation, stdout, stderr io.Writer) int {
 //
 // 出口三态（同族纪律，`publish set` / `publish tree has`）：真源只读预演**拿不到结论** ⇒
 // **退码 8 · stdout 一行都不出**（计划件不许建在不洁读数上 —— 静默给个「会发 0 件」比不答更坏）。
-func publishRunDryRun(inv *invocation, stdout, stderr io.Writer, script, scriptArgs, effect string) int {
+func publishRunDryRun(inv *invocation, stdout, stderr io.Writer, script, scriptArgs, effect string, legacy bool) int {
 	// ① 真源只读预演（先取数，取不到就**不出**计划件）。
 	root := repoRoot()
 	if root == "" {
@@ -275,11 +301,21 @@ func publishRunDryRun(inv *invocation, stdout, stderr io.Writer, script, scriptA
 	fmt.Fprintln(stdout, "计划件（--dry-run · 零副作用 —— 未执行、未改任何状态）")
 	fmt.Fprintf(stdout, "  动作     : %s publish run\n", progName)
 	fmt.Fprintf(stdout, "  危险档   : D3（发布档：会写产物目录；命中私有面门禁 ⇒ 整批自中止，一个字节都不推）\n")
-	fmt.Fprintf(stdout, "  它会调   : bash %s%s\n", script, scriptArgs)
+	fmt.Fprintf(stdout, "  它会执   : %s%s\n", script, scriptArgs)
 	fmt.Fprintf(stdout, "  它会动   : %s\n", effect)
+	if legacy {
+		fmt.Fprintf(stdout, "  档位     : --legacy（**应急通道** · 已弃用压平器 · v2.6.0 计划删除）\n")
+	} else {
+		fmt.Fprintf(stdout, "  档位     : 默认（逐提交镜像器 = 正式发布通道）\n")
+	}
 	fmt.Fprintf(stdout, "  走哪一路 : %s\n", publishRunPathNotice)
 	// ── 真源只读预演（`--list-only` 同形）：读数一律取真源自己那行机器面，本件不在 Go 侧复算 ──
-	fmt.Fprintf(stdout, "  只读预演 : 真源 `publish/mirror-public-lib.py --list-only`（零写盘 · 零联网 · 零推送 —— 本入口的读数来源）\n")
+	listOnlyNote := "真源 `publish/mirror-public-lib.py --list-only`（零写盘 · 零联网 · 零推送 —— 本入口的读数来源）"
+	if legacy {
+		// 诚实标注：`--legacy` 档真跑走压平器，而只读预演只有镜像器那一路 ⇒ 下面四格是**镜像器口径**。
+		listOnlyNote = "真源 `publish/mirror-public-lib.py --list-only`（零写盘 · 零联网 · 零推送）· ⚠️ 本档走压平器 ⇒ 下面几行是**镜像器口径**，仅供对照、不是本档读数"
+	}
+	fmt.Fprintf(stdout, "  只读预演 : %s\n", listOnlyNote)
 	fmt.Fprintf(stdout, "  会发     : %d 件 / 跳过 %d 件（%s）/ 空指 %d 条\n",
 		lo.WillSend, lo.Skipped, publishRunSkipBreakdown(lo.SkipByTable), lo.EmptyPointers)
 	fmt.Fprintf(stdout, "  规则指纹 : %s（**一字不改** —— 与真源现读逐字相同）\n", lo.RulesFingerprint)
