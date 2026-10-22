@@ -477,11 +477,8 @@ type cnfEntry struct {
 }
 
 func cnfParseTree(root string) ([]cnfEntry, int, bool) {
-	fp := cnfPyJoin(root, cnfMainRel)
-	if !cnfIsFile(fp) {
-		return nil, 0, false
-	}
-	src, err := cnfReadText(fp)
+	// ★ 拆件后（GAP-20261011-03）：表在 cmdtable_*.go，读合成真源。
+	src, err := readCmdTreeSynth(root)
 	if err != nil {
 		return nil, 0, false
 	}
@@ -698,11 +695,8 @@ func cnfValueForm(usage string, pos int) bool {
 }
 
 func cnfParseUsages(root string) (map[string]cnfUsage, bool) {
-	fp := cnfPyJoin(root, cnfMainRel)
-	if !cnfIsFile(fp) {
-		return nil, false
-	}
-	src, err := cnfReadText(fp)
+	// ★ 拆件后（GAP-20261011-03）：表在 cmdtable_*.go，读合成真源（形状与拆件前同构）。
+	src, err := readCmdTreeSynth(root)
 	if err != nil {
 		return nil, false
 	}

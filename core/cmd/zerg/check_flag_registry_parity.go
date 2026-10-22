@@ -548,17 +548,17 @@ func frpParseFaces(root string) ([]string, map[string]bool, []frpRow, map[string
 		D[m[1]] = true
 	}
 
-	// 面① 用法串（命令树逐条）
-	if !strings.Contains(mainSrc, frpTreeSign) {
+	// 面① 用法串（命令树逐条）★ 拆件后读合成真源（表在 cmdtable_*.go）
+	treeSrc, treeErr := readCmdTreeSynth(root)
+	if treeErr != nil {
+		return nil, nil, nil, nil, fmt.Errorf("命令树合成真源拿不到（表在 cmdtable_*.go）：%v", treeErr)
+	}
+	if !strings.Contains(treeSrc, frpTreeSign) {
 		return nil, nil, nil, nil, fmt.Errorf("命令树 `%s` 找不到（用法串取数面变了 ⇒ 不给结论）", frpTreeSign)
 	}
-	t0 := strings.Index(mainSrc, frpTreeSign)
-	t1r := strings.Index(mainSrc[t0:], "\n\t}\n")
-	if t1r < 0 {
-		t1r = len(mainSrc) - t0 // py 此处抛 ValueError（未捕获 ⇒ 退 1）—— 见件头未覆盖面②
-	}
-	t1 := t0 + t1r
-	tree := mainSrc[t0:t1]
+	t0 := strings.Index(treeSrc, frpTreeSign)
+	t1 := len(treeSrc)
+	tree := treeSrc[t0:t1]
 
 	consts := map[string]string{}
 	for _, s := range srcs {

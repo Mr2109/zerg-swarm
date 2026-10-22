@@ -1,0 +1,170 @@
+package main
+
+// 命令表 · task 族（自 main.go 拆出 · 缺口 GAP-20261011-03「按族拆件」）
+//
+// 为什么拆：main.go 曾用单个 297 条的字面量承载全部命令（4272 行），
+// 每次加一条命令都要开窗改同一个巨型文件 ⇒ 多路并发写同一件（现读 14 处未提交 hunk 并存）。
+// 拆后：一条命令只动**本族一件**；装配在 main.go 的 init 里（顺序 = 首次出现序，✗ 依赖字面量顺序的代码不会变）。
+//
+// 纪律：本文件只放**命令表条目**（path/kind/summary/usage/fields/run…），不放实现逻辑。
+func cmdtable_task() []*command {
+	return []*command{
+		{
+			path:     []string{"task", "ls"},
+			kind:     "Task",
+			summary:  "任务队列（投影 /api/tasks）",
+			usage:    "zerg task ls [--json <字段>]",
+			fields:   []string{"id", "status", "model", "machine", "priority", "created_at", "description"},
+			endpoint: "GET /api/tasks",
+			run:      cmdTaskLs,
+		},
+		{
+			path:     []string{"task", "show"},
+			kind:     "TaskShow",
+			summary:  "看单个任务（`--follow` 转发到 `zerg watch`，不另起一条流）",
+			usage:    "zerg task show <任务 id> [--follow] [--json <字段>]",
+			arity:    "any",
+			args:     []string{"任务 id"},
+			fields:   []string{"id", "status", "model", "machine", "priority", "created_at", "description"},
+			endpoint: "GET /api/tasks",
+			run:      cmdTaskShow,
+		},
+		// ---- 批 D · T-44 `task` 族全动作面（§三 D 族 · 12 个动作名一个不差）----
+		{
+			path:     []string{"task", "submit"},
+			danger:   &dangerSpec{dangerD2, "（提交主题）", "把任务入队（`POST /api/tasks` · 改控制面队列态 · 占机器与模型槽）", "GAP-20261005-40 · 同族先例 task cancel（D2）· §三 D 族", false, dangerScopeRemote},
+			opened:   true,
+			kind:     "TaskSubmit",
+			summary:  "提交任务（D2 写面 · 全旗标 ⇒ API 请求体逐条对上）",
+			usage:    "zerg task submit --desc <描述> [--model <模型>] [--priority <n>] [--slice-id <片>] [--depends-on <片>]… [--acceptance <判据>]… [--timeout <时长>] [--dry-run | --yes]",
+			arity:    "none",
+			args:     []string{"（旗标：--desc/--model/--priority/--slice-id/--depends-on/--acceptance）"},
+			endpoint: "POST /api/tasks",
+			run:      cmdTaskSubmit,
+		},
+		// ---- 批 D · T-11…T-14/T-17：`task cancel`（D2 写面 · 任务退场正门 · **本版已开放**）----
+		// 与同族四条（`move/pause/resume/retry`）同形：D2 + `--confirm=<任务 id>` + `--yes`；
+		// 本版真跑：确认档齐就 POST `/api/tasks/{id}/cancel`（幂等三成因走 stdout 字段 · 单 id 绝不给 8）。
+		{
+			path:     []string{"task", "cancel"},
+			kind:     "TaskCancel",
+			summary:  "撤下排队/暂停任务（D2 写面 · `--reason` 闭集 5 值必填 · `--confirm=<任务 id>` 与 `--yes` **同时到**才执行 · **本版已开放**）",
+			usage:    "zerg task cancel <任务 id> --reason <superseded|obsolete|duplicate|abandoned|other> [--note <一句>] --confirm=<任务 id> [--dry-run | --yes] [--json <字段>]",
+			arity:    "any",
+			args:     []string{"任务 id"},
+			fields:   []string{"id", "outcome", "cancelled", "already_cancelled", "already_terminal"},
+			danger:   &dangerSpec{dangerD2, "任务 id", "把该任务从 queue 摘出 → 置 status=cancelled → 落 history（可逆面：队列位次；**在飞的件本版不给撤** —— 先 terminate 另立账）；幂等三成因（cancelled / already_cancelled / already_terminal）走 stdout 字段、不走退码", "设计-任务退场正门-v0.2 §4.1/§11.2/§11.5 · 开工单 T-12/T-13/T-14/T-17", true, dangerScopeRemote},
+			opened:   true,
+			endpoint: "POST /api/tasks/{id}/cancel?reason=<闭集 5 值 必填>&note=<一句 可选>",
+			run:      cmdTaskCancel,
+		},
+		{
+			path:     []string{"task", "diff"},
+			kind:     "TaskDiff",
+			summary:  "该任务工作树的**只读** `git diff --stat`",
+			usage:    "zerg task diff <任务 id> [--json <字段>]",
+			arity:    "any",
+			args:     []string{"任务 id"},
+			fields:   []string{"id", "workdir", "diff_stat"},
+			endpoint: "GET /api/tasks/{id}（取 workdir）+ 本机只读 git",
+			run:      cmdTaskDiff,
+		},
+		{
+			path:     []string{"task", "git"},
+			kind:     "TaskGit",
+			summary:  "该任务工作树的 git 面（分支 / HEAD / 未提交 / 与 main 的距离）",
+			usage:    "zerg task git <任务 id> [--json <字段>]",
+			arity:    "any",
+			args:     []string{"任务 id"},
+			fields:   []string{"id", "workdir", "branch", "head", "dirty", "ahead_of_main"},
+			endpoint: "GET /api/tasks/{id}（取 workdir）+ 本机只读 git",
+			run:      cmdTaskGit,
+		},
+		{
+			path:     []string{"task", "logs"},
+			kind:     "TaskLogs",
+			summary:  "该任务的日志（`/api/logs/task/{id}` **路由没接** ⇒ 不给结论，退码 8）",
+			usage:    "zerg task logs <任务 id> [--json <字段>]",
+			arity:    "any",
+			args:     []string{"任务 id"},
+			fields:   []string{"id", "available", "detail"},
+			endpoint: "GET /api/logs/task/{id}（处理器在 handlers.go:966 · 路由没接 ⇒ 现跑 404）",
+			run:      cmdTaskLogs,
+		},
+		{
+			path:     []string{"task", "move"},
+			kind:     "TaskMove",
+			summary:  "挪动任务在队列里的位置（D2 写面 · `--dry-run` 零副作用 · 缺 `--yes` ⇒ 2）",
+			usage:    "zerg task move <任务 id> --to <top|bottom|up|down> [--dry-run | --yes] [--json <字段>]",
+			arity:    "any",
+			args:     []string{"任务 id"},
+			fields:   []string{"task_id", "action", "ok"},
+			danger:   &dangerSpec{dangerD2, "任务 id", "改这条任务在队列里的次序（可能插到别人前面）", "§三 D 族 · 开工单 T-44 · 同族写面先例 `sched set`（D2）", true, dangerScopeRemote},
+			opened:   true,
+			endpoint: "POST /api/tasks/{id}/move?action=top|bottom|up|down",
+			run:      cmdTaskMoveGuarded,
+		},
+		// ---- 危险动作：**未开放的那批只登记形状，不开放执行**（§6.2 批 1 零写操作）；
+		// ★ 例外（本刀）：`task terminate` 本版**已开放**（D3 写面 —— 确认档齐就真执行，见下条）。----
+		// 未开放的那批每条都过 cmdGuarded：`--dry-run` 出计划件（退码 0）；真跑一律拒执（退码 2 = 不给结论）。
+		{
+			path:    []string{"task", "terminate"},
+			kind:    "TaskTerminate",
+			summary: "强杀在跑的任务（D3 写面 · `--reason` 闭集 5 值必填 · `--confirm=<任务 id>` 与 `--yes` **同时到**才执行 · **本版已开放**）",
+			usage:   "zerg task terminate <任务 id> --reason <superseded|obsolete|duplicate|abandoned|other> [--note <一句>] --confirm=<任务 id> [--dry-run | --yes] [--json <字段>]",
+			arity:   "any",
+			args:    []string{"任务 id"},
+			fields:  []string{"id", "outcome", "terminated", "not_running", "already_terminal"},
+			danger: &dangerSpec{dangerD3, "任务 id",
+				"终止该任务的执行（CA 侧停 + 任务状态置 terminated）· 已产出的工作树不自动回收",
+				"§三 D 族 · §4.1 K7 · §九 M3 C1/C4 · 开工单 T-44", true, dangerScopeRemote},
+			opened:   true,
+			endpoint: "POST /api/tasks/{id}/terminate?reason=<闭集 5 值 必填>&note=<一句 可选>",
+			run:      cmdTaskTerminate,
+		},
+		{
+			path:    []string{"task", "rm"},
+			summary: "删除任务（危险 D3 · 本版未开放）",
+			usage:   "zerg task rm <任务 id> --confirm=<任务 id> --yes [--dry-run]",
+			arity:   "any",
+			args:    []string{"任务 id"},
+			danger: &dangerSpec{dangerD3, "任务 id",
+				"删除该任务的记录与它指派的工作树/分支（**不可逆**）",
+				"§三 D 族 · §4.1 K7 · 开工单 T-44", true, dangerScopeRemote},
+			run: cmdGuarded,
+		},
+		{
+			path:     []string{"task", "pause"},
+			danger:   &dangerSpec{dangerD2, "任务 id", "把排队中的任务置为暂停态（可 resume 回来）· 内部 = 控制面 `POST /api/tasks/{id}/pause?pause=true`", "§三 D 族 · §6.3 S5 · 同族写面先例 `task move`（D2）", true, dangerScopeRemote},
+			opened:   true,
+			summary:  "暂停任务（D2 写面：`--dry-run` 先行出计划件 · 真跑要 `--yes` · 内部 = 控制面 `POST /api/tasks/{id}/pause?pause=true`）",
+			usage:    "zerg task pause <任务 id> --yes [--dry-run]",
+			arity:    "any",
+			args:     []string{"任务 id"},
+			endpoint: "POST /api/tasks/{id}/pause?pause=true（控制层既有路由 · 命令面不新开一条路）",
+			run:      cmdTaskPauseGuarded,
+		},
+		{
+			path:     []string{"task", "resume"},
+			danger:   &dangerSpec{dangerD2, "任务 id", "把暂停的任务放回排队（可能立刻占机器）· 内部 = 控制面 `POST /api/tasks/{id}/pause?pause=false`", "§三 D 族 · §6.3 S5 · 同族写面先例 `task move`（D2）", true, dangerScopeRemote},
+			opened:   true,
+			summary:  "继续任务（D2 写面：`--dry-run` 先行出计划件 · 真跑要 `--yes` · 内部 = 控制面 `POST /api/tasks/{id}/pause?pause=false`）",
+			usage:    "zerg task resume <任务 id> --yes [--dry-run]",
+			arity:    "any",
+			args:     []string{"任务 id"},
+			endpoint: "POST /api/tasks/{id}/pause?pause=false（控制层既有路由 · 命令面不新开一条路）",
+			run:      cmdTaskResumeGuarded,
+		},
+		{
+			path:     []string{"task", "retry"},
+			danger:   &dangerSpec{dangerD2, "任务 id", "把 failed 任务置回 queued（会再占一次机器与模型槽）· 内部 = 控制面 `POST /api/tasks/{id}/retry`", "§三 D 族 · §6.3 S5 · 同族写面先例 `task pause`（D2）", true, dangerScopeRemote},
+			opened:   true,
+			summary:  "重跑任务（D2 写面：`--dry-run` 先行出计划件 · 真跑要 `--yes` · 内部 = 控制面 `POST /api/tasks/{id}/retry`）",
+			usage:    "zerg task retry <任务 id> --yes [--dry-run]",
+			arity:    "any",
+			args:     []string{"任务 id"},
+			endpoint: "POST /api/tasks/{id}/retry（控制层既有路由 · 命令面不新开一条路）",
+			run:      cmdTaskRetryGuarded,
+		},
+	}
+}

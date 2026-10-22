@@ -559,7 +559,7 @@ func TestAdoptRetireExclusionsRetiredTolerant(t *testing.T) {
 
 func TestAdoptRetireItaskCriteriaHold(t *testing.T) {
 	root, d, _ := loadAR(t)
-	mainGo := readRepo(t, root, "core/cmd/zerg/main.go")
+	mainGo := synthTree(t, root)
 	fam := readRepo(t, root, "core/cmd/zerg/family_itask.go")
 	if errs := judgeARItask(root, d, mainGo, fam); len(errs) > 0 {
 		t.Errorf("判据⑥ 破（%d 处）：\n  %s", len(errs), joinErrs(errs))
@@ -573,7 +573,7 @@ func TestAdoptRetireItaskCriteriaHold(t *testing.T) {
 
 func TestAdoptRetireJudgeHasTeeth(t *testing.T) {
 	root, d, raw := loadAR(t)
-	mainGo := readRepo(t, root, "core/cmd/zerg/main.go")
+	mainGo := synthTree(t, root)
 	fam := readRepo(t, root, "core/cmd/zerg/family_itask.go")
 	// 正控：真件全绿。
 	for name, n := range map[string]int{
@@ -995,7 +995,7 @@ func arMutateReclass(t *testing.T, raw []byte, fn func(map[string]interface{})) 
 // 导出物不在（两仓分家）⇒ 该格 Skip；在则必须过。
 func TestAdoptRetireReclassVsExport(t *testing.T) {
 	root, d, raw := loadAR(t)
-	mainGo := readRepo(t, root, "core/cmd/zerg/main.go")
+	mainGo := synthTree(t, root)
 	if errs := judgeARReclass(raw, d, mainGo, ""); len(errs) > 0 {
 		t.Errorf("判据⑧ 破（真源内部，%d 处）：\n  %s", len(errs), joinErrs(errs))
 	}
@@ -1400,4 +1400,39 @@ func TestAdoptRetireItaskModeSetFourStates(t *testing.T) {
 	if rc, out, _ := run("itask", "mode", "set", "health-check"); rc != 2 || out != "" {
 		t.Errorf("④ 缺 --on/--off：rc=%d（要 2）· stdout=%q（要空 —— 零写）", rc, out)
 	}
+}
+
+// synthTree —— 命令树源码（拆件后 = main.go 已不再承载表 ⇒ 读合成真源）。
+// 缺口 GAP-20261011-03：判据件与门同口径，✗ 各自再读 main.go（会读到空树、静默把判据挂空）。
+func synthTree(t *testing.T, root string) string {
+	t.Helper()
+	files, err := filepath.Glob(filepath.Join(root, "core", "cmd", "zerg", "cmdtable_*.go"))
+	if err != nil {
+		t.Fatalf("命令表分件 glob 失败：%v", err)
+	}
+	if len(files) == 0 {
+		t.Fatalf("命令表分件一件都没有（拆件后 main.go 不再承载表）—— 判据不可判")
+	}
+	const sig = "return []*command{"
+	var b strings.Builder
+	b.WriteString("commands = []*command{")
+	for _, f := range files {
+		raw, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatalf("读命令表分件失败（%s）：%v", f, err)
+		}
+		txt := string(raw)
+		i := strings.Index(txt, sig)
+		if i < 0 {
+			continue
+		}
+		txt = txt[i+len(sig):]
+		j := strings.LastIndex(txt, "\n\t}")
+		if j < 0 {
+			continue
+		}
+		b.WriteString(txt[:j])
+	}
+	b.WriteString("\n\t}\n")
+	return b.String()
 }

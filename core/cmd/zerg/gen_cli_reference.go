@@ -539,10 +539,12 @@ func gcrConstUsages(root string) map[string]string {
 	return out
 }
 
-// gcrTreeFromSource —— 命令树源码（main.go）→ [(命令名, 用法串)]（第二份真源）。
+// gcrTreeFromSource —— 命令树源码 → [(命令名, 用法串)]（第二份真源）。
+//
+// ★ 拆件后（GAP-20261011-03）：表搬进 cmdtable_*.go ⇒ 读**合成真源**（形状与拆件前逐字同构）。
 func gcrTreeFromSource(root string) [][2]string {
-	src, ok := gcrRead(gcrPyJoin(root, gcrMainRel))
-	if !ok {
+	src, err := readCmdTreeSynth(root)
+	if err != nil {
 		return nil
 	}
 	start := strings.Index(src, "commands = []*command{")

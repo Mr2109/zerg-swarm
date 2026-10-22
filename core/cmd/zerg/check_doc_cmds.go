@@ -573,13 +573,13 @@ func dcmdKey(parts []string) string {
 
 // dcmdParseTree —— 命令树 → {key: 是不是一条完整命令}（L1/L2 也登记，值 False）。
 func dcmdParseTree(root string) map[string]bool {
-	b, err := os.ReadFile(dcmdJoin(root, dcmdMainRel))
+	// ★ 拆件后（GAP-20261011-03）：表不在 main.go，读**合成真源**（形状与拆件前同构）。
+	src, err := readCmdTreeSynth(root)
 	if err != nil {
 		// ★ B 类真口子修（原 py `except OSError` 静默 · ✗ 不再静默）：登记 + 判红 + rc=2。
-		dcmdReadFails = append(dcmdReadFails, fmt.Sprintf("%s（%v）", dcmdMainRel, err))
+		dcmdReadFails = append(dcmdReadFails, fmt.Sprintf("命令树合成真源（%s ＋ cmdtable_*.go）（%v）", dcmdMainRel, err))
 		return nil
 	}
-	src := string(b)
 	start := strings.Index(src, "commands = []*command{")
 	if start < 0 {
 		return nil

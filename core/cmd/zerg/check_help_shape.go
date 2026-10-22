@@ -1683,15 +1683,12 @@ func chsConstUsages(pkgDir string) map[string]string {
 // chsTreeUsage —— 命令树源码（`core/cmd/zerg/main.go` 的 `commands` 切片）⇒ [(命令名, usage 串)]。
 // ✗ 取不到（件不在盘 / 切片头尾标记找不到 / 一条都没有）⇒ (nil, 理由) ⇒ 调用方 fail-closed。
 func chsTreeUsage(root string) ([][2]string, string) {
-	mainPath := chsPyJoinAll(append([]string{root}, chsTreeMainRel...)...)
-	if !chsIsFile(mainPath) {
-		return nil, "命令树源码不在盘：" + mainPath
+	// ★ 拆件后（GAP-20261011-03）：表在 cmdtable_*.go ⇒ 读合成真源（形状与拆件前同构；
+	//   一件分件都没有时它会回落读 main.go 里的旧形态，老夹具不受影响）。
+	src, serr := readCmdTreeSynth(root)
+	if serr != nil {
+		return nil, "命令树合成真源拿不到（" + serr.Error() + "）"
 	}
-	raw, err := os.ReadFile(mainPath)
-	if err != nil {
-		return nil, "命令树源码读不回来（" + chsOSErrStr(mainPath, err) + "）"
-	}
-	src := string(raw)
 	start := strings.Index(src, chsTreeHeadLit)
 	if start < 0 {
 		return nil, "命令树源码里找不到切片头 `" + chsTreeHeadLit + "`（口径漂了）"
@@ -1701,7 +1698,7 @@ func chsTreeUsage(root string) ([][2]string, string) {
 		return nil, "命令树源码里找不到 `commands` 切片的收尾标记（口径漂了）"
 	}
 	seg := src[start : start+rel]
-	consts := chsConstUsages(chsPyDirname(mainPath))
+	consts := chsConstUsages(chsPyDirname(chsPyJoinAll(append([]string{root}, chsTreeMainRel...)...)))
 	matches := chsPathRE.FindAllStringSubmatchIndex(seg, -1)
 	var out [][2]string
 	for i, m := range matches {
