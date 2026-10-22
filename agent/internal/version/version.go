@@ -15,13 +15,23 @@ var (
 	Version   = "unknown"
 	Commit    = "unknown"
 	BuildTime = "unknown"
-	// Origin —— 构建期注入的**源提交**（同源判定的可比键 · GAP-20261013-09 · 候选 c）：
-	// 本机二进制所编那棵树的 HEAD 若带 `GitOrigin-RevId` trailer（镜像树逐笔都带）则取 trailer 值
-	// （= 私有图源提交）；没有 trailer（私有权威树）则取 HEAD 本身。
+	// Origin —— 构建期注入的**源提交**（同源判定的可比键 · GAP-20261013-09 · 候选 c ·
+	// 注入面由 GAP-20261021-08 补齐）：本机二进制所编那棵树的 HEAD 若带 `GitOrigin-RevId` trailer
+	// （镜像树逐笔都带）则取 trailer 值（= 私有图源提交）；没有 trailer（私有权威树）则取 HEAD 本身。
 	// ✗ 未注入时保持**空串 = 判不了**（主控把本机那一行判成 `unknown`）—— ✗ 绝不回落成 `Commit`：
 	// 节点 `Commit` 是**镜像 tip**、与主控的私有提交不同名，回落即把两套命名空间混成一句假判决。
+	//
+	// ★ 形状由构建器**归一**：一律 12 位十六进制前缀（`scripts/build/cmd/zerg-build-all` 的
+	// `gitOrigin`）。理由：trailer 里是 40 位全 sha、`rev-parse --short HEAD` 是 7~8 位，
+	// 两侧不归一 ⇒ 逐字比必然 `mixed`（假红）。✗ 不带 `+dirty`：脏是**内容**不同（由 Digest 答），
+	// 源提交仍是那一笔。
+	// ★ 运行期取源顺序（含手搓构建的兜底）见 `resolveOrigin`：`-X` > 嵌入 tags `origin=` > 环境变量。
 	Origin = ""
 )
+
+// OriginEnv —— Origin 的**运行期兜底**变量（手搓 `go build` 的机器自报源提交用）。
+// 优先级最低（与 `-ldflags -X` 打架时以构建期注入为准），见 `resolveOrigin`。
+const OriginEnv = "ZERG_ORIGIN"
 
 // Line 机器可读单行身份（与核心侧同形）：zerg-daemon 2.5.9 abc1234 2026-09-11T07:00:00Z
 func Line(component string) string {

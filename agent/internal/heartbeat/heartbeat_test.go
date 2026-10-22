@@ -325,6 +325,8 @@ func TestBuildBody_CarriesOriginSHA(t *testing.T) {
 	old := version.Origin
 	version.Origin = "3b04f6abcd"
 	t.Cleanup(func() { version.Origin = old })
+	// 环境变量兜底不许在本用例里插队（-X 那格优先，但把环境清掉才谈得上确定性）。
+	t.Setenv(version.OriginEnv, "")
 
 	body := newTestRunner(baseBackend(), fakeVram{known: false}, &fakeActive{}).buildBody()
 	if got := body["origin_sha"]; got != "3b04f6abcd" {
@@ -340,6 +342,8 @@ func TestBuildBody_OriginAbsentStaysEmpty(t *testing.T) {
 	old := version.Origin
 	version.Origin = ""
 	t.Cleanup(func() { version.Origin = old })
+	// 兜底那一路也清掉：否则「壳里恰好设了 ZERG_ORIGIN」会让本用例假红/假绿。
+	t.Setenv(version.OriginEnv, "")
 
 	body := newTestRunner(baseBackend(), fakeVram{known: false}, &fakeActive{}).buildBody()
 	v, ok := body["origin_sha"]

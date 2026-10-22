@@ -51,10 +51,16 @@ var (
 
 func main() {
 	_ = flag.Bool("version", false, "打印代码身份（机器可读）后退出")
+	versionFull := flag.Bool("version-full", false, "打印**完整**代码身份（四格 ＋ 源提交 origin 与来路）后退出；-version 的四格格式不变")
 	flag.Parse()
 
 	if v := flag.CommandLine.Lookup("version"); v != nil && v.Value.String() == "true" {
 		fmt.Println(version.Line("zerg-agentd"))
+		return
+	}
+	if *versionFull {
+		// 新增一格**另起一行**：`-version` 的四格行一个字节不动（现有分析脚本按 $1..$4 切）。
+		fmt.Println(version.ReadSelf().Identity("zerg-agentd"))
 		return
 	}
 	// 2026-09-28：令牌只走环境变量/文件 —— --token 旗标已停用（令牌五不进：argv 里看得到命令行）。
@@ -86,7 +92,9 @@ func main() {
 		}
 	}
 	startup.Mark("参数与令牌校验通过")
-	logx.Infof("main", "zerg-agent 启动", "version", version.Version, "host", *host, "port", *port, "machine", *machineParam)
+	logx.Infof("main", "zerg-agent 启动", "version", version.Version, "host", *host, "port", *port, "machine", *machineParam,
+		// 源提交（GAP-20261021-08）：与心跳 origin_sha 同一处真源，日志里先点名一次。
+		"origin", version.ReadSelf().OriginText())
 
 	// 机器标识：参数优先，否则取主机名
 	m := *machineParam

@@ -64,9 +64,12 @@ const usage = `用法: go run ./cmd/zerg-build-all [旗标]（与 scripts/build/
 
 // buildInfo 的字段顺序与 `build-all.sh:465-472` 的 heredoc 逐字一致（version/commit/build_time/builder_host）。
 type buildInfo struct {
-	Version     string `json:"version"`
-	Commit      string `json:"commit"`
-	BuildTime   string `json:"build_time"`
+	Version   string `json:"version"`
+	Commit    string `json:"commit"`
+	BuildTime string `json:"build_time"`
+	// Origin —— 源提交（同源判定可比键 · 与注入进制品的 `-X …Origin=` 同一个值）。
+	// `omitempty`：判不了（不是 git 仓）时**不写假值也不写空串**，老键一字不动，旧消费者零影响。
+	Origin      string `json:"origin,omitempty"`
 	BuilderHost string `json:"builder_host"`
 }
 
@@ -178,6 +181,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	sha := gitSha(root, baseEnv)
+	origin := gitOrigin(root, baseEnv)
 	buildTime := buildTimeNow()
 
 	out := filepath.Join(root, "bin")
@@ -190,14 +194,23 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 
 	// 身份注入**第一份**：-ldflags（core 模块的 version 包）。
-	ldflags := "-s -w -X github.com/Mr2109/zerg-swarm/core/internal/version.Commit=" + sha +
-		" -X github.com/Mr2109/zerg-swarm/core/internal/version.BuildTime=" + buildTime
+	// Origin（源提交）与 Commit/BuildTime 同一行注入：它是主控「同源判定」唯一的基准键，
+	// 不注入 ⇒ `MasterOriginSHA()` 恒空串 ⇒ 全表 `same_origin` 永远 `unknown`（GAP-20261021-08）。
+	ldflags := withOriginFlag("-s -w -X github.com/Mr2109/zerg-swarm/core/internal/version.Commit="+sha+
+		" -X github.com/Mr2109/zerg-swarm/core/internal/version.BuildTime="+buildTime,
+		"github.com/Mr2109/zerg-swarm/core/internal/version", origin)
 	// 身份注入**第二份**：进嵌入段（`-tags`）—— 不执行该件也能 `go version -m <件>` 读到。
 	gotags := "commit=" + sha + ",build_time=" + buildTime
-	// agent 模块自己的 version 包（Version/Commit/BuildTime 三格，与全量档那一行逐字同源）。
-	agentLDFLAGS := "-s -w -X github.com/Mr2109/zerg-swarm/agent/internal/version.Version=" + version +
-		" -X github.com/Mr2109/zerg-swarm/agent/internal/version.Commit=" + sha +
-		" -X github.com/Mr2109/zerg-swarm/agent/internal/version.BuildTime=" + buildTime
+	if origin != "" {
+		// 第三格：源提交（与 -X 那一份同值，两个独立读法取或）。★ 必须**接在尾部**：
+		// 全量收口互检按 `-tags=commit=<sha>,` 这个子串比（见下方四件互检），换顺序即假红。
+		gotags += ",origin=" + origin
+	}
+	// agent 模块自己的 version 包（Version/Commit/BuildTime/Origin 四格，与全量档那一行逐字同源）。
+	agentLDFLAGS := withOriginFlag("-s -w -X github.com/Mr2109/zerg-swarm/agent/internal/version.Version="+version+
+		" -X github.com/Mr2109/zerg-swarm/agent/internal/version.Commit="+sha+
+		" -X github.com/Mr2109/zerg-swarm/agent/internal/version.BuildTime="+buildTime,
+		"github.com/Mr2109/zerg-swarm/agent/internal/version", origin)
 
 	logf := func(format string, a ...any) { fmt.Fprintf(stdout, format+"\n", a...) }
 
@@ -410,11 +423,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 	//	  在本行之前 `return`（逐字「其余制品与 build-info.json 一个字节未动」）⇒ 那四档不碰它。
 	//	- ✗ **勿手改**（下次全量档会被覆写）；✗ **勿当身份真源** —— 身份真源 = **制品自身嵌入段**
 	//	  （`-tags commit=…,build_time=…`；读法 `zerg version --build-info`）。
-	if err := writeBuildInfo(coreOut("build-info.json"), version, sha, buildTime); err != nil {
+	if err := writeBuildInfo(coreOut("build-info.json"), version, sha, buildTime, origin); err != nil {
 		fmt.Fprintf(stderr, "❌ 写 build-info.json 失败：%v\n", err)
 		return 1
 	}
-	fmt.Fprintf(stdout, "   📝 build-info.json: version=%s commit=%s\n", version, sha)
+	fmt.Fprintf(stdout, "   📝 build-info.json: version=%s commit=%s origin=%s\n", version, sha, originOrUnknownWord(origin))
 
 	// ── GAP-20260927-311：全量收口四件互检（fail-closed）────────────────────────
 	// 四件制品内嵌身份（`-tags` 嵌入段，`go version -m` 可读）逐件 == 本次 sha —— 不齐 ⇒ 非零退：
@@ -565,9 +578,86 @@ func buildTimeNow() string {
 	return time.Now().UTC().Format("2006-01-02T15:04:05Z")
 }
 
-func writeBuildInfo(path, version, sha, buildTime string) error {
+// originShortLen —— 源提交（`version.Origin`）的**规范长度**，也是「两侧逐字可比」的唯一前提。
+//
+// 病灶形状：trailer 里写的是 **40 位全 sha**（`publish/mirror-public.sh` 的 `GitOrigin-RevId`），
+// 而 `rev-parse --short HEAD` 给 **7~8 位** —— 主控（私有树 ⇒ HEAD）与节点（镜像树 ⇒ trailer）
+// 不归一化就必然比成 `mixed`（假红），而假红会把「同源」这件事又变成判不了。
+// 12 位：git 常用的「够区分」长度，又短到能进日志/心跳体。
+const originShortLen = 12
+
+// gitOrigin —— 读**源提交**（同源判定可比键 · GAP-20261013-09；注入面 GAP-20261021-08）：
+//
+//	① HEAD 带 `GitOrigin-RevId` trailer（镜像/中继树逐笔都带）⇒ 取 trailer 值 = 私有图源提交；
+//	② 不带（私有权威树）⇒ 取 HEAD 本身；
+//	③ 不是 git 仓 / 读不出 ⇒ 空串 = **判不了**（✗ 回落成 sha：镜像 tip 冒充源提交就是假判决）。
+//
+// ★ 一律截成 originShortLen 位；✗ 不带 `+dirty` —— 脏是**内容**不同（Digest 那格答），源提交仍是
+// 那一笔，带上它会把同源判成 `mixed`。★ 两侧（core / agent）都由本函数注入 ⇒ 同一形状。
+func gitOrigin(root string, env []string) string {
+	if v := gitOriginTrailer(root, env); v != "" {
+		return originShort(v)
+	}
+	return originShort(gitHeadSHA(root, env))
+}
+
+// gitOriginTrailer 读 HEAD 的 `GitOrigin-RevId` trailer（读不到 / 无该 trailer ⇒ 空串）。
+// 多行（同名 trailer 出现多次）⇒ 取**第一条非空**，与 `%(trailers:key=…)` 的取值序一致。
+func gitOriginTrailer(root string, env []string) string {
+	cmd := exec.Command("git", "log", "-1", "--format=%(trailers:key=GitOrigin-RevId,valueonly)", "HEAD")
+	cmd.Dir, cmd.Env = root, env
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if v := strings.TrimSpace(line); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// gitHeadSHA 取 HEAD 的**定长短** sha（`--short=12`；不是默认的 7~8）—— 与 trailer 那侧同长。
+func gitHeadSHA(root string, env []string) string {
+	cmd := exec.Command("git", "rev-parse", "--short="+strconv.Itoa(originShortLen), "HEAD")
+	cmd.Dir, cmd.Env = root, env
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// originShort 把源提交截成 originShortLen 位（短于该长度 ⇒ 原样；空 ⇒ 空 = 判不了）。
+func originShort(v string) string {
+	v = strings.TrimSpace(v)
+	if len(v) <= originShortLen {
+		return v
+	}
+	return v[:originShortLen]
+}
+
+// withOriginFlag 把 `-X <pkg>.Origin=<值>` 接到一串 ldflags 后面。
+// 值为空 ⇒ **一个字节也不接**（未注入 = 空串 = 判不了；不写一处看着像「配了」的 `Origin=`）。
+func withOriginFlag(flags, pkgPath, origin string) string {
+	if origin == "" {
+		return flags
+	}
+	return flags + " -X " + pkgPath + ".Origin=" + origin
+}
+
+// originOrUnknownWord 人面词：空 ⇒ `unknown`（机器面仍写空串/省略，见 buildInfo.Origin）。
+func originOrUnknownWord(origin string) string {
+	if origin == "" {
+		return "unknown"
+	}
+	return origin
+}
+
+func writeBuildInfo(path, version, sha, buildTime, origin string) error {
 	b, err := json.MarshalIndent(buildInfo{
-		Version: version, Commit: sha, BuildTime: buildTime,
+		Version: version, Commit: sha, BuildTime: buildTime, Origin: origin,
 		BuilderHost: zgb.UnameOS() + "/" + zgb.UnameArch(),
 	}, "", "  ")
 	if err != nil {

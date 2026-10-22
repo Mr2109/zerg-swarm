@@ -187,9 +187,17 @@ func Build(opts BuildOptions) (*BuildResult, error) {
 		buildTime = time.Now().UTC().Format("2006-01-02T15:04:05Z")
 	}
 	plat := Platform()
+	// 源提交（同源判定基准 · GAP-20261021-08）：与 `zerg-build-all` 的 `gitOrigin` 同形 ——
+	// 目标树的 `GitOrigin-RevId` trailer（镜像树）> 目标树 HEAD；一律截 12 位、不带 `+dirty`。
+	// ★ 从**目标树**读，不从本进程读：本进程跑的那一笔未必是这批件的来源。
+	origin := buildOrigin(opts.Source)
 	coreFlags := fmt.Sprintf("-s -w -X %s.Commit=%s -X %s.BuildTime=%s", ModulePath, opts.Commit, ModulePath, buildTime)
 	agentdFlags := fmt.Sprintf("-s -w -X %s.Version=%s -X %s.Commit=%s -X %s.BuildTime=%s",
 		AgentModulePath, version, AgentModulePath, opts.Commit, AgentModulePath, buildTime)
+	if origin != "" {
+		coreFlags += " -X " + ModulePath + ".Origin=" + origin
+		agentdFlags += " -X " + AgentModulePath + ".Origin=" + origin
+	}
 
 	res := &BuildResult{
 		Staging: opts.Staging, Version: version, Tag: "v" + version,

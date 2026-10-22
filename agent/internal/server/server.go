@@ -765,6 +765,11 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"code_sha":        self.Commit,
 		"code_build_time": self.BuildTime,
 		"code_digest":     self.Digest,
+		// 源提交（GAP-20261013-09 / GAP-20261021-08）：与心跳 `origin_sha` **同一处真源**
+		// （`ReadSelf().Origin`：`-X` > 嵌入 tags > `ZERG_ORIGIN`）。空串 = 判不了（✗ 不回落成
+		// code_sha —— 私有提交与镜像 tip 是两套命名空间）；source 一格点名这次是从哪读的。
+		"code_origin":        self.Origin,
+		"code_origin_source": self.OriginSource,
 	}
 
 	writeJSON(w, http.StatusOK, snap)

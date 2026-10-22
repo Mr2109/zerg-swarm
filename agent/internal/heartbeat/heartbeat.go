@@ -217,8 +217,10 @@ func (r *Runner) buildBody() map[string]interface{} {
 		// 同源判定（GAP-20261013-09 · 候选 c）：本机二进制**源提交** —— 构建期注入的
 		// `GitOrigin-RevId` trailer（镜像树）或 HEAD（私有树）。它与 code_sha 分属两套 git
 		// 命名空间（私有提交 ⟷ 镜像 tip），本格是主控拼「同源/混版/判不了」唯一的可比键。
+		// ★ GAP-20261021-08：改从 `ReadSelf` 取（与 code_sha 三格**同一处真源**）——
+		// 取源顺序 `-X` > 嵌入 tags `origin=` > `ZERG_ORIGIN`（手搓构建也有值）；
 		// 未注入 ⇒ 空串 = 判不了（✗ 不回落成 code_sha —— 两套命名空间混成一句就是假判决）。
-		"origin_sha": version.Origin,
+		"origin_sha": self.Origin,
 	}
 
 	// active_requests：真实在飞请求计数。没有来源就不出现——绝不写死 0（旧行为已修）。
