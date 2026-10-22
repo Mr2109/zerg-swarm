@@ -664,6 +664,39 @@ func run(args []string, stdout, stderr io.Writer) int {
 		//   被包脚本的输出（`gate show` 默认面 = `--emit-cmd` 直取口 · 契约钉「一字不改」）。
 		gapEnvTail = gapNonDefaultRootLine()
 	}
+	// ★ 本枚（P1 打样 · 件 `Q-150` · 2026-10-22）：`--json <字段>` 的**字段名**在**唯一咽喉点**核 ——
+	//   位置写死：`cmd.run` **之前**（用法错必须**零副作用**：`GAP-20261020-01` 那条纪律 =
+	//   「先核字段再动手」；`gate run --step … --json nope` 修前要**跑完整步**才在出口被拒）。
+	//
+	//   病（修前现读实据 · 两类，各自可复现）：
+	//     ① **绕开出口的自出包封路**根本不过 `validateSelected` ⇒ 坏字段被**静默吞**：
+	//        `zerg gap ls --grep zzzz --json nope` 修前 rc=1 + 314 B 包封（字段名一个字节不提）；
+	//        `zerg apply --json nope` 修前 rc=0 · 535 B；`zerg core logs --json nope` 修前 rc=8 · 450 B；
+	//        `zerg gap assign ls --json nope` 修前 rc=1 · 486 B；`zerg publish accept --json nope`
+	//        修前干脆**挂住**（30 s 不返回）。自出包封的点位：`family_gap.go` 六处零命中/超时快速路
+	//        · `family_gap_diff.go` · `guard.go` 的幂等重跑路（`family_code_constdup.go` 自拼对象但
+	//        **先核**字段 ⇒ 不在病灶清单里）。
+	//     ② **迟到**：走 `emitSelected` 的那些（`gate run` 单步档就是：**跑完整步**、建日志目录、
+	//        读回 results.tsv 之后才在出口核）⇒ 退码对但代价白付、状态可能已改。
+	//   一处（本格）修好 ⇒ 全部有字段表的命令同受益（修前实测：290 条里 223 条有字段表；
+	//   无表的 67 条照旧走下面「说明面」那条判词，行为一字不动）。
+	//
+	//   口径（三格写死，✗ 不许放宽）：
+	//     ① 只在 `cmd.fields` 非空（该条**有机器面字段表**）时判 —— 没表的说明面/危险档错误面照旧；
+	//     ② 收受集 = `fields ∪ optFields`（与 `validateSelected` **同一条白名单**：可选字段层只增）⇒
+	//        **合法字段一个不误伤**（合法面的输出字节由下面「两态对拍」逐字节钉住）；
+	//     ③ 坏名 ⇒ `reportBadField`（**同一句判词 + 同一张表**，与出口那条逐字同形）+ `exitUsage`，
+	//        stdout 0 字节（K2 的口径：用法错不是结果面）。
+	if inv.jsonGiven && len(inv.fields) > 0 && len(cmd.fields) > 0 {
+		if rc := rejectUnknownJSONFields(inv, cmd, stderr); rc != exitOK {
+			// ★ 尾行（`gap` 族的 ①②③④ 申报 / 非 gap 族的④点名）照旧补上 —— 既有命令在
+			//   非默认 env 下的 stderr 因此**逐字不动**（默认态本来一字不加 ⇒ 两态全同）。
+			if len(gapEnvTail) > 0 {
+				_, _ = stderr.Write(gapEnvTail)
+			}
+			return rc
+		}
+	}
 	var rc int
 	if inv.hasFlag(wallclockFlag) {
 		d, werr := parseWallclock(inv.flagVal(wallclockFlag))
@@ -6896,19 +6929,48 @@ func validateSelected(inv *invocation, stderr io.Writer, path []string, fields [
 	if cmd == nil || len(cmd.fields) == 0 || len(fields) == 0 {
 		return exitOK
 	}
-	registered := make(map[string]bool, len(cmd.fields)+len(cmd.optFields))
-	for _, f := range cmd.fields {
-		registered[f] = true
-	}
-	// ★ 可选字段层（`cmd.optFields`）：登在**出口白名单**里、点得出来；但**不进** `cmd.fields`
-	//   （那一份是文档/帮助导出面的冻结字段表 —— 可选字段是只增的第二层，`approveOptionalFields` 即它）。
-	for _, f := range cmd.optFields {
-		registered[f] = true
-	}
 	for _, f := range fields {
-		if !registered[f] {
+		if !jsonFieldRegistered(cmd, f) {
 			inv.setErr("usage", "json_field_unknown:"+f, fmt.Sprintf("未知字段 %q", f))
 			return reportBadField(stderr, path, f)
+		}
+	}
+	return exitOK
+}
+
+// jsonFieldRegistered —— 某个 `--json` 字段名**是否在册**（`fields` ∪ `optFields`）：
+// `--json` 字段白名单的**唯一**判据口（`validateSelected` 出口那一侧与 `rejectUnknownJSONFields`
+// 咽喉点那一侧共用它 ⇒ 两处收受集**不可能漂**）。`optFields` 是可选字段层（登在出口白名单、
+// 点得出来，但不进文档/帮助导出的冻结字段表），对它一律只做**收受**、不做**公告**。
+func jsonFieldRegistered(cmd *command, f string) bool {
+	if cmd == nil {
+		return false
+	}
+	for _, x := range cmd.fields {
+		if x == f {
+			return true
+		}
+	}
+	for _, x := range cmd.optFields {
+		if x == f {
+			return true
+		}
+	}
+	return false
+}
+
+// rejectUnknownJSONFields —— `--json <字段>` 字段名的**咽喉点**校验（件 `Q-150`：主流程在
+// `cmd.run` 之前调一次 ⇒ 填错字段的命令**零副作用**地退 2 并点名可用字段）。
+//
+// 与出口那条（`validateSelected`）的分工写死：本支只服务 `run` 的前置面（`cmd` 已经取到 ⇒
+// 不重新 `find`）；判据、判词、字段表、退码**四处逐字相同**（`jsonFieldRegistered` +
+// `reportBadField` + `exitUsage`）⇒ 同一条命令无论是被前置面还是出口面拦下，调用方读到的
+// stderr 与 rc 都一致（✗ 不造第二套文案）。
+func rejectUnknownJSONFields(inv *invocation, cmd *command, stderr io.Writer) int {
+	for _, f := range inv.fields {
+		if !jsonFieldRegistered(cmd, f) {
+			inv.setErr("usage", "json_field_unknown:"+f, fmt.Sprintf("未知字段 %q", f))
+			return reportBadField(stderr, cmd.path, f)
 		}
 	}
 	return exitOK

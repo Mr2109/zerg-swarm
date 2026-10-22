@@ -55,9 +55,15 @@ func TestErrEnvelopeCarriesEnvMeta(t *testing.T) {
 	//   恒 0 字节，失败包封拿不到了）。改用**零命中**那一支（`--unit` 收窄到不含夹具行的值）：
 	//   它是 `kind=failed`（退码 1），仍由本命令自己走 `emitEnvelopeWith` 出失败包封 ⇒ 本件钉的
 	//   `envMeta` 那几格照旧可读。判据**一字未放宽**：退码精确 + 既有两格 + 本枚那五格逐格在。
+	//   ★ 件 `Q-150`（2026-10-22）：字段面改指**在册**的 `id` —— 原先那五个名字
+	//   （`total,hits,query,query_ts,ledger_sha16`）都是 `meta` 子键、**不在** `gap ls` 的
+	//   字段表里：本件过去只在「零命中自出包封」那条路上取数，而那条路当时**不核字段名** ⇒
+	//   它靠的正是 `Q-150` 要治的那处静默吞。字段名前置校验接上之后，本件钉的**主题
+	//   （失败包封吃 envMeta）一字不动**，只把投影名换成合法的一格（`items` 恒为空数组，与
+	//   本件的断言无关；五格 meta 子键由 `gapLsMetaAdd` 照旧给出）。
 	var out, errb bytes.Buffer
 	rc := RunForTest([]string{"gap", "ls", "--unit", unit + "/零命中-zz", "--json",
-		"total,hits,query,query_ts,ledger_sha16"}, &out, &errb)
+		"id"}, &out, &errb)
 	if rc != 1 {
 		t.Fatalf("零命中要退 1（`kind=failed` · 「没有」不是「失败」也不是绿），得到 %d · stdout=%q stderr=%q",
 			rc, out.String(), errb.String())
