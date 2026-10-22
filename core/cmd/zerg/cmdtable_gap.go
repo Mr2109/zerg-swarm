@@ -159,7 +159,7 @@ func cmdtable_gap() []*command {
 			path:     []string{"gap", "add"},
 			kind:     "GapAdd",
 			summary:  "记一条缺口（写面 · 留证据）：**手搓记录 + 验证命令是两件必填**（防呆⑤）· 同 fp 同内容 ⇒ 幂等命中 0 · 同 fp 内容不同 ⇒ `14` · 审计进 `edit_audit.jsonl`（写不进就不写真源）",
-			usage:    "zerg gap add --symptom <一句> --handmade <命令原样> --impact <六值之一> --want-family <族> --want-action <动作> [--want-argv <段>…] [--prio P0|P1|P2] [--state <仍缺|已立项|不做>] --repro-cmd <命令> --verify-cmd <命令> [--depends-on <fp>…] [--qid <Q-NNN> [--qid-source <出处锚>]] [--note <注>|--notes <注>|--evidence <注>…] [--by <谁>] [--dry-run] [--yes] [--json <字段>]",
+			usage:    "zerg gap add --symptom <一句> --handmade <命令原样> --impact <六值之一> --want-family <族> --want-action <动作> [--want-argv <段>…] [--prio P0|P1|P2] [--state <仍缺|已立项|不做>] --repro-cmd <命令> --verify-cmd <命令> [--verify-absent] [--depends-on <fp>…] [--qid <Q-NNN> [--qid-source <出处锚>]] [--note <注>|--notes <注>|--evidence <注>…] [--by <谁>] [--dry-run] [--yes] [--json <字段>]",
 			arity:    "none",
 			args:     []string{"（无位置参数：全部走旗标）"},
 			fields:   gapAddFields,

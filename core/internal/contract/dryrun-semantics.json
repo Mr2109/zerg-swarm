@@ -1820,6 +1820,13 @@
    "语义": "dryrun.v1",
    "零副作用判据": "本件只有命令表字面量（path/kind/summary/usage/fields/run 指针），零可执行逻辑；`--dry-run`、`--yes` 等只作为 usage 串出现，不读不写不执行；真语义站点仍在同族 family_*.go",
    "备注": "拆件补登记：门⑩ 按「出现 --dry-run 字样的件」判 R1 未登记，本件命中只因 usage 串里写了旗标名"
+  },
+  {
+   "file": "core/cmd/zerg/gap_verify_absent_test.go",
+   "类": "反向判据的三条牙（甲 不存在的 path 能入账 / 乙 已存在的 path 拒收 2 / 丙 旧行为不变）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "三条腿全走 `--dry-run` ⇒ 计划面只印不落：真源（t.TempDir() 里的空账）零追加 · 审计零行 · 退码只判 rc",
+   "备注": "缺口 GAP-20260925-03：`--dry-run` 字样只作为被测旗标出现在 argv 里"
   }
  ]
 }

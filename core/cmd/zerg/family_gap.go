@@ -141,9 +141,15 @@ type gapRecord struct {
 	WantArgv  []string `json:"want_argv,omitempty"`
 	ReproCmd  string   `json:"repro_cmd"`
 	VerifyCmd string   `json:"verify_cmd"`
-	DependsOn []string `json:"depends_on,omitempty"`
-	FoundAt   string   `json:"found_at"`
-	Verified  string   `json:"last_verified_at,omitempty"`
+	// VerifyAbsent —— 判据是「这条命令**应当不存在**」（缺口 `GAP-20260925-03` 的自指）。
+	//   病：`--verify-cmd` 历来必须解析到命令树 ⇒ 「某条命令缺失」这类缺口**记不进账**。
+	//   治：`gap add --verify-absent --verify-cmd "zerg 某族 某动作"` —— 校验方向反过来：
+	//   现读**必须解析不到**才算合法入账（若它已经在树里 ⇒ 这说明缺口已修或有别的问题，拒收 2，
+	//   让人改用普通判据）。`omitempty` ⇒ 老行逐字节不变。
+	VerifyAbsent bool     `json:"verify_absent,omitempty"`
+	DependsOn    []string `json:"depends_on,omitempty"`
+	FoundAt      string   `json:"found_at"`
+	Verified     string   `json:"last_verified_at,omitempty"`
 	// VerifyRC —— 判据**真退码**（`zerg gap verify-one` 真跑 `verify_cmd` 那一刻原样记下）。
 	// 占位判据**不执行** ⇒ 落常量 `n/a`（不是「绿」也不是「红」：那一格压根没跑）。
 	// `omitempty` ⇒ 老行（没有这一格）**逐字节不变**（本族整件重写那一支同此）。
@@ -2839,8 +2845,10 @@ type gapAddInput struct {
 	WantArgv  []string
 	ReproCmd  string
 	VerifyCmd string
-	DependsOn []string
-	StateWant string
+	// VerifyAbsent —— `--verify-absent`：判据写「这条命令不存在」（见 gapRecord.VerifyAbsent）。
+	VerifyAbsent bool
+	DependsOn    []string
+	StateWant    string
 	// QID / QIDSource —— 缺口 ↔ 任务的机器可读对应（缺口 `GAP-20260926-70` · 2026-10-23）：新行落账时
 	//   把版账的 `Q-NNN` 号写进真源。★ **可选**：不给 ⇒ 该行不带这两格（老调用方 / 守卫自动入账路
 	//   行为与退码**一字不动** —— 强制必填会一次打红 1400+ 存量与全部自动化入账路，不属于「最小方案」）。
@@ -2871,9 +2879,12 @@ func gapAddInputFromFlags(inv *invocation) gapAddInput {
 		WantArgv:  inv.flagVals("--want-argv"),
 		ReproCmd:  strings.TrimSpace(inv.flagVal("--repro-cmd")),
 		VerifyCmd: strings.TrimSpace(inv.flagVal("--verify-cmd")),
-		DependsOn: inv.dependsOn, // `--depends-on` 是具名旗标（收进 invocation.dependsOn，不是 kv）
-		StateWant: strings.TrimSpace(inv.flagVal("--state")),
-		Fields:    gapAddFields,
+		// ★ GAP-20260925-03：旗标判据走 inv.flagGiven（kv 键在 ‖ 原始 argv 有过），
+		//   ✗ 不自己扫 argv —— 全仓唯一「扫 argv」实现是 flagArgScan。
+		VerifyAbsent: inv.flagGiven("--verify-absent"),
+		DependsOn:    inv.dependsOn, // `--depends-on` 是具名旗标（收进 invocation.dependsOn，不是 kv）
+		StateWant:    strings.TrimSpace(inv.flagVal("--state")),
+		Fields:       gapAddFields,
 	}
 }
 
@@ -3207,7 +3218,7 @@ func gapAddUsageConfirm(inv *invocation, stderr io.Writer, in gapAddInput, sympt
 		{"--verify-cmd", verifyCmd},
 		{"--repro-cmd", reproCmd},
 	} {
-		if why := gapBoilerplateWhy(col.val); why != "" {
+		if why := gapBoilerplateWhy(col.val); why != "" && !in.VerifyAbsent {
 			inv.setErr("usage", "boilerplate_cmd", why)
 			fmt.Fprintf(stderr, "%s: `%s` 是样板值：%s\n", progName, col.flag, why)
 			fmt.Fprintf(stderr, "  通用命令（闭集：`help` / `doctor` / `<族> ls` / `<族> status`）只列举概览、判不了任何一条缺口 ⇒ 拒收 2（缺口 `GAP-20260927-246` · `GAP-20260926-55`）\n")
@@ -3216,13 +3227,21 @@ func gapAddUsageConfirm(inv *invocation, stderr io.Writer, in gapAddInput, sympt
 	}
 	// ★ 缺口 `GAP-20261021-07`（本枚 · 现拿现读）：样板值闸之后补**读现成物**那一档 —— 只判
 	//   `--verify-cmd`（复现命令读码当现场证据是合法用法，见 `gapLiveReadWhy` 件头）。
-	if why := gapLiveReadWhy(verifyCmd); why != "" {
+	if why := gapLiveReadWhy(verifyCmd); why != "" && !in.VerifyAbsent {
 		inv.setErr("usage", "live_read_cmd", why)
 		fmt.Fprintf(stderr, "%s: `--verify-cmd` 是现拿现读：%s\n", progName, why)
 		fmt.Fprintf(stderr, "  换一条**有鉴别力**的判据：`zerg code find <真符号>`（修没修真会翻 rc）/ `<命令> --json <新字段>`（修前「未知字段」rc=2、修后 rc=0）⇒ 拒收 2（缺口 `GAP-20261021-07`）\n")
 		return gapRecord{}, exitUsage
 	}
-	if _, why := gapJudgeArgv(verifyCmd); why != "" {
+	if _, why := gapJudgeArgv(verifyCmd); in.VerifyAbsent {
+		// ★ 缺口 `GAP-20260925-03`（本枚）：反向判据 —— 现读**必须**解析不到才算合法入账。
+		if why == "" {
+			inv.setErr("usage", "verify_absent_but_present", verifyCmd)
+			fmt.Fprintf(stderr, "%s: `--verify-absent` 说「这条命令应当不存在」，但现读它**已在命令树里**：%s\n", progName, verifyCmd)
+			fmt.Fprintf(stderr, "  两种可能：① 该缺口已修 ⇒ 换普通判据（指向修好后的证据面，如 `zerg code find <真符号>`）；② path 写错了 ⇒ 逐字改\n")
+			return gapRecord{}, exitUsage
+		}
+	} else if why != "" {
 		inv.setErr("usage", "verify_cmd_unresolved", why)
 		fmt.Fprintf(stderr, "%s: `--verify-cmd` 解析不到命令树：%s\n", progName, why)
 		fmt.Fprintf(stderr, "  v1.3 §七 规矩 2：判据必须能在命令树里解析到（解析面 = 命令树，门⑪ `T1` 保证它与矩阵 `command` 列同尺）\n")
@@ -3232,7 +3251,7 @@ func gapAddUsageConfirm(inv *invocation, stderr io.Writer, in gapAddInput, sympt
 	// 「命令树里解析得到、真跑却恒退 2（未知旗标 / 未知字段 / 缺必填子命令）」的判据照样入库、
 	// 且永远变不绿。本档**真跑一次取 rc**：命中那几族错文 ⇒ 拒收；其余 rc（0 / 1 / 有鉴别力的读数）⇒ 收。
 	// ★ 只对**新写入**生效（存量账一字不回溯）。
-	if why := gapJudgePreflightWhy(verifyCmd); why != "" {
+	if why := gapJudgePreflightWhy(verifyCmd); why != "" && !in.VerifyAbsent {
 		inv.setErr("usage", "verify_cmd_preflight", why)
 		fmt.Fprintf(stderr, "%s: `--verify-cmd` 现跑预检不过：%s\n", progName, why)
 		fmt.Fprintf(stderr, "  口径：判据要**真跑得动**且读数可辨 —— 不给结论的形态（未知旗标 / 未知字段 / 缺必填子命令）收下来只会让该条判据永远变不绿 ⇒ 拒收 2（缺口 `GAP-20261013-14`）\n")
@@ -3243,7 +3262,7 @@ func gapAddUsageConfirm(inv *invocation, stderr io.Writer, in gapAddInput, sympt
 	rec := gapRecord{
 		Symptom: symptom, Handmade: handmade, Impact: impact, Prio: prio, State: stateWant,
 		WantFam: wantFam, WantAct: wantAct, WantArgv: wantArgv,
-		ReproCmd: reproCmd, VerifyCmd: verifyCmd, DependsOn: dependsOn,
+		ReproCmd: reproCmd, VerifyCmd: verifyCmd, VerifyAbsent: in.VerifyAbsent, DependsOn: dependsOn,
 		// ★ 缺口 `GAP-20260926-70`：qid 两格（空 ⇒ `omitempty` 不带键 ⇒ 老调用方的行**逐字节不变**）。
 		QID: in.QID, QIDSource: in.QIDSource,
 	}

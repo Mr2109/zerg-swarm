@@ -1771,6 +1771,11 @@ func parseInvocation(args []string) (*invocation, error) {
 		//   ★ 必须在下面「未知旗标」兜底**之前**上户口，否则 `--force-recompute` 一律退 2。
 		case a == "--force-recompute":
 			inv.kvSet(a, "true")
+		// ★ 2026-10-23（缺口 `GAP-20260925-03`）：`gap add --verify-absent` —— 反向判据
+		//   （「这条命令应当不存在」）。布尔形态与 `--force-recompute` 同一种：写进 `inv.kv`
+		//   让 `flagGiven` 看得见，✗ 不落 `inv.unknown`（那会退化成「未知旗标 2」）。
+		case a == "--verify-absent":
+			inv.kvSet(a, "true")
 		// ★ 2026-10-10（缺口 GAP-20260927-205 · 本枚）：`itask mode set --on|--off` 的两枚**布尔**旗标——
 		//   与 `--force-recompute` 同一种形态：写进 `inv.kv`（`kvSet`）⇒ dispatch 的数据驱动收口看得见
 		//   （usage 未列它的命令 ⇒ 真给即退 2「未知旗标」）。用法串与本表**必须同改**（门73）。
