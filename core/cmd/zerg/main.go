@@ -1130,6 +1130,30 @@ func init() {
 			passthrough: true,
 			run:         cmdGate,
 		},
+		// ---- P1 · 上下文压缩的可回查面（设计稿 v5 §6）----
+		// ★ 只读呈现与取回；压缩决策在对话/任务侧的引擎里，不在命令面。
+		// ★ `compact` 暂不提供：CLI 侧没有「压缩目标」⇒ 硬造即假命令，挂账等有目标那天。
+		{
+			path:     []string{"context", "stats"},
+			kind:     "ContextStats",
+			summary:  "只读：卸载面与审计面的读数（件数 / 字节 / 事件数 · `--json` 闭集四字段）",
+			usage:    "zerg context stats [--json <字段>]",
+			arity:    "none",
+			args:     []string{"（不收位置参数）"},
+			fields:   []string{"dir", "count", "bytes", "events"},
+			endpoint: "",
+			run:      cmdContext,
+		},
+		{
+			path:     []string{"context", "show"},
+			kind:     "ContextShow",
+			summary:  "只读：按 id 取回**卸载的原文**（逐字节 · `zerg context stats` 里的落点目录）",
+			usage:    "zerg context show <sha16>",
+			arity:    "any",
+			args:     []string{"id（单段文件名；不在盘 ⇒ 2 并列现有几个）"},
+			endpoint: "",
+			run:      cmdContext,
+		},
 		{
 			path:     []string{"gate", "self-test-summary"},
 			kind:     "GateSelfTestSummary",

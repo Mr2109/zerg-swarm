@@ -279,6 +279,10 @@
     {
       "file": "rollback-keep",
       "reason": "**目录**（不是单个状态对象）：`--rollback` 路径形退点的**看管复本**（`core/cmd/zerg/family_dev.go:keepRollbackSnapshot` 把前态件逐字节复本落成 `<提案号>-<基名>`，缺口 GAP-20260928-126）。它装的是**件的复本集合**、不是带信封的状态对象 ⇒ 无 schema 可迁、目录级版本化不适用（与 `loopcore/checkpoints` 同口径）；目录里单件是任意格式的整件复本、逐件读不整体解析。它本身正是「跨版本仍要读得到」的持久位（scratch 清理不再冲掉退点依据），故只登记不盖章。"
+    },
+    {
+      "file": "ctx-unload",
+      "reason": "内容寻址的证据卸载目录（<sha16>.txt · 一件一文件，无信封、无索引）。写入只增不改：同内容同文件、不同内容新文件；压缩/摘要只读它取回原文。旧版不认这些文件也不影响任何解析 ⇒ 版本化不适用（与 compact_journal.jsonl 同档）。"
     }
   ]
 }

@@ -1263,8 +1263,8 @@ var chsBaseline = chsBaselineSet{
 	//   `doctor node` 不进危险表 —— 它**只读**（一条 ssh / 本机 `sh -s` + 只读命令；`git status` 带
 	//   `--no-optional-locks` 免得刷索引），✗ 不写盘、✗ 不改服务、✗ 不提权（见 `family_doctor_node.go`
 	//   件头）⇒ 这一格是「没有顺手放宽」的反证，不是省了没量。
-	"help --all":     {HasLines: true, Lines: 505, HasBytes: true, Bytes: 263198},
-	"help":           {HasLines: true, Lines: 379, HasBytes: true, Bytes: 97655, HasLast: true, Last: "      非交互用 `--token-stdin`；详见 `zerg help credentials`）。"},
+	"help --all":     {HasLines: true, Lines: 509, HasBytes: true, Bytes: 264018},
+	"help":           {HasLines: true, Lines: 383, HasBytes: true, Bytes: 98475, HasLast: true, Last: "      非交互用 `--token-stdin`；详见 `zerg help credentials`）。"},
 	"help dangerous": {HasLines: true, Lines: 128, HasBytes: true, Bytes: 49360, HasRows: true, Rows: 116, HasTail: true, Tail: "上表 116 条：**已开放 103 条**（确认档齐就真执行 —— 逐条见上行标记）；**未开放 13 条**（真跑一律**拒执**、退码 2 = 不给结论，只有 `--dry-run` 出计划件 = 退码 0）。"},
 	"help config":    {HasLines: true, Lines: 21, HasBytes: true, Bytes: 1748},
 }

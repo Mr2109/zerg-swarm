@@ -8,11 +8,11 @@
     "non_literal_read": "非字面量取空白规整化后的表达式文本"
   },
   "counts": {
-    "literals": 775,
-    "literal_sites": 1610,
-    "non_literals": 14,
-    "non_literal_sites": 89,
-    "sites_total": 1699
+    "literals": 778,
+    "literal_sites": 1615,
+    "non_literals": 15,
+    "non_literal_sites": 92,
+    "sites_total": 1707
   },
   "literals": [
     {
@@ -164,6 +164,12 @@
       "value": "approver_not_human",
       "sites": [
         "core/cmd/zerg/family_dev.go:2424"
+      ]
+    },
+    {
+      "value": "arity",
+      "sites": [
+        "core/cmd/zerg/family_context.go:126"
       ]
     },
     {
@@ -597,7 +603,7 @@
     {
       "value": "bad_schema_major",
       "sites": [
-        "core/cmd/zerg/main.go:623"
+        "core/cmd/zerg/main.go:629"
       ]
     },
     {
@@ -722,7 +728,7 @@
       "value": "bad_wallclock",
       "sites": [
         "core/cmd/zerg/family_fs_tools.go:929",
-        "core/cmd/zerg/main.go:665"
+        "core/cmd/zerg/main.go:671"
       ]
     },
     {
@@ -1311,6 +1317,18 @@
       ]
     },
     {
+      "value": "ctx_id_illegal",
+      "sites": [
+        "core/cmd/zerg/family_context.go:135"
+      ]
+    },
+    {
+      "value": "ctx_unload_missing",
+      "sites": [
+        "core/cmd/zerg/family_context.go:143"
+      ]
+    },
+    {
       "value": "cwd_absent",
       "sites": [
         "core/cmd/zerg/family_find.go:58",
@@ -1709,9 +1727,11 @@
     {
       "value": "extra_args",
       "sites": [
+        "core/cmd/zerg/family_context.go:53",
         "core/cmd/zerg/family_dev.go:1181",
         "core/cmd/zerg/family_dev.go:206",
         "core/cmd/zerg/family_dev_check.go:49",
+        "core/cmd/zerg/family_gate_baseline.go:101",
         "core/cmd/zerg/family_gate_four_states.go:99",
         "core/cmd/zerg/family_gate_progress.go:619",
         "core/cmd/zerg/family_gate_progress.go:710",
@@ -1919,37 +1939,37 @@
     {
       "value": "gate_ls_fast_field_absent",
       "sites": [
-        "core/cmd/zerg/gate.go:754"
+        "core/cmd/zerg/gate.go:760"
       ]
     },
     {
       "value": "gate_ls_fast_needs_machine_face",
       "sites": [
-        "core/cmd/zerg/gate.go:741"
+        "core/cmd/zerg/gate.go:747"
       ]
     },
     {
       "value": "gate_ls_machine_face_broken",
       "sites": [
-        "core/cmd/zerg/gate.go:643"
+        "core/cmd/zerg/gate.go:649"
       ]
     },
     {
       "value": "gate_ls_reds_no_run",
       "sites": [
-        "core/cmd/zerg/gate.go:786"
+        "core/cmd/zerg/gate.go:792"
       ]
     },
     {
       "value": "gate_ls_reds_unreadable",
       "sites": [
-        "core/cmd/zerg/gate.go:792"
+        "core/cmd/zerg/gate.go:798"
       ]
     },
     {
       "value": "gate_ls_step_id_ambiguous",
       "sites": [
-        "core/cmd/zerg/gate.go:770"
+        "core/cmd/zerg/gate.go:776"
       ]
     },
     {
@@ -2259,7 +2279,7 @@
         "core/cmd/zerg/family_gap_state.go:3303",
         "core/cmd/zerg/family_gap_state.go:3574",
         "core/cmd/zerg/family_gap_state.go:3836",
-        "core/cmd/zerg/main.go:6448"
+        "core/cmd/zerg/main.go:6527"
       ]
     },
     {
@@ -3115,7 +3135,7 @@
     {
       "value": "no_verify_forbidden",
       "sites": [
-        "core/cmd/zerg/main.go:316"
+        "core/cmd/zerg/main.go:322"
       ]
     },
     {
@@ -5509,6 +5529,12 @@
       ]
     },
     {
+      "value": "\"context_action_unknown:\"+action",
+      "sites": [
+        "core/cmd/zerg/family_context.go:45"
+      ]
+    },
+    {
       "value": "\"json_field_unknown:\"+bad",
       "sites": [
         "core/cmd/zerg/family_approve.go:246",
@@ -5525,10 +5551,12 @@
         "core/cmd/zerg/family_agent_ops.go:251",
         "core/cmd/zerg/family_code.go:410",
         "core/cmd/zerg/family_code_constdup.go:358",
+        "core/cmd/zerg/family_context.go:59",
         "core/cmd/zerg/family_dev_edit.go:396",
         "core/cmd/zerg/family_eggs_cocoons.go:1423",
         "core/cmd/zerg/family_gap_diff.go:476",
         "core/cmd/zerg/family_gap_state.go:216",
+        "core/cmd/zerg/family_gate_baseline.go:117",
         "core/cmd/zerg/family_gate_four_states.go:109",
         "core/cmd/zerg/family_gate_progress.go:635",
         "core/cmd/zerg/family_gate_progress.go:722",
@@ -5545,8 +5573,8 @@
         "core/cmd/zerg/family_repo_diffstat.go:105",
         "core/cmd/zerg/family_route.go:85",
         "core/cmd/zerg/family_trace.go:189",
-        "core/cmd/zerg/gate.go:609",
-        "core/cmd/zerg/main.go:6831"
+        "core/cmd/zerg/gate.go:615",
+        "core/cmd/zerg/main.go:6910"
       ]
     },
     {
