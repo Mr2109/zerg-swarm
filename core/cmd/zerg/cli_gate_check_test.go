@@ -369,8 +369,14 @@ func TestGateCheckGoEntryTableComplete(t *testing.T) {
 	//	（check-write-inventory · 见 core/cmd/zerg/check_write_inventory.go · 真源
 	//	core/internal/contract/write-inventory.json 的「默认档是否写盘 ＋ 只读旗标名」与实践
 	//	沙箱对拍；0=一致 1=破承诺 8=判不了 · 在盘无同名 py 件 ⇒ 名解析走 inproc 兜底）⇒ 194→195。
-	if got := len(gateCheckGoEntry); got != 195 {
-		t.Fatalf("进程内 Go 表项数要 == 195，得到 %d", got)
+	// ★ 2026-10-22（P3 · 门133 桶内未闭归零 · 本单）：判据入 inproc 表 +1
+	//
+	//	（check-gap-bucket-zero · 见 core/cmd/zerg/check_gap_bucket_zero.go · 读
+	//	~/.zerg/state/zerg-cli-gaps.jsonl ＋ 清单件 scripts/gates/bucket-zero-close.json；
+	//	0=清单桶全归零 1=有桶未归零/白名单过期或空转 2=取数面拿不到 · 在盘无同名 py 件
+	//	⇒ 名解析走 inproc 兜底）⇒ 195→196。
+	if got := len(gateCheckGoEntry); got != 196 {
+		t.Fatalf("进程内 Go 表项数要 == 196，得到 %d", got)
 	}
 	// ★ 放宽（2026-10-07 退役批）：旧不变量「表键必在名录」⇒「表键 ⇒ 名录 **或** inproc 键 二者其一」。
 	//   退役件（py 已 `git rm`）只余 inproc 那一路（family_gate_check.go 的 inproc 兜底 ⇒ rc=0）；

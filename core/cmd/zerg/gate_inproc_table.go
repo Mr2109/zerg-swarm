@@ -66,6 +66,7 @@ var gateCheckGoEntry = map[string]func(stdout, stderr io.Writer, argv []string) 
 	"check-flag-registry-parity":            flagRegistryParityGateMain,
 	"check-fleet-loadable":                  checkFleetLoadableGateMain,
 	"check-gap-axis-reconcile":              checkGapAxisReconcileGateMain,
+	"check-gap-bucket-zero":                 checkGapBucketZeroGateMain,
 	"check-gap-closure-drift":               checkGapClosureDriftGateMain,
 	"check-gap-ledger-face":                 checkGapLedgerFaceGateMain,
 	"check-gap-ledger-view":                 gapLedgerViewGateMain,
