@@ -4,8 +4,14 @@
 //
 //	· 不另写一份步骤表（`--list` 就是步骤表的**唯一真源**，命令面只把它原样转出）；
 //	· 不动脚本退码（脚本退多少、命令面就返多少 —— **正码**逐字透传）；
-//	  **唯一例外 = 表外负码**：子进程被信号打死时 Go 的 `ExitCode()` 给 `-1`（它**不是退码**、
+//	  **例外一 = 表外负码**：子进程被信号打死时 Go 的 `ExitCode()` 给 `-1`（它**不是退码**、
 //	  是「没有退码」）⇒ 显式收回 `exitInterrupted`(130)，落点见本文件 `:198`（缺口 `GAP-20261002-18`）。
+//	  **例外二 = 脚本的 `2`**（缺口 `GAP-20260928-152` · 2026-10-23）：脚本侧 `2` = **不给结论**、
+//	  命令面 `2` = **用法错** ⇒ 同一个数字两种含义，调用方分不清「我参数写错了」与「门跑了但没结论」。
+//	  `run` / `self-test` 两档把脚本的 `2` 归命令面 `8`（`blocked` · 不给结论），命令面的 `2` 只给用法错
+//	  （未知旗标 / 步名不在 / 值域不认 / **组合不合法**：这四类都由命令面在 exec **之前**拒）；
+//	  0/1/其余正码照旧逐字透传。归一只有一处实现：本文件 `gateScriptRC`。
+//	  `ls` / `show` 等**不归**：`gate show` 零命中时脚本退的 2 本来就是「名给错了」（用法错）。
 //
 // 六条动作与脚本旗标的对应（一一对应，不加戏）；`check` 是第七条第**不走脚本**的（判据转发壳）：
 //
@@ -297,6 +303,20 @@ func cmdGate(inv *invocation, stdout, stderr io.Writer) int {
 		if rc := gateRunPrecheckScopeValues(script, tail, stderr); rc != exitOK {
 			return rc
 		}
+		// ★ 缺口 `GAP-20260928-152`：**组合类用法错**（互斥旗标同给 / `--step` 给了旗标而非步名）也是
+		//   命令面用法错（2）⇒ 执行前判，别等脚本退它那个「不给结论」的 2（现归 8）。
+		if rc := gateRunPrecheckFlagCombos(tail, stderr); rc != exitOK {
+			return rc
+		}
+		// ★ 缺口 `GAP-20260928-152`（2026-10-23）：**步名写错也是命令面用法错（2）**。
+		//   过去单步档的步名只在脚本 `filter_step` 里判（脚本退它自己的 2 = 不给结论）⇒「参数写错」
+		//   与「脚本自身不给结论」同码。这里按脚本自己的 `add_step` 声明**执行前**判（真源同一份：
+		//   `parseAddSteps` + 归一，与脚本 `filter_step` 的「去掉反斜杠后逐字相等」同串空间），
+		//   不中 / 歧义 ⇒ 退 2 并给「最像的合法输入」＋候选（与 `--json`/`--show-log` 同方言）。
+		//   缺 `--step` 或值为空 ⇒ 一个字节都不动（既有形态照旧交给自举件）。
+		if rc := gateRunPrecheckStepName(script, tail, stderr); rc != exitOK {
+			return rc
+		}
 		// ★ 缺口 `GAP-20261001-35`（本片）：单步档**不带 `--only-step`** ⇒ 脚本会先跑整套
 		//   『合成步骤·不碰真目标』自检，其输出与真那一步**混在同一条 stdout**（既有两次误读）。
 		//   命令面在 exec **之前**补一行**显式声明**（= stdout 首行 · 逐字串见 `family_gate_run_step.go`
@@ -410,6 +430,13 @@ func cmdGate(inv *invocation, stdout, stderr io.Writer) int {
 			if code < 0 {
 				return exitInterrupted
 			}
+			// ★ 缺口 `GAP-20260928-152`（2026-10-23）：脚本的 `2`（**不给结论**）与命令面的 `2`
+			//   （**用法错**）同数字两义 ⇒ 只对 `run` / `self-test` 两档归一（脚本 2 ⇒ 命令面 8）。
+			//   其余档不归：`gate show` 零命中时脚本退的 2 本来就是「名给错了」（用法错）。
+			switch action {
+			case "run", "self-test":
+				return gateScriptRC(code, stderr)
+			}
 			return code
 		}
 		fmt.Fprintf(stderr, "%s: 跑不动门禁脚本：%v\n", progName, err)
@@ -424,6 +451,28 @@ func cmdGate(inv *invocation, stdout, stderr io.Writer) int {
 		gateLsPasteFooter(stderr, lsBuf.String())
 	}
 	return exitOK
+}
+
+// gateScriptRC —— 门禁脚本退码 ⇒ 命令面退码（**唯一一处归一** · 缺口 `GAP-20260928-152` · 2026-10-23）。
+//
+// 为什么要归一：脚本自己声明 `2` = **不给结论**（用法错/前置缺件/自检不过/有步骤报 BLOCKED ——
+// 见脚本头注释里以「# 退出码：」起头的那一行），而命令面 `2` = **用法错**（命令面在 exec
+// **之前**就拒的形态：未知旗标 / 步名不在 / 值域不认）。`gate run` 若把脚本的 2 原样转出 ⇒
+// 同一个数字两种含义：调用方分不清「我参数写错了」与「门跑了但没给结论」（本缺口的就是这一条）。
+//
+// 口径（A 组 2026-10-13 拍板 · **不改任何既有码值**）：命令面 `2` 只给用法错；脚本的 `2` 归
+// `exitBlocked`(8) —— 与命令面 8 = blocked（不给结论）同义。其余正码（0 / 1 / 3 / 127…）逐字
+// 透传，「只转发、不翻译」的其余部分不下岗（§6.3 S3 · §九 M11 `G1-a`）。
+//
+// 两态各有自己的报话（人面也分得开）：用法错那一档由各前移校验打「未知参数 / 步名逐字找不到」
+// ＋ `error.kind=usage`；本函数打「门禁脚本**自身不给结论** ⇒ 归 8」。
+func gateScriptRC(code int, stderr io.Writer) int {
+	if code != exitUsage {
+		return code
+	}
+	fmt.Fprintf(stderr, "%s: 门禁脚本**自身不给结论**（脚本退 %d）⇒ 命令面归 `%d`（blocked · 不给结论）；命令面的 `%d` 只给**用法错**（`GAP-20260928-152`）\n",
+		progName, exitUsage, exitBlocked, exitUsage)
+	return exitBlocked
 }
 
 // recordRunFreshness —— 把这一趟的指纹随件落进那一趟的目录（**只写这一枚**；写不下去只出声、

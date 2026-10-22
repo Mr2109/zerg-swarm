@@ -49,6 +49,11 @@ type Index struct {
 	} `json:"tool"`
 	CreatedAt string  `json:"created_at"`
 	Entries   []Entry `json:"entries"`
+	// WallMinVersion —— ★ `GAP-20261015-25` · D12 的**卵侧声明**（可加面键 `wall_min_version` ·
+	// `§16.5 V2`）：与 B 侧 `zegIndexJSON.WallMinVersion` **同形** —— `RawMessage` 收原样
+	// （历史夹具写数字 `1`、新写端写 `"1.4.0"` ⇒ ✗ 不许钉成 string），`omitempty` ⇒ 未声明时索引字节不变。
+	// ★ A 侧只**收键不判**：D12「用哪一份茧壁」属 B 侧行为面（A 侧补闸＝改行为 · 另单）。
+	WallMinVersion json.RawMessage `json:"wall_min_version,omitempty"`
 }
 
 // Plan 一段的展开动作（孵化器照此把段落到空间内，并复核 sha）。

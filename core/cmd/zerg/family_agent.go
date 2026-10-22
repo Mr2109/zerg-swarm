@@ -43,14 +43,27 @@ func fleetMachine(inv *invocation, machine string, stderr io.Writer) (jsonObj, i
 	ms := asObj(fleet["machines"])
 	o := asObj(ms[machine])
 	if o == nil {
-		names := make([]string, 0, len(ms))
-		for n := range ms {
-			names = append(names, n)
+		// ★ 2026-10-23（缺口 `GAP-20261021-08`）：**载荷里没有 ≠ 名册里没有**。
+		//   改前这两件事共用一句「名册里没有这台机」⇒ 对一台**名册里明明在、只是没有心跳**的机器
+		//   （离线 / 网络不通 / 未装子端）说的是假话，还把「最像的合法输入」指向别的机器。
+		//   现读：名册真源 = `~/.zerg/contexts/<档>.yaml` 的 `nodes:`（§九 M13 Z2）⇒ 按它判。
+		rosterNames, rosterPath, rosterWhy := agentRosterNames(inv)
+		if rosterWhy != "" {
+			fmt.Fprintf(stderr, "%s: 主控载荷里没有这台机 %q，且名册读不到（%s）· %s ⇒ **它在不在名册里判不了**（✗ 不当「名册里没有」）\n",
+				progName, machine, rosterPath, rosterWhy)
+			inv.setErr("blocked", "roster_unreadable", "名册读不到 ⇒ 机器是否在册判不了")
+			return nil, exitBlocked
 		}
-		sort.Strings(names)
+		for _, n := range rosterNames {
+			if n == machine {
+				fmt.Fprintf(stderr, "%s: %s 在名册（%s）里，但主控**没有它的心跳快照** ⇒ 观测面无可投影的格（backend_state=%s · 其余格留空「不猜」）\n",
+					progName, machine, rosterPath, agentNoHeartbeat)
+				return jsonObj{"machine": machine, "healthy": agentHealthyUnknown, "backend_state": agentNoHeartbeat}, exitOK
+			}
+		}
 		fmt.Fprintf(stderr, "%s: 名册里没有这台机 %q（§九 M13 Z3）\n", progName, machine)
-		fmt.Fprintf(stderr, "名册: %s\n", strings.Join(names, " · "))
-		if s := nearestName(machine, names); s != "" {
+		fmt.Fprintf(stderr, "名册: %s\n", strings.Join(rosterNames, " · "))
+		if s := nearestName(machine, rosterNames); s != "" {
 			fmt.Fprintf(stderr, "最像的合法输入: %s\n", s)
 		}
 		inv.setErr("unsupported_on_node", "unknown_machine", "名册里没有这台机")
@@ -76,6 +89,64 @@ func agentMarkUnknownGPU(o jsonObj, row map[string]string) {
 	}
 	if known, _ := o["vram_known"].(bool); !known {
 		row["gpu_used_gb"] = "n/a"
+	}
+}
+
+// ---- 观察面 ⟷ 名册：逐台对齐（缺口 `GAP-20261021-08` · 2026-10-23）----
+//
+// 病根（现读，逐行）：
+//
+//	① `/api/fleet/status` 的 `machines` = **心跳快照表**，不是名册 —— `core/internal/store/store.go:138`
+//	   `snapshots` 只在 `ReceiveHeartbeat`（同件 :153-163）里建行；主控 `StatusHandler`
+//	   （`core/internal/api/handlers.go:1224`）直接 `h.Store.GetAllSnapshots()`，**不与名册并集**。
+//	② `cmdAgentLs` 改前只遍历这份载荷的键 ⇒ 名册里在、但此刻没有心跳的机器（离线 / 网络不通 /
+//	   还没装子端）**整行消失**：「名册 3 台、`agent ls` 只出 2 台」。名册是**声明面**
+//	   （§九 M13 `Z2` = `~/.zerg/contexts/<档>.yaml` 的 `nodes:`；`Z6` = 离线也出表）⇒ 观察面
+//	   比声明面少台 = 报错面不对。
+//
+// 治法（只补观察面的**行**，✗ 不改载荷语义、✗ 不造数）：名册有 + 心跳无 ⇒ 出一行，`backend_state`
+// 标 `无心跳`、`healthy` 标 `unknown`，其余格**留空不猜**（✗ 落 `0` / ✗ 落 `idle` 都会被读成真读数）。
+
+const (
+	// agentNoHeartbeat —— 名册里在、主控**从未收到该机心跳**时 `backend_state` 的唯一取值。
+	// 三态理由与 `same_origin` / `modelLoadUnknown` 同一条：缺 ≠ 坏 ≠ 好 —— 没数据就明说没数据
+	// （✗ 落 `idle` 会被读成「空闲可派活」）。
+	agentNoHeartbeat = "无心跳"
+	// agentHealthyUnknown —— 一行里没有任何一格可信时 `healthy` 的取值（与主控
+	// `core/internal/api/fleet_health.go:65` 的 `OriginUnknown` 同一个词，✗ 不另造新词）。
+	agentHealthyUnknown = "unknown"
+)
+
+// agentRosterNames 读名册真源（`~/.zerg/contexts/<档>.yaml` 的 `nodes:`）的机器名。
+//
+// 复用门④ 的解析原语 `cnrLoadRoster`（`check_nodes_roster.go:612` · 与 `fleet render` /
+// `check-nodes-roster` **同一套口径** · ✗ 不引第二套 YAML 解析）。
+// 返回 (names, path, why)：`why != ""` ⇒ 名册读不到 ⇒ 调用方如实示「对齐判不了」，
+// ✗ 不许把「读不到」当「名册 0 台」（§九 M3 / RC9：读不到不当健康）。
+func agentRosterNames(inv *invocation) (names []string, path string, why string) {
+	p, perr := contextYAMLPath(inv)
+	if perr != "" {
+		return nil, "", perr
+	}
+	nodes, msg := cnrLoadRoster(p)
+	if msg != "" {
+		return nil, p, msg
+	}
+	names = make([]string, 0, len(nodes))
+	for _, k := range cnrSortedKeys(nodes) {
+		if n := strings.TrimSpace(cnrStripQuotes(k)); n != "" {
+			names = append(names, n)
+		}
+	}
+	return names, p, ""
+}
+
+// agentNoHeartbeatRow —— 名册有、心跳无的那一行（只有能证实的格；其余整键缺席）。
+func agentNoHeartbeatRow(machine string) map[string]string {
+	return map[string]string{
+		"machine":       machine,
+		"healthy":       agentHealthyUnknown,
+		"backend_state": agentNoHeartbeat,
 	}
 }
 

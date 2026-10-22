@@ -33,6 +33,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/Mr2109/zerg-swarm/core/internal/config"
 )
 
 // uiStartBinRel —— UI 可执行件（脚本 `BIN="$REPO_ROOT/bin/zerg-ui"`）。
@@ -138,8 +140,10 @@ func uiStartTailTo(logPath string, n int, stderr io.Writer) {
 // 覆盖序：进程环境 < `.env` 赋值 < 令牌文件（与 python 侧 `os.environ[...] = _v` 同序）。
 func uiStartChildEnv(root string) []string {
 	env := uiStartLoadDotenv(root, os.Environ())
-	if home, err := os.UserHomeDir(); err == nil {
-		if b, err := os.ReadFile(filepath.Join(home, ".zerg", "token")); err == nil {
+	// 令牌文件路径也只有一份（GAP-20261017-04）：`config.TokenFilePath()` → `shared/credential.FilePath()`。
+	// 注意本件是**供给面**（把权威令牌注入 `ZERG_TOKEN`），不是读取面的第二套优先级。
+	if p := config.TokenFilePath(); p != "" {
+		if b, err := os.ReadFile(p); err == nil {
 			if v := strings.TrimSpace(string(b)); v != "" {
 				env = uiStartEnvSet(env, "ZERG_TOKEN", v)
 			}

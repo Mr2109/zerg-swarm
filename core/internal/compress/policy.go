@@ -62,6 +62,10 @@ type Policy struct {
 	Engine       string        // free（缺省）| summary | external
 	MaxRatio     float64       // 输出/输入上限（0.25）
 	Deadline     time.Duration // 超时即降级
+
+	// Summarize —— summary 引擎的注入面（P3）：nil ⇒ 降级 free 并在 Result.Fallback 标记。
+	// 放这里而不是塞全局变量：一个场景一个 Policy，注入随参数走，并发安全。
+	Summarize SummarizerFunc
 }
 
 // DefaultPolicy —— 缺省参数（对齐设计稿 v5 §5 两线三档）。
@@ -111,6 +115,14 @@ type Event struct {
 type Engine interface {
 	Name() string
 	Compress(ctx context.Context, segs []Segment, p Policy) ([]Segment, string, error) // (结果, 机制名, err)
+}
+
+// FallbackReporter —— 引擎自报「这一轮降级了」的可选接口。
+//
+// ★ 不扩 Engine seam：free 不需要实现；summary 在 Summarizer 未注入时降级 free，
+// Apply 据 (true, 原因) 把 Result.Fallback / Result.Reason 填上（观测口径 §9）。
+type FallbackReporter interface {
+	Fallback() (bool, string)
 }
 
 // ErrGuard —— 必留闸失败（整次压缩作废、调用方须回退原文）。
@@ -183,17 +195,23 @@ func Apply(ctx context.Context, segs []Segment, p Policy) (Result, error) {
 	after := TotalTokens(out)
 	res.After, res.Ratio = after, ratio
 
-	// 阶段二：仅在窗口线以上才允许摘要（P3 才有引擎；当前直接停在剪枝）
+	// 阶段二：仅在窗口线以上才允许摘要（P3：summary 引擎；Summarizer 未注入即降级 free）
 	if float64(after)/float64(p.Budget) >= p.CompactPct {
-		if e := engineOf(p.Engine); e != nil && e.Name() != "free" {
+		if e := engineOf(p.Engine, p.Summarize); e != nil && e.Name() != "free" {
 			cc, cancel := context.WithTimeout(ctx, p.Deadline)
 			defer cancel()
 			if s2, m2, e2 := e.Compress(cc, out, p); e2 == nil {
 				out, mech, res.Aggressive = s2, m2, "balanced"
+				// 引擎自报降级（如 summary 无 Summarizer）：机制仍是 free 的，档位退回 light
+				if fb, ok := e.(FallbackReporter); ok {
+					if hit, why := fb.Fallback(); hit {
+						res.Fallback, res.Reason, res.Aggressive = true, why, "light"
+					}
+				}
 				after = TotalTokens(out)
 				res.After, res.Mechanism = after, mech
 			} else {
-				res.Fallback, res.Reason = true, e2.Error()
+				res.Fallback, res.Reason = true, e2.Error() // 摘要失败 ⇒ 留 free 结果（不阻塞主循环）
 			}
 		}
 	}
@@ -208,13 +226,13 @@ func Apply(ctx context.Context, segs []Segment, p Policy) (Result, error) {
 	return res, nil
 }
 
-func engineOf(name string) Engine {
+func engineOf(name string, sum SummarizerFunc) Engine {
 	switch name {
 	case "", "free":
 		return &PrunerFree{}
 	case "summary":
-		return nil // P3 落地前不发车
+		return &SummaryEngine{Summarize: sum} // P3：本体零依赖，Summarizer 由 Policy 注入
 	default:
-		return nil
+		return nil // external（P4）默认关
 	}
 }

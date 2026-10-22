@@ -38,6 +38,7 @@ var gateCheckGoEntry = map[string]func(stdout, stderr io.Writer, argv []string) 
 	"check-cli-contract":                    cliContractGateMain,
 	"check-cli-ownership":                   checkCliOwnershipGateMain,
 	"check-compat-manifest":                 compatManifestGateMain,
+	"check-compress-ruler":                  checkCompressRulerGateMain, // 门136：压缩尺子硬闸（AllSamples × free × Budget 8192）
 	"check-contract-describes-truth":        checkContractDescribesTruthGateMain,
 	"check-contract-registry":               contractRegistryGateMain,
 	"check-contract-version-diff":           cvdMain,
@@ -142,6 +143,7 @@ var gateCheckGoEntry = map[string]func(stdout, stderr io.Writer, argv []string) 
 	"check-repo-symlink-farm":               checkRepoSymlinkFarmGateMain,
 	"check-retire-consistency":              checkRetireConsistencyGateMain,
 	"check-retire-roster":                   retireRosterGateMain,
+	"check-script-registration":             checkScriptRegistrationGateMain,
 	"check-selfcount":                       checkSelfcountGateMain,
 	"check-selftest-knobs":                  checkSelftestKnobsGateMain,
 	"check-service-declaration":             checkServiceDeclarationGateMain,
@@ -200,6 +202,7 @@ var gateCheckGoEntry = map[string]func(stdout, stderr io.Writer, argv []string) 
 	"pack-release":                          packReleaseMain,
 	"preview-gate-steps":                    pgsGateMain,
 	"repo-diffstat-check":                   repoDiffstatGateMain,
+	"run_p0":                                runP0GateMain,
 	"seal-ledger":                           sealLedgerGateMain,
 	"show-baseline":                         showBaselineGateMain,
 	"stability-stats":                       evalStabilityStatsGateMain,

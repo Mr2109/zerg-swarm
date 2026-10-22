@@ -1512,6 +1512,41 @@
       "类": "上条的判据件（三态 + 互斥五档 + 缓存共用）",
       "语义": "dryrun.v1",
       "零副作用判据": "用例断言：`--check` 与 `--node`/位置参数/`--dry-run`/`--confirm`/`--yes` 五档互斥各退 2，且互斥判定**在 fetch 之前**（不触网）；up-to-date 档退 2、判不了档退 1"
+    },
+    {
+      "file": "core/internal/compress/eval/samples_plan.go",
+      "类": "评测夹具文本，**不是**干跑语义站点（R29/R30 的 ruler 样本正文里的英文 `dry run` 只是被压缩的素材句子与 needle 字面；本件不解析旗标、不跑 CLI）",
+      "语义": "dryrun.v1",
+      "零副作用判据": "本件零副作用：只构造内存样本（段落正文 + needle 字面），不读盘、不写盘、不 exec；`re-scored after the dry run` / `captured during the dry run` 两处仅是样本正文",
+      "备注": "门⑩ `R1 未登记件`（现跑命中即红）：命中两行为英文素材句「dry run」及其 needle 字面，无旗标解析 ⇒ 并入 dryrun.v1，不另立语义"
+    },
+    {
+      "file": "core/internal/compress/eval/samples_trajectory.go",
+      "类": "评测夹具文本，**不是**干跑语义站点（R15 zh 的样本正文含一行 `zerg export --dry-run --out …` 的**示例命令行**＋ needle 字面；本件不解析 argv、不跑 CLI、不外发）",
+      "语义": "dryrun.v1",
+      "零副作用判据": "本件零副作用：只构造内存轨迹样本；`$ zerg export --dry-run --out /tmp/…` 与 needle `zerg export --dry-run` 只是素材与断言字面，不执行 CLI、不落盘、不联网",
+      "备注": "门⑩ `R1 未登记件`（现跑命中即红）：命中三行为示例命令行与 needle 字面 ⇒ 并入 dryrun.v1，不另立语义"
+    },
+    {
+      "file": "scripts/ops/volume-ready-exec.sh",
+      "类": "实现站点：卷就绪等待器的 `--dry-run`（只打印将 exec 的 argv ＋ 单次双检读数；不等、不 exec、不改状态；`--` 之后的目标侧 `--dry-run` 原样透传）· 与 dryrun.v1 同一套语义",
+      "语义": "dryrun.v1",
+      "零副作用判据": "`--dry-run` ⇒ 退码 0 · 只往 stdout/stderr 打印计划（argv 逐枚一行 + shell 引用形 + 双检读数）· 不 exec 真件、不 sleep 等待、不建目录、不写文件、不碰 launchd；`scripts/ops/volume-ready-exec.test.sh` ④ 现跑断言真件一次未跑且 dump 件未落",
+      "备注": "门⑩ `R1 未登记件`（本件新件 · 同批补真 `--dry-run`）：约定写在件头「干跑（--dry-run）的约定」五条"
+    },
+    {
+      "file": "scripts/ops/volume-ready-exec.test.sh",
+      "类": "测试面，**不是**干跑语义站点（④ 段把 `--dry-run` 交给被测件并断言 argv 打印 / 零 exec / 不等待；自身一行干跑逻辑都没有）",
+      "语义": "dryrun.v1",
+      "零副作用判据": "本件只在 `mktemp -d` 临时床造假卷与假挂载表；④ 用例断言 rc=0、无真件 stdout、dump 件不落、计划含 argv 与目标侧 `--dry-run`、0s 返回；不碰 /Volumes、不碰 launchd",
+      "备注": "门⑩ `R1 未登记件`（registry_fanout 亦要求每个 .sh 有落点）：命中为被测件旗标与断言字面"
+    },
+    {
+      "file": "core/cmd/zerg/family_gap_setwant_tiers_test.go",
+      "类": "命令面测试件（`gap set-want` 面第二组牙：〔庚〕旧值→新值逐字 / 〔辛〕只读借用档硬拒 / 〔壬〕缺参数）—— 测试面，**不是**干跑语义站点（全件唯一命中在第 4 行注释：说明前件 `family_gap_setwant_test.go` 已有〔丁〕`--dry-run` 组、本件只补另三组；自身一行干跑逻辑都没有）",
+      "语义": "dryrun.v1",
+      "零副作用判据": "测试面：全部判据跑在 `t.TempDir()` 合成状态目录（`ZERG_STATE_DIR`）与合成夹具账上，本件不写仓、不起门禁、不 exec 真脚本；〔辛〕那一组断言的正是写面无落点（借源逐字节不变 · 审计零行 · 连 `.lock` 都不许出现）",
+      "备注": "登记依据 = 门⑩ `R1 未登记件`（现跑命中即红）：命中是**注释引文**（第 4 行转述前件〔丁〕的干跑组名），不是第五套语义 ⇒ 并入 `dryrun.v1`，不造新 id —— 同 `family_gap_setwant_test.go` / `eggmax_timeout_test.go` 的「测试面，非语义站点」处置。★ 2026-10-23 落件同批补登记。"
     }
   ]
 }

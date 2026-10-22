@@ -117,22 +117,33 @@ func TestGapSetWantTwoStateVerbatim(t *testing.T) {
 		"--want-family", "gap", "--want-action", "set-want",
 		"--evidence", "拍板：want 写面入册（GAP-20261008-07）", "--yes"}
 
-	// ① 改前（命令树里没有这条动作 —— 也就是本单落地前的真态）
+	// ① 改前（命令树里没有这条动作 —— 本单落地前的真态）。
+	// ★ 2026-10-23：`gap set-want` 已注册进命令树 ⇒ 本条腿在**已装树**上不可能再复现；
+	//   改前态由 `-overlay` 两态覆盖（HEAD 版 main.go ⇒ rc=2 且报「族名/中间节点」）。
+	//   此处只保留「若仍是未注册态，则必须 rc=2 且账一字不动」的守门断言。
 	rc, _, errb := gapSetWantTestRun(t, argv...)
-	if rc != 2 {
-		t.Fatalf("改前该条动作不在命令树 ⇒ rc=2（实测 rc=%d · stderr=%q）", rc, errb)
-	}
-	if !strings.Contains(errb, "未知命令") && !strings.Contains(errb, "族名/中间节点") {
-		t.Errorf("改前应逐字报「这条动作不在命令树」（stderr=%q）", errb)
-	}
-	after, _ := os.ReadFile(ledger)
-	if !bytes.Equal(before, after) {
-		t.Fatalf("改前一发居然动了账（%d → %d 字节）", len(before), len(after))
+	if rc == 2 {
+		if !strings.Contains(errb, "未知命令") && !strings.Contains(errb, "族名/中间节点") {
+			t.Errorf("改前应逐字报「这条动作不在命令树」（stderr=%q）", errb)
+		}
+		after, _ := os.ReadFile(ledger)
+		if !bytes.Equal(before, after) {
+			t.Fatalf("改前一发居然动了账（%d → %d 字节）", len(before), len(after))
+		}
+	} else {
+		// 命令已注册 ⇒ 本腿在现树上会真写；把账恢复到腿前字节，让「改后腿」的增量仍是 1 条。
+		if err := os.WriteFile(ledger, before, 0o644); err != nil {
+			t.Fatalf("恢复腿前账失败：%v", err)
+		}
+		t.Logf("命令已注册（rc=%d）⇒ 改前腿由 overlay 两态覆盖；账已恢复到腿前字节", rc)
 	}
 
-	// ② 改后（装上同一条动作）
+	// ② 改后（装上同一条动作 · 用**会变**的值：`gap` → `命令面`）
 	gapSetWantTestInstall(t)
-	rc, out, errb := gapSetWantTestRun(t, argv...)
+	argv2 := []string{"gap", "set-want", "GAP-20261008-07",
+		"--want-family", "gate", "--want-action", "set-want",
+		"--evidence", "拍板：want 写面入册（GAP-20261008-07）", "--yes"}
+	rc, out, errb := gapSetWantTestRun(t, argv2...)
 	if rc != 0 {
 		t.Fatalf("改后应 rc=0（实测 rc=%d · stderr=%q）", rc, errb)
 	}
@@ -145,8 +156,8 @@ func TestGapSetWantTwoStateVerbatim(t *testing.T) {
 
 	// ②a want 两格**逐字**变；state / 其余键不动
 	row := gapSetWantTestRow(t, ledger, "GAP-20261008-07")
-	if row["want_family"] != "gap" {
-		t.Errorf("want_family 应为 gap（got=%v）", row["want_family"])
+	if row["want_family"] != "gate" {
+		t.Errorf("want_family 应为 gate（got=%v）", row["want_family"])
 	}
 	if row["want_action"] != "set-want" {
 		t.Errorf("want_action 应逐字为 set-want（got=%v）", row["want_action"])
@@ -176,7 +187,7 @@ func TestGapSetWantTwoStateVerbatim(t *testing.T) {
 	}
 
 	// ③ 幂等：同值再发一次 ⇒ 0 · 账字节不变（不写真源、不写审计、不落注）
-	rc, out, _ = gapSetWantTestRun(t, argv...)
+	rc, out, _ = gapSetWantTestRun(t, argv2...)
 	if rc != 0 || !strings.Contains(out, "无变化") {
 		t.Fatalf("同值应幂等命中（rc=%d · stdout=%q）", rc, out)
 	}

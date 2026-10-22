@@ -124,15 +124,14 @@ type impactBackfillContract struct {
 	NotInputTo []string `json:"not_input_to"`
 }
 
-// impactBackfillFlagGiven —— `--gate-results` **给没给**（值给没给另判）：`flagValue` 只在「后面还有一格」时
-// 才算给过 ⇒ 收尾那一格的「**给了旗标没给值**」它看不见，而这一格正是要判的用法错（退 2 · stdout 0 字节）。
+// impactBackfillFlagGiven —— `--gate-results` **给没给**（值给没给另判）。
+//
+// ★ 缺口 `GAP-20260926-58`（收敛 · 本枚）：判据唯一实现已收归 `flag_given.go`
+// （`inv.flagGiven` ⇒ `flagArgGiven` ⇒ `flagArgScan`）。本函数只留作**按 argv 的薄壳**
+// （黑盒用例 `ImpactBackfillFlagGivenForTest` 仍经它判「收尾那一格裸形」；
+// 生产路径已改调 `inv.flagGiven`）—— ✗ 不再自带循环。
 func impactBackfillFlagGiven(orig []string) bool {
-	for _, a := range orig {
-		if a == "--gate-results" || strings.HasPrefix(a, "--gate-results=") {
-			return true
-		}
-	}
-	return false
+	return flagArgGiven(orig, "--gate-results")
 }
 
 // impactBackfillContractOf 现读契约件（**只读真源**）。返回原因非空 ⇒ 调用方按**不给结论**（退 8）处理

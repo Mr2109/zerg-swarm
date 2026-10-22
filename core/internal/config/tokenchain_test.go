@@ -1,13 +1,17 @@
 package config
 
+// 本件只测**转发层**：优先级逻辑与「旧名出声一次 / 不回显」的实现判据搬到了
+// `shared/credential/tokenchain_test.go`（实现搬到哪，判据跟到哪 —— 否则判据测的是影子）。
+// 这里守两件事：① 转发层真把共享实现接上了（三路两态取值/来源都对）；
+// ② 转发层**没有**偷偷长出第二套优先级（源文件里不许有 `os.Getenv`、链字面量与真源逐字相等）。
+
 import (
-	"bytes"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
+
+	"github.com/Mr2109/zerg-swarm/shared/credential"
 )
 
 // tctSampleToken —— 合成令牌（不是任何真令牌）：判据只关心「它有没有出现在输出里」。
@@ -80,69 +84,39 @@ func TestTokenChainThreeRoutesTwoStates(t *testing.T) {
 	}
 }
 
-// TestLegacyAnnounceOnceSourceOnly —— 旧名命中**出声一次**：只报来源、不回显令牌。
-func TestLegacyAnnounceOnceSourceOnly(t *testing.T) {
+// TestTokenChainForwardingOnly —— 转发层不变量（机读）：
+//
+//	① 链字面量与真源逐字相等；② 令牌文件路径与真源相等；
+//	③ 本件源码里**没有** `os.Getenv`（否则就是又一套优先级）；
+//	④ 缺令牌报话点名 `token_source=` 与 `TOKEN-CHAIN:`，且不含令牌值。
+func TestTokenChainForwardingOnly(t *testing.T) {
+	if TokenChain != credential.Chain {
+		t.Fatalf("链字面量不是转发来的：config=%q · shared=%q", TokenChain, credential.Chain)
+	}
 	tctIsolate(t)
-	t.Setenv(TokenLegacyAuthToken, tctSampleToken)
-
-	var buf bytes.Buffer
-	oldSink, oldOnce := tokenLegacySink, tokenLegacyOnce
-	tokenLegacySink = &buf
-	tokenLegacyOnce = &sync.Once{}
-	t.Cleanup(func() { tokenLegacySink = oldSink; tokenLegacyOnce = oldOnce })
-
-	if got := ResolveAuthToken(); got != tctSampleToken {
-		t.Fatalf("旧名取值不符")
-	}
-	if got := ResolveAuthToken(); got != tctSampleToken {
-		t.Fatalf("旧名第二次取值不符")
+	if got, want := TokenFilePath(), credential.FilePath(); got != want {
+		t.Fatalf("令牌文件路径不是同源：config=%q · shared=%q", got, want)
 	}
 
-	before := buf.Len()
-	AnnounceLegacyTokenSource(TokenSourceEnv)
-	if buf.Len() != before {
-		t.Fatalf("主路（env:ZERG_TOKEN）也出声了 —— 只许旧名提示")
+	src, err := os.ReadFile("tokenchain.go")
+	if err != nil {
+		t.Fatalf("读不了 tokenchain.go: %v", err)
+	}
+	if strings.Contains(string(src), "os.Getenv") {
+		t.Fatal("转发层里出现 os.Getenv ⇒ 又长出了第二套优先级（真源只在 shared/credential）")
+	}
+	if !strings.Contains(string(src), "// TOKEN-CHAIN: "+tcpCanonical) {
+		t.Fatalf("转发层缺链标记行（名字序）：%q", tcpCanonical)
 	}
 
-	out := strings.TrimSpace(buf.String())
-	if out == "" {
-		t.Fatal("旧名命中却没出声（要求提示一次）")
+	hint := credential.MissingHint()
+	if !strings.Contains(hint, "TOKEN-CHAIN: "+credential.Chain) {
+		t.Fatalf("缺令牌报话没有机器可读的链：%q", hint)
 	}
-	if lines := strings.Split(out, "\n"); len(lines) != 1 {
-		t.Fatalf("旧名提示应恰好一次，实得 %d 行", len(lines))
+	if !strings.Contains(hint, "token_source="+string(TokenSourceMissing)) {
+		t.Fatalf("缺令牌报话没有 token_source 键：%q", hint)
 	}
-	if !strings.Contains(out, string(TokenSourceLegacyAuth)) {
-		t.Fatalf("提示里没点名来源标记：%q", out)
-	}
-	if err := tokenLeakGuard(out, tctSampleToken); err != nil {
-		t.Fatalf("%v", err)
-	}
-}
-
-// tokenLeakGuard —— 判据本体：输出里出现令牌值 ⇒ 非 nil（红）。
-func tokenLeakGuard(out, token string) error {
-	if token == "" {
-		return nil
-	}
-	if strings.Contains(out, token) {
-		return fmt.Errorf("令牌回显：输出里出现了令牌值（len=%d）—— 五不进之「不进日志」被破坏", len(token))
-	}
-	return nil
-}
-
-// tctBadTokenLogLine —— 负控夹具：现实里最常见的那种「把令牌拼进日志格式」写法。
-func tctBadTokenLogLine(src TokenSource, token string) string {
-	return fmt.Sprintf("令牌来源 %s · token=%s\n", src, token)
-}
-
-// TestTokenLeakGuardNegativeControl —— 负控：故意把令牌写进日志格式 ⇒ 判据必红。
-func TestTokenLeakGuardNegativeControl(t *testing.T) {
-	if err := tokenLeakGuard(tctBadTokenLogLine(TokenSourceLegacyAuth, tctSampleToken), tctSampleToken); err == nil {
-		t.Fatal("负控失败：故意把令牌放进日志格式，判据仍绿 ⇒ 判据没牙")
-	} else {
-		t.Logf("负控读数：红 · %v", err)
-	}
-	if err := tokenLeakGuard("令牌来源 "+string(TokenSourceLegacyAuth)+"\n", tctSampleToken); err != nil {
-		t.Fatalf("正控失败：只报来源的输出被判红 ⇒ 判据过宽：%v", err)
+	if strings.Contains(hint, tctSampleToken) {
+		t.Fatal("报话里出现了令牌值")
 	}
 }

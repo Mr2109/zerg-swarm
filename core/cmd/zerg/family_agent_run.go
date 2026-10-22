@@ -392,17 +392,13 @@ func agentRunClip(s string, maxBytes int) string {
 	return s[:cut] + "..."
 }
 
-// agentRunFlagGiven —— 「这枚旗标给没给」的判据（只看原始 argv：`--x` 与 `--x=v` 两形态都算给）。
+// agentRunFlagGiven —— 「这枚旗标给没给」的判据（收敛到 `inv.flagGiven` · 缺口 `GAP-20260926-58`）。
 //
-// ★ 为什么不用 `inv.hasFlag`：它只认写进 `inv.kv` 的那批；`--model` 这类**类型化字段**
-// （`inv.modelWant`）不在 `kv` 里 ⇒ 拿 `hasFlag` 判会得出「给了却说没给」。
+// ★ 收口前本件自己扫一遍 `inv.orig`（「另写一套」）；现在判据只有 `flag_given.go` 一份：
+// `kv 键在 ‖ 原始 argv 有这枚旗标`。`--model` 这类**类型化字段**（`inv.modelWant`）不在 `kv` 里，
+// 由第二路（argv）照样判得对 —— 不再需要每个调用点各写一份循环。
 func agentRunFlagGiven(inv *invocation, name string) bool {
-	for _, a := range inv.orig {
-		if a == name || strings.HasPrefix(a, name+"=") {
-			return true
-		}
-	}
-	return false
+	return inv.flagGiven(name)
 }
 
 // agentRunPickTools —— 源件 `filterTools` 的逐字搬（逗号分隔子集 · MCP 合并后统一过滤）。

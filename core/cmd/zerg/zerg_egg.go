@@ -147,6 +147,33 @@ type zegIndexJSON struct {
 	Tool      zegToolJSON    `json:"tool"`
 	CreatedAt string         `json:"created_at"`
 	Entries   []zegEntryJSON `json:"entries"`
+	// WallMinVersion —— ★ `GAP-20261015-25` · D12 用的**卵侧声明**：本卵要求的最低茧壁版
+	// （可加面键 `wall_min_version` · `§16.5 V2`）。★ 取值**类型不定**（历史夹具写的是数字 `1`，
+	// 新写端会写 `"1.4.0"`）⇒ 用 `RawMessage` 收原样、`zegWallMinOf` 两种形态都读，
+	// ✗ 不许钉成 string（钉了 ⇒ 旧卵当场 D13 解析失败）。
+	// ★ `omitempty`：写端**不置**该键 ⇒ 索引字节逐字不变；读端只取值（✗ 不当不可变面判）。
+	WallMinVersion json.RawMessage `json:"wall_min_version,omitempty"`
+}
+
+// zegWallMinOf —— 把 `wall_min_version` 的**任意声明形态**读成一个版本串：
+// `"1.4.0"`（字符串）/ `1`、`1.2`（数字）/ 缺失或 `null` ⇒ 空串（＝未声明）。
+// ★ 对象 / 数组 / 布尔 ⇒ 也当未声明（可加面键，✗ 不为它拒 —— 拒它属「同键换语义」以外的面）。
+func zegWallMinOf(raw json.RawMessage) string {
+	t := strings.TrimSpace(string(raw))
+	if t == "" || t == "null" {
+		return ""
+	}
+	if t[0] == '"' {
+		var s string
+		if err := json.Unmarshal(raw, &s); err != nil {
+			return ""
+		}
+		return strings.TrimSpace(s)
+	}
+	if t[0] == '{' || t[0] == '[' || t == "true" || t == "false" {
+		return ""
+	}
+	return t
 }
 
 // zegIndex —— 解析后的索引（读端用）。
@@ -174,6 +201,9 @@ type zegIndex struct {
 	TableLen int64
 	FileLen  int64
 	TableSHA string
+	// WallMin —— ★ `GAP-20261015-25` · D12：卵侧声明的最低茧壁版（可加面键 `wall_min_version`；
+	// 空串 = 卵未声明）。读端只取值，✗ 不当不可变面判。
+	WallMin string
 }
 
 // zegEntry —— 打包期的条目（多一个内部 `src`，**不进 JSON**）。
@@ -1170,6 +1200,7 @@ func zegV2ParseIndex(f *os.File) (*zegIndex, error) {
 		TableLen:  slot.TableLen,
 		FileLen:   slot.FileLen,
 		TableSHA:  hex.EncodeToString(slot.TableSHA[:]),
+		WallMin:   zegWallMinOf(raw.WallMinVersion),
 	}
 	for _, e := range idx.Entries {
 		if e.Off < zegV2HeaderBytes || e.Off+e.Size > slot.FileLen {
@@ -1911,6 +1942,7 @@ func zegParseIndexV1(f *os.File, hdr []byte) (*zegIndex, error) {
 		CreatedAt: raw.CreatedAt,
 		Entries:   raw.Entries,
 		Layout:    zegFormatVerV1,
+		WallMin:   zegWallMinOf(raw.WallMinVersion),
 	}
 	// ★ 卵1② ＋ 卵1①：读端**逐段审计**（path / mode / mediaType 三道）—— 这是「双向校验」的另一半；
 	// 跑在结构化解码之后、返回之前（拒 ⇒ 具名 `*zegRefusal`，点名档位与规则）。

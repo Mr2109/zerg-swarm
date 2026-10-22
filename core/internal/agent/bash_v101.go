@@ -16,6 +16,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -533,7 +534,9 @@ func (ec *ExecContext) executeBashV101(ctx context.Context, command string, cwd 
 			}
 		}
 	}
-	cmd := exec.CommandContext(ctx, "bash", "-c", rtkCommand)
+	// 起子进程的唯一入口：限额前缀（ulimit -u/-t）＋ 自成进程组 ＋ 到点两段收尾。
+	//   —— 收尾走整组：`bash -c` 再 fork 的孙进程（后台作业/门步骤）不能漏。
+	cmd := boundedShell(ctx, "bash", rtkCommand)
 	cmd.Dir = workDir
 
 	var stdout, stderr bytes.Buffer
@@ -544,15 +547,28 @@ func (ec *ExecContext) executeBashV101(ctx context.Context, command string, cwd 
 	durMs := time.Since(start).Milliseconds()
 	exitCode := 0
 	if runErr != nil {
-		if ee, ok := runErr.(*exec.ExitError); ok {
-			exitCode = ee.ExitCode()
-		} else {
-			exitCode = -1
+		switch {
+		case errors.Is(runErr, exec.ErrWaitDelay):
+			// 子进程 exit 0、但孙进程（后台作业）还攥着 stdout 管道 ⇒ WaitDelay 强关管道并返回
+			//   ErrWaitDelay。命令本身是成功的：旧行为会在这里吊到孙进程自己退出（最长整段 timeout）。
+			exitCode = 0
+		default:
+			if ee, ok := runErr.(*exec.ExitError); ok {
+				exitCode = ee.ExitCode()
+			} else {
+				exitCode = -1
+			}
 		}
 	}
+	rawExit := exitCode // 限额报话要认原始码（152 = SIGXCPU）；超时那一格会把它改写
 
-	// 7. 超时/信号判定（ctx 超时——命令被杀）
+	// 7. 超时/信号判定（ctx 超时/取消——整棵进程组两段收尾，收干净才返回）
+	//   ctx 到点已由 Cancel（整组 TERM）打过头阵；这里补同步两段收尾：TERM 整组 → 宽限 → KILL 整组。
+	//   已收净时 childTreeGone 首轮即真（~20ms 内返回），不会给正常命令加延时。
 	timedOut := ctx.Err() == context.DeadlineExceeded
+	if ctx.Err() != nil {
+		terminateChildTree(cmd)
+	}
 	if timedOut {
 		exitCode = -1
 	}
@@ -579,6 +595,10 @@ func (ec *ExecContext) executeBashV101(ctx context.Context, command string, cwd 
 		fmt.Fprintf(&sb, "⚠️ exit %d — 命令失败\n", exitCode)
 		if timedOut {
 			sb.WriteString(fmt.Sprintf("⏱️ timeout（超过 %d 秒被终止）\n", int(timeout.Seconds())))
+		}
+		// 限额报话：与「命令自己失败」「超时」分开报（拍板要求：真的超了限额必须能认出来）。
+		if limitHit := childLimitDiagnosis(rawExit, childExitSignal(runErr), stderrText); limitHit != "" {
+			sb.WriteString(limitHit + "\n")
 		}
 		if guide := bashClassifyError(stderrText, command); guide != "" {
 			sb.WriteString(guide + "\n")

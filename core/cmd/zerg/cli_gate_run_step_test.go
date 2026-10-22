@@ -7,7 +7,8 @@
 //	② `--json` **不透传给被包的脚本**（脚本见到它必红 —— 这正是「命令面旗标」与「脚本旗标」的分界）；
 //	③ 步名未知名 ⇒ 退 2（**执行前判**：脚本一次都没被调用）+ 给出「最像的合法输入」（K14 第三件）；
 //	④ `--json` 不给字段 ⇒ 退码取自退码表（`usage` · 归一后 = 2）且 stdout 0 字节（K2）；`--json` 不在单步档 ⇒ 退 2；
-//	⑤ **脚本的退码原样转出**（合成脚本退 2 ⇒ 命令面退 2，不是「非 0 一律 1」）。
+//	⑤ **脚本的码照旧转出**（合成脚本退 1 ⇒ 命令面退 1），**唯一一格归一**：脚本的 `2`（不给结论）
+//	   归命令面 `8`（缺口 `GAP-20260928-152` —— 命令面的 `2` 只给用法错，两态可分）。
 //	⑥ `log_body`（门步**自己 stdout 正文**的读回 · 2026-09-27 补）：正控逐字相等 + 日志件缺失档不编数。
 package main_test
 
@@ -135,13 +136,18 @@ func TestGateRunStep_JSONComesFromScriptResults(t *testing.T) {
 	}
 }
 
-// ⑤ 脚本退码原样转出（**不翻译**）：合成脚本退 2 ⇒ 命令面退 2。
+// ⑤ 脚本的码转出 + **唯一一格归一**：合成脚本退 2（不给结论）⇒ 命令面退 **8**（缺口 `GAP-20260928-152`）。
+// 包封里那两格仍是脚本自己落的读数（`verdict=BLOCKED` · `rc=2`）—— 命令面不改写脚本的判决，只改
+// **自己的**退码那一层：`2` 留给用法错，`8` 才是不给结论。
 func TestGateRunStep_CarriesScriptExitCode(t *testing.T) {
 	bin := zergBinary(t)
 	root := stepRepo(t, stepGateScriptFails)
-	rc, out, _ := execCase(t, bin, root, "gate", "run", "--step", "合成步", "--json", "step,verdict,rc")
-	if rc != 2 {
-		t.Fatalf("合成脚本退 2 ⇒ 命令面退 2（只转发、不翻译），得到 %d", rc)
+	rc, out, errb := execCase(t, bin, root, "gate", "run", "--step", "合成步", "--json", "step,verdict,rc")
+	if rc != 8 {
+		t.Fatalf("合成脚本退 2（不给结论）⇒ 命令面退 8（GAP-20260928-152），得到 %d · stderr=%s", rc, errb)
+	}
+	if !strings.Contains(errb, "自身不给结论") {
+		t.Errorf("归一那一发要在 stderr 说明「脚本自身不给结论 ⇒ 归 8」：%q", errb)
 	}
 	var env struct {
 		Items []map[string]string `json:"items"`
@@ -151,6 +157,94 @@ func TestGateRunStep_CarriesScriptExitCode(t *testing.T) {
 	}
 	if env.Items[0]["verdict"] != "BLOCKED" || env.Items[0]["rc"] != "2" {
 		t.Errorf("判决要照抄脚本结果表（BLOCKED/2）：%+v", env.Items[0])
+	}
+}
+
+// stepGateScriptNoVerdict —— 合成脚本：**只要被真跑就落一枚 marker**，然后退 2（= 脚本自身不给结论）。
+// marker 的路径从环境继承（`execCase` 把 `os.Environ()` 透给子进程）。用途：证明「用法错那一发
+// **一次都没跑脚本**」与「不给结论那一发**真跑了**」—— 两态的**来源**不同，不只是数字不同。
+const stepGateScriptNoVerdict = `if [ -n "${GAP152_MARK:-}" ]; then : > "${GAP152_MARK}"; fi
+exit 2
+`
+
+// ── 缺口 `GAP-20260928-152`：退码可分（**参数写错 = 2** / **脚本自身不给结论 = 8**）──
+//
+// 病：`gate run` 曾把脚本的 2 原样转出，而命令面的 2 = 用法错 ⇒ 同一个数字两种含义，
+// 调用方分不清「我参数写错了」与「门跑了但没给结论」（缺口原话）。
+// 修后判据（同一份夹具、同一个脚本，只换输入）：
+//
+//	甲 步名逐字不在（参数写错）⇒ 2，且**脚本没被调用**（marker 不在）；
+//	乙 脚本自身不给结论（脚本退 2）⇒ 8，且**脚本真跑了**（marker 在）；
+//	丙 未知旗标（也是参数写错）⇒ 2 + 明说「未知参数」；
+//	丁 组合类用法错（互斥旗标同给 / `--only-step` 缺 `--step`）⇒ 2，脚本同样没被调用。
+//
+// ★ 硬断言是「甲 ≠ 乙」这一条 —— 修前两发同为 2，本用例当场红（有牙）。
+func TestGateRun_RCUsageVsNoConclusionSeparable(t *testing.T) {
+	bin := zergBinaryFromSource(t)
+	mark := filepath.Join(t.TempDir(), "script-ran.mark")
+	t.Setenv("GAP152_MARK", mark)
+	root := stepRepo(t, stepGateScriptNoVerdict)
+
+	// 甲：步名写错 ⇒ 命令面用法错 2，且脚本**一次都没跑**（执行前判）。
+	rcUsage, _, errUsage := execCase(t, bin, root, "gate", "run", "--step", "没有这一步-zz")
+	if rcUsage != 2 {
+		t.Fatalf("甲 步名写错 ⇒ 退 2（命令面用法错），得到 %d · stderr=%s", rcUsage, errUsage)
+	}
+	if !strings.Contains(errUsage, "最像的合法输入") {
+		t.Errorf("甲 要给人指路（「最像的合法输入」）：%q", errUsage)
+	}
+	if _, err := os.Stat(mark); err == nil {
+		t.Fatalf("甲 是**执行前判**：脚本不许被调用，但 marker 落了（%s）", mark)
+	}
+
+	// 丙：未知旗标 ⇒ 也是命令面用法错 2（同一档，报话各自点名）。
+	rcFlag, _, errFlag := execCase(t, bin, root, "gate", "run", "--bogus-flag")
+	if rcFlag != 2 {
+		t.Fatalf("丙 未知旗标 ⇒ 退 2（命令面用法错），得到 %d · stderr=%s", rcFlag, errFlag)
+	}
+	if !strings.Contains(errFlag, "未知参数") {
+		t.Errorf("丙 要点名那一枚未知参数：%q", errFlag)
+	}
+
+	// 丁：**组合类**用法错（互斥旗标同给）⇒ 仍是 2（命令面执行前判），脚本同样没被调用。
+	for _, c := range []struct {
+		argv []string
+		want string
+	}{
+		{[]string{"gate", "run", "--only-step"}, "只在单步档上有意义"},
+		{[]string{"gate", "run", "--step", "合成步", "--only-step", "--self-test"}, "不许同用"},
+		{[]string{"gate", "run", "--fast", "--scope", "go"}, "不许同用"},
+	} {
+		rc, _, errb := execCase(t, bin, root, c.argv...)
+		if rc != 2 {
+			t.Fatalf("丁 组合不合法（%v）⇒ 退 2（用法错），得到 %d · stderr=%s", c.argv[2:], rc, errb)
+		}
+		if !strings.Contains(errb, c.want) {
+			t.Errorf("丁 要点名那一条组合规矩（%q）：%q", c.want, errb)
+		}
+		if _, err := os.Stat(mark); err == nil {
+			t.Fatalf("丁 也是执行前判：脚本不许被调用，但 marker 落了（%s）", mark)
+		}
+	}
+
+	// 乙：脚本自身不给结论 ⇒ 8，且脚本**真跑了**。
+	rcNoVerdict, _, errNoVerdict := execCase(t, bin, root, "gate", "run", "--step", "合成步")
+	if rcNoVerdict != 8 {
+		t.Fatalf("乙 脚本自身不给结论 ⇒ 退 8（blocked · 不给结论），得到 %d · stderr=%s", rcNoVerdict, errNoVerdict)
+	}
+	if _, err := os.Stat(mark); err != nil {
+		t.Fatalf("乙 必须**真跑**脚本（8 的来源是脚本自己的 2）：marker 不在（%s）· err=%v", mark, err)
+	}
+	if !strings.Contains(errNoVerdict, "自身不给结论") {
+		t.Errorf("乙 要在 stderr 说明「门禁脚本自身不给结论 ⇒ 归 8」：%q", errNoVerdict)
+	}
+
+	// 可分性本身：两态**不同码**、且各有各的报话（机器面看码、人面看字）。
+	if rcUsage == rcNoVerdict {
+		t.Fatalf("「参数写错」与「脚本自身不给结论」必须不同码：两发都是 %d", rcUsage)
+	}
+	if strings.Contains(errUsage, "自身不给结论") || strings.Contains(errNoVerdict, "未知参数") {
+		t.Errorf("两态的报话不许互相冒充：用法错=%q · 不给结论=%q", errUsage, errNoVerdict)
 	}
 }
 

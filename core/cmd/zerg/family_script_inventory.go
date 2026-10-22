@@ -78,7 +78,11 @@ func scriptInvDenyWriteFlags(inv *invocation) []string {
 		out = append(out, "--set")
 	}
 	for _, f := range []string{"--out", "--file"} {
-		if _, ok := inv.kv[f]; ok {
+		// ★ 缺口 `GAP-20260926-58`（收敛 · 本枚）：此前是**直读 `inv.kv[f]`**（三套口径里的第二套）。
+		//   改调唯一判据 `inv.flagGiven`（`kv 键在 ‖ 原始 argv 有这枚旗标`）—— 本守卫的语义
+		//   「给了就拒」一字不动（`--out`/`--file` 都是取值旗标 ⇒ 进 kv，两路同真），
+		//   只是不再自写一份存在性判断。
+		if inv.flagGiven(f) {
 			out = append(out, f)
 		}
 	}

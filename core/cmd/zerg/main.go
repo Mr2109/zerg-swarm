@@ -347,6 +347,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 	if inv.hasFlag("--include-open") && !usageDeclaresFlag(cmd, "--include-open") {
 		inv.unknown = append(inv.unknown, "--include-open")
 	}
+	// ★ 缺口账 `GAP-20260929-41`（2026-10-23）：`--bucket` 只对 `gap status` 有意义（按渲染桶名收窄）；
+	//   既有的 `gap ls` / `gap show` **不许静默吞** —— 没在 usage 里声明 ⇒ 一律按未知旗标退 2
+	//   （硬约束⑤：既有命令的退码与输出一字不动）。
+	if inv.hasFlag("--bucket") && !usageDeclaresFlag(cmd, "--bucket") {
+		inv.unknown = append(inv.unknown, "--bucket")
+	}
 	// ★ 同一条数据驱动收口（P0 #232 · 2026-10-08）：`--hours` 在解析面刚上户口（`valueFlagName`）⇒ 全族共用；
 	//   若不在此收口，别族（usage 未列它的命令）真给 `--hours` 会从「未知旗标 2」退化成**静默吞**
 	//   （硬约束⑤：既有命令的退码与输出一字不动）。形状逐字照拄上面 `--top` 那条。
@@ -1848,6 +1854,20 @@ func init() {
 			endpoint: "",
 			run:      cmdCorePs,
 		},
+
+		// ---- GAP-20261021-03（2026-10-23）：`core load` —— 主控当前负载的**只读可见面**
+		// （在算什么 / 为谁算 / 还要多久 ＋ CPU 与耗时自测）。实现件 = `family_core_load.go`；
+		// ★ 只读：不碰调度、不 kill、不写状态件、不新开路由（复用 `GET /api/core/status` ＋ 本机 `ps` 两帧差分）。
+		{
+			path:     []string{"core", "load"},
+			kind:     "CoreLoad",
+			summary:  "主控当前负载（只读投影 ＋ 本机两帧差分测 CPU）：判读 满载/忙/空闲 · `cpu_pct`/`cpu_cores`/`rss_mb`/`uptime` · 逐枚在装任务给 `model`/`machine`/`phase`/`elapsed_s`/`eta_s` · 采样窗口 500ms（非生命期均值）",
+			usage:    "zerg core load [--json <字段>]",
+			arity:    "none",
+			fields:   coreLoadFields,
+			endpoint: "GET /api/core/status（＋ 本机 `ps` 两帧差分）",
+			run:      cmdCoreLoad,
+		},
 		// ---- T2④ / T4①（2026-10-14 · 本单）：`core db <check|backup|restore|prune>` —— 虫族库
 		// 备份 / 恢复 / 体检 / GFS 轮转的**唯一命令入口**。设计 §五 Q12 逐字：「✗ 不新开 `zerg db` 族」
 		// ⇒ 挂**既有 `core` 族**下；登记形制照同族 `core daemon`（一条命令 · 子动作在 `inv.args[0]` 里派发）。
@@ -2144,6 +2164,21 @@ func init() {
 			//  上面那份 `fields:` 冻结表 ⇒ 帮助面 / 命令页一行不动、`合法字段:` 那条错误面也一字不变）。
 			//  逐行落一格 `total` = 本跑**真合计处数**（与包封 `meta.total` 同源同值）。
 			optFields: []string{"total"},
+		},
+
+		// ---- GAP-20260926-78（2026-10-23）：`repo uncommitted` —— **未提交件分类面**（只读 · 零写盘）
+		// `git diff --stat` 对 `??` 件恒空、空输出还退 0 ⇒ 数不出「工作树有几件未提交」；
+		// 本面真源 = `git status --porcelain=v1 -z -uall`，逐件给 kind/artifact/mtime/bucket/source。
+		{
+			path:     []string{"repo", "uncommitted"},
+			kind:     "RepoUncommitted",
+			summary:  "**未提交件分类面**（只读 · 缺口 `GAP-20260926-78`）：把工作树里所有未提交件逐件摊成表（kind/artifact/mtime/bucket/source），来源按现内容 sha256 对审计账 `after_sha256` 反查 ⇒ 本笔/他路/存量/来源不明四档",
+			usage:    "zerg repo uncommitted [--root <仓根>] [--since <时长|RFC3339>] [--me <提案号|人>] [--audit <审计账>]… [--json <字段>]",
+			arity:    "none",
+			args:     []string{"（不收位置参数：仓根由 `--root` 或 env `ZERG_REPO` / cwd 上溯定）"},
+			fields:   repoUncommittedFields,
+			endpoint: "",
+			run:      cmdRepoUncommitted,
 		},
 		// ---- T20 正门一条（本枚 · **只增**）----
 		// 「报行数三格」的机检面：判一份 diffstat 报没报齐 `原始 diff / 增 / 减`。
@@ -4174,7 +4209,7 @@ func init() {
 			path:     []string{"gap", "ls"},
 			kind:     "GapList",
 			summary:  "缺口账（只读面：不写真源、不写审计）· 可按状态/优先级/影响面收窄 · 账内闭集外的值 ⇒ 判红并**点名到行**",
-			usage:    "zerg gap ls [--state <仍缺|已派|已立项|已解|回归|不做>…] [--prio P0|P1|P2] [--impact <命令面|门禁面|文档面|公开面|换件面|归档面>] [--unit <件路径|目录前缀>] [--module <模块前缀>] [--grep <关键词>] [--untriaged] [--solved-kind <实现|销案|前提不成立|部分|未分类>] [--json <字段>]",
+			usage:    "zerg gap ls [--state <仍缺|已派|已立项|已解|回归|不做>…] [--prio P0|P1|P2] [--impact <命令面|门禁面|文档面|公开面|换件面|归档面>] [--unit <件路径|目录前缀>] [--module <模块前缀>] [--grep <关键词>] [--qid <Q-NNN>] [--untriaged] [--solved-kind <实现|销案|前提不成立|部分|未分类>] [--json <字段>]",
 			fields:   gapListFields,
 			endpoint: "",
 			run:      cmdGapLs,
@@ -4190,7 +4225,11 @@ func init() {
 			//   ⇒ 无需重生成命令页，也不造「表列着、面不产出」的反例。
 			// ★ 缺口 GAP-20260927-322（批⑤ · 2026-10-13）：`frozen`（账真源**读面冻结锚**：sha16 · 行数 ·
 			//   读时点）同走**可选字段层** —— 登在出口白名单、`--json` 点得出来，但不进 `fields` 冻结表。
-			optFields: []string{"truncated", "hits", "total", "triage_batch", "file", "frozen"},
+			optFields: []string{"truncated", "hits", "total", "triage_batch", "file", "frozen",
+				// ★ 缺口 `GAP-20260926-70`（2026-10-23 · 本枚）：`qid` / `qid_source` —— 缺口 ↔ 版账
+				//   `Q-NNN` 的机器可读对应（反查轴 `--qid <Q-NNN>` 的逐条回吐口）。同走**可选字段层**
+				//   ⇒ 点得出来、不进 `fields` 冻结表（无需重生成命令页）；老行没有这两格 ⇒ 空串不出键。
+				"qid", "qid_source"},
 		},
 		// ★ `gap status` —— **排行面**（批1 第四片 · 只读面 · 2026-09-28）：按件（`--by unit` · 缺省）
 		//   或按模块（`--by module`）分桶排行；**批4 第二片**再加 `--by tier`（按判据分级分桶 ——
@@ -4203,7 +4242,7 @@ func init() {
 			path:     []string{"gap", "status"},
 			kind:     "GapStatus",
 			summary:  "缺口账**排行面**（只读）：按件（`--by unit` · 缺省）/ 按模块（`--by module`）/ 按**判据分级**（`--by tier`）／按**入账日**（`--by day` · 新增走 found_at 轴、销案走 solved_at 轴、同给净）分桶。按**命令族**（`--by family` · 走账自带 `want_family` 原值成桶）分桶。件轴／模块轴：逐桶给 **未闭 / 已解 / 净**（可为负）+ 近邻量化（P0/P1/P2 计数）· 排序键 = ① 未闭降序 ② 近邻量化降序（都写进表头）· 对账等式自校（Σ(有件桶未闭) + 无件桶 == 账内仍缺 · 不成立 ⇒ `warnings` 点名差数）。**tier 轴**：行 = 三桶闭集（真判据 / 占位 / 无 —— `verify_tier` 已落库则用它，未落库则现读 `verify_cmd` 现算：空串/无键 ⇒ 无 · 含「占位」字样 ⇒ 占位 · 其余且能被命令树解析 ⇒ 真判据）· 列 = **条数 / 其中仍缺 / 其中已解** · 表尾固定两行：① 守恒式自校「三桶之和 == 总账」（两数各自现算 · 不等 ⇒ **判红 1** 并打印两数）② 占位桶**只报告不阻断**（不退码 · 先量分布）。全轴带 `query_ts` / `ledger_sha16`（不同时刻两个排行才可比）· 截断自报（`--top` 一页硬顶 = `gapLsRowCap`）· 读不到真源 ⇒ 8",
-			usage:    "zerg gap status [--by <unit|module|tier|day|family>] [--top <N>] [--state <仍缺|已派|已立项|已解|回归|不做>…] [--prio P0|P1|P2] [--impact <命令面|门禁面|文档面|公开面|换件面|归档面>] [--unit <件路径|目录前缀>] [--module <模块前缀>] [--grep <关键词>] [--json <字段>]",
+			usage:    "zerg gap status [--by <unit|module|tier|day|family>] [--top <N>] [--bucket <桶名>…] [--state <仍缺|已派|已立项|已解|回归|不做>…] [--prio P0|P1|P2] [--impact <命令面|门禁面|文档面|公开面|换件面|归档面>] [--unit <件路径|目录前缀>] [--module <模块前缀>] [--grep <关键词>] [--json <字段>]",
 			fields:   gapStatusFields,
 			endpoint: "",
 			run:      cmdGapStatus,
@@ -4279,16 +4318,19 @@ func init() {
 		//   只读面（不登记 `danger` ⇒ 按只读幂等档列）· 点名面复用同族 `gapTargetOne`（**账内没有这个 id ⇒ 2**，
 		//   与 `set-state` / `note` 同一口径）· 读不到真源 ⇒ 8。实现件 = `family_gap.go:cmdGapShow`。
 		{
-			path:      []string{"gap", "show"},
-			kind:      "GapShow",
-			summary:   "取一条缺口的**完整正文**（只读面 · 一字不截）：正文 / 手搓记录 / 复现 / 判据 / 已解证据 / 口径注全量出 —— `gap ls` 那一行只印摘要前 40 显示宽、`--json` 全量直出又会被读方截断（缺口账 `GAP-20260927-243`）· 账内没有这个 id ⇒ 用法错 2（同族口径 · 不跨族抄 `dev proposal show` 的 1）· 读不到真源 ⇒ 8",
-			usage:     "zerg gap show <GAP id|件路径> [--json <字段>]（位置参数给一条件路径 = 按件反查：该件在账里被点到的条目逐条列出 · 件不在仓里 ⇒ 2 · 仓根取不到 ⇒ 8）",
-			arity:     "any",
-			args:      []string{"缺口 id（**恰好一条** —— 本面只取一条）"},
-			fields:    gapShowFields,
-			optFields: []string{"hints"},
-			endpoint:  "",
-			run:       cmdGapShow,
+			path:    []string{"gap", "show"},
+			kind:    "GapShow",
+			summary: "取一条缺口的**完整正文**（只读面 · 一字不截）：正文 / 手搓记录 / 复现 / 判据 / 已解证据 / 口径注全量出 —— `gap ls` 那一行只印摘要前 40 显示宽、`--json` 全量直出又会被读方截断（缺口账 `GAP-20260927-243`）· 账内没有这个 id ⇒ 用法错 2（同族口径 · 不跨族抄 `dev proposal show` 的 1）· 读不到真源 ⇒ 8",
+			usage:   "zerg gap show <GAP id|件路径> [--json <字段>]（位置参数给一条件路径 = 按件反查：该件在账里被点到的条目逐条列出 · 件不在仓里 ⇒ 2 · 仓根取不到 ⇒ 8）",
+			arity:   "any",
+			args:    []string{"缺口 id（**恰好一条** —— 本面只取一条）"},
+			fields:  gapShowFields,
+			optFields: []string{"hints",
+				// ★ 缺口 `GAP-20260926-70`（2026-10-23 · 本枚）：`qid` / `qid_source` —— 单条面的
+				//   同一份对应格（与 `gap ls` 同源同形 · 同走可选字段层）。老行 ⇒ 空串不出键。
+				"qid", "qid_source"},
+			endpoint: "",
+			run:      cmdGapShow,
 		},
 		// ★ `gap hints` —— **正门提示面**（只读 · 2026-10-10 · 缺口 `GAP-20261010-26` ＝ 父
 		//   `GAP-20260929-09` 的第二形态「正门 gap/contract 子命令出口」）。逐条给「怎么核 /
@@ -4309,7 +4351,7 @@ func init() {
 			path:     []string{"gap", "add"},
 			kind:     "GapAdd",
 			summary:  "记一条缺口（写面 · 留证据）：**手搓记录 + 验证命令是两件必填**（防呆⑤）· 同 fp 同内容 ⇒ 幂等命中 0 · 同 fp 内容不同 ⇒ `14` · 审计进 `edit_audit.jsonl`（写不进就不写真源）",
-			usage:    "zerg gap add --symptom <一句> --handmade <命令原样> --impact <六值之一> --want-family <族> --want-action <动作> [--want-argv <段>…] [--prio P0|P1|P2] [--state <仍缺|已立项|不做>] --repro-cmd <命令> --verify-cmd <命令> [--depends-on <fp>…] [--note <注>|--notes <注>|--evidence <注>…] [--by <谁>] [--dry-run] [--yes] [--json <字段>]",
+			usage:    "zerg gap add --symptom <一句> --handmade <命令原样> --impact <六值之一> --want-family <族> --want-action <动作> [--want-argv <段>…] [--prio P0|P1|P2] [--state <仍缺|已立项|不做>] --repro-cmd <命令> --verify-cmd <命令> [--depends-on <fp>…] [--qid <Q-NNN> [--qid-source <出处锚>]] [--note <注>|--notes <注>|--evidence <注>…] [--by <谁>] [--dry-run] [--yes] [--json <字段>]",
 			arity:    "none",
 			args:     []string{"（无位置参数：全部走旗标）"},
 			fields:   gapAddFields,
@@ -4472,6 +4514,26 @@ func init() {
 			opened:   true,
 			endpoint: "",
 			run:      cmdGapSetUnit,
+		},
+
+		// ★ 2026-10-23（`GAP-20261008-07` · 「want 无 CLI 写面」的治法）：`gap set-want`
+		//   —— **改 want 三格（`want_family` / `want_action` / `want_argv`）的正门**。
+		//   病源：同族五写面（`set-state` / `note` / `set-unit` / `judge set` / `assign`）都不碰 want 两格
+		//   ⇒ 拍板换了方向只能手改盘上真源（绕审计 / 绕账写锁 / 绕一切校验）。
+		//   实现件 = `family_gap_state.go:cmdGapSetWant`。形制照同族 `set-unit`：走族内唯一收口
+		//   `gapRewriteOne`（写前取锁走**写面落点** `gapLedgerWritePath` · 只重写目标那一行）。
+		{
+			path:     []string{"gap", "set-want"},
+			kind:     "GapSetWant",
+			summary:  "改一条缺口的 **want 三格**（`want_family` / `want_action` / `want_argv` · 写面 · `--dry-run` 恒 0 · 缺 `--yes` fail-closed 2）：走唯一收口 `gapRewriteOne`（写前取锁走写面落点 · 只重写目标那一行 · 其余行逐字节不变）· 族名闭集 = 命令树顶层族 ∪ 账内现用原值 · `--evidence` 必填 · `state` 一个字节不动 · 只读借用档硬拒 2",
+			usage:    "zerg gap set-want <GAP id> --want-family <族> --want-action <动作> [--want-argv <段>…] --evidence <一句话> [--by <谁>] [--dry-run | --yes] [--json <字段>]",
+			arity:    "any",
+			args:     []string{"缺口 id（**恰好一条** —— 本动作不做批量）"},
+			fields:   gapSetWantFields,
+			danger:   &dangerSpec{dangerD2, "缺口 id", "改真源里的 `want_family` / `want_action` / `want_argv` 三格 + 往 `notes` 追加一条改口径留痕注 + 审计一行（可逆：照审计那一格回写；`state` 逐字不动 · 其余行逐字节不变）", "缺口账 `GAP-20261008-07`（want 无写面 · 治法）· 同族写面先例 `gap set-unit` / `gap judge set`", false, dangerScopeOutRepo},
+			opened:   true,
+			endpoint: "",
+			run:      cmdGapSetWant,
 		},
 		// ★ 2026-10-10（缺口账 `GAP-20261010-34`）：`gap judge set` —— 账内 ~99 条判据「无鉴别力 /
 		//   与 want 无关」，全卡在缺这个「改判据」写面（现读只有 `set-state` 改态、`set-unit` 改件面三键，
@@ -4884,6 +4946,22 @@ func init() {
 			opened:   true,
 			endpoint: "",
 			run:      cmdFleetRender,
+		},
+
+		// ---- GAP-20260926-92（2026-10-23）：`fleet topology` —— **部署拓扑只读面**
+		// （名册真源 ⟷ 投影 对拍 ＋ 逐机判「远端自持与否」）。实现件 = `family_fleet_topology.go`；
+		// ★ 只读：零网络 / 零 ssh / 零写盘 —— ✗ 不替代 `agent ls` 观测面。
+		{
+			path:     []string{"fleet", "topology"},
+			kind:     "FleetTopology",
+			layer:    "host",
+			summary:  "部署拓扑只读面（名册真源 ⟷ 投影 对拍 ＋ 逐机判「远端自持与否」：自持=components 含 core ＋ fleet 回执 converged；推送=agent deploy 台账 verified 事件）",
+			usage:    "zerg fleet topology [--roster <名册件>] [--path <投影件>] [--root <仓根>] [--context <档名>] [--expect-no-changes] [--json <字段>]",
+			arity:    "none",
+			args:     []string{"（无位置参数）"},
+			fields:   []string{"machine", "components", "root", "ssh", "self_host", "channel", "last_self_update", "self_update_converged", "last_push", "last_push_file", "verdict", "drift"},
+			endpoint: "",
+			run:      cmdFleetTopology,
 		},
 		// ---- L1 批3（2026-10-08）：`zerg mcp` 真动作分派（★ 真 Go 化 · 非壳搬运 · 占位 `mcp ls` 下架）----
 		// 依据：`mcp_zerg_server-真Go化-先期设计-20261008.md` §五 步3（命令树接线）· §三（真 Go 化路径）。
@@ -6117,6 +6195,21 @@ func valueFlagName(a string) string {
 		"--solved-kind", "--remainder", "--judge-cmd":
 		return a
 	}
+	// ★ 缺口 `GAP-20260926-70`（2026-10-23 · 本枚）：续两枚 —— `--qid <Q-NNN>` / `--qid-source <出处锚>`。
+	//   `--qid` 是**缺口 ↔ 版账 Q 号**的对应格：`gap add` 写新行那一格、`gap ls` 拿它做反查轴；
+	//   `--qid-source` 只配 `--qid`（无号无处落锚）。语义在两条命令里判（本排只管上户口）。
+	//   ★ 本排是名字表「唯一真源」⇒ 不登记就一律退 2「未知旗标」= 新旗标等于不可用。
+	switch a {
+	case "--qid", "--qid-source":
+		return a
+	}
+	// ★ 2026-10-23（缺口 `GAP-20260926-78` · `repo uncommitted`）：三枚取值旗标上户口 ——
+	//   `--since <时长|RFC3339>` / `--me <提案号|人>` / `--audit <审计账>`。语义在 `cmdRepoUncommitted`
+	//   里判（本排是名字表「唯一真源」⇒ 不登记就一律退 2「未知旗标」= 新旗标等于不可用）。
+	switch a {
+	case "--since", "--me", "--audit":
+		return a
+	}
 	// 受控写面与提交面旗标（D3b 第二/三步 · 2026-09-21）：受控写入的件名、提交信息、
 	// 审批的件名与理由 —— 与上面同一张名字表的口径（值照收，语义在各自命令里判）。
 	// ★ 2026-09-28（缺口 `GAP-20260928-79` · 本枚）：续 `--allow-cross-root <理由>` 一枚 ——
@@ -6389,6 +6482,7 @@ func valueFlagName(a string) string {
 		//   本排只续 `--top` 这一枚新名字（一族共用一张名字表 · **不重开同名旗标**）。
 		//   ★ 名字表是本仓「唯一真源」⇒ 不登记就一律退 2「未知旗标」= 新旗标等于不可用。
 		"--top",
+		"--bucket",
 		// ★ 批2 第一片（2-2）：`gap idea add|ls` 的 `--source <guard|gate|egg|human>`（四值闭集 · 逐字照
 		//   设计稿 §9.1 第 2 条）。名字表是本仓「唯一真源」⇒ 不登记就一律退 2「未知旗标」= 新旗标等于不可用。
 		// ★ 批3 第一片（2026-09-28）：`gap assign` 的作业单六栏五枚旗标 + 回执路径一枚。

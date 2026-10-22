@@ -65,13 +65,64 @@ const (
 )
 
 // hfeRefusal 拒孵 —— 一律**逐阶段点名 ＋ 出声**，✗ 不静默降级。
+//
+// ★ `GAP-20261015-25`：D5/D6a/D10/D11 四档的**报话与退码**取 13 档表同一行（`zegVersionTiers`），
+// 本结构多带 `Tier` / `Msg` / `Code` / `Detail` 四格 —— 表改了行为就跟着改，✗ 不在调用点手抄文案。
+// 其余阶段（校验/展开/交接）仍走 `Reason` 那句具名说明（它们不属「卵不能孵时怎么报」那 13 档）。
 type hfeRefusal struct {
 	Stage  hfeStage
 	Reason string
+	Tier   string // 非空 ⇒ 报话/退码取 13 档表该行（D5 / D6a / D10 / D11）
+	Msg    string // 13 档表报话（逐字 · 已按模板填值）
+	Code   int    // 13 档表退码
+	Detail string // 细节读数（人面补充 · 不进第一行）
 }
 
 func (e *hfeRefusal) Error() string {
+	if e.Msg != "" {
+		if e.Detail != "" {
+			return e.Msg + "\n详情（阶段 " + string(e.Stage) + "）：" + e.Detail
+		}
+		return e.Msg
+	}
 	return fmt.Sprintf("拒孵（阶段 %s）：%s", string(e.Stage), e.Reason)
+}
+
+// hfeFromTierRefusal —— 把一条 13 档表的读端拒（`*zegRefusal`）挂上孵化阶段。
+func hfeFromTierRefusal(stage hfeStage, r *zegRefusal) *hfeRefusal {
+	if r == nil {
+		return &hfeRefusal{Stage: stage, Reason: "（空拒：✗ 不当成放行）"}
+	}
+	return &hfeRefusal{Stage: stage, Tier: r.Tier, Msg: r.Msg, Code: r.Code, Detail: r.Detail}
+}
+
+// hfeAsRefusal —— 任意错 ⇒ 拒孵错（13 档表的拒保留档位与退码；其余按阶段具名）。
+func hfeAsRefusal(stage hfeStage, err error) *hfeRefusal {
+	if err == nil {
+		return nil
+	}
+	if r, ok := err.(*zegRefusal); ok {
+		return hfeFromTierRefusal(stage, r)
+	}
+	if r, ok := err.(*hfeRefusal); ok {
+		return r
+	}
+	return &hfeRefusal{Stage: stage, Reason: err.Error()}
+}
+
+// hfeExitCode —— 拒孵错 → (退码, true)。★ 13 档表的档 ⇒ 取表里的码（D10=8 / D11=10 / D5·D6a=2）；
+// 其余拒 ⇒ `exitFail`（一般失败），✗ 不返回 0 冒充放行。
+func hfeExitCode(err error) (int, bool) {
+	if r, ok := err.(*hfeRefusal); ok {
+		if r.Tier != "" {
+			return r.Code, true
+		}
+		return exitFail, true
+	}
+	if r, ok := err.(*zegRefusal); ok && r.Coded {
+		return r.Code, true
+	}
+	return 0, false
 }
 
 // hfeStageOf 取一个错的拒孵阶段（非拒孵错 ⇒ 返回空串，调用方据此区分「算不出来」与「拒了」）。
@@ -114,6 +165,11 @@ type hfeHandoff struct {
 	Align        int64             `json:"align"`
 	CacheHit     bool              `json:"cache_hit"`
 	Precheck     eggstore.Precheck `json:"precheck"`
+	// ★ GAP-20261015-25 · D12：实际用哪份茧壁（`machine` / `egg` / 空=本档不介入）＋ 观测面标注一行。
+	Wall     string `json:"wall"`
+	WallNote string `json:"wall_note"`
+	// ★ GAP-20261015-25 · D6b：非必需段类型未知 ⇒ 跳过并登记（读端登记面的交接副本）。
+	D6bSkipped []string `json:"d6b_skipped,omitempty"`
 }
 
 // hfeOptions 「从单文件孵」的入参。
@@ -178,6 +234,26 @@ func hatchFromEgg(opts hfeOptions) (hfeHandoff, error) {
 			len(vres.Problems), strings.Join(vres.Problems, " / "))}
 	}
 
+	// ①b 读索引（读端唯一入口 `zegParseIndex` —— ✗ 不另写解析器）：后面四档闸都要段表。
+	idx, ierr := hfeReadIndex(eggPath)
+	if ierr != nil {
+		return h, hfeAsRefusal(hfeStageVerify, ierr)
+	}
+	// ①c D5：契约段缺必需字段（引擎入口/绑定/限额任一为 nil ⇒ 拒，✗ 不默默取默认值）。
+	if cerr := hgtContractGate(eggPath, idx); cerr != nil {
+		return h, hfeAsRefusal(hfeStageVerify, cerr)
+	}
+	// ①d D6a / D6b：必需段类型本机不认识 ⇒ 拒；非必需段 ⇒ 跳过并登记（照 OCI「MUST NOT error」）。
+	d6b, merr := hgtMediaTypeGate(idx)
+	if merr != nil {
+		return h, hfeAsRefusal(hfeStageVerify, merr)
+	}
+	// ①e D12：V1 三段判「用机器那份还是卵内那份」（不报错，结论写进交接件＝观测面标注）。
+	wallChoice, wallNote, werr := hgtWallGate(idx)
+	if werr != nil {
+		return h, &hfeRefusal{Stage: hfeStageState, Reason: werr.Error()}
+	}
+
 	// ② 门：在册 ＋ 完工标记 ＋ 仅 verified 可孵 ＋ 水线（都 fail-closed、都出声）
 	st := opts.Store
 	if st == nil {
@@ -188,9 +264,9 @@ func hatchFromEgg(opts hfeOptions) (hfeHandoff, error) {
 		return h, &hfeRefusal{Stage: hfeStageState,
 			Reason: fmt.Sprintf("名册里没有这枚卵 %q（✗ 不许孵不在册的卵）", opts.EggName)}
 	}
-	if !e.Complete {
-		return h, &hfeRefusal{Stage: hfeStageState,
-			Reason: "半成品：完工标记不是「已完成」（✗ 文件存在 ≠ 可用）"}
+	// D10：半成品（临时件未 rename ／ 完工标记未置位）⇒ 拒，码 8。
+	if herr := hgtHalfRefuse(eggPath, opts.EggName, e.Complete); herr != nil {
+		return h, hfeAsRefusal(hfeStageState, herr)
 	}
 	if err := eggstore.CheckHatchable(opts.EggName, e.State); err != nil {
 		return h, &hfeRefusal{Stage: hfeStageState, Reason: err.Error()}
@@ -199,10 +275,9 @@ func hatchFromEgg(opts hfeOptions) (hfeHandoff, error) {
 	if perr != nil {
 		return h, &hfeRefusal{Stage: hfeStageWaterline, Reason: perr.Error()}
 	}
-	if pre.Verdict == eggstore.VerdictRefuse {
-		return h, &hfeRefusal{Stage: hfeStageWaterline, Reason: fmt.Sprintf(
-			"盘面到水线/硬线 ⇒ 拒新孵化：%s；可回收卵清单：%s",
-			strings.Join(pre.Reasons, "；"), hfeListOrNone(pre.Reclaimable))}
+	// D11：水线/硬线已到，或本卵展开所需 > 现读可用 ⇒ 拒，码 10（附可回收卵清单）。
+	if derr := hgtDiskGate(pre, hgtNeedBytes(idx)); derr != nil {
+		return h, derr
 	}
 
 	// ③ 展开（★ 库件内顺序：先登记引用 → 再 CoW 整文件）
@@ -212,18 +287,13 @@ func hatchFromEgg(opts hfeOptions) (hfeHandoff, error) {
 	}
 
 	// 展开物**去写位**（✗ 不得把展开物当可写）
-	mode, merr := hfeMakeReadOnly(rep.Path)
-	if merr != nil {
+	mode, merr2 := hfeMakeReadOnly(rep.Path)
+	if merr2 != nil {
 		return h, &hfeRefusal{Stage: hfeStageExpand,
-			Reason: fmt.Sprintf("展开物去写位失败（✗ 不当可写才交给孵化器）：%v", merr)}
+			Reason: fmt.Sprintf("展开物去写位失败（✗ 不当可写才交给孵化器）：%v", merr2)}
 	}
 
 	// 引擎看得到的那一层：索引段表（同一份读端 `zegParseIndex`，✗ 不另写一份解析器）
-	idx, ierr := hfeReadIndex(eggPath)
-	if ierr != nil {
-		return h, &hfeRefusal{Stage: hfeStageExpand,
-			Reason: fmt.Sprintf("展开后取索引失败：%v", ierr)}
-	}
 	segs := make([]hfeSegment, 0, len(idx.Entries))
 	var dataBytes int64
 	for _, s := range idx.Entries {
@@ -250,6 +320,9 @@ func hatchFromEgg(opts hfeOptions) (hfeHandoff, error) {
 		Align:        idx.Align,
 		CacheHit:     vres.CacheHit,
 		Precheck:     pre,
+		Wall:         wallChoice,
+		WallNote:     wallNote,
+		D6bSkipped:   d6b,
 	}
 	return h, nil
 }

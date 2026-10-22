@@ -40,12 +40,16 @@ func filterTools(all []agent.ToolDef, names string) []agent.ToolDef {
 }
 
 // mustToken 启动期校验共享令牌（2026-09-11 A 批：库内零明文）。
-// 解析顺序：环境变量 ZERG_AUTH_TOKEN / ZERG_API_TOKEN → ~/.zerg/token 文件。
-// 拿不到即拒绝启动——空令牌会让所有主控调用 403，而日志看不出异常。
+// ★ 顺序不在本件：唯一链 = `shared/credential`（env:ZERG_TOKEN > file:~/.zerg/token >
+// env:ZERG_AUTH_TOKEN > env:ZERG_API_TOKEN），经 `config.ResolveAuthToken` 转发
+// （GAP-20261017-04 —— 此处旧注释曾写「AUTH/API → file」，与真行为不符）。
+// 拿不到即拒绝启动——空令牌会让所有主控调用 403，而日志看不出异常；
+// 报话机读（`token_source=` ＋ `TOKEN-CHAIN:`），✗ 不回显令牌值。
 func mustToken() string {
 	t := config.ResolveAuthToken()
 	if t == "" {
-		log.Fatalf("❌ no shared token configured: set ZERG_AUTH_TOKEN or write it to %s (see .env.example)", config.TokenFilePath())
+		log.Fatalf("❌ 未配置共享令牌（token_source=%s）\n   TOKEN-CHAIN: %s\n   修法：export ZERG_TOKEN=<令牌>，或写入 %s（chmod 600 · 见 .env.example）",
+			config.TokenSourceMissing, config.TokenChain, config.TokenFilePath())
 	}
 	return t
 }

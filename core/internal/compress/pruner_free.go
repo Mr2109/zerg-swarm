@@ -64,10 +64,21 @@ func (p *PrunerFree) Compress(ctx context.Context, segs []Segment, pol Policy) (
 	}
 
 	// ② 余量闸：累计超线则从最旧的可卸载观察继续卸
+	//
+	// ★ 本闸曾经死循环：带 raw_ptr 的段卸过一次后 Tokens 仍 >0、段也仍在窗口里，
+	// 于是每轮都被当成「候选」再卸一次 —— 而占位符里的数字位数越缩越小、token 几乎不降，
+	// 循环体又不看 ctx，整批跑批就闷死在一档里。三重防呆：
+	//  1. 每轮先看 ctx：上游取消/超时要能立刻收手，不许闷在循环里；
+	//  2. unload 幂等：文本已是目标占位符/折叠形态就返回 false（见 unload）；
+	//  3. 进展检测：一轮下来 token 没降 ⇒ break，绝不空转。
+	stalled := make([]bool, len(out))
 	for total := TotalTokens(out); total > headroomLimit; {
+		if err := ctx.Err(); err != nil {
+			return nil, "", err
+		}
 		idx := -1
 		for i := 0; i < protectedFrom; i++ {
-			if out[i].Pinned || out[i].Kind != KindObservation || out[i].Tokens <= 0 {
+			if stalled[i] || out[i].Pinned || out[i].Kind != KindObservation || out[i].Tokens <= 0 {
 				continue
 			}
 			if idx < 0 || out[i].Tokens > out[idx].Tokens {
@@ -77,11 +88,16 @@ func (p *PrunerFree) Compress(ctx context.Context, segs []Segment, pol Policy) (
 		if idx < 0 {
 			break
 		}
+		before := total
 		if !unload(&out[idx]) {
-			break
+			stalled[idx] = true // 该段已卸载到位（幂等 false）：本轮别再选它
+			continue
+		}
+		total = TotalTokens(out)
+		if total >= before {
+			break // 没释放任何 token ⇒ 余下都是不可压缩面（钉住/会话段），不空转
 		}
 		mechanism = "mask"
-		total = TotalTokens(out)
 	}
 
 	// ③ 去重（保留首次出现）
@@ -107,22 +123,51 @@ func (p *PrunerFree) Compress(ctx context.Context, segs []Segment, pol Policy) (
 }
 
 // unload —— 把一条观察换成「摘要引子 ＋ 指针」；无指针则保头尾折叠。
-// 返回是否真改了内容。
+// 返回是否真改了内容；**幂等**：文本已经是目标形态就返回 false。
+//
+// ★ 幂等的意义不只是「省一次写」：余量闸按 Tokens 选最大段，卸载后的占位符 Tokens 仍 >0
+// 且段仍在窗口里，没有这条判定就会被反复选中、反复「卸载」而一个 token 都不掉（老死循环）。
+// 判定用「目标文本 == 当前文本」而不是另加标志位：目标形态由 Tokens/RawPtr/正文唯一决定，
+// 一旦相等，再写一遍必然一字不变 ⇒ 天然收敛。
 func unload(s *Segment) bool {
 	if s.RawPtr != "" {
-		s.Text = fmt.Sprintf("〔已卸载 %d token · 原文可回查：%s〕", s.Tokens, s.RawPtr)
+		next := unloadedText(s.Tokens, s.RawPtr)
+		if s.Text == next {
+			return false // 已卸载过：再写只换占位符里的数字，不释放 token
+		}
+		s.Text = next
 		s.Tokens = EstimateTokens(s.Text)
 		return true
 	}
 	// 无指针 ⇒ 不许整段丢（否则不可逆）：保头尾
-	const headN, tailN = 400, 200
 	r := []rune(s.Text)
-	if len(r) <= headN+tailN {
+	if len(r) <= unloadHeadN+unloadTailN {
 		return false
 	}
-	s.Text = string(r[:headN]) + fmt.Sprintf("\n…〔中段 %d 字已折叠〕…\n", len(r)-headN-tailN) + string(r[len(r)-tailN:])
+	next := foldedText(r)
+	if s.Text == next {
+		return false // 已折叠过
+	}
+	s.Text = next
 	s.Tokens = EstimateTokens(s.Text)
 	return true
+}
+
+const (
+	unloadHeadN = 400
+	unloadTailN = 200
+)
+
+// unloadedText —— 带指针段的卸载形态（唯一构造点：写入与幂等判定必须同一份）。
+func unloadedText(tokens int, rawPtr string) string {
+	return fmt.Sprintf("〔已卸载 %d token · 原文可回查：%s〕", tokens, rawPtr)
+}
+
+// foldedText —— 无指针段的折叠形态（同上，唯一构造点）。
+func foldedText(r []rune) string {
+	return string(r[:unloadHeadN]) +
+		fmt.Sprintf("\n…〔中段 %d 字已折叠〕…\n", len(r)-unloadHeadN-unloadTailN) +
+		string(r[len(r)-unloadTailN:])
 }
 
 // joinAnchors 便于适配器复用：把锚点集合并成一行。

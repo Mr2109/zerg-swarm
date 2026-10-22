@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os/exec"
 	"strings"
 	"time"
 )
@@ -70,7 +69,8 @@ func (tc TestChecker) Pass(ctx interface{}, contract string) (bool, string) {
 	defer cancel()
 
 	// 构建命令：在 shell 中执行（支持管道、重定向等）
-	cmd := exec.CommandContext(c, "sh", "-c", tc.Command)
+	//   走统一入口：ulimit 限额前缀 ＋ 自成进程组 ＋ 到点整组两段收尾（测试命令 fork 的子件不漏）。
+	cmd := boundedShell(c, "sh", tc.Command)
 
 	// 收集 stdout + stderr 到同一 buffer
 	var stdout, stderr bytes.Buffer
@@ -78,10 +78,13 @@ func (tc TestChecker) Pass(ctx interface{}, contract string) (bool, string) {
 	cmd.Stderr = &stderr
 
 	// 执行
-	err := cmd.Run()
+	runErr := cmd.Run()
+	if c.Err() != nil {
+		terminateChildTree(cmd) // 到点/取消：整组 TERM → 宽限 → 整组 KILL
+	}
 	out := stdout.String() + stderr.String()
 
-	if err != nil {
+	if runErr != nil {
 		// 命令失败：附契约描述
 		return false, fmt.Sprintf("%s\n契约: %s", out, contract)
 	}

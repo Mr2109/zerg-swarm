@@ -69,8 +69,10 @@ func normStepName(s string) string { return strings.ReplaceAll(s, "\\", "") }
 
 // gateRunStepJSON —— 单步档的机器面（人面仍由脚本原样给出，走 stderr）。
 //
-// 退码口径：**脚本的码原样转出**（0 全绿 / 1 有失败项 / 2 不给结论）；命令面自己只在
-// 「执行前判」与「K2 的 `--json` 不给字段」两处退码：前者 2、后者**取自退码表**（`usage` · 归一后同为 2）。
+// 退码口径（缺口 `GAP-20260928-152` · 2026-10-23 起可分）：
+// **命令面自己的用法错 ⇒ 2**（执行前判：缺步名 / 步名不在 / 歧义 / `--json` 不给字段）；
+// **脚本的码**：0 全绿 / 1 有失败项照旧逐字转出，脚本的 `2`（= **不给结论**）归命令面 `8`（`gate.go`
+// 的 `gateScriptRC` —— 唯一一处归一）⇒ 「参数写错（2）」与「脚本自身不给结论（8）」不再同码。
 func gateRunStepJSON(inv *invocation, stdout, stderr io.Writer, root, script string, tail []string) int {
 	// K2（§4.1）：给了 `--json` 但不给字段 ⇒ 退码由 `requireFields` **取自退码表**回（`K2` 归一后 = 用法错 2），
 	// stdout 0 字节（与 `requireFields` 同一口径）。
@@ -201,7 +203,9 @@ func gateRunStepJSON(inv *invocation, stdout, stderr io.Writer, root, script str
 	runningChild = nil
 	rc := exitOK
 	if ee, ok := err.(*exec.ExitError); ok {
-		rc = ee.ExitCode() // ★ 只转发、不翻译：脚本退多少就返多少
+		// ★ 缺口 `GAP-20260928-152`：脚本的 `2` = **不给结论**，命令面的 `2` 只给用法错 ⇒
+		//   走唯一那处归一（`gate.go` 的 `gateScriptRC`：脚本 2 ⇒ 8）。其余正码逐字转出。
+		rc = gateScriptRC(ee.ExitCode(), stderr)
 	} else if err != nil {
 		fmt.Fprintf(stderr, "%s: 跑不动门禁脚本：%v\n", progName, err)
 		return exitFail
@@ -452,6 +456,94 @@ func resolveGateStep(decls []gateStepDecl, name string, stderr io.Writer) (gateS
 	return hits[0], exitOK
 }
 
+// ── `gate run` 的**旗标组合**前移校验（缺口 `GAP-20260928-152` · 2026-10-23）─────────────
+//
+// 病：脚本 `main()` 里有五条**组合用法错**（同给互斥旗标 / `--step` 给了旗标而非步名），它们退的
+// 是脚本自己的 `2` = **不给结论**；而命令面现把脚本的 2 归 `8`（同一条缺口的归一）⇒ 若不先判，
+// 纯参数错误也会被读成「门跑了但没结论」（契约矩阵 `gate/run#--only-step 缺 --step` 两格当场红）。
+//
+// 治法：exec **之前**按脚本 `main()` 那五条组合臂**逐条镜像**（条件逐字照它、判词同形），命中即
+// `exitUsage`（2 = 用法错）且**不跑脚本** ⇒「参数写错」全部落在 2，`8` 只留给「脚本真跑了但没给
+// 结论」（前置缺件 / 自检不过 / 有步骤报 BLOCKED）。
+//
+// 逐条（与脚本 `main()` 同序同条件 · 值旗标的下一个 token 一律当值，与它 `need_flag_val` 同口径）：
+//
+//	① `--fast` 与 `--scope` 同给；② `--only-step` 缺 `--step`；③ `--only-step` 与 `--self-test` 同给；
+//	④ `--step` 与 `--fast`/`--scope`/`--emit-cmd` 同给；⑤ `--step` 的值以 `-` 起头。
+//
+// 口径：与名面 / 值面 / 步名三条前移校验同规（只读 `tail`、不写任何件）；`--` 之后的段是**透传口**，
+// 一律不判（那是给那一步命令串的旗标）。
+func gateRunPrecheckFlagCombos(tail []string, stderr io.Writer) int {
+	bools := map[string]bool{}
+	values := map[string]string{}
+	valueGiven := map[string]bool{}
+	for i := 0; i < len(tail); i++ {
+		a := tail[i]
+		if a == "--" {
+			break
+		}
+		if gateRunTakesValue(a) {
+			valueGiven[a] = true
+			if i+1 < len(tail) {
+				values[a] = tail[i+1]
+				i++ // 值（含以连字符开头者）逐字跳过 —— 与自举件 `need_flag_val` 同口径
+			}
+			continue
+		}
+		bools[a] = true
+	}
+	stepName := values["--step"]
+	reject := func(detail, why string) int {
+		fmt.Fprintf(stderr, "✗ %s ⇒ **用法错**（rc=%d）\n", why, exitUsage)
+		fmt.Fprintf(stderr, "error.kind=usage · detail=%s · retryable=false · remedy=fix_usage\n", detail)
+		fmt.Fprintf(stderr, "%s: 这一发**没跑任何步骤** —— 组合在**命令面**就校验（缺口 `GAP-20260928-152`；脚本自己只会退 2=不给结论，判不出「参数错」）\n", progName)
+		return exitUsage
+	}
+	if bools["--fast"] && valueGiven["--scope"] {
+		return reject("fast_scope_exclusive", "`--fast` 与 `--scope` 不许同用（快速档 = 默认集里按 FAST_STEPS 名单挑出的子集）")
+	}
+	if bools["--only-step"] && strings.TrimSpace(stepName) == "" {
+		return reject("only_step_needs_step", "`--only-step` 只在单步档上有意义（要 `--step <步名> --only-step`）")
+	}
+	if bools["--only-step"] && bools["--self-test"] {
+		return reject("only_step_selftest_exclusive", "`--only-step` 与 `--self-test` 不许同用（前者 = 真跑那一道门并跳过整套自检；后者 = 只跑那道门的自检）")
+	}
+	if strings.TrimSpace(stepName) != "" {
+		if bools["--fast"] || valueGiven["--scope"] || valueGiven["--emit-cmd"] {
+			return reject("step_single_only", "`--step` 与 `--fast` / `--scope` / `--emit-cmd` 不许同用（单步档 = 只跑那一道门）")
+		}
+		if strings.HasPrefix(stepName, "-") {
+			return reject("step_name_is_flag", "`--step` 要一个步名（给的是旗标 "+stepName+"）")
+		}
+	}
+	return exitOK
+}
+
+// gateRunPrecheckStepName —— 单步档**执行前**判步名（缺口 `GAP-20260928-152` · 2026-10-23）。
+//
+// 为什么要有它：**步名写错是命令面用法错（2）**，而脚本 `filter_step` 判到它时退的是脚本自己的
+// `2` = **不给结论** ⇒ 两者同码（「参数写错」与「脚本自身不给结论」分不开）。这里在 exec
+// **之前**按脚本自己的 `add_step` 声明判 —— 真源同一份（`parseAddSteps` + `normStepName`，与脚本
+// `filter_step` 的「去掉反斜杠后逐字相等」同串空间），不中 / 歧义 ⇒ `exitUsage` 并给
+// 「最像的合法输入」＋候选（与 `--json`/`--show-log`/`--verify-live` 三条**同一句判词**）。
+//
+// 缺 `--step` 或值为空 ⇒ `exitOK`（既有形态**一个字节都不动**：仍原样交给自举件，由它判）；
+// 读不到脚本 ⇒ `exitOK`（脚本缺席由 `cmdGate` 更早那一步 fail-closed 退 2，这里不另立一种退码）。
+func gateRunPrecheckStepName(script string, tail []string, stderr io.Writer) int {
+	name := gateStepNameFrom(tail)
+	if strings.TrimSpace(name) == "" {
+		return exitOK
+	}
+	src, err := os.ReadFile(script)
+	if err != nil {
+		return exitOK
+	}
+	if _, rc := resolveGateStep(parseAddSteps(string(src)), name, stderr); rc != exitOK {
+		return rc
+	}
+	return exitOK
+}
+
 // gateRunStepLiveVerify —— 把只读复核旗标**逐字透传给那一步的命令串**并原样转出它的退码。
 // 只在 `--step <步名>` 与旗标同给时由 `gate.go` 的 `run` 支调进（**既有形态一个字节不改**：
 // 缺 `--step` 的那一发仍原样走自举件，退码照旧）。
@@ -510,7 +602,7 @@ func gateRunStepLiveVerify(inv *invocation, stdout, stderr io.Writer, root, scri
 	defer func() { runningChild = nil }()
 	err = cmd.Run()
 	if ee, ok := err.(*exec.ExitError); ok {
-		return ee.ExitCode() // ★ 只转发、不翻译
+		return ee.ExitCode() // ★ 只转发、不翻译（这里是**步骤脚本自己**的码：它退 2 多半就是认不出旗标 —— 用法错，**不做 2⇒8 归一**）
 	} else if err != nil {
 		fmt.Fprintf(stderr, "%s: 跑不动这一步的命令串（%v）\n", progName, err)
 		return exitFail
@@ -538,7 +630,9 @@ func gateRunStepLiveVerify(inv *invocation, stdout, stderr io.Writer, root, scri
 //	  自己的两枚），**唯一一处定义**（`gateRunValueFlags`/`gateRunBoolFlags`）；
 //	· 退码**一个字节不改**：未知参数过去 2、现在 2；合法形态原样透传（exec 之前只是**看一眼**）。
 //	  故「参数写错」与「跑成功」在退码上**仍然**与改前逐字相同 —— 本单治的是「**白跑**」那一半；
-//	  若要把「参数错」与「跑成功」在退码上分开，得改码语义 ⇒ 归**待拍项**（见回执）；
+//	  ★ 2026-10-23（缺口 `GAP-20260928-152`）那件**待拍项已办**：脚本的 `2` 归命令面 `8` ⇒
+//	  「参数写错（2）」与「不给结论（8）」已可分；**组合类**用法错（互斥旗标同给等）由
+//	  `gateRunPrecheckFlagCombos` 前移到 2。
 //	· 值与旗标的分野**逐字照自举件**：值旗标的**下一个 token 无论是否以连字符开头都当值**
 //	  （自举件 `need_flag_val` 只数个数、不看形状）⇒ 前移校验与自举件对同一串 argv 的结论一致，
 //	  不出现「命令面拒了、自举件本来会收」的新分歧。

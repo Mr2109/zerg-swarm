@@ -372,6 +372,10 @@ type eggTableJSON struct {
 	Tool      json.RawMessage `json:"tool"`
 	CreatedAt string          `json:"created_at"`
 	Entries   []EggSegment    `json:"entries"`
+	// WallMinVersion —— ★ `GAP-20261015-25` · D12：与 v1 `Index` **同一键**（可加面键
+	// `wall_min_version`）—— 与 B 侧 `zegIndexJSON.WallMinVersion` 同形（`RawMessage` 收原样 ·
+	// `omitempty` ⇒ 未声明时段表字节不变）。★ 读端只**收键不判**（D12 墙版判定属 B 侧行为面）。
+	WallMinVersion json.RawMessage `json:"wall_min_version,omitempty"`
 }
 
 // ReadEggIndex —— 读一枚 v2 蛋的头与段表（**只读**：不落任何件、不改任何状态）。

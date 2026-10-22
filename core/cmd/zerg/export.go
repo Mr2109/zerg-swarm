@@ -478,16 +478,13 @@ func dangerOpen() int {
 }
 
 // flagValue 从原始命令行里取 `--k v` 或 `--k=v` 的值（导出命令自己也走透传面）。
+//
+// ★ 缺口 `GAP-20260926-58`（收敛 · 本枚）：扫描循环收归 `flag_given.go` 的 `flagArgScan`
+// （仓里唯一一份「扫 argv 找旗标」的实现）—— 本函数只剩**值**这一问的语义：
+// 「出现过 **且** 有值槽」才算取到（`--k` 在尾 ⇒ 没取到，与收口前逐字同）。
 func flagValue(orig []string, key string) (string, bool) {
-	for i, a := range orig {
-		if a == key && i+1 < len(orig) {
-			return orig[i+1], true
-		}
-		if strings.HasPrefix(a, key+"=") {
-			return strings.TrimPrefix(a, key+"="), true
-		}
-	}
-	return "", false
+	v, slot, found := flagArgScan(orig, key)
+	return v, found && slot
 }
 
 // mdCell —— 写 markdown 表格单元时的**最小转义**：单元文本里的裸 `|` 写成 `\|`。

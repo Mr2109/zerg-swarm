@@ -230,9 +230,27 @@ func cmdAgentLs(inv *invocation, stdout, stderr io.Writer) int {
 		return rc
 	}
 	ms := asObj(resp["machines"])
-	names := make([]string, 0, len(ms))
+	// ★ 2026-10-23（缺口 `GAP-20261021-08`）：观察面 = **心跳快照**（载荷只由 `ReceiveHeartbeat` 建行 ·
+	//   `core/internal/store/store.go:138/153-163`；主控 `StatusHandler` 不与名册并集 ·
+	//   `core/internal/api/handlers.go:1224`）⇒ 名册里在、但此刻没有心跳的机器**整行消失**
+	//   （改前现读：名册 3 台，本命令只出 2 台 —— mini-node-2 整台不见，而它就在名册里）。
+	//   名册是**声明面**（§九 M13 `Z2` 真源 · `Z6` 离线也出表）⇒ 这里按名册补行：
+	//   名册有 + 心跳无 ⇒ 出一行，`backend_state=无心跳`、`healthy=unknown`、其余格**留空不猜**。
+	//   ✗ 不改主控载荷（`/api/fleet/status` 的 `machines` 含义一个字不动）；✗ 不把缺读数印成 0/idle。
+	rosterNames, rosterPath, rosterWhy := agentRosterNames(inv)
+	names := make([]string, 0, len(ms)+len(rosterNames))
+	seen := make(map[string]bool, len(ms)+len(rosterNames))
 	for n := range ms {
-		names = append(names, n)
+		if !seen[n] {
+			seen[n] = true
+			names = append(names, n)
+		}
+	}
+	for _, n := range rosterNames {
+		if !seen[n] {
+			seen[n] = true
+			names = append(names, n)
+		}
 	}
 	sort.Strings(names)
 	// ★ 2026-10-05（缺口 `GAP-20261005-45`）：投影面 = **登记面**（`fieldListOf` 单一真源）。
@@ -243,9 +261,13 @@ func cmdAgentLs(inv *invocation, stdout, stderr io.Writer) int {
 	//   只落**载荷真有的**键：无值整键不出现（与出口 `marshalObjectRegistered` 同一条纪律）。
 	fields := fieldListOf(inv.path)
 	rows := []map[string]string{}
+	missing := []string{}
 	for _, n := range names {
 		o := asObj(ms[n])
 		if o == nil {
+			// 名册有、心跳无 ⇒ 补一行（只有能证实的格；其余整键缺席 —— `--json` 侧自动略键）。
+			rows = append(rows, agentNoHeartbeatRow(n))
+			missing = append(missing, n)
 			continue
 		}
 		row := make(map[string]string, len(fields))
@@ -260,6 +282,15 @@ func cmdAgentLs(inv *invocation, stdout, stderr io.Writer) int {
 		//   —— 正是缺口 GAP-20260925-34 的「不反映真实值」在 ls 面的残格。
 		agentMarkUnknownGPU(o, row)
 		rows = append(rows, row)
+	}
+	// 对齐结论**必须说出口**（✗ 静默补行 —— 否则读者分不清「名册 3 台都在」与「只读到 2 台」）：
+	//   名册读不到 ⇒ 对齐**判不了**（✗ 当 0 台）；名册读了但有台没心跳 ⇒ 点名是哪几台。
+	if rosterWhy != "" {
+		fmt.Fprintf(stderr, "%s: 名册读不到（%s）· %s ⇒ 与名册的**逐台对齐判不了**（本面只有心跳 %d 台）\n",
+			progName, rosterPath, rosterWhy, len(ms))
+	} else if len(missing) > 0 {
+		fmt.Fprintf(stderr, "%s: 名册 %d 台 · 心跳 %d 台 · 名册有但无心跳 %d 台（%s）⇒ 已按名册补行（backend_state=%s · 其余格留空「不猜」）\n",
+			progName, len(rosterNames), len(ms), len(missing), strings.Join(missing, " · "), agentNoHeartbeat)
 	}
 	// ★ 2026-10-10（缺口 `GAP-20261010-29` / `GAP-20261010-06`）：人面列 = **字段面同源**
 	//   （`fieldListOf` 单一真源）。改前这里另写一份硬编 8 格清单 ⇒ 人面看不到机读面（`--json`）

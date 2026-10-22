@@ -23,8 +23,9 @@ import (
 // TOKEN-CHAIN: ZERG_TOKEN > ~/.zerg/token > ZERG_AUTH_TOKEN > ZERG_API_TOKEN
 //
 // tokenSourceName —— 令牌取自哪一级（错误信息里点名「凭据来自哪一级」· §九 M20 `O5`）。
-// ★ 取值域真源 = `core/internal/config` 的 `TokenSource`（GAP-20261017-02/-04：CLI 不再自备
-// 第二套优先级）。`stdin:--token-stdin` 是 CLI 独有的**传输级**（不进 argv），不是真源级。
+// ★ 取值域真源 = `shared/credential`（GAP-20261017-04：优先级**只有一份实现**，本件与主控
+// 都只是 `core/internal/config` 的转发；CLI 不再自备第二套）。
+// `stdin:--token-stdin` 是 CLI 独有的**传输级**（不进 argv），不是真源级。
 type tokenSourceName string
 
 const (

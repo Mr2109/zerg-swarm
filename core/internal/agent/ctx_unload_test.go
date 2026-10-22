@@ -1,10 +1,13 @@
 package agent
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Mr2109/zerg-swarm/core/internal/compress"
 )
 
 // ① 小输出原样返回（不做无谓的落盘）。
@@ -77,4 +80,126 @@ func TestUnloadToolResultFallbackOnWriteError(t *testing.T) {
 	if got := unloadToolResult(in); got != in {
 		t.Fatalf("卸载失败时应原样返回，实得 %q", got)
 	}
+}
+
+// ⑤ 审计接线：真卸一次 ⇒ `compress-audit.jsonl` **追加**一行，字段与 compress.Event 一致。
+//
+// 这一条是 events 恒 0 的反证：不写事件时 events 永远是 0（本项目 116 笔只落了卸载件、
+// 117 笔只落了只读呈现，写侧一直没人 ⇒ 读侧恒 0）。这里直接断言落盘行的**内容**，
+// 不只看文件存在：行数、Parse 得回 compress.Event、Before > After、Mechanism=unload。
+func TestUnloadToolResultWritesCompressAudit(t *testing.T) {
+	state := t.TempDir()
+	t.Setenv("ZERG_STATE_DIR", state)
+	audit := filepath.Join(state, "compress-audit.jsonl")
+
+	in := strings.Repeat("工具输出a", ctxUnloadBytes) // 远超 4 KiB
+	unloadToolResult(in)
+
+	lines := readAuditLines(t, audit)
+	if len(lines) != 1 {
+		t.Fatalf("应落 1 行审计，实得 %d 行", len(lines))
+	}
+	var ev compress.Event
+	if err := json.Unmarshal([]byte(lines[0]), &ev); err != nil {
+		t.Fatalf("审计行不是合法 compress.Event：%v（原文 %q）", err, lines[0])
+	}
+	if ev.Phase != "completed" || ev.Mechanism != "unload" {
+		t.Fatalf("事件三维不对：Phase=%q Mechanism=%q", ev.Phase, ev.Mechanism)
+	}
+	if ev.At.IsZero() {
+		t.Fatal("审计行没有时间戳（At 空）⇒ 不可回查")
+	}
+	if ev.Before <= 0 || ev.After >= ev.Before {
+		t.Fatalf("Before/After 不成立：%d → %d", ev.Before, ev.After)
+	}
+	if !strings.Contains(ev.Reason, state) {
+		t.Fatalf("Reason 没带落点路径：%q", ev.Reason)
+	}
+
+	// 追加而非重写：再卸一份**不同**内容 ⇒ 2 行，且第 1 行逐字节不变。
+	first := lines[0]
+	unloadToolResult(strings.Repeat("工具输出b", ctxUnloadBytes))
+	lines = readAuditLines(t, audit)
+	if len(lines) != 2 {
+		t.Fatalf("第二次卸载后应为 2 行（追加），实得 %d 行", len(lines))
+	}
+	if lines[0] != first {
+		t.Fatalf("追加写动了旧行（第 1 行被重写）：\n旧 %q\n新 %q", first, lines[0])
+	}
+}
+
+// ⑥ 没卸载就别写事件（小输出 / 卸载失败都不算一次压缩动作）——events 不能靠灌水变大。
+func TestUnloadSmallOutputWritesNoAudit(t *testing.T) {
+	state := t.TempDir()
+	t.Setenv("ZERG_STATE_DIR", state)
+	unloadToolResult(strings.Repeat("s", ctxUnloadBytes)) // 恰在阈值上 = 不卸
+	if _, err := os.Stat(filepath.Join(state, "compress-audit.jsonl")); err == nil {
+		t.Fatal("小输出不应产生审计行")
+	}
+	// 跨阈值一次 + 阈值上一次 ⇒ 只 1 行
+	unloadToolResult(strings.Repeat("t", ctxUnloadBytes+1))
+	unloadToolResult(strings.Repeat("t", ctxUnloadBytes))
+	if n := len(readAuditLines(t, filepath.Join(state, "compress-audit.jsonl"))); n != 1 {
+		t.Fatalf("应只 1 行审计（只有跨阈值那次算），实得 %d 行", n)
+	}
+}
+
+// ⑦ 端到端烟测（默认 skip · 只有点名 `ZERG_CTX_AUDIT_SMOKE_STATE=<状态目录>` 才跑）：
+// 走**真**压缩入口 compressOldest → summarizeRound → unloadToolResult，事件落进点名的状态目录。
+// 点名的目录就是 `zerg context stats` 读的那个目录 ⇒ 跑完 events 必须 > 0。
+//
+// 为什么默认 skip：本包普通用例一律 t.TempDir() 隔离，不许往用户真实状态目录里灌审计行；
+// 这条只用于验收「写侧接线是否真通到 CLI 读数」这一步（跑法见文件末尾注释）。
+func TestUnloadAuditSmokeAmbientState(t *testing.T) {
+	state := os.Getenv("ZERG_CTX_AUDIT_SMOKE_STATE")
+	if state == "" {
+		t.Skip("未点名 ZERG_CTX_AUDIT_SMOKE_STATE ⇒ 跳过端到端烟测")
+	}
+	t.Setenv("ZERG_STATE_DIR", state)
+	audit := filepath.Join(state, "compress-audit.jsonl")
+	before := countJSONLines(t, audit)
+
+	a := NewAgent(Config{ContextWindow: 1})
+	a.history = []Message{
+		{Role: "assistant", Content: "决策：读大文件"},
+		{Role: "tool", ToolCallID: "t1", Content: strings.Repeat("大输出", ctxUnloadBytes)},
+		{Role: "assistant", Content: "决策：继续"},
+	}
+	if !a.compressOldest() {
+		t.Fatal("没压成 —— 烟测前提不成立（应压最早一轮）")
+	}
+	after := countJSONLines(t, audit)
+	if after <= before {
+		t.Fatalf("压缩后审计面没长（%d → %d）⇒ 写侧没接到 compress-audit.jsonl", before, after)
+	}
+}
+
+// countJSONLines —— 数一件 JSONL 的行数（文件不在 = 0）。
+func countJSONLines(t *testing.T, path string) int {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0
+		}
+		t.Fatalf("审计件读不回来：%v（%s）", err, path)
+	}
+	s := strings.TrimSuffix(string(b), "\n")
+	if s == "" {
+		return 0
+	}
+	return strings.Count(s, "\n") + 1
+}
+
+func readAuditLines(t *testing.T, path string) []string {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("审计件读不回来：%v（%s）", err, path)
+	}
+	s := strings.TrimSuffix(string(b), "\n")
+	if s == "" {
+		return nil
+	}
+	return strings.Split(s, "\n")
 }

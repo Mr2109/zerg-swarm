@@ -612,9 +612,11 @@ func (s *MasterScheduler) pingModel(model string) (bool, error) {
 		if strings.HasPrefix(env, "ZERG_GATEWAY_URL=") {
 			gatewayURL = strings.TrimPrefix(env, "ZERG_GATEWAY_URL=")
 		}
-		if strings.HasPrefix(env, "ZERG_AUTH_TOKEN=") {
-			token = strings.TrimPrefix(env, "ZERG_AUTH_TOKEN=")
-		}
+	}
+	// 快照里的令牌也走**同一条链**（GAP-20261017-04）：此前只认 `ZERG_AUTH_TOKEN=`
+	// ⇒ 快照里给的是 `ZERG_TOKEN=` 时这一支是死的，主控与子端于是各读各的。
+	if v := config.TokenFromEnviron(s.agentEnv); v != "" {
+		token = v
 	}
 	body := map[string]interface{}{
 		"model": model,
@@ -851,9 +853,10 @@ func (s *MasterScheduler) callGatewayModel(model, systemPrompt, userPrompt strin
 		if strings.HasPrefix(env, "ZERG_GATEWAY_URL=") {
 			gatewayURL = strings.TrimPrefix(env, "ZERG_GATEWAY_URL=")
 		}
-		if strings.HasPrefix(env, "ZERG_AUTH_TOKEN=") {
-			token = strings.TrimPrefix(env, "ZERG_AUTH_TOKEN=")
-		}
+	}
+	// 同一条链（GAP-20261017-04）：快照级也认 `ZERG_TOKEN=`，不再只认旧名。
+	if v := config.TokenFromEnviron(s.agentEnv); v != "" {
+		token = v
 	}
 	// 工具模式（方案轮/选定轮——模型调工具提交结构化输出）
 	// v2.5.6 修复: TOOL: 前缀只是触发标记——userPrompt 内容完整（不剥掉——模型需要完整任务描述）

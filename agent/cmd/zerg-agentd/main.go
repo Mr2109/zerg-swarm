@@ -10,7 +10,8 @@
 // 用法：
 //
 //	./zerg-agent --host 0.0.0.0 --machine <name> --controller http://<controller-host>:8580 --registry agent_models.yaml
-//	（令牌只走环境变量 ZERG_AUTH_TOKEN，或文件 ~/.zerg/token 提供——见仓库 .env.example；--token 旗标已停用）
+//	（令牌只走唯一链 ZERG_TOKEN > ~/.zerg/token > ZERG_AUTH_TOKEN > ZERG_API_TOKEN —— 实现真源
+//	 `shared/credential`，与主控/CLI 同一份；见仓库 .env.example；--token 旗标已停用）
 package main
 
 import (
@@ -21,7 +22,6 @@ import (
 	"net"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -35,6 +35,7 @@ import (
 	"github.com/Mr2109/zerg-swarm/agent/internal/registry"
 	"github.com/Mr2109/zerg-swarm/agent/internal/server"
 	"github.com/Mr2109/zerg-swarm/agent/internal/startup"
+	"github.com/Mr2109/zerg-swarm/shared/credential"
 )
 
 var (
@@ -75,12 +76,13 @@ func main() {
 		fmt.Fprintln(os.Stderr, "❌ 令牌不许走 argv；请用环境变量或 ~/.zerg/token 文件")
 		os.Exit(2)
 	}
-	token := resolveToken()
+	token, tokenSrc := resolveToken()
 
 	// 2026-09-11 A 批（库内零明文）：令牌必须可用，否则拒绝启动——
 	// 空令牌会让心跳/主控调用全部 401，而进程看起来正常运行 ⇒ 不给结论、不假装健康。
+	// 报话机读（`token_source=` ＋ `TOKEN-CHAIN:`），✗ 不回显令牌值。
 	if strings.TrimSpace(token) == "" {
-		fmt.Fprintln(os.Stderr, "❌ 未配置共享令牌：请设环境变量 ZERG_AUTH_TOKEN（或兼容旧名 ZERG_API_TOKEN / ZERG_TOKEN），或写入文件 ~/.zerg/token（见仓库 .env.example）")
+		fmt.Fprint(os.Stderr, missingTokenMessage(tokenSrc))
 		os.Exit(8)
 	}
 
@@ -93,6 +95,9 @@ func main() {
 	}
 	startup.Mark("参数与令牌校验通过")
 	logx.Infof("main", "zerg-agent 启动", "version", version.Version, "host", *host, "port", *port, "machine", *machineParam,
+		// 令牌**只报来源**（GAP-20261017-04：日志里必须看得出「读的是哪一路」，否则两处 env 不同时
+		// 各读各的令牌而日志无异常）。✗ 永不拼接令牌值。
+		"token_source", string(tokenSrc),
 		// 源提交（GAP-20261021-08）：与心跳 origin_sha 同一处真源，日志里先点名一次。
 		"origin", version.ReadSelf().OriginText())
 
@@ -189,21 +194,28 @@ func main() {
 	fmt.Println("子端 Agent 已退出")
 }
 
+// TOKEN-CHAIN: ZERG_TOKEN > ~/.zerg/token > ZERG_AUTH_TOKEN > ZERG_API_TOKEN
+//
 // resolveToken 解析共享令牌（2026-09-11 A 批：库内零明文）。
-// 优先级：环境变量 ZERG_AUTH_TOKEN → 兼容旧名 ZERG_API_TOKEN / ZERG_TOKEN → 文件 ~/.zerg/token。
-// 均未提供时返回空串，由 main 启动期直接报错退出。
-func resolveToken() string {
-	for _, k := range []string{"ZERG_AUTH_TOKEN", "ZERG_API_TOKEN", "ZERG_TOKEN"} {
-		if v := strings.TrimSpace(os.Getenv(k)); v != "" {
-			return v
-		}
+// ★ **不自备优先级**（GAP-20261017-04）：唯一实现 = `shared/credential.ResolveWithSource`
+// —— 与主控/CLI 同一份；本件只负责「旧名命中出声一次」。此前本件把 ZERG_TOKEN 排在旧名之后、
+// 令牌文件最后 ⇒ 与 UI 链完全相反，两处 env 不同就各读各的令牌而日志无异常。
+// 均未提供时返回空 + `SourceMissing`，由 main 启动期报话并退出（不静默放行）。
+func resolveToken() (string, credential.Source) {
+	v, src := credential.ResolveWithSource()
+	if v == "" {
+		return "", credential.SourceMissing
 	}
-	if home, err := os.UserHomeDir(); err == nil {
-		if b, err := os.ReadFile(filepath.Join(home, ".zerg", "token")); err == nil {
-			if v := strings.TrimSpace(string(b)); v != "" {
-				return v
-			}
-		}
-	}
-	return ""
+	credential.AnnounceLegacy(src) // 只报来源，✗ 不回显令牌
+	return v, src
+}
+
+// missingTokenMessage —— 缺令牌时的**机器可读**报话（`token_source=` ＋ `TOKEN-CHAIN:`）。
+// ✗ 不含令牌值：本函数只拿得到来源标记与文件路径。
+func missingTokenMessage(src credential.Source) string {
+	return "❌ 未配置共享令牌\n" +
+		"   " + strings.ReplaceAll(credential.MissingHint(), "\n", "\n   ") + "\n" +
+		"   本进程实际读数：token_source=" + string(src) + "\n" +
+		"   修法：export ZERG_TOKEN=<令牌>，或 printf '%s' <令牌> > " + credential.FilePath() + "（chmod 600）\n" +
+		"   令牌五不进：不进 argv / URL / 日志 / 聊天 / 入库（见仓库 .env.example）\n"
 }

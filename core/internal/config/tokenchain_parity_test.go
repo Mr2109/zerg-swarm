@@ -1,14 +1,20 @@
 package config
 
+// 对拍判据（GAP-20261017-04 收敛后的形态）：**真源一份**（`shared/credential`）+ 各读取面只转发。
+// 因此本件不再「钉住已知偏差」，而是钉住三件事：
+//  ① 每个读取面的源文件都带同一行 `// TOKEN-CHAIN: ...`（机读、逐字同序）；
+//  ② 各读取面**不许**自己 `os.Getenv` 令牌名（出现即第二套优先级 ⇒ 红）；
+//     子端是唯一例外：它直接调 `credential.ResolveWithSource()` —— 判据要求这行在场。
+//  ③ 真源常量 `TokenChain` 的内部次序递增。
+
 import (
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 )
 
-// tcpMarkerPrefix —— 三处读取面各自在源文件里写死的一行「链字面」（机读形态）。
+// tcpMarkerPrefix —— 各读取面在源文件里写死的一行「链字面」（机读形态）。
 // 形态固定：行首 `// TOKEN-CHAIN: a > b > c > d`（顺序逐字，可对拍）。
 const tcpMarkerPrefix = "// TOKEN-CHAIN: "
 
@@ -26,28 +32,32 @@ func tcpMarker(text string) (string, bool) {
 	return "", false
 }
 
-// tcpReadCore 读 core 内的件（本测试件的工作目录 = core/internal/config）。
-func tcpReadCore(t *testing.T, rel string) string {
+// tcpReadRepo 读仓内件（本测试件的工作目录 = core/internal/config）。
+func tcpReadRepo(t *testing.T, rel string) string {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join("..", "..", rel))
+	b, err := os.ReadFile(filepath.Join("..", "..", "..", rel))
 	if err != nil {
 		t.Fatalf("读不了 %s: %v", rel, err)
 	}
 	return string(b)
 }
 
-// TestTokenChainParityCoreSurfaces —— 对拍（甲）：CLI 与主控**逐字同序**，且与 TokenChain 常量同序。
-// 两处都走 `config.ResolveAuthTokenWithSource`，标记行是给「有人把链抄成第二份」留的牙。
-func TestTokenChainParityCoreSurfaces(t *testing.T) {
+// tcpTokenEnvLiterals —— 令牌环境变量名的**字面量**（只在本判据里出现一次）。
+var tcpTokenEnvLiterals = []string{`"ZERG_TOKEN"`, `"ZERG_AUTH_TOKEN"`, `"ZERG_API_TOKEN"`}
+
+// TestTokenChainParitySurfaces —— 对拍：真源 + 三个读取面标记逐字同序，且真源次序递增。
+func TestTokenChainParitySurfaces(t *testing.T) {
 	surfaces := []struct {
 		name string
 		rel  string
 	}{
-		{"主控（core/internal/config）", "internal/config/tokenchain.go"},
-		{"CLI（core/cmd/zerg/credentials.go）", "cmd/zerg/credentials.go"},
+		{"真源（shared/credential）", "shared/credential/tokenchain.go"},
+		{"主控转发层（core/internal/config）", "core/internal/config/tokenchain.go"},
+		{"CLI（core/cmd/zerg/credentials.go）", "core/cmd/zerg/credentials.go"},
+		{"子端（agent/cmd/zerg-agentd/main.go）", "agent/cmd/zerg-agentd/main.go"},
 	}
 	for _, s := range surfaces {
-		got, ok := tcpMarker(tcpReadCore(t, s.rel))
+		got, ok := tcpMarker(tcpReadRepo(t, s.rel))
 		if !ok {
 			t.Fatalf("%s 缺 `%s` 标记行（链被抄成第二份 / 标记被删 ⇒ 判据盲）", s.name, strings.TrimSpace(tcpMarkerPrefix))
 		}
@@ -70,48 +80,35 @@ func TestTokenChainParityCoreSurfaces(t *testing.T) {
 	}
 }
 
-// tcpAgentKnownDeviation —— 子端**现读**顺序（本单不许动 `agent/**` ⇒ 见 GAP-20261017-04 的「子端那半」）。
-// 钉住它：改成唯一链 ⇒ 本判据自动放行（并提示已收敛）；变成第三种顺序 ⇒ 当场红。
-const tcpAgentKnownDeviation = "ZERG_AUTH_TOKEN > ZERG_API_TOKEN > ZERG_TOKEN > ~/.zerg/token"
+// TestTokenChainNoSecondPriority —— 除真源外，任何读取面都不许自带令牌名 `os.Getenv`：
+// 各读一遍 = 各有一套优先级（GAP-20261017-04 的病根）。子端必须**调真源**而不是抄顺序。
+func TestTokenChainNoSecondPriority(t *testing.T) {
+	surfaces := []string{
+		"core/internal/config/tokenchain.go",
+		"core/internal/config/config.go",
+		"core/cmd/zerg/credentials.go",
+		"core/cmd/zerg-agent/main.go",
+		"agent/cmd/zerg-agentd/main.go",
+	}
+	for _, rel := range surfaces {
+		text := tcpReadRepo(t, rel)
+		for _, lit := range tcpTokenEnvLiterals {
+			if strings.Contains(text, "os.Getenv("+lit+")") {
+				t.Fatalf("%s 里出现 os.Getenv(%s) ⇒ 第二套优先级（令牌名只在 shared/credential 出现）", rel, lit)
+			}
+		}
+	}
 
-var (
-	tcpAgentFuncRE = regexp.MustCompile(`(?s)func resolveToken\(\) string \{.*?\[\]string\{([^}]*)\}`)
-	tcpAgentNameRE = regexp.MustCompile(`"([A-Z0-9_]+)"`)
-)
-
-// tcpAgentOrder 从子端源文件抽「环境变量名序 + 令牌文件」，得到可对拍的顺序串。
-func tcpAgentOrder(text string) (string, bool) {
-	m := tcpAgentFuncRE.FindStringSubmatch(text)
-	if m == nil {
-		return "", false
+	// 子端收敛的机读证据：直接调用真源，且不留自建的「名字数组」。
+	sub := tcpReadRepo(t, "agent/cmd/zerg-agentd/main.go")
+	if !strings.Contains(sub, "credential.ResolveWithSource()") {
+		t.Fatal("子端没调 shared/credential.ResolveWithSource() ⇒ 优先级仍在自己手里")
 	}
-	var names []string
-	for _, q := range tcpAgentNameRE.FindAllStringSubmatch(m[1], -1) {
-		names = append(names, q[1])
+	if strings.Contains(sub, `[]string{"ZERG_`) {
+		t.Fatal("子端还留着自建的环境变量名数组 ⇒ 第二套顺序")
 	}
-	if len(names) == 0 || !strings.Contains(text, `".zerg", "token"`) {
-		return "", false
-	}
-	return strings.Join(names, " > ") + " > ~/.zerg/token", true
-}
-
-// TestTokenChainParitySubend —— 对拍（乙）：子端在另一 module（`agent/go.mod`）⇒ 不能 import 本件，
-// 只能按源文件对拍。已知偏差钉死在此，✗ 不静默放过第三种形态。
-func TestTokenChainParitySubend(t *testing.T) {
-	b, err := os.ReadFile(filepath.Join("..", "..", "..", "agent", "cmd", "zerg-agentd", "main.go"))
-	if err != nil {
-		t.Fatalf("读不了子端 main.go: %v", err)
-	}
-	got, ok := tcpAgentOrder(string(b))
-	if !ok {
-		t.Fatal("子端 resolveToken 形态变了：抽不出顺序（判据盲 ⇒ 必须人工核）")
-	}
-	switch got {
-	case tcpCanonical:
-		t.Logf("子端已收敛到唯一链：%s", got)
-	case tcpAgentKnownDeviation:
-		t.Logf("子端仍为已知偏差（GAP-20261017-04 · 需另开一单）：%s", got)
-	default:
-		t.Fatalf("子端令牌顺序出现第三形态：%s（唯一链 %q · 已知偏差 %q）", got, tcpCanonical, tcpAgentKnownDeviation)
+	// 令牌文件路径也只有一份。
+	if strings.Contains(sub, `".zerg", "token"`) {
+		t.Fatal("子端自己拼令牌文件路径 ⇒ 路径真源应在 shared/credential.FilePath()")
 	}
 }

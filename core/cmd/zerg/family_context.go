@@ -116,7 +116,7 @@ func contextStats(inv *invocation, stdout, stderr io.Writer) int {
 
 	fmt.Fprintf(stdout, "卸载件：%d · 合计 %d 字节\n", count, bytes)
 	fmt.Fprintf(stdout, "落点：%s\n", dir)
-	fmt.Fprintf(stdout, "审计事件：%d（%s · 无则 0 = 审计线尚未接线）\n", events, ctxAuditPath())
+	fmt.Fprintf(stdout, "审计事件：%d（%s · 每次卸载一行 · 只追加）\n", events, ctxAuditPath())
 	return exitOK
 }
 

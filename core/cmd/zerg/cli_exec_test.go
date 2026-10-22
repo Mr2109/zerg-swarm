@@ -81,16 +81,27 @@ func execCase(t *testing.T, bin, repo string, argv ...string) (int, string, stri
 	return rc, out.String(), errb.String()
 }
 
-// TestCLIExecPassthroughCarriesScriptExitCode —— **透传不翻译**（§九 M11 `G1-a`）：
-// 合成脚本退 1 ⇒ 命令面退 1；退 2 ⇒ 命令面退 2（不是「非 0 一律 1」）。
+// TestCLIExecPassthroughCarriesScriptExitCode —— **透传**（§九 M11 `G1-a`）：脚本退 1 / 3 ⇒ 命令面
+// 退同一码（不是「非 0 一律 1」）；**脚本退 2 ⇒ 命令面退 8**（缺口 `GAP-20260928-152`：脚本的 2 =
+// 不给结论、命令面的 2 = 用法错 ⇒ 这一格归一，否则同数字两义）。
 func TestCLIExecPassthroughCarriesScriptExitCode(t *testing.T) {
 	bin := zergBinary(t)
-	for _, want := range []int{1, 2} {
-		root := syntheticRepo(t, "case \"${1:-}\" in --list) echo '── 步骤清单（scope 模式 名称）──'; echo 'docs 合成步'; echo '共 1 步'; exit 0 ;; esac\nexit "+string(rune('0'+want))+"\n")
+	listBody := "case \"${1:-}\" in --list) echo '── 步骤清单（scope 模式 名称）──'; echo 'docs 合成步'; echo '共 1 步'; exit 0 ;; esac\n"
+	for _, want := range []int{1, 3} {
+		root := syntheticRepo(t, listBody+"exit "+string(rune('0'+want))+"\n")
 		rc, _, errb := execCase(t, bin, root, "gate", "run", "--scope", "gates")
 		if rc != want {
 			t.Errorf("合成脚本退 %d ⇒ 命令面退 %d（薄壳只转发、不翻译：两值必须相等）· stderr=%s", want, rc, errb)
 		}
+	}
+	// 唯一归一的那一格：脚本 2（不给结论）⇒ 命令面 8（blocked）。
+	root := syntheticRepo(t, listBody+"exit 2\n")
+	rc, _, errb := execCase(t, bin, root, "gate", "run", "--scope", "gates")
+	if rc != 8 {
+		t.Errorf("合成脚本退 2（不给结论）⇒ 命令面退 8（GAP-20260928-152；命令面的 2 只给用法错），得到 %d · stderr=%s", rc, errb)
+	}
+	if !strings.Contains(errb, "自身不给结论") {
+		t.Errorf("归一那一发要在 stderr 说明「脚本自身不给结论 ⇒ 归 8」：%q", errb)
 	}
 }
 

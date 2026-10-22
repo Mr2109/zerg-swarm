@@ -259,7 +259,15 @@ func gapRewriteOne(inv *invocation, led gapLedger, idx int, rec gapRecord, cmdNa
 	//   新基线上（未动的行逐字节取新基线原文）—— ✗ 不是拿旧基线整件覆盖 ⇒ 别的写者已落的更新
 	//   不被覆盖（零丢更新）；同一 id 在两次读之间被别人改过 ⇒ 仍按**原口径拒写**（退 14 · 并发冲突）。
 	//   ★ 取不到锁 / 现读不出 ⇒ 按原口径退 2 / 8 且**不给结论**（✗ 不静默继续）。
-	lk, lerr := gapLedgerLock(led.Path)
+	// ⓪ **写面落点**（缺口 `GAP-20260929-41` 残留 · 本笔）：写面只认 `gapLedgerWritePath`，
+	//    ✗ 不拿**读面**落点（`led.Path`）去取锁。只读借用档在册 ⇒ 写面**没有落点** ⇒ 这里在
+	//    **取锁之前**硬拒（rc=2）：借源旁边不再留 0 字节 `<借源>.lock`（账没变、盘也不许变 ——
+	//    「借用 = 只读」要在盘面上成立，不是只在账内容上成立）。
+	wpath, werr := gapLedgerWritePath()
+	if werr != nil {
+		return "borrow_read_only", exitUsage, werr.Error()
+	}
+	lk, lerr := gapLedgerLock(wpath)
 	if lerr != nil {
 		return "ledger_locked", exitUsage,
 			fmt.Sprintf("账写排他锁取不到（%v） ⇒ 拿不到独占写权，本次拒写", lerr)
@@ -313,10 +321,10 @@ func gapRewriteOne(inv *invocation, led gapLedger, idx int, rec gapRecord, cmdNa
 	if err := appendGapAudit(editAuditPath(), audit); err != nil {
 		return "audit_unwritable", exitBlocked, err.Error()
 	}
-	if err := gapWriteLedger(led.Path, lines); err != nil {
+	if err := gapWriteLedger(wpath, lines); err != nil {
 		return "ledger_unwritable", exitBlocked, err.Error()
 	}
-	back, err := os.ReadFile(led.Path)
+	back, err := os.ReadFile(wpath)
 	if err != nil || sha256Of(back) != audit.GapAfterSHA {
 		return "ledger_readback_mismatch", exitBlocked, "写回读对不上"
 	}
@@ -385,7 +393,14 @@ type gapApplyFail struct {
 // 与 `gapRewriteOne` 同形：`rc==0` ⇒ 真写成功（`detail` 空）。取锁失败 ⇒ 退 2（`ledger_locked`，与
 // `gapRewriteOne` 同码）；锁内读不到 / 写不进 / 回读对不上 ⇒ 退 8（不给结论）。
 func gapLedgerApply(build func(fresh gapLedger) ([]string, *gapApplyFail)) (string, int, string) {
-	lk, lerr := gapLedgerLock(gapLedgerPath())
+	// ★ 缺口 `GAP-20260929-41` 残留（本笔）：写面落点只认 `gapLedgerWritePath`（✗ 不用读面的
+	//   `gapLedgerPath` —— 借用档下那是**借来的那一件**，在其旁边取锁 = 0 字节 `.lock` 写别人的盘）。
+	//   借用档在册 ⇒ 无落点 ⇒ **取锁之前**就拒（rc=2）。
+	wpath, werr := gapLedgerWritePath()
+	if werr != nil {
+		return "borrow_read_only", exitUsage, werr.Error()
+	}
+	lk, lerr := gapLedgerLock(wpath)
 	if lerr != nil {
 		return "ledger_locked", exitUsage,
 			fmt.Sprintf("账写排他锁取不到（%v） ⇒ 拿不到独占写权，本次拒写", lerr)
@@ -400,14 +415,14 @@ func gapLedgerApply(build func(fresh gapLedger) ([]string, *gapApplyFail)) (stri
 	if fail != nil {
 		return fail.Detail, fail.RC, fail.Msg
 	}
-	if werr := gapWriteLedger(fresh.Path, lines); werr != nil {
+	if werr := gapWriteLedger(wpath, lines); werr != nil {
 		return "ledger_unwritable", exitBlocked, werr.Error()
 	}
 	want := ""
 	if len(lines) > 0 {
 		want = strings.Join(lines, "\n") + "\n"
 	}
-	back, rerr := os.ReadFile(fresh.Path)
+	back, rerr := os.ReadFile(wpath)
 	if rerr != nil || string(back) != want {
 		return "ledger_readback_mismatch", exitBlocked, "写回读对不上"
 	}
@@ -2148,6 +2163,12 @@ func gapWriteFail(inv *invocation, stderr io.Writer, detail, msg, cmdName string
 		fmt.Fprintf(stderr, "  %s\n", msg)
 		fmt.Fprintf(stderr, "  真源     : %s（一个字节未动 · 审计一行未落 —— 闸在「审计先落盘」**之前**）\n", gapLedgerPath())
 		fmt.Fprintf(stderr, "  下一步   : **重跑一次即可**（重跑以盘上现状为新基线）—— **不要手改账件**（手改正是这条闸要挡的形态）\n")
+	case "borrow_read_only":
+		inv.setErr("usage", detail, msg)
+		fmt.Fprintf(stderr, "%s: **只读借用档** ⇒ 写面拒执（退码 2 · 取锁之前就拒 —— 借源目录零新增文件，连 .lock 一枚都不造）\n", progName)
+		fmt.Fprintf(stderr, "  %s\n", msg)
+		fmt.Fprintf(stderr, "  真源     : %s（一字未动 · 那件是**借来**的，借用 = 只读）\n", gapLedgerPath())
+		fmt.Fprintf(stderr, "  下一步   : 要写就把旋钮撤掉（`env -u %s`）并把状态目录指回真源\n", gapBorrowEnv)
 	case "ledger_locked":
 		inv.setErr("usage", detail, msg)
 		fmt.Fprintf(stderr, "%s: **账写排他锁取不到** ⇒ 拿不到独占写权，本次**拒写**（退码 2 · 不给结论）\n", progName)

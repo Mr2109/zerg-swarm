@@ -89,6 +89,7 @@ type Agent struct {
 	logger         *Logger        // v2.5.4.9 结构化日志（可选——nil 时用 stderr）
 	turnCount      int            // v2.5.5 冷启动检测：callModel 调用计数（首轮=冷启动）
 	rollingSummary rollingSummary // v2.5.4.9 滚动窗口压缩——累积摘要（压缩轮次保留）
+	summaryEngine  summaryEngine  // P3 摘要引擎装配（零值=未启用=free；见 summary_engine.go）
 }
 
 // SetLogger 设置结构化日志（v2.5.4.9——callModel 事件写入）。
@@ -149,6 +150,10 @@ func NewAgent(cfg Config) *Agent {
 		client:      &http.Client{Timeout: cfg.Timeout},
 		execContext: NewExecContext(cfg.WorkDir),
 	}
+	// P3 摘要引擎装配：**配置驱动、永不自动激活**——缺 env ⇒ 引擎保持零值（free），
+	// 压缩行为与接线前逐字一致；启动日志明写是哪一种（见 summary_engine.go）。
+	a.summaryEngine = resolveSummaryEngine(compactCtxBudgetTokens(), summaryEngineEnvLookup)
+	announceSummaryEngine(a.summaryEngine)
 	// v2.5.5 P2: 注入父 agent 引用（spawn_agent 子 agent 委托——2026-08-21 Mr2109）
 	a.execContext.Parent = a
 	return a

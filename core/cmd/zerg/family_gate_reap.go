@@ -588,17 +588,14 @@ func cmdGateReap(inv *invocation, stdout, stderr io.Writer) int {
 	return gateReapEmit(inv, stdout, stderr, rows)
 }
 
+// gateReapHasFlag —— 「这枚旗标给没给」（缺口 `GAP-20260926-58`）。
+//
+// 判据唯一实现在 `flag_given.go`：`kv 键在 ‖ 原始 argv 有这枚旗标`。收口前本函数自己扫一遍
+// `inv.orig` 的尾段（三套口径里的「另写一套」）—— 两路对 `--stale` 同真（它在名字表里、
+// 真给就进 `kv`），差别只剩「尾段口径 vs 全 argv」：`inv.path` 段是命令名（`gate`/`reap`），
+// 不可能是旗标字面。
 func gateReapHasFlag(inv *invocation, name string) bool {
-	tail := inv.orig
-	if len(inv.path) <= len(inv.orig) {
-		tail = inv.orig[len(inv.path):]
-	}
-	for _, a := range tail {
-		if a == name || strings.HasPrefix(a, name+"=") {
-			return true
-		}
-	}
-	return false
+	return inv.flagGiven(name)
 }
 
 type gateReapRow struct {

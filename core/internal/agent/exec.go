@@ -14,7 +14,6 @@ import (
 	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -467,12 +466,17 @@ func extractDocument(ctx context.Context, kind, absPath string) (string, string,
 	run := func(sec int, name string, args ...string) (string, error) {
 		cctx, cancel := context.WithTimeout(ctx, time.Duration(sec)*time.Second)
 		defer cancel()
-		cmd := exec.CommandContext(cctx, name, args...)
+		// 走统一入口：限额前缀 ＋ 自成进程组 ＋ 到点整组两段收尾。
+		cmd := boundedExec(cctx, name, args...)
 		var out, errb bytes.Buffer
 		cmd.Stdout = &out
 		cmd.Stderr = &errb
-		if err := cmd.Run(); err != nil {
-			return "", fmt.Errorf("%s 抽取失败: %v(%s)", name, err, strings.TrimSpace(errb.String())[:min(200, len(strings.TrimSpace(errb.String())))])
+		runErr := cmd.Run()
+		if cctx.Err() != nil {
+			terminateChildTree(cmd) // 抽取器卡住时整组收尾（不把孙件留在盘上跑）
+		}
+		if runErr != nil {
+			return "", fmt.Errorf("%s 抽取失败: %v(%s)", name, runErr, strings.TrimSpace(errb.String())[:min(200, len(strings.TrimSpace(errb.String())))])
 		}
 		return out.String(), nil
 	}
@@ -616,7 +620,8 @@ func parseSheetTSV(r io.Reader, shared []string) (string, error) {
 
 // iconvBytes — 经系统 iconv 转码到 UTF-8(零依赖)
 func iconvBytes(data []byte, from string) ([]byte, error) {
-	cmd := exec.Command("iconv", "-f", from, "-t", "UTF-8")
+	// 同走统一入口（限额 ＋ 自成进程组）：短命过滤器也不必留一棵裸进程在别人的组里。
+	cmd := boundedExec(context.Background(), "iconv", "-f", from, "-t", "UTF-8")
 	cmd.Stdin = bytes.NewReader(data)
 	var out bytes.Buffer
 	cmd.Stdout = &out
@@ -708,7 +713,7 @@ func validateWritten(absPath string) (string, string) {
 
 // validateYAML — python3 yaml 校验(无解析器→跳过注记;不引 Go 依赖——拍板 2)
 func validateYAML(absPath string) (string, string) {
-	cmd := exec.Command("python3", "-c", "import sys,yaml;yaml.safe_load(sys.stdin.read())")
+	cmd := boundedExec(context.Background(), "python3", "-c", "import sys,yaml;yaml.safe_load(sys.stdin.read())")
 	in, err := os.Open(absPath)
 	if err != nil {
 		return "", ""
@@ -912,8 +917,12 @@ func (ec *ExecContext) executeApplyPatch(ctx context.Context, path string, patch
 	// GAP-20260927-80：先取旧内容指纹（件级账用），再严格应用。
 	beforeBytes, _ := os.ReadFile(absPath)
 	// 严格应用（patch 命令——--fuzz=0 精确匹配——失败报错）
-	cmd := exec.CommandContext(ctx, "patch", "--fuzz=0", "--silent", absPath, patchFile.Name())
+	//   走统一入口：限额前缀 ＋ 自成进程组 ＋ 到点/cancel 整组两段收尾。
+	cmd := boundedExec(ctx, "patch", "--fuzz=0", "--silent", absPath, patchFile.Name())
 	out, err := cmd.CombinedOutput()
+	if ctx.Err() != nil {
+		terminateChildTree(cmd)
+	}
 	if err != nil {
 		// 应用失败——返回错误（不默默改错——模型重新读再写）
 		return "", fmt.Errorf("补丁应用失败（位置/上下文不匹配——重新读文件再写）: %v\n%s", err, tailStr(string(out), 300))

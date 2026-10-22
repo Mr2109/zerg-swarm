@@ -378,8 +378,19 @@ func TestGateCheckGoEntryTableComplete(t *testing.T) {
 	// ★ 2026-10-22（缺口 GAP-20261015-01 · allgo01）：`gateway/install.sh` 真搬 Go
 	//	（build-apps · 见 core/cmd/zerg/gateway_build.go · 键 build-apps —— ★ 不改名则键 `install`
 	//	会与 publish/install.sh 撞键，把未搬的那件一起读成绿）⇒ 197→198。
-	if got := len(gateCheckGoEntry); got != 198 {
-		t.Fatalf("进程内 Go 表项数要 == 198，得到 %d", got)
+	// ★ 2026-10-23（同夜两批 · 本格一次补齐两条，逐条点名出处）⇒ 198→200：
+	//	① 门135 脚本登记正门（键 check-script-registration · 见 core/cmd/zerg/check_script_registration.go ·
+	//	   scripts/** 每件须在 公开标记.tsv 有行）—— 该批**未同批**改本格；
+	//	② 门136 压缩尺子硬闸（键 check-compress-ruler · 见 core/cmd/zerg/check_compress_ruler.go ·
+	//	   eval.AllSamples() × free × Budget 8192 的 MRR_win/MRR_rec/AnchorLost 三条硬闸）—— 本单。
+	//	写清两条的理由：这个数字是**棘轮**（表静默变小/变大都要有人认账），不是「顺手抹平」——
+	//	抹平时必须能指出是哪一批加的，否则下一个人只会看到我从 198 跳到 200 而不知道多了什么。
+	// ★ 2026-10-23（check-cli-ownership 存量清账 · 本单）⇒ 200→201：
+	//	键 run_p0（见 core/cmd/zerg/run_p0.go · 虫族对话 P0 静态契约套件 12 条 ＋ 内嵌元测试的
+	//	Go 真搬 · 原 `scripts/chat-eval/run_p0.py` 仍在盘且仍是门132 的步 ⇒ 两半并存由防波门
+	//	check-py-go-pairing-drift 以 `--self-test` 两态对拍看着）—— 本单补此格。
+	if got := len(gateCheckGoEntry); got != 201 {
+		t.Fatalf("进程内 Go 表项数要 == 201，得到 %d", got)
 	}
 	// ★ 放宽（2026-10-07 退役批）：旧不变量「表键必在名录」⇒「表键 ⇒ 名录 **或** inproc 键 二者其一」。
 	//   退役件（py 已 `git rm`）只余 inproc 那一路（family_gate_check.go 的 inproc 兜底 ⇒ rc=0）；

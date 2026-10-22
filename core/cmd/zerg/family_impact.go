@@ -133,7 +133,7 @@ func cmdImpact(inv *invocation, stdout, stderr io.Writer) int {
 	//   ① `--gate-results` 给了但没给值 ⇒ 退 2；② 确认档给了但值与主机名不符 ⇒ 退 2（与 `dev edit` 同一口径）。
 	//   ★ 这两条都**不改**既有的退码档，只是「回填」这一面自己的用法错。
 	backfillWanted := false
-	if impactBackfillFlagGiven(inv.orig) {
+	if inv.flagGiven("--gate-results") {
 		backfillWanted = true
 		if strings.TrimSpace(inv.flagVal("--gate-results")) == "" {
 			inv.setErr("usage", "missing_gate_results", "`--gate-results` 没给值")

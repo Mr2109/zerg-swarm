@@ -5,9 +5,9 @@ package config
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
+	"github.com/Mr2109/zerg-swarm/shared/credential"
 	"gopkg.in/yaml.v3"
 )
 
@@ -159,10 +159,8 @@ func LoadFleetConfig(path string) (*FleetConfig, error) {
 //
 // 另可用 .env 供给上述环境变量（`set -a; . ./.env; set +a`，见仓库根 .env.example）。
 func TokenFilePath() string {
-	if home, err := os.UserHomeDir(); err == nil {
-		return filepath.Join(home, ".zerg", "token")
-	}
-	return ""
+	// 路径也只有这一份：真源在 `shared/credential.FilePath`（主控 / CLI / 子端 / UI 启动器共用）。
+	return credential.FilePath()
 }
 
 // ResolveAuthToken 解析共享令牌（首尾空白已去）：只取令牌值；来源见 ResolveAuthTokenWithSource。

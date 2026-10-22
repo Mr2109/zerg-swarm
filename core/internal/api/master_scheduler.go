@@ -284,9 +284,27 @@ func (s *MasterScheduler) recoverWaitingLocked() {
 		}
 	}
 
-	// 回锁——处理结果
+	// 回锁——处理结果（★ 快照是锁外拍的：只处理「此刻仍在等待分区」的件，见本函数注释）
 	s.mu.Lock()
+	s.applyWaitingRecoveryLocked(expired, recovered)
+	s.mu.Unlock()
+}
+
+// applyWaitingRecoveryLocked 恢复循环第二阶段（调用方持锁）: 处理锁外 ping 得到的快照结果。
+//
+// ★ 2026-10-22 GAP-20261022-02: `expired`/`recovered` 是**锁外** ping 期间拍的快照，而
+// ping 会阻塞数秒——这期间用户完全可能对该件下 cancel（撤销面现已收 waiting_retry）。
+// 照旧无条件处理会出两种坏结局:
+//   - recovered 一侧: 对已撤件 applyStatus(queued) + heap.Push ⇒ **已撤件复活回队列**
+//     并被重新派发（正是「取消后又在队」这一族）；
+//   - expired 一侧: 把 cancelled 覆写成 failed ⇒ 丢掉「退场」语义（T-05「绝不覆写终态」）。
+//
+// 故两个循环都只处理「此刻仍在 s.waiting」的件；不在 = 快照过期 ⇒ 无动作（不覆写、不回队）。
+func (s *MasterScheduler) applyWaitingRecoveryLocked(expired, recovered []*Task) {
 	for _, task := range expired {
+		if _, stillWaiting := s.waiting[task.ID]; !stillWaiting {
+			continue // 快照过期: 期间已被撤销/结案/摘出 —— 不得覆写其终态
+		}
 		task.applyStatus(StatusFailed, time.Now())
 		task.FailReason = "环境故障持续超过 30 分钟——自动放弃（需人工介入）: " + task.FailReason
 		delete(s.waiting, task.ID)
@@ -294,6 +312,9 @@ func (s *MasterScheduler) recoverWaitingLocked() {
 		log.Printf("❌ scheduler: task %s environment-failure timeout — abandoned (>30min, manual intervention needed)", task.ID)
 	}
 	for _, task := range recovered {
+		if _, stillWaiting := s.waiting[task.ID]; !stillWaiting {
+			continue // 快照过期: 期间已被撤销 —— 不得回队（回队 = 复活并重新派发）
+		}
 		delete(s.waiting, task.ID)
 		task.applyStatus(StatusQueued, time.Now())
 		heap.Push(&s.queue, task)
@@ -306,7 +327,6 @@ func (s *MasterScheduler) recoverWaitingLocked() {
 		}
 		s.dispatchLocked()
 	}
-	s.mu.Unlock()
 }
 
 // maxWaitRetry 环境故障最大等待时间（30 分钟——超限降级 failed）
@@ -1088,7 +1108,7 @@ func (s *MasterScheduler) CancelTask(taskID, reason, note string) (outcome strin
 		if t.Status != StatusQueued && t.Status != StatusPaused {
 			st := t.Status
 			s.mu.Unlock()
-			return "", fmt.Errorf("task %s status %s cannot be cancelled (only queued/paused tasks can be cancelled)", taskID, st)
+			return "", fmt.Errorf("task %s status %s cannot be cancelled (cancellable statuses: queued, paused, waiting_retry)", taskID, st)
 		}
 		// ② 改态
 		t.applyStatus(StatusCancelled, time.Now())
@@ -1118,9 +1138,30 @@ func (s *MasterScheduler) CancelTask(taskID, reason, note string) (outcome strin
 		s.mu.Unlock()
 		return "", fmt.Errorf("task %s is running (running tasks cannot be cancelled — terminate first)", taskID)
 	}
-	if _, ok := s.waiting[taskID]; ok {
+	if t, ok := s.waiting[taskID]; ok {
+		// 2026-10-22 GAP-20261022-02 —— waiting_retry 原先**两个门都不收**
+		// （cancel 回「waiting for environment recovery … cannot be cancelled」、terminate 回
+		// 「is not running (only running tasks can be stopped)」）⇒ 用户从命令面根本关不掉它，
+		// 只能等 30 分钟超时降级 failed 或手改状态文件。
+		// 现口径: waiting_retry 是**停着的**（未派发、未占并发槽），撤销它就是「退场」，
+		// 与 queued/paused 同一个语义（cancelled ≠ 完成，plan §O-8）⇒ 就地结案。
+		// ★ 必须**同时**从 s.waiting 摘掉 —— 留着就会被恢复循环捞回去重新派发（复活）。
+		if t.Status != StatusWaitingRetry {
+			st := t.Status
+			s.mu.Unlock()
+			return "", fmt.Errorf("task %s status %s in the waiting partition cannot be cancelled (cancellable statuses: queued, paused, waiting_retry)", taskID, st)
+		}
+		t.applyStatus(StatusCancelled, time.Now())
+		t.markClosed(reason, note)
+		delete(s.waiting, taskID)
+		s.history[taskID] = t
+		if err := saveTasksForCancel(s.queue, s.running, s.history, s.waiting); err != nil {
+			s.mu.Unlock()
+			return "", fmt.Errorf("取消任务 %s 落盘失败（本次取消未提交）: %w", taskID, err)
+		}
 		s.mu.Unlock()
-		return "", fmt.Errorf("task %s is waiting for environment recovery (waiting_retry tasks cannot be cancelled)", taskID)
+		log.Printf("🚫 scheduler: task %s cancelled (reason=%s · 原 waiting_retry，已摘出等待分区)\n", taskID, reason)
+		return CancelOutcomeCancelled, nil
 	}
 	t, ok := s.history[taskID]
 	if !ok {
@@ -1128,6 +1169,26 @@ func (s *MasterScheduler) CancelTask(taskID, reason, note string) (outcome strin
 		return "", fmt.Errorf("task %s not found", taskID)
 	}
 	switch t.Status {
+	case StatusQueued, StatusPaused, StatusWaitingRetry:
+		// 2026-10-22 GAP-20261022-01/02 —— 「可恢复态却落在 history」的孤儿件。
+		//
+		// 制造者: tasks_persist.go::parkUnrecovered（属可恢复集却落在非对应分区 ⇒ 保守留 history、
+		// 不派发、**不跨分区重路由**），而 loadPersistedHistory 只从 queue 回队 ⇒ 这些件
+		// **永不派发**、投影恒报 queued。撤销面原先只从 queue 认 queued/paused，于是它们一路
+		// 落进本 switch 的 default，报出「status queued cannot be cancelled (only queued/paused
+		// tasks can be cancelled)」——文案与状态自相矛盾，且件**永远撤不掉**。
+		//
+		// 处置: 按 status 就地结案（件已在 history，不动容器），写 closed_* 正交标记。
+		// ★ 绝不回填 queue —— 回填等于让一件从未派发的孤儿复活并重新派发（§2.5 白名单不动）。
+		t.applyStatus(StatusCancelled, time.Now())
+		t.markClosed(reason, note)
+		if err := saveTasksForCancel(s.queue, s.running, s.history, s.waiting); err != nil {
+			s.mu.Unlock()
+			return "", fmt.Errorf("取消任务 %s 落盘失败（本次取消未提交）: %w", taskID, err)
+		}
+		s.mu.Unlock()
+		log.Printf("🚫 scheduler: task %s cancelled (reason=%s · history 里的可恢复态孤儿件: 未派发、未回队)\n", taskID, reason)
+		return CancelOutcomeCancelled, nil
 	case StatusCancelled:
 		// 幂等: 关已关的 ⇒ 静默成功、无副作用（§11.2 · F-6）
 		s.mu.Unlock()
@@ -1146,7 +1207,7 @@ func (s *MasterScheduler) CancelTask(taskID, reason, note string) (outcome strin
 	default:
 		st := t.Status
 		s.mu.Unlock()
-		return "", fmt.Errorf("task %s status %s cannot be cancelled (only queued/paused tasks can be cancelled)", taskID, st)
+		return "", fmt.Errorf("task %s status %s cannot be cancelled (cancellable statuses: queued, paused, waiting_retry)", taskID, st)
 	}
 }
 

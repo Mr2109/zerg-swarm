@@ -580,17 +580,24 @@ func main() {
 
 	// V22-压缩：LLMLingua-2 一体化压缩器（ONNX，纯 Go 进程内）
 	// 路径：<压缩模型目录>/llmlingua2-onnx/（模型已转换 ONNX）——目录经 statepath.CompressModelsDir 解析，尊重 ZERG_COMPRESS_MODELS
-	compressorPath := filepath.Join(statepath.CompressModelsDir(), "llmlingua2-onnx")
-	linguaCompressor := compressor.New(compressor.Config{
-		ModelPath: filepath.Join(compressorPath, "model.onnx"),
-		TokPath:   filepath.Join(compressorPath, "tokenizer.json"),
-	})
-	gw.SetCompressor(linguaCompressor)
-	// 丙批 §4.2（2026-09-10）：压缩单一入口的 LLMLingua-2 依赖——与网关同一个进程内 ONNX 实例
-	chat.SetLinguaCompressor(func(_ context.Context, text string) (string, error) {
-		out, _, _, err := linguaCompressor.Compress(text)
-		return out, err
-	})
+	// P4（2026-10-23）：默认**不加载**——启动即载 2.1 GB ONNX（model.onnx.data）而全仓无调用点；
+	// 仅 ZERG_COMPRESSOR_ON=1 时按原样 New → gw.SetCompressor → chat 注入。
+	if os.Getenv("ZERG_COMPRESSOR_ON") == "1" {
+		compressorPath := filepath.Join(statepath.CompressModelsDir(), "llmlingua2-onnx")
+		linguaCompressor := compressor.New(compressor.Config{
+			ModelPath: filepath.Join(compressorPath, "model.onnx"),
+			TokPath:   filepath.Join(compressorPath, "tokenizer.json"),
+		})
+		gw.SetCompressor(linguaCompressor)
+		// 丙批 §4.2（2026-09-10）：压缩单一入口的 LLMLingua-2 依赖——与网关同一个进程内 ONNX 实例
+		chat.SetLinguaCompressor(func(_ context.Context, text string) (string, error) {
+			out, _, _, err := linguaCompressor.Compress(text)
+			return out, err
+		})
+		fmt.Printf("🧠 压缩器已加载（ZERG_COMPRESSOR_ON=1）：%s\n", compressorPath)
+	} else {
+		fmt.Printf("⏭️ 压缩器未加载（默认关）：ZERG_COMPRESSOR_ON=1 可开启（不再加载 2.1 GB ONNX）\n")
+	}
 
 	// B4 v2：排除本机模式切换（用户工作时——路由跳过 local）
 	r.Post("/api/fleet/exclude-local", func(w http.ResponseWriter, r *http.Request) {

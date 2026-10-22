@@ -318,8 +318,9 @@ func (a *Agent) compressOneRound() bool {
 		}
 	}
 	// 提取最早轮内容 → 摘要
+	// P3：引擎启用时走模型摘要；未启用 / 失败 / 空结果 ⇒ 一律回落原 free 口径（本函数不返回错误）
 	earliest := a.history[firstRoundStart:firstRoundEnd]
-	summary := summarizeRound(earliest)
+	summary := a.summarizeRoundForCompaction(earliest)
 	// 摘要追加到滚动摘要区
 	a.rollingSummary.text = a.rollingSummary.text + summary
 	a.rollingSummary.compacted++

@@ -150,24 +150,28 @@ func (w *Worker) executeAgent(issuePath string) (int, error) {
 		return runner(issuePath), nil
 	}
 
-	// 生产默认：exec zerg-agent
+	// 生产默认：exec zerg-agent —— 走统一入口（限额 ＋ 自成进程组 ＋ 到点整组两段收尾）。
 	ctx, cancel := context.WithTimeout(context.Background(), workerTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "zerg-agent", "-issue", issuePath)
+	cmd := boundedExec(ctx, "zerg-agent", "-issue", issuePath)
 	cmd.Dir = w.workDir
 
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	if err := cmd.Run(); err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
+	runErr := cmd.Run()
+	if ctx.Err() != nil {
+		terminateChildTree(cmd) // 到点：整组 TERM → 宽限 → 整组 KILL（zerg-agent 再 fork 的孙件不漏）
+	}
+	if runErr != nil {
+		if exitErr, ok := runErr.(*exec.ExitError); ok {
 			log.Printf("🐛 zerg-agent failed with exit code %d (issue: %s)", exitErr.ExitCode(), issuePath)
 			return exitErr.ExitCode(), nil // 退出码不是 0 = 失败（正常路径）
 		}
-		log.Printf("🐛 zerg-agent execution error (not an exit-code error): %v", err)
-		return -1, fmt.Errorf("failed to execute zerg-agent: %w", err)
+		log.Printf("🐛 zerg-agent execution error (not an exit-code error): %v", runErr)
+		return -1, fmt.Errorf("failed to execute zerg-agent: %w", runErr)
 	}
 
 	return 0, nil
