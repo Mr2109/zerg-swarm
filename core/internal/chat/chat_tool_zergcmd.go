@@ -205,7 +205,7 @@ type zergCmdFamily struct {
 var zergCmdFamilies = []zergCmdFamily{
 	{"gap", 32},
 	{"agent", 22},
-	{"gate", 18},
+	{"gate", 19},
 	{"model", 14},
 	{"egg", 13},
 	{"task", 13},
@@ -245,7 +245,7 @@ var zergCmdFamilies = []zergCmdFamily{
 	{"ci", 1},
 	{"config", 1},
 	{"deploy", 1},
-	{"doctor", 1},
+	{"doctor", 2},
 	{"find", 1},
 	{"impact", 1},
 	{"isolate-ro", 1},
