@@ -184,6 +184,7 @@ var gateCheckGoEntry = map[string]func(stdout, stderr io.Writer, argv []string) 
 	"fleet-logs":                            fleetLogsGateMain,
 	"gate-check-health":                     gateCheckHealthMain,
 	"gate-report":                           gateReportMain,
+	"build-apps":                            gatewayBuildGateMain,
 	"gen-cli-reference":                     genCliReferenceGateMain,
 	"gen-gap-ledger":                        genGapLedgerGateMain,
 	"gen-glossary-exports":                  genGlossaryExportsGateMain,

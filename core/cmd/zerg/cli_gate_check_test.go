@@ -375,8 +375,11 @@ func TestGateCheckGoEntryTableComplete(t *testing.T) {
 	//	~/.zerg/state/zerg-cli-gaps.jsonl ＋ 清单件 scripts/gates/bucket-zero-close.json；
 	//	0=清单桶全归零 1=有桶未归零/白名单过期或空转 2=取数面拿不到 · 在盘无同名 py 件
 	//	⇒ 名解析走 inproc 兜底）⇒ 195→196。
-	if got := len(gateCheckGoEntry); got != 197 {
-		t.Fatalf("进程内 Go 表项数要 == 197，得到 %d", got)
+	// ★ 2026-10-22（缺口 GAP-20261015-01 · allgo01）：`gateway/install.sh` 真搬 Go
+	//	（build-apps · 见 core/cmd/zerg/gateway_build.go · 键 build-apps —— ★ 不改名则键 `install`
+	//	会与 publish/install.sh 撞键，把未搬的那件一起读成绿）⇒ 197→198。
+	if got := len(gateCheckGoEntry); got != 198 {
+		t.Fatalf("进程内 Go 表项数要 == 198，得到 %d", got)
 	}
 	// ★ 放宽（2026-10-07 退役批）：旧不变量「表键必在名录」⇒「表键 ⇒ 名录 **或** inproc 键 二者其一」。
 	//   退役件（py 已 `git rm`）只余 inproc 那一路（family_gate_check.go 的 inproc 兜底 ⇒ rc=0）；

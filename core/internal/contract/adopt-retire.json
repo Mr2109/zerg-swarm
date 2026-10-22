@@ -1543,13 +1543,6 @@
    "review_date": "2026-10-07"
   },
   {
-   "object": "gateway/install.sh",
-   "category": "本机物件",
-   "reason": "未 Go 化：本机三件套构建",
-   "keep_cost": "随机型同步",
-   "review_date": "2026-10-07"
-  },
-  {
    "object": "gateway/tests/fixtures/mock_backend.py",
    "category": "测试夹具",
    "reason": "未 Go 化：夹具假后端",
