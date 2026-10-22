@@ -52,6 +52,7 @@ var gateCheckGoEntry = map[string]func(stdout, stderr io.Writer, argv []string) 
 	"check-doc-freshness":                   checkDocFreshnessGateMain,
 	"check-doc-meta":                        checkDocMetaGateMain,
 	"check-doc-name":                        checkDocNameGateMain,
+	"check-doc-number-live":                 checkDocNumberLiveGateMain,
 	"check-doc-section-numbers":             checkDocSectionNumbersGateMain,
 	"check-docs-orphans-links":              checkDocsOrphansLinksGateMain,
 	"check-dryrun-semantics":                checkDryrunSemanticsGateMain,
