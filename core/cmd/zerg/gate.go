@@ -104,7 +104,7 @@ func gateLSRejectFlags(tail []string, stderr io.Writer) int {
 // 「最小入口」前置。其余动作（`ls`/`run`/`show`/`find`/`self-test` 等真要脚本的）行为**一字不改**。
 func gateActionNeedsScript(action string) bool {
 	switch action {
-	case "check", "results":
+	case "check", "results", "baseline":
 		return false
 	}
 	return true
@@ -355,6 +355,12 @@ func cmdGate(inv *invocation, stdout, stderr io.Writer) int {
 		// 不写不删任何日志）。本动作**不走脚本**（脚本没有这个动作）⇒ 是第四条命令面分支，
 		// 与 `run --step --json` / `show --json` 同规：只在命令面自己的旗标上生效。
 		return gateResults(inv, stdout, stderr, root)
+	case "baseline":
+		// ★ Q-125（本枚）：中间节点 `gate baseline` 下的只读呈现面 `gate baseline show`。
+		//   读路径 = 本包 `baseline_ratchet.go` 的 brConditions/brCollect/brLoadLedger/brLastEntryFor
+		//   （✗ 不另造第二套基线读取）；**不走脚本**、不 exec 自举件 ⇒ 公开树（`scripts/gates/**`
+		//   被排除的那种树）里这条动作照常可跑。判决与退码全在实现件里，这里只分派。
+		return gateBaselineShow(inv, stdout, stderr, root)
 	case "check":
 		// ★ v2.5.14 · M1 首项（设计-判据 CLI 化-v1.7 §9.1）：**判据转发壳**。
 		// 判据名 ⇒ 件 的**保守**解析（名录真源 = 现读 `scripts/gates/` 目录列举）＋ 逐字透传；

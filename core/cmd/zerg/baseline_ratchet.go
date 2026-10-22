@@ -910,17 +910,26 @@ func brAppendLedger(root string, entry *brObj) *string {
 }
 
 // ── 判 ───────────────────────────────────────────────────────────────────────
-func brVerdictOf(cond brCond, curVal *int, curSha *string, entries []map[string]any) (string, string) {
-	var es []map[string]any
+// brLastEntryFor —— 该条件在台账里的**最后一条**记录（没有 ⇒ nil）。
+//
+// ★ 单一口径（Q-125）：判面（`brVerdictOf`）与只读呈现面（`zerg gate baseline show` 的
+// 「基线值」列 / 「差」列）都读这一处 —— 两条面各写一遍「按 name 过滤、取末条」就是**第二套
+// 基线读取口径**（本仓明令不许：读棘轮现状只许走这一件）。
+func brLastEntryFor(entries []map[string]any, name string) map[string]any {
+	var last map[string]any
 	for _, e := range entries {
-		if s, ok := e["name"].(string); ok && s == cond.name {
-			es = append(es, e)
+		if s, ok := e["name"].(string); ok && s == name {
+			last = e
 		}
 	}
-	if len(es) == 0 {
+	return last
+}
+
+func brVerdictOf(cond brCond, curVal *int, curSha *string, entries []map[string]any) (string, string) {
+	last := brLastEntryFor(entries, cond.name)
+	if last == nil {
 		return "red", "无记录：件里这个棘轮数字**一条台账记录都没有** ⇒ 判红（`R-03`）"
 	}
-	last := es[len(es)-1]
 	if curVal == nil || !brNumEquals(last["new"], *curVal) {
 		return "red", fmt.Sprintf("现值 %s ≠ 台账最后一条 new %s ⇒ 有一条**没记录的手改** ⇒ 判红（改动只许走 `--write`）",
 			brStrOfInt(curVal), brPyRepr(last["new"]))

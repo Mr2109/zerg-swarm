@@ -303,8 +303,14 @@ func run(args []string, stdout, stderr io.Writer) int {
 	//   命令**在册** ⇒ 出该条**用法串**（不再打全局树）· **不起命令**（零副作用）· 退 `0`。
 	//   第二态（命令不在册）在上面那条「未知命令」分支：stderr 首行逐字 `未知命令 …` · 退 `2`。
 	//   两态**同族同码**：`zerg frobnicate --help` 与 `zerg frobnicate` 都退 `2`、首行同为 `未知命令`。
-	if inv.wantHelp {
+	if inv.wantHelp && !passthroughChildHelp(cmd, inv, rest) {
 		return cmdUsageHelp(cmd, stdout)
+	}
+	if inv.wantHelp {
+		// ★ 本笔：走到这里 = 透传型命令 + `-h` + 已点名子件目标 ⇒ **`-h` 交给子件**。
+		//   清掉 wantHelp（下面不再有读者，但别留一个「要帮助」的假信号）；`-h` 本身仍在
+		//   `inv.orig` 里 —— 透传壳（如 `gate check` 的 `inv.orig[2:]`）逐字转发，子件自己印 usage。
+		inv.wantHelp = false
 	}
 	inv.path = cmd.path
 	inv.args = append(rest, inv.args...)
@@ -802,7 +808,13 @@ type command struct {
 	// ⇒ 它们在帮助面/导出面**不算「已开放」**（口径 = `openedForRun`，见该函数）。
 	refuses     bool
 	passthrough bool // 原样透传型（gate 族）：旗标与位置参数逐字交给被包的脚本
-	run         func(*invocation, io.Writer, io.Writer) int
+	// childHelp：透传型里的**子件帮助透传档** —— 给了 `-h`（短形）且已点名子件目标时，
+	// `-h` 交给子件印它自己的 usage；`--help`（长形）**永远**出该条命令的族帮助。
+	// 缺省 `false` = 现行行为（`-h` 与 `--help` 一样出族帮助）。★ 只给「`-h` 本身就是纯帮助」
+	// 的转发壳开（`gate check`）—— 跑真门/真动作的命令（`gate run` 等）不许开：
+	// `-h` 漏进子件 = 把「问帮助」变成「真干一次」。
+	childHelp bool
+	run       func(*invocation, io.Writer, io.Writer) int
 }
 
 // openedForRun —— 这条命令**今天真跑能不能执行**（帮助面 / 导出面「已开放」计数的**唯一**口径）。
@@ -1088,6 +1100,28 @@ func init() {
 			endpoint:  "",
 			run:       cmdGate,
 		},
+		// ---- Q-125（本枚 · 只增）：棘轮基线的**只读呈现面** `zerg gate baseline show` ----
+		// 病根：命令树里没有 `baseline` 这个节点 ⇒ `zerg gate baseline show` 落到「族名/中间节点」
+		//   分支（rc=2），而读棘轮现状只有 `gate check baseline-ratchet --view`（名词 = 判据件名）。
+		// 本动作挂既有 `gate` 族（中间段 `baseline` · 三段路径 `resolve()` 已支持），**不新开族**。
+		// ★ 读路径 = `baseline_ratchet.go` 的 brConditions/brCollect/brLoadLedger/brLastEntryFor
+		//   （与 `gate check baseline-ratchet` **同一引擎** ⇒ 不许另造第二套基线读取）。
+		// ★ 不走脚本（`gateActionNeedsScript` 已把 `baseline` 归入「不 exec 自举件」那一档）⇒
+		//   公开树（排除 `scripts/gates/**`）里照常可跑。
+		// ★ `fields:` 必须写成 `[]string{…}` **字面量**（契约脚本 `FIELDS_RE` 只认字面量）。
+		//   八格里后两格（`ledger_value` / `delta`）是本动作的**派生列**，前六格与 `--view --json`
+		//   的 rows 同名同义 ⇒ 两个机器面可逐字段对拍。
+		{
+			path:     []string{"gate", "baseline", "show"},
+			kind:     "GateBaselineShow",
+			summary:  "只读：棘轮基线**现读值 × 台账基线值 × 差**（逐条件 · 不带名 = 全部）· 读路径 = 同族 `gate check baseline-ratchet` 的同一套引擎（✗ 不另造第二套读取）",
+			usage:    "zerg gate baseline show [<条件名>] [--json <字段>] [--root <目录>]",
+			arity:    "any",
+			args:     []string{"条件名（可省；省 = 全部条件。点错名 ⇒ 2 + 可用清单 = 条件表现读）"},
+			fields:   []string{"name", "gate", "file", "value", "ledger_value", "delta", "verdict", "verdict_text"},
+			endpoint: "",
+			run:      cmdGate,
+		},
 		{
 			path:        []string{"gate", "self-test"},
 			summary:     "门禁自检（合成步骤 · 不碰真目标）",
@@ -1129,6 +1163,10 @@ func init() {
 			// ★ 必须写成 `[]string{…}` **字面量**（契约脚本的 `FIELDS_RE` 只认字面量；
 			//   抽成变量 = 该条被读成「没有字段表」）—— 与 `net probe` / `publish tree has` 同一条纪律。
 			fields: []string{"count", "resolved", "dry_run", "entries"},
+			// ★ 本笔（缺口：`zerg gate check <判据名> -h` 被命令树截成族帮助）：`-h` 短形**透传给子件**
+			//   ⇒ 子件自己的 usage 在 CLI 上可达；`--help` 长形仍是本条的族帮助（判据在 `passthroughChildHelp`）。
+			//   只本条开：`gate run` 这类「跑真门」的透传命令**不许**开，否则 `-h` 会变成真干一次。
+			childHelp: true,
 			// ★ 写工具危险档（M1 批B）：件头 `#zerg-class: write D2|D3` ⇒ 壳侧 exec 前强制确认档。
 			// 取**最坏档 D3** 登记（写工具里最坏是不可逆；命令树一格只能写一档 ⇒ 取最坏）；
 			// `ChecksConfirm: true` = 实现真读 `--confirm`（family_gate_check.go 的写工具闸 · 真读才印）。
@@ -5184,10 +5222,18 @@ type invocation struct {
 	jsonGiven bool
 	fields    []string
 
-	plain       bool
-	wantHelp    bool
-	wantVersion bool
-	tty         bool // stdout 是不是终端（行式面/人面的分档依据 · §九 M14）
+	plain    bool
+	wantHelp bool
+	// ★ 本笔：`-h` 与 `--help` **分开记**（修「`zerg gate check <判据名> -h` 被命令树截成族帮助」）。
+	//   解析面此前把两枚并成同一个 `wantHelp` ⇒ 透传型命令（`passthrough: true`）的**子件**永远
+	//   收不到 `-h`：`gate check` 壳逐字转发的是 `inv.orig[2:]`，可派发层在 `run` 里先被
+	//   `if inv.wantHelp { return cmdUsageHelp(...) }` 截住，子件 usage 在 CLI 上一律不可达。
+	//   两枚**语义分开**（判据在 `passthroughChildHelp`）：`--help` 仍是该条命令的族帮助面
+	//   （既有行为一字不动），`-h` 在「透传型 + 已点名子件目标」时交给子件。
+	wantHelpShort bool // 只由 `-h` 置位
+	wantHelpLong  bool // 只由 `--help` 置位
+	wantVersion   bool
+	tty           bool // stdout 是不是终端（行式面/人面的分档依据 · §九 M14）
 
 	// 原样透传用：命令行原样（含未知旗标）+ 这一轮见过的未知旗标（非透传命令要据此报错）
 	orig    []string
@@ -5760,8 +5806,17 @@ func parseInvocation(args []string) (*invocation, error) {
 				inv.kvSet("--after", v)
 				inv.kvSet("--before", v)
 			}
+		// ★ 本笔：两枚**合并成一条 case 行是故意的**（门73 的取数面按 `case a == "--x"` 逐条现读，
+		//   拆成两支会多出一枚未在用法串登记的短形）—— 语义在块内按字面分：长形 = 族帮助面，
+		//   短形 = 可交给子件（判据在 `passthroughChildHelp`）。`zerg -h` / `zerg gate -h` 的
+		//   裸形语义**不变**（两枚都置 `wantHelp`）。
 		case a == "--help" || a == "-h":
 			inv.wantHelp = true
+			if a == "-h" {
+				inv.wantHelpShort = true
+			} else {
+				inv.wantHelpLong = true
+			}
 		case a == "--version":
 			inv.wantVersion = true
 		// ★ 户口登记（2026-10-05 · 缺口账 `GAP-20261005-60` 剩面）：`gap reread --include-open`
@@ -7039,6 +7094,29 @@ func cmdVersion(inv *invocation, stdout, stderr io.Writer) int {
 // 专题，命令树里绝大多数命令不在其中；本函数读的就是 `command` 那几格（加一条命令只改一处），
 // 且 `stdout` **不含**全局头行（`helpText()` 第 1 行）—— 这正是「`--help` 能不能当存在性判据」
 // 的分水岭（设计稿 `设计-CLI机器读面-v1.0` §1.3 坑 1/2）。
+
+// passthroughChildHelp —— `-h` 该不该**交给子件**（而不是被命令树截成族帮助）。
+//
+// 三格同时成立才透传：
+//
+//	① `cmd.childHelp`（**逐条点名**的透传档 —— 缺省 ✗ 不透传：`gate run` 这类「跑真门」的命令
+//	   里 `-h` 一旦漏给子件就会**真跑一门**，那是拿帮助面换副作用，不许默认开）；
+//	② 短形 `-h` 且**没有**长形 `--help`（`--help` 永远是该条命令的族帮助面 —— 既有行为一字不动）；
+//	③ 命令路径之后**还剩位置参数**（= 已点名子件目标；`zerg gate check -h` 这种没点名的不算，
+//	   仍出族帮助、退 0）。
+//
+// 为什么必须在这里分：`gate check` 壳转发的是 `inv.orig[2:]`（用户敲在 `gate check` 之后的**一切**），
+// `-h` 本来就在里面 —— 唯一把子件 usage 挡在门外的就是派发层那一格 `if inv.wantHelp`。
+func passthroughChildHelp(cmd *command, inv *invocation, rest []string) bool {
+	if cmd == nil || !cmd.childHelp || !cmd.passthrough {
+		return false
+	}
+	if !inv.wantHelpShort || inv.wantHelpLong {
+		return false
+	}
+	return len(rest) > 0
+}
+
 func cmdUsageHelp(cmd *command, stdout io.Writer) int {
 	usage := strings.TrimSpace(cmd.usage)
 	if usage == "" {

@@ -12661,6 +12661,60 @@
    "want_rc": 2,
    "want_stdout_bytes": 0,
    "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "gate/baseline/show#未知旗标",
+   "command": "gate baseline show",
+   "argv": [
+    "gate",
+    "baseline",
+    "show",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判 —— 不读条件表、不读台账、不打任何基线值"
+  },
+  {
+   "id": "gate/baseline/show#不认的契约主号",
+   "command": "gate baseline show",
+   "argv": [
+    "gate",
+    "baseline",
+    "show",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "不认的契约主号 ⇒ 执行前判拒绝（本版只认 zerg/v1）· 跑不到取数面"
+  },
+  {
+   "id": "gate/baseline/show#多余位置参数",
+   "command": "gate baseline show",
+   "argv": [
+    "gate",
+    "baseline",
+    "show",
+    "a",
+    "b"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "本命令只收**一个**条件名（`arity` 窄口）⇒ 多给即用法错 · 不给「随便挑一个」的静默回落"
+  },
+  {
+   "id": "gate/baseline/show#--root 缺值",
+   "command": "gate baseline show",
+   "argv": [
+    "gate",
+    "baseline",
+    "show",
+    "--root"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "`--root` 给了但没给值 ⇒ 用法错（照 `gate run --root` 先例 · ✗ 不静默回落本仓）"
   }
  ],
  "tiers": {
