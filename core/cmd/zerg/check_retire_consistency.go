@@ -3,6 +3,22 @@
 //
 // 义（缺口逐字）：凡 `retire_ledger` 已登记且**不在盘**的件，不得在任何登记/排除面留**悬空行**。
 //
+// ★ 义·第二半（2026-10-22 · 补缺口「已退场却仍在盘被静默跳过」）：台账已登记**退场**的件若**仍在盘**，
+// 同样必须**逐件点名**（rc=1）；✗ 不许因为「进不了 absSet」就整条从扫描面上消失（本缺口的成因：
+// 旧读的扫描域 = 退件 ∧ 不在盘 ⇒ 在盘者既不点名也不计数；`state` 一词在读账时被整列丢掉）。
+//
+// 分档（真源 = 台账 `state` **首词** · 闭集见 adopt_retire_test 判据④）：
+//
+//	甲 `已删`       = 断言**已不在盘** ⇒ 在盘 = 台账撒谎（硬矛盾 · 点名）。
+//	乙 `已登记退场` = 只登记、不代管真删（决-01）⇒ **在盘即点名**：要么同批删件、要么摘掉台账该条
+//	                 （「未退场」不是合法态词 —— 台账只收退场件 ⇒ 摘条才是「改回未退」的落地形态）。
+//	丙 `待删`       = 断言**在盘**（等真删）⇒ 在盘即合规；「不在盘」由判据④ 钉（✗ 本门重复判）。
+//	丁 其他态词     = 闭集外 ∧ **在盘** ⇒ 点名（✗ 不许把「看不懂的态词」静默当「不表态」；
+//	                 闭集**形态**本身由判据④ 判 —— 本门只管「在盘」这一半）。
+//
+// 白名单 `crcPresentKeeps` 只收**有意留底**的件：逐条类别 ＋ 理由 ＋ **到期日**，到期即失效并重新点名。
+// ✗ 不为这一档设棘轮基线（存量基线 = 这批件永久绿着潜伏 —— 那正是本缺口的形态）。
+//
 // 口径参照（✗ 另起语汇）：门75「戊 件面现读存在性」（Go 半 `check_gap_axis_reconcile.go` 的
 //
 //	gapAxisRecExistenceHits）—— 存在性 = **现读** `git -C <仓> ls-files -z`（无缓存）；命中词汇
@@ -12,7 +28,8 @@
 //
 // ★ 本件已接线（inproc 表分派）（不改 main.go 命令树 · 不删 py 原件）。inproc 键登记见 gate_inproc_table.go。
 //
-// 退码（与 py 逐字同）：0 无**新**悬空（存量棘轮内） · 1 有新悬空（tri-report ⇒ 落 REPORT） ·
+// 退码：0 无**新**悬空 且 无「已退场却仍在盘」 ·
+// 1 有新悬空 或 有「已退场却仍在盘」（tri-report ⇒ 落 REPORT · 逐件点名） ·
 //
 //	2 取数面拿不到（账本读不了 / git ls-files 失败 ⇒ 不给结论）。
 package main
@@ -27,11 +44,12 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 )
 
 const crcTool = "check-retire-consistency.py"
 const crcVersion = "v1.0.0"
-const crcGateName = "退件↔登记/排除面 一致性（retire_ledger 已退且不在盘者不得留悬空行）"
+const crcGateName = "退件↔登记/排除面 一致性（retire_ledger 已退：不在盘者不得留悬空行 · 在盘者逐件点名）"
 const crcLedgerRel = pathAdoptRetireJSON
 
 const (
@@ -39,6 +57,36 @@ const (
 	crcRCReport = 1 // 有新悬空（tri-report ⇒ 落 REPORT）
 	crcRCBlock  = 2 // 取数面拿不到 ⇒ 不给结论
 )
+
+// ── 台账态词（state **首词** · 闭集真源见 adopt_retire_test 判据④ {已删|待删|已登记退场}）──────
+const (
+	crcStateDeleted    = "已删"    // 甲：断言已不在盘
+	crcStatePending    = "待删"    // 丙：断言仍在盘（等真删）
+	crcStateRegistered = "已登记退场" // 乙：只登记（正门只做登记面 · 决-01）
+)
+
+// ── 档位名（渲染与自检断言共用一格串 ⇒ ✗ 两处各写一份字面）──────────────────────
+const (
+	crcTierDeleted    = "甲·已删（断言不在盘）"
+	crcTierRegistered = "乙·已登记退场（在盘即红）"
+	crcTierPending    = "丙·待删（断言在盘）"
+	crcTierUnknown    = "丁·态词不可识别"
+)
+
+// crcStateTier —— 态词 ⇒ 档（按**首词**比，日期在括号里 ⇒ 用 HasPrefix）。
+func crcStateTier(state string) string {
+	s := strings.TrimSpace(state)
+	switch {
+	case strings.HasPrefix(s, crcStateDeleted):
+		return crcTierDeleted
+	case strings.HasPrefix(s, crcStateRegistered):
+		return crcTierRegistered
+	case strings.HasPrefix(s, crcStatePending):
+		return crcTierPending
+	default:
+		return crcTierUnknown
+	}
+}
 
 // ── 例外白名单：有意保留的 (surface_id, ref) + 逐条理由（✗ 非静默跳过）───────────
 type crcKeep struct{ sid, ref, reason string }
@@ -53,6 +101,24 @@ var crcKeeps = []crcKeep{}
 var crcBaseline = [][2]string{
 	// ★ 2026-10-08 清理批（GAP-20261008-05）：首读收的 3 对（registry 9 条 + 两器 4 条）已逐面**摘行清空**
 	//   ⇒ 棘轮基线**同步到新值 = 空**（照现读机制：表外的才是「悬空」；清完悬空/存量均 0）。
+}
+
+// ── 「已退场却仍在盘」白名单：**有意留底**的件（类别 ＋ 理由 ＋ 到期日 · ✗ 非静默跳过）────────
+//
+// 准入三条（缺一不准入）：① 件必须**仍有用途**（如两态对拍的 sh 底片 / 对外发布面要发的历史件）；
+// ② 写明**到期日**；③ 到期日（含当天）之后该条**自动失效** —— 重新按红点名，留底不许无声续命。
+// 到期日留空 ⇒ 按**已过期**处理（fail-closed：白名单不给自己开口子）。
+//
+// ★ 首读现读（2026-10-22 · 台账 192 条 · 在盘 2 件）：**空表**。那两件没有任何「有意保留」的证据
+// （`real-gates.sh` 的 SH_TABLE/SH_GATES 仍列着它们 = 同批未收尾，✗ 不是留底）⇒ 不预置条目。
+var crcPresentKeeps = []crcPresentKeep{}
+
+// crcPresentKeep —— 一条在盘留底登记。
+type crcPresentKeep struct {
+	object   string // 台账 `object` 逐字（✗ 通配：留底是逐件的事）
+	category string // 留底类别（如「两态对拍底片」「对外发布面」）
+	reason   string // 为什么必须留在盘
+	until    string // 到期日 YYYY-MM-DD（含当天仍有效 · 空 = 立即失效）
 }
 
 // ── 九面（面 ④「两器」= 一件面两件 ⇒ 恰八面 ＋ 2026-10-08 切源补第 ⑨ 面 = 行式排除表）──────
@@ -404,7 +470,12 @@ func crcGitTracked(root string) (map[string]bool, string) {
 	return set, ""
 }
 
-func crcLoadLedger(root string) (retired []string, exceptions []string, errMsg string) {
+// crcLedgerRow —— 台账一条：`object` 逐字 ＋ `state` 逐字。
+//
+// ★ 旧读只取 `object`、把 `state` 整列丢掉 ⇒ 分不了档，「已删」与「已登记退场」在本门眼里等价。
+type crcLedgerRow struct{ object, state string }
+
+func crcLoadLedger(root string) (retired []crcLedgerRow, exceptions []string, errMsg string) {
 	path := filepath.Join(root, crcLedgerRel)
 	if _, err := os.Stat(path); err != nil {
 		return nil, nil, "账本不在盘：" + crcLedgerRel
@@ -421,7 +492,8 @@ func crcLoadLedger(root string) (retired []string, exceptions []string, errMsg s
 		for _, e := range l {
 			if m, ok := crcAsMap(e); ok {
 				if s, ok := m["object"].(string); ok && s != "" {
-					retired = append(retired, s)
+					st, _ := m["state"].(string)
+					retired = append(retired, crcLedgerRow{object: s, state: st})
 				}
 			}
 		}
@@ -436,6 +508,25 @@ func crcLoadLedger(root string) (retired []string, exceptions []string, errMsg s
 		}
 	}
 	return retired, exceptions, ""
+}
+
+// crcOnDisk —— 现读**文件面**存在性（`test -e` 同义）。
+//
+// ✗ 不拿 `git ls-files` 代：**未跟踪残片**同样是「还在盘」（删了一半 / `.gitignore` 兜住都不算退场）。
+func crcOnDisk(root, rel string) bool {
+	if rel == "" {
+		return false
+	}
+	if _, err := os.Lstat(filepath.Join(root, filepath.FromSlash(rel))); err == nil {
+		return true
+	}
+	// 目录前缀形态（台账若登 `scripts/x/`）：其下目录仍在盘 ⇒ 算在盘。
+	if strings.HasSuffix(rel, "/") {
+		if st, err := os.Stat(filepath.Join(root, filepath.FromSlash(strings.TrimSuffix(rel, "/")))); err == nil && st.IsDir() {
+			return true
+		}
+	}
+	return false
 }
 
 func crcIsDangling(ref string, absent map[string]bool) bool {
@@ -460,14 +551,30 @@ type crcSurfaceResult struct {
 }
 type crcReport struct {
 	trackedN, retiredN, exceptionsN int
+	deletedN, registeredN, pendingN int    // 台账态词分档计数（甲/丙/乙）
+	otherStateN                     int    // 丁：闭集外态词
+	today                           string // 现读「今天」（白名单到期判定 · 渲染与 --json 同源一处）
 	absent                          []string
 	perSurface                      []crcSurfaceResult
 	dangling                        [][3]string // sid,label,ref
 	stock                           [][3]string
 	exempt                          [][3]string // sid,ref,reason
+	present                         []crcPresentRow
+	presentKept                     [][4]string // object,category,reason,until
+	presentExpired                  [][4]string // object,category,reason,until
 }
 
-func crcCompute(root string, tracked map[string]bool, retired, exceptions []string, basePairs [][2]string) crcReport {
+// crcPresentRow —— 「台账已退场 · 件仍在盘」逐件一行（✗ 只给条数：条数相同而件不同 = 点名失效）。
+type crcPresentRow struct {
+	object, state, tier string
+	tracked             bool
+}
+
+func crcCompute(root string, tracked map[string]bool, rows []crcLedgerRow, exceptions []string, basePairs [][2]string, keeps []crcPresentKeep, today string) crcReport {
+	retired := make([]string, 0, len(rows))
+	for _, r := range rows {
+		retired = append(retired, r.object)
+	}
 	absSet := map[string]bool{}
 	for _, p := range retired {
 		if !tracked[p] {
@@ -497,6 +604,48 @@ func crcCompute(root string, tracked map[string]bool, retired, exceptions []stri
 	rep.retiredN = len(retired)
 	rep.exceptionsN = len(exceptions)
 	rep.absent = absent
+	rep.today = today
+
+	// ── 第二半（本缺口的正题）：台账已登记退场/已删，件却**仍在盘** ⇒ 逐件点名，✗ 不进 absSet 就消失 ──
+	keepObj := map[string]crcPresentKeep{}
+	for _, k := range keeps {
+		keepObj[k.object] = k
+	}
+	for _, r := range rows {
+		tier := crcStateTier(r.state)
+		switch tier {
+		case crcTierDeleted:
+			rep.deletedN++
+		case crcTierRegistered:
+			rep.registeredN++
+		case crcTierPending:
+			rep.pendingN++
+		default:
+			rep.otherStateN++
+		}
+		if tier == crcTierPending {
+			continue // 丙 = 断言**在盘**（等真删）⇒ 在盘即合规（「不在盘」由判据④ 钉 · ✗ 本门重复判）
+		}
+		if !crcOnDisk(root, r.object) {
+			continue
+		}
+		if k, ok := keepObj[r.object]; ok {
+			switch {
+			case k.until == "":
+				// 白名单不给自己开口子：没写到期日 ⇒ 当场算过期。
+				rep.presentExpired = append(rep.presentExpired, [4]string{r.object, k.category, k.reason, "（未登记到期日）"})
+			case today <= k.until:
+				rep.presentKept = append(rep.presentKept, [4]string{r.object, k.category, k.reason, k.until})
+				continue
+			default:
+				rep.presentExpired = append(rep.presentExpired, [4]string{r.object, k.category, k.reason, k.until})
+			}
+		}
+		rep.present = append(rep.present, crcPresentRow{
+			object: r.object, state: r.state, tier: tier, tracked: tracked[r.object],
+		})
+	}
+
 	for _, s := range crcSurfaces {
 		var refs []string
 		var rels []string
@@ -570,6 +719,39 @@ func crcRender(rep crcReport, unknown string) string {
 	out = append(out, "取数面 : "+crcLedgerRel)
 	out = append(out, fmt.Sprintf("现读   : git ls-files 共 %d 件 ｜ retire_ledger %d 条 ｜ retire_exceptions %d 条 ｜ 已退且不在盘 %d 件",
 		rep.trackedN, rep.retiredN, rep.exceptionsN, len(rep.absent)))
+	out = append(out, fmt.Sprintf("退场面 : 台账 %d 条 ＝ 甲·已删 %d ／ 丙·待删 %d ／ 乙·已登记退场 %d ／ 丁·态词不可识别 %d",
+		rep.retiredN, rep.deletedN, rep.pendingN, rep.registeredN, rep.otherStateN))
+	out = append(out, fmt.Sprintf("         ｜ 已退场却**仍在盘** %d 件（✗ 不许静默跳过）｜ 留底白名单 %d 条 ｜ 白名单过期 %d 条",
+		len(rep.present), len(rep.presentKept), len(rep.presentExpired)))
+	if len(rep.present) > 0 {
+		out = append(out, "")
+		out = append(out, "✗ 已登记退场却仍在盘（逐件点名 · 二选一：删件 ／ 摘台账条）：")
+		for _, p := range rep.present {
+			where := "未跟踪残片（盘上有 · git 未收）"
+			if p.tracked {
+				where = "git 已跟踪"
+			}
+			out = append(out, "      · "+p.object)
+			out = append(out, fmt.Sprintf("          档=%s ｜ 态词=%s ｜ %s", p.tier, p.state, where))
+			out = append(out, "          ⇒ ① 同批删件：`git rm` 该件 ＋ 摘 `scripts/gates/real-gates.sh` 的 SH_TABLE/SH_GATES 两处"+
+				" ＋ 摘 `check_bypass_idioms.go` 里它的内容锚登记 ＋ 摘九面登记行 ＋ 台账 state 改「已删（日期）」")
+			out = append(out, "             ② 摘掉台账这一条（= 改回「未退场」；台账只收退场件 ⇒ 没有「未退」态词，摘条即落地形态）")
+		}
+	}
+	if len(rep.presentKept) > 0 {
+		out = append(out, "")
+		out = append(out, "有意留底（白名单 · 带到期日 · 到期即失效 · ✗ 非静默跳过）：")
+		for _, k := range rep.presentKept {
+			out = append(out, fmt.Sprintf("  · %s —— [%s] %s（到期 %s）", k[0], k[1], k[2], k[3]))
+		}
+	}
+	if len(rep.presentExpired) > 0 {
+		out = append(out, "")
+		out = append(out, "✗ 白名单**已过期/无效**（留底理由不再成立 ⇒ 按红逐件点名）：")
+		for _, k := range rep.presentExpired {
+			out = append(out, fmt.Sprintf("  · %s —— [%s] %s（到期 %s ＜ 今天 %s）", k[0], k[1], k[2], k[3], rep.today))
+		}
+	}
 	out = append(out, "")
 	totalNew, totalStock := 0, 0
 	for _, s := range rep.perSurface {
@@ -601,7 +783,8 @@ func crcRender(rep crcReport, unknown string) string {
 		}
 	}
 	out = append(out, "")
-	out = append(out, fmt.Sprintf("合计 : 新悬空 %d 行 ｜ 存量（棘轮内）%d 行 ｜ 例外 %d 行", totalNew, totalStock, len(rep.exempt)))
+	out = append(out, fmt.Sprintf("合计 : 新悬空 %d 行 ｜ 存量（棘轮内）%d 行 ｜ 例外 %d 行 ｜ 在盘 %d 件 ｜ 白名单过期 %d 条",
+		totalNew, totalStock, len(rep.exempt), len(rep.present), len(rep.presentExpired)))
 	if len(rep.exempt) > 0 {
 		out = append(out, "")
 		out = append(out, "例外/白名单（逐条理由 · ✗ 非静默跳过）：")
@@ -610,7 +793,7 @@ func crcRender(rep crcReport, unknown string) string {
 		}
 	}
 	out = append(out, "")
-	out = append(out, "档 : tri-report（只报告 · 新悬空 rc=1 落 REPORT · ✗ 不阻断）")
+	out = append(out, "档 : tri-report（只报告 · 新悬空或「已退场仍在盘」rc=1 落 REPORT · ✗ 不阻断）")
 	if unknown != "" {
 		out = append(out, "✗ 取数面拿不到："+unknown+" ⇒ **不给结论**（rc=2）")
 	}
@@ -627,6 +810,31 @@ func crcBaselineTSV(rep crcReport) string {
 	}
 	out = append(out, fmt.Sprintf("TOTAL\t_\t%d\t%d\t%d", len(rep.dangling), len(rep.stock), len(rep.exempt)))
 	return strings.Join(out, "\n")
+}
+
+// crcTestToday —— 自检固定「今天」（白名单到期判定要用 · ✗ 拿 time.Now 让自检随日历变红）。
+const crcTestToday = "2026-10-22"
+
+// crcPresentKey —— 在盘点名的**一格串**（自检断言用 · 逐件 object｜档位｜tracked）。
+func crcPresentKey(rows []crcPresentRow) string {
+	parts := make([]string, 0, len(rows))
+	for _, r := range rows {
+		tr := "untracked"
+		if r.tracked {
+			tr = "tracked"
+		}
+		parts = append(parts, r.object+"｜"+r.tier+"｜"+tr)
+	}
+	return strings.Join(parts, ",")
+}
+
+// crcKeptKey —— 留底白名单的**一格串**（object｜category｜reason｜until）。
+func crcKeptKey(ks [][4]string) string {
+	parts := make([]string, 0, len(ks))
+	for _, k := range ks {
+		parts = append(parts, strings.Join([]string{k[0], k[1], k[2], k[3]}, "｜"))
+	}
+	return strings.Join(parts, ",")
 }
 
 // ── self-test（合成夹具 · 不碰真仓）───────────────────────────────────────────
@@ -704,7 +912,7 @@ func crcSelfTest(stdout io.Writer) int {
 	report("selftest·git 可取数", gerr, "")
 	ret, exc, lerr := crcLoadLedger(base)
 	report("selftest·账本可读", lerr, "")
-	rep := crcCompute(base, tracked, ret, exc, crcBaseline)
+	rep := crcCompute(base, tracked, ret, exc, crcBaseline, nil, crcTestToday)
 	report("selftest·absent 只 GONE.py", strings.Join(rep.absent, ","), "scripts/x/GONE.py")
 	report("selftest·新悬空行数（含 DROP_PREFIX 前缀命中）", fmt.Sprint(len(rep.dangling)), "5")
 	report("selftest·例外行数", fmt.Sprint(len(rep.exempt)), "0")
@@ -717,19 +925,83 @@ func crcSelfTest(stdout io.Writer) int {
 	// ★ 九面有牙：往排除表塞一条**已退且不在盘**的件 ⇒ 该面出新悬空（GONE.py 此时仍不在盘）。
 	_ = os.WriteFile(filepath.Join(base, filepath.FromSlash(exclRel)),
 		[]byte("# c\nscripts/x/LIVE.py\nscripts/x/GONE.py\n"), 0o644)
-	repX := crcCompute(base, tracked, ret, exc, crcBaseline)
+	repX := crcCompute(base, tracked, ret, exc, crcBaseline, nil, crcTestToday)
 	report("负控·排除表塞一条已退件 ⇒ 新悬空 6（九面有牙）", fmt.Sprint(len(repX.dangling)), "6")
 	_ = os.WriteFile(filepath.Join(base, filepath.FromSlash(exclRel)),
 		[]byte("# c\nscripts/x/LIVE.py\n"), 0o644) // 复原（不污染后续读数）
-	repB := crcCompute(base, tracked, ret, exc, [][2]string{{"marks", "scripts/x/GONE.py"}})
+	repB := crcCompute(base, tracked, ret, exc, [][2]string{{"marks", "scripts/x/GONE.py"}}, nil, crcTestToday)
 	report("selftest·棘轮命中 ⇒ 新悬空 4", fmt.Sprint(len(repB.dangling)), "4")
 	report("selftest·棘轮命中 ⇒ 存量 1", fmt.Sprint(len(repB.stock)), "1")
 	// 负控：把 GONE.py 造回盘 ⇒ 悬空归 0
 	_ = os.WriteFile(filepath.Join(base, filepath.FromSlash("scripts/x/GONE.py")), []byte{}, 0o644)
 	_ = exec.Command("git", "-C", base, "add", "-A").Run()
 	tracked2, _ := crcGitTracked(base)
-	rep2 := crcCompute(base, tracked2, ret, exc, crcBaseline)
+	rep2 := crcCompute(base, tracked2, ret, exc, crcBaseline, nil, crcTestToday)
 	report("负控·件造回盘 ⇒ 悬空 0", fmt.Sprint(len(rep2.dangling)), "0")
+
+	// ── ★ 在盘档（2026-10-22 · 本缺口正题）：台账已退场、件仍在盘 ⇒ **逐件点名** ────────────────
+	//   现读夹具：GONE.py（刚被造回盘）＋ GONE2.py（一开头就在盘）⇒ 两条都在盘・都写「已删」
+	//   ⇒ 甲档点名 2 件，且逐件带**档位**与 tracked（✗ 只给条数：条数对而件错 = 点名失效）。
+	report("负控·已删∧在盘 ⇒ 逐件点名 2 件", crcPresentKey(rep2.present),
+		"scripts/x/GONE.py｜"+crcTierDeleted+"｜tracked,scripts/x/GONE2.py｜"+crcTierDeleted+"｜tracked")
+	report("负控·在盘档点名 ⇒ 退码红", fmt.Sprint(crcRCOKorReport(rep2)), "1")
+
+	// 两态之一：把一件**移走** ⇒ 该条消（另一条仍在 · 退码仍红）。
+	_ = os.Remove(filepath.Join(base, filepath.FromSlash("scripts/x/GONE.py")))
+	_ = exec.Command("git", "-C", base, "add", "-A").Run()
+	tracked3, _ := crcGitTracked(base)
+	rep3 := crcCompute(base, tracked3, ret, exc, crcBaseline, nil, crcTestToday)
+	report("两态·移走一件 ⇒ 该条消（剩 1 条 · 另一件）", crcPresentKey(rep3.present),
+		"scripts/x/GONE2.py｜"+crcTierDeleted+"｜tracked")
+	report("两态·移走一件 ⇒ 退码仍红（在盘档还有 1 件）", fmt.Sprint(crcRCOKorReport(rep3)), "1")
+
+	// 两态之二：两件都移走 ⇒ 在盘 0、退码转绿。
+	_ = os.Remove(filepath.Join(base, filepath.FromSlash("scripts/x/GONE2.py")))
+	_ = exec.Command("git", "-C", base, "add", "-A").Run()
+	tracked4, _ := crcGitTracked(base)
+	rep4 := crcCompute(base, tracked4, ret, exc, crcBaseline, nil, crcTestToday)
+	// 全部移走后「在盘档」归 0（✗ 再贡献红）；此时仍红是因为**悬空档同时复活**（GONE.py 又被九面引着）
+	// —— 两档各判各的，本格只钉在盘档的贡献归零。
+	report("两态·全部移走 ⇒ 在盘 0（在盘档不再贡献红 · 余红 5 行来自悬空档复活）",
+		fmt.Sprintf("%d/%d", len(rep4.present), len(rep4.dangling)), "0/5")
+
+	// 白名单：① 未到期 ⇒ 不点名、进留底栏（带类别/理由/到期日）；② 已过期 ⇒ 重新点名 ＋ 过期栏。
+	_ = os.WriteFile(filepath.Join(base, filepath.FromSlash("scripts/x/GONE2.py")), []byte{}, 0o644)
+	_ = exec.Command("git", "-C", base, "add", "-A").Run()
+	tracked5, _ := crcGitTracked(base)
+	keptLive := []crcPresentKeep{{object: "scripts/x/GONE2.py", category: "两态对拍底片", reason: "自检夹具", until: "2999-12-31"}}
+	repK := crcCompute(base, tracked5, ret, exc, crcBaseline, keptLive, crcTestToday)
+	report("白名单·未到期 ⇒ 不点名 · 进留底栏 1", fmt.Sprintf("%d/%d", len(repK.present), len(repK.presentKept)), "0/1")
+	report("白名单·留底行带类别/理由/到期日", crcKeptKey(repK.presentKept),
+		"scripts/x/GONE2.py｜两态对拍底片｜自检夹具｜2999-12-31")
+	keptDead := []crcPresentKeep{{object: "scripts/x/GONE2.py", category: "两态对拍底片", reason: "自检夹具", until: "2020-01-01"}}
+	repE := crcCompute(base, tracked5, ret, exc, crcBaseline, keptDead, crcTestToday)
+	report("白名单·已过期 ⇒ 重新点名 ＋ 过期栏 1", fmt.Sprintf("%d/%d", len(repE.present), len(repE.presentExpired)), "1/1")
+	keptNoDate := []crcPresentKeep{{object: "scripts/x/GONE2.py", category: "两态对拍底片", reason: "自检夹具", until: ""}}
+	repN := crcCompute(base, tracked5, ret, exc, crcBaseline, keptNoDate, crcTestToday)
+	report("白名单·缺到期日 ⇒ 按过期处理（fail-closed）", fmt.Sprintf("%d/%d", len(repN.present), len(repN.presentExpired)), "1/1")
+
+	// 三档态词逐件读（甲/乙/丁 一格串钉住 · 丙待删在盘 = 合规不点名）：
+	//   GONE.py 已删且**不在盘**（合法）· GONE2.py 已登记退场且**在盘**（乙 ⇒ 点名）· ODD.py 态词闭集外（丁 ⇒ 点名）。
+	_ = os.WriteFile(filepath.Join(base, filepath.FromSlash("scripts/x/ODD.py")), []byte{}, 0o644)
+	ledger3 := map[string]interface{}{
+		"retire_ledger": []interface{}{
+			map[string]interface{}{"object": "scripts/x/GONE.py", "state": "已删（2026-09-20）"},
+			map[string]interface{}{"object": "scripts/x/GONE2.py", "state": "已登记退场（2026-10-15）"},
+			map[string]interface{}{"object": "scripts/x/ODD.py", "state": "搁置（2026-10-20）"},
+		},
+		"retire_exceptions": []interface{}{},
+	}
+	lb3, _ := json.Marshal(ledger3)
+	_ = os.WriteFile(filepath.Join(base, filepath.FromSlash(crcLedgerRel)), lb3, 0o644)
+	_ = exec.Command("git", "-C", base, "add", "-A").Run()
+	tracked6, _ := crcGitTracked(base)
+	ret6, exc6, lerr6 := crcLoadLedger(base)
+	report("三档·state 列读得出来（✗ 旧读整列丢）", lerr6+fmt.Sprint(len(ret6)), "3")
+	repS := crcCompute(base, tracked6, ret6, exc6, crcBaseline, nil, crcTestToday)
+	report("三档·乙在盘点名 ＋ 丁态词点名（甲不在盘 ⇒ 不点名）", crcPresentKey(repS.present),
+		"scripts/x/GONE2.py｜"+crcTierRegistered+"｜tracked,scripts/x/ODD.py｜"+crcTierUnknown+"｜tracked")
+	report("三档·分档计数 甲1/丙0/乙1/丁1", fmt.Sprintf("%d/%d/%d/%d", repS.deletedN, repS.pendingN, repS.registeredN, repS.otherStateN), "1/0/1/1")
 
 	fmt.Fprintf(stdout, "self-test：%d 格 · %d 失败\n", len(checks), nf)
 	if nf == 0 {
@@ -760,6 +1032,7 @@ const crcHelpText = crcUsage +
 	"optional arguments:\n" +
 	"  -h, --help            show this help message and exit\n" +
 	"  --check               只报告（tri-report 默认档）\n" +
+	"  在盘档：台账 state 首词分档 —— 已删(断言不在盘)／待删(断言在盘)／已登记退场(在盘即红 · 逐件点名)\n" +
 	"  --baseline            出基线表（TSV）\n" +
 	"  --json                机器可读输出\n" +
 	"  --self-test           合成夹具成对负控（不碰真目标）\n" +
@@ -835,7 +1108,7 @@ func checkRetireConsistencyGateMain(stdout, stderr io.Writer, argv []string) int
 		return crcRCBlock
 	}
 
-	rep := crcCompute(root, tracked, ret, exc, crcBaseline)
+	rep := crcCompute(root, tracked, ret, exc, crcBaseline, crcPresentKeeps, time.Now().Format("2006-01-02"))
 	if a.json {
 		rep.outJSON(stdout)
 		return crcRCOKorReport(rep)
@@ -849,7 +1122,9 @@ func checkRetireConsistencyGateMain(stdout, stderr io.Writer, argv []string) int
 }
 
 func crcRCOKorReport(rep crcReport) int {
-	if len(rep.dangling) > 0 {
+	// 在盘档（含过期白名单：过期条目同时也进了 present）一律 rc=1 ⇒ 要么删件、要么摘台账条。
+	// ✗ 不为这一档设棒轮基线：存量基线 = 这批件永久绿着潜伏。
+	if len(rep.dangling) > 0 || len(rep.present) > 0 {
 		return crcRCReport
 	}
 	return crcRCOK
@@ -872,7 +1147,24 @@ func (rep crcReport) outJSON(stdout io.Writer) {
 		"absent":        rep.absent,
 		"dangling_rows": len(rep.dangling),
 		"stock_rows":    len(rep.stock),
+		// ★ 在盘档（2026-10-22）：退场台账里却仍在盘的件，逐件 object/state/tier/tracked。
+		"state_tiers":     map[string]int{"deleted": rep.deletedN, "pending": rep.pendingN, "registered": rep.registeredN, "unknown": rep.otherStateN},
+		"present_rows":    len(rep.present),
+		"present_kept":    len(rep.presentKept),
+		"present_expired": len(rep.presentExpired),
+		"today":           rep.today,
 	}
+	type presentRow struct {
+		Object  string `json:"object"`
+		State   string `json:"state"`
+		Tier    string `json:"tier"`
+		Tracked bool   `json:"tracked"`
+	}
+	var plist []presentRow
+	for _, p := range rep.present {
+		plist = append(plist, presentRow{p.object, p.state, p.tier, p.tracked})
+	}
+	obj["present"] = plist
 	var dlist []pair
 	for _, d := range rep.dangling {
 		dlist = append(dlist, pair{d[0], d[2]})

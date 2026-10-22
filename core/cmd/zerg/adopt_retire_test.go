@@ -269,8 +269,12 @@ func judgeARRetireLedger(root string, d arDoc) []error {
 			}
 		case strings.Contains(e.State, "已登记退场"):
 			// ② 正门那一档：`zerg script retire` 只做**登记面**退场（决-01 · ✗ 不代管 `git rm`）⇒
-			//   真删交 git 历史＋收口批 ⇒ 登记之后件可能已删、也可能尚未删。这一档**不**以「在盘/不在盘」
-			//   断言（两种都是正门语义内的合法态）；只认它是正门会写进 ledger 的合法取值。
+			//   真删交 git 历史＋收口批 ⇒ 登记之后件可能已删、也可能尚未删。本格**不**以「在盘/不在盘」
+			//   判它（正门语义内两态都出得来）；只认它是正门会写进 ledger 的合法取值。
+			// ★ 2026-10-22 交接口：**「在盘」这一半不再无人管** —— 由门115（`check_retire_consistency.go`
+			//   的乙档）**逐件点名 · rc=1**。✗ 别把本格的「不判」读成「在盘永久合法」：那读法让
+			//   `scripts/gates/check-agentd-unit-default.sh` 与 `check-upgrade-local-source.sh`
+			//   （登记 2026-10-15）在盘 7 天无人点名。单点判据：在盘与否**只在**门115 判，本格不重复判。
 		default:
 			errs = append(errs, fmt.Errorf("判据④ 破：%s 的 state = %q 不在闭集 {已删|待删|已登记退场}", e.Object, e.State))
 		}
