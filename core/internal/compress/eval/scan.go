@@ -190,6 +190,11 @@ func RunScan(ctx context.Context, samples []Sample, cfg ScanConfig) (*ScanReport
 	if cfg.Engine == "" {
 		cfg.Engine = "free"
 	}
+	// ★ 扫描走**子进程**（scan_child.go）⇒ 不能把 Summarizer 注入过去（func 过不了进程边界）。
+	//   summary 引擎的整批读数只能走 RunBatch（同进程注入）。这里显式拒绝，✗ 不静默降级成 free。
+	if cfg.Engine != "free" {
+		return nil, fmt.Errorf("eval: 四档扫描只支持 free（子进程隔离摆不了摘要器）；engine=%q 请改用 RunBatch 逐档跑", cfg.Engine)
+	}
 	if cfg.WorkRoot == "" {
 		return nil, fmt.Errorf("eval: WorkRoot 必填（每档 unload 原件落点）")
 	}

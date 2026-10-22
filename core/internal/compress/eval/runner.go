@@ -25,11 +25,17 @@ import (
 // Config —— 一次跑批的全部参数。
 type Config struct {
 	Budget  int    // 目标窗口（token）；缺省 8192
-	Engine  string // 本笔只支持 free（summary/external 不接模型，见 N/A 说明）
+	Engine  string // free（缺省）/ summary（须同时给 Summarizer，否则拒跑而不是编读数）
 	WorkDir string // unload/ 与 samples.json 的落点
 	OutBase string // 报告基名（无扩展名）：<OutBase>.json / .md / .jsonl
 	Only    []string
 	RunID   string
+	// Summarizer —— summary 引擎的注入面（P3 整批跑）：nil 且 Engine=summary ⇒ 直接报错，
+	// **不降级**（降级会静默产出 free 的读数、再贴上 summary 的名 —— 那就是编读数）。
+	// 本包不读 env、不建 HTTP 客户端：调用方拿到端点后自己造，注入进来。
+	Summarizer compress.SummarizerFunc
+	// SummaryMaxSegs/MaxTokens 只用于报告头（让人看得见这批摘要器拿到的预算）。
+	SummaryMaxTokens int
 	// RotPctOverride > 0 时覆盖 Policy.RotPct —— 只给「对照样本断言不是空的」负控用。
 	RotPctOverride float64
 	// PerOutputOverride > 0 时覆盖 Policy.PerOutputPct —— 同上，只给负控用。
@@ -181,8 +187,12 @@ func RunBatch(ctx context.Context, samples []Sample, cfg Config) (*Report, error
 	if cfg.Engine == "" {
 		cfg.Engine = "free"
 	}
-	if cfg.Engine != "free" {
-		return nil, fmt.Errorf("eval: 本笔只接 free 引擎（要 %q：未接模型，拒绝编读数）", cfg.Engine)
+	if cfg.Engine != "free" && cfg.Engine != "summary" {
+		return nil, fmt.Errorf("eval: 只接 free / summary 引擎（要 %q：未接模型，拒绝编读数）", cfg.Engine)
+	}
+	// ★ summary 必须真注入摘要器：没有它就**拒跑**，而不是降级成 free 再贴 summary 的名。
+	if cfg.Engine == "summary" && cfg.Summarizer == nil {
+		return nil, fmt.Errorf("eval: engine=summary 但 Config.Summarizer 为空 ⇒ 拒跑（降级会静默产出 free 的读数贴上 summary 的名）")
 	}
 	if cfg.WorkDir == "" {
 		return nil, fmt.Errorf("eval: WorkDir 必填（unload 原件落点）")
@@ -207,6 +217,7 @@ func RunBatch(ctx context.Context, samples []Sample, cfg Config) (*Report, error
 
 	pol := compress.DefaultPolicy(cfg.Budget)
 	pol.Engine = cfg.Engine
+	pol.Summarize = cfg.Summarizer // P3：真摘要器由调用方注入（本包不读 env）
 	if cfg.RotPctOverride > 0 {
 		pol.RotPct = cfg.RotPctOverride
 	}
