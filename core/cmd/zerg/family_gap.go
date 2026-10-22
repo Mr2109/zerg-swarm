@@ -1225,7 +1225,7 @@ var gapLsBetweenReads func()
 
 // gapLsQueryText —— `meta.query` 的回显（**现读收窄入参** · 序 = state / prio / impact / unit / module）。
 // 未给的旗标**不写那一格** ⇒ 无收窄时逐字 `{}`（缺席 ≠ 假值）。
-func gapLsQueryText(states []string, prio, impact, unit, module string) string {
+func gapLsQueryText(states []string, prio, impact, unit, module, grep string) string {
 	parts := []string{}
 	if len(states) > 0 {
 		q := make([]string, 0, len(states))
@@ -1246,6 +1246,10 @@ func gapLsQueryText(states []string, prio, impact, unit, module string) string {
 	if module != "" {
 		parts = append(parts, `"module":`+jstr(module))
 	}
+	// ★ 末格：`--grep <关键词>`（原样回显真读到的那个词 —— 已 TrimSpace 的调用方口径）。
+	if grep != "" {
+		parts = append(parts, `"grep":`+jstr(grep))
+	}
 	return "{" + strings.Join(parts, ",") + "}"
 }
 
@@ -1262,11 +1266,11 @@ func gapLsQueryText(states []string, prio, impact, unit, module string) string {
 // 机检可直接断言「两命令说的是同一口径」，而不是靠人读文案。
 const gapAxisScopeUnit = "unit 精确等值"
 
-func gapLsMetaAdd(inv *invocation, states []string, prio, impact, unit, module string, total, hits int,
+func gapLsMetaAdd(inv *invocation, states []string, prio, impact, unit, module, grep string, total, hits int,
 	snapSHA16 string, snapLines int, readbackSHA16 string, extWrite bool) {
 	inv.metaAddJSON("total", strconv.Itoa(total))
 	inv.metaAddJSON("hits", strconv.Itoa(hits))
-	inv.metaAddJSON("query", gapLsQueryText(states, prio, impact, unit, module))
+	inv.metaAddJSON("query", gapLsQueryText(states, prio, impact, unit, module, grep))
 	inv.metaAddStr("query_ts", gapNow())
 	inv.metaAddStr("ledger_sha16", readbackSHA16)
 	inv.metaAddStr("snapshot_sha16", snapSHA16)
@@ -1553,7 +1557,9 @@ func cmdGapLs(inv *invocation, stdout, stderr io.Writer) int {
 	}
 	// ★ 批1 第三片（本枚）：**一页硬顶 + 截断自报**（口径见 `gapLsRowCap` 顶上那一段）。
 	//   未给收窄旗标 ⇒ 一步不裁（既有三枚旗标那一档的输出与退码**一字不动**）。
-	narrowed := wantUnit != "" || wantModule != ""
+	// ★ 本笔：`--grep` 与 `--unit/--module` 同属**真收窄面**（参与筛选、会改 hits）⇒ 一并计入 narrowed，
+	//   否则「只给 --grep」这一档既不出 meta、也不出零命中回显（= 过滤生效了却读不出来）。
+	narrowed := wantUnit != "" || wantModule != "" || wantGrep != ""
 	total, hits, cut := len(out), len(out), false
 	// ★ 本枚（缺口 `GAP-20261013-19`）：上限 = 收窄档的 `gapLsRowCap` ∪ `--limit` 的较小者
 	//   （不给 `--limit` 时 rowCap 与旧式**逐字同值** ⇒ 既有各档输出与退码一字不动）；
@@ -1593,9 +1599,20 @@ func cmdGapLs(inv *invocation, stdout, stderr io.Writer) int {
 		//   与退码（1）**逐字不动**（硬约束⑥）。机器面那一路：`items` = `[]`（`rows` 空 ⇒
 		//   `emitSelected` 逐字 `[]`）· `meta.total` = `meta.hits` = `0` · `meta.query` = 收窄值回显。
 		if narrowed {
-			fmt.Fprintf(stderr, "%s: 0 命中 —— 收窄值回显：--unit %q · --module %q（退码 1 · 「没有」不是绿）\n",
-				progName, wantUnit, wantModule)
-			gapLsMetaAdd(inv, wantStates, wantPrio, wantImpact, wantUnit, wantModule, 0, 0,
+			var echoParts []string
+			if wantUnit != "" {
+				echoParts = append(echoParts, fmt.Sprintf("--unit %q", wantUnit))
+			}
+			if wantModule != "" {
+				echoParts = append(echoParts, fmt.Sprintf("--module %q", wantModule))
+			}
+			if wantGrep != "" {
+				echoParts = append(echoParts, fmt.Sprintf("--grep %q", wantGrep))
+			}
+			echo := strings.Join(echoParts, " · ")
+			fmt.Fprintf(stderr, "%s: 0 命中 —— 收窄值回显：%s（退码 1 · 「没有」不是绿）\n",
+				progName, echo)
+			gapLsMetaAdd(inv, wantStates, wantPrio, wantImpact, wantUnit, wantModule, wantGrep, 0, 0,
 				gapLsSnapSHA16, gapLsSnapLines, gapLsReadbackSHA16, gapLsExtWrite)
 			// ★ 机器面（规格②「机器面 `items` 空数组 + `total=0`」）：本面**自己出包封**。
 			//   为什么必须自己出：失败路径上的兜底包封（`main.go:250` 的 `emitErrEnvelope`）**不带
@@ -1610,7 +1627,7 @@ func cmdGapLs(inv *invocation, stdout, stderr io.Writer) int {
 	}
 	inv.changed = boolPtr(false)
 	if narrowed {
-		gapLsMetaAdd(inv, wantStates, wantPrio, wantImpact, wantUnit, wantModule, total, hits,
+		gapLsMetaAdd(inv, wantStates, wantPrio, wantImpact, wantUnit, wantModule, wantGrep, total, hits,
 			gapLsSnapSHA16, gapLsSnapLines, gapLsReadbackSHA16, gapLsExtWrite)
 	}
 	// ★ `GAP-20260928-163`（2026-10-10 · 本枚）：**跑级截断自报**逐行落到 `--json` 字段面 ——
@@ -4129,7 +4146,7 @@ func (b gapStatusBucket) Net() int { return b.Open - b.Closed }
 // 前半段**逐字复用** `gapLsQueryText`（三枚闭集旗标的同一种序与同一种「缺席 ≠ 假值」语义），
 // 本面只续 `grep` / `by` / `top` 三格 —— 不另造第二套 query 拼装（同源才不会两处走岔）。
 func gapStatusQueryText(states []string, prio, impact, unit, module, grep, by string, top int) string {
-	inner := strings.TrimSuffix(gapLsQueryText(states, prio, impact, unit, module), "}")
+	inner := strings.TrimSuffix(gapLsQueryText(states, prio, impact, unit, module, ""), "}")
 	add := func(part string) {
 		if inner != "{" {
 			inner += ","
