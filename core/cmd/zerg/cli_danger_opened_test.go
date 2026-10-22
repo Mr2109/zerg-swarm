@@ -61,6 +61,9 @@ var refusingRunners = []func(*invocation, io.Writer, io.Writer) int{
 	cmdDevBuild,
 	cmdDevTest,
 	cmdAgentBootstrap,
+	// ★ Q-129：`update` 的包装 —— 有 `--check` 走只读 `cmdUpdateCheck`，否则**原样交给** `cmdGuarded`。
+	//   与真源 `check_danger_guard_parity.go` 的 `dangerGuardParityGuardedRunners` **同一集合**。
+	cmdUpdateOrGuarded,
 }
 
 // runnerName —— 函数值 ⇒ 可读名（`main.cmdGuarded`）。判红时**点名到条目**用。

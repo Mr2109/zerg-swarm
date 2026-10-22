@@ -158,6 +158,16 @@ func enforceNodeRules(inv *invocation, cmd *command, stderr io.Writer) (int, boo
 	// `--node` 可重复：去重（同机写两遍不是错，异机同时给才算歧义 —— `P-067` 的同一条口径）。
 	nodes := dedupe(inv.nodes)
 
+	// ★ Q-129（2026-10-22）：`zerg update --check` 是**本机只读检查** —— 不点名机器、不看名册、
+	//   不落任何件。不在这里早退的话，`update` 的 `machine: machineHostName` 会让下面
+	//   `needsMachine` 那条「无目标 ⇒ 2」把它拦住（只读动作被「必须点一台机」挡死 = 新旗标不可用）。
+	//   ★ 只放**这一档空目标**：`--node X` / 位置参数仍走下面原有判定（点错名册仍照旧退 2），
+	//   真给了机器目标则由实现件 `cmdUpdateCheck` 判「只读档不点名机器」用法错 2。
+	if len(cmd.path) == 1 && cmd.path[0] == "update" && inv.hasFlag("--check") &&
+		len(nodes) == 0 && len(inv.args) == 0 {
+		return 0, false
+	}
+
 	// `Z3` 未知名 ⇒ 2 + 列名册 + 最像的
 	for _, n := range nodes {
 		if !contains(r.Nodes, n) {

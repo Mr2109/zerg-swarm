@@ -66,11 +66,12 @@ func dangerGuardFuncName(f func(*invocation, io.Writer, io.Writer) int) string {
 // ★ 这是**白名单、不是放宽**：任何**其它** `run`（既非 `cmdGuarded`、也不在此表里）仍判红 ——
 // 「声明未开放却接了真 runner」这条牙照旧在。新增包装函数必须同批登记于此（带件:行号）。
 var dangerGuardParityGuardedRunners = []string{
-	"cmdGuarded",        // 未开放的统一实现：只出计划件 + 拒执退码 2
-	"cmdAgentReap",      // 包装：真跑分支 → cmdGuarded（family_reap.go:245-249）
-	"cmdDevBuild",       // 包装：devOrderedAction → cmdGuarded（family_dev_candidate.go:282 经 :340）
-	"cmdDevTest",        // 包装：候选区档同上；仅 `--pkg` 作用域档真执行（family_dev_scoped.go:108-152）
-	"cmdAgentBootstrap", // 包装：真跑分支 → cmdGuarded（family_agent_bootstrap.go · GAP-20260925-22）
+	"cmdGuarded",         // 未开放的统一实现：只出计划件 + 拒执退码 2
+	"cmdAgentReap",       // 包装：真跑分支 → cmdGuarded（family_reap.go:245-249）
+	"cmdDevBuild",        // 包装：devOrderedAction → cmdGuarded（family_dev_candidate.go:282 经 :340）
+	"cmdDevTest",         // 包装：候选区档同上；仅 `--pkg` 作用域档真执行（family_dev_scoped.go:108-152）
+	"cmdAgentBootstrap",  // 包装：真跑分支 → cmdGuarded（family_agent_bootstrap.go · GAP-20260925-22）
+	"cmdUpdateOrGuarded", // 包装：有 `--check` 走只读 `cmdUpdateCheck`，否则**原样交给** `cmdGuarded`（update_check.go:57-62 · Q-129）
 }
 
 // dangerGuardParityOffenders —— 现算脱钩清单（`catalog()` 现读 ⇒ 命令树一变它即变）。

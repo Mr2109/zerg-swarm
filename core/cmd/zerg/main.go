@@ -446,6 +446,14 @@ func run(args []string, stdout, stderr io.Writer) int {
 	if inv.hasFlag("--check-excludes-parity") && !usageDeclaresFlag(cmd, "--check-excludes-parity") {
 		inv.unknown = append(inv.unknown, "--check-excludes-parity")
 	}
+	// ★ Q-129：`--check`（裸形布尔）在解析面刚上户口 ⇒ **全族共用**；不在此收口，别族（usage
+	//   未列它的命令）真给它会从「未知旗标 2」退化成**静默吞**。★ 用**精确**判
+	//   （`usageDeclaresExactFlag`）而不是 `usageDeclaresFlag`：`--check` 是
+	//   `--check-excludes-parity` 的**前缀** ⇒ 子串判会让 `publish run --check` 被「证明」已登记、
+	//   随后落进实现被静默吞。归 `update`（只读检查）。
+	if inv.hasFlag("--check") && !usageDeclaresExactFlag(cmd, "--check") {
+		inv.unknown = append(inv.unknown, "--check")
+	}
 	// ★ 同一条数据驱动收口（本单 · 缺口 `GAP-20260929-28` 剩面）：`--uncertain` 在解析面刚上户口
 	//   （布尔 case）⇒ 全族共用；若不在此收口，别族（usage 未列它的命令）真给它会从「未知旗标 2」
 	//   退化成**静默吞**（硬约束⑤：既有命令的退码与输出一字不动）。形状逐字照拄上面
@@ -3324,12 +3332,15 @@ func init() {
 		{
 			path:    []string{"update"},
 			machine: machineHostName,
-			summary: "源码式自更新（危险 D3 · 本版未开放）",
-			usage:   "zerg update [--node <机>] --confirm=<主机名> --yes [--dry-run]",
+			// ★ Q-129：`--check` 是**只读**档（不下载、不构建、不换件 ⇒ 不入危险档），与换件那条
+			//   D3 路径**同一条命令两档**（先例：`dev proposal` 整条登 D2、`new` 才 fail-closed）。
+			summary: "源码式自更新（危险 D3 · 本版未开放）；`--check` 只读：查有无新版（不下载不换件）",
+			usage:   "zerg update [--check | --node <机> --confirm=<主机名> --yes [--dry-run]] [--json <字段>]",
 			arity:   "any",
 			args:    []string{"主机名"},
+			fields:  updateCheckFields,
 			danger:  &dangerSpec{dangerD3, "主机名", "按真源走一次自更新（校验 + 换件 + 回执；走 F-3 例外清单）", "§7.1 P12 · §九 M20 F-3 · 开工单 T-52", true, dangerScopeSystem},
-			run:     cmdGuarded,
+			run:     cmdUpdateOrGuarded,
 		},
 		{
 			path:    []string{"dev", "proposal"},
@@ -5956,6 +5967,11 @@ func parseInvocation(args []string) (*invocation, error) {
 		//   它的命令 ⇒ 真给即退 2「未知旗标」）。★ **✗ 不进 `valueFlagName`**（那是**取值**名表）：布尔名
 		//   登进去会让门73 判据丙「形态」判红。必须在下面「未知旗标」兜底**之前**上户口。
 		case a == "--check-excludes-parity":
+			inv.kvSet(a, "true")
+		// ★ Q-129：`--check` —— `zerg update` 的**只读**「有没有新版本」检查（真身
+		//   `core/internal/selfupdate.Check`；与 `zerg-core update --check` 同一个函数、同一份缓存）。
+		//   布尔档 ⇒ 写进 `inv.kv`（`kvSet`）⇒ dispatch 的数据驱动收口看得见；✗ 不进 `valueFlagName`。
+		case a == "--check":
 			inv.kvSet(a, "true")
 		// ★ 本笔（缺口 `GAP-20260926-22`）：`--legacy` —— `publish run` 的**应急通道档**（直调已弃用的
 		//   压平器 `scripts/build/publish-public.sh` · 语义在 `family_publish_run.go` 的 `legacy` 分支）。

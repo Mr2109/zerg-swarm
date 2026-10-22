@@ -122,6 +122,13 @@ func updatesCheckEnabled(fleetYAML string) bool {
 	return true
 }
 
+// CheckEnabled —— 导出壳：`updates.check`（fleet.yaml）是否开着（缺省 true）。
+//
+// 为什么要有这层壳：`zerg update --check`（CLI 侧，`core/cmd/zerg`）与 `zerg-core update --check`
+// 必须**同一条配置口径** —— 判定只有 `updatesCheckEnabled` 一份实现，CLI 侧不另读一遍 YAML
+// （两处各读一份 ⇒ 「zerg 说查、zerg-core 说不查」这类分家迟早发生）。本函数**只读、零副作用**。
+func CheckEnabled(fleetYAML string) bool { return updatesCheckEnabled(fleetYAML) }
+
 // Compare —— 纯比较函数（可单测，不碰网络）：给定 local/remote 两个 sha 与祖先关系判定，
 // 得出状态。`ancestor` 为 (isAncestor, ok)；ok=false 表示跨浅边界判不出（不猜）。
 func Compare(local, remote string, ancestor func(a, b string) (bool, bool), aheadCount int) CheckResult {
