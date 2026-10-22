@@ -346,7 +346,8 @@ func summarizeRound(msgs []Message) string {
 				sb.WriteString(fmt.Sprintf("调用工具: %s(%v)\n", tc.Name, truncateArgs(tc.Args)))
 			}
 		case "tool":
-			res := m.Content
+			// ★ 大输出先卸载（原文落盘可回查），再按摘要口径截断
+			res := unloadToolResult(m.Content)
 			if len(res) > 150 {
 				res = res[:runeStartBackward(res, 150)] + "…"
 			}
