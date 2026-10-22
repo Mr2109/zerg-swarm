@@ -36,11 +36,11 @@
   {
    "face": "入口（cmd/Makefile/bin/顶层）",
    "objects": 13,
-   "adopt": 0,
+   "adopt": 7,
    "internal": 6,
    "retire": 0,
-   "pending": 7,
-   "why": "② 5 不动（zerg-core · zerg-agentd · Makefile · bin/ · 顶层两件启动脚本）+ 1（2026-09-21 改判：compressor_demo 由 ③ 改判 ② 保留为内部 · 登记 `scripts/公开标记.tsv` public=no）= 6；③ 0（改判后入口面 ③ 清零）；④ 7 = P13 的七个老入口（**本枚只取证，生死待拍**）"
+   "pending": 0,
+   "why": "① 7 = P13 的七个老入口（`zerg-agent` · `zerg-api` · `zerg-compat` · `zerg-model` · `zerg-review` · `zerg-scheduler` · `zerg-trace`）—— 2026-10-20 批 B1–B7 逐面搬入 `zerg` 命令树（`zerg agent run` / `api serve` / `compat list|check|migrate|manifest` / `model record verify|probe|ls` / `review` / `sched run` / `trace`），⑦ 条 verdict 均「已归」（`core/internal/contract/unresolved-entries.json`）⇒ 归属定档 ①（2026-10-22 · GAP-20261014-53…59）；★ 退役是另一轴：5 件无调用方（可退役）、2 件仍有运行时/构建依赖（`zerg-agent` 生产派单 exec · `zerg-compat` 构建档+制品矩阵）⇒ 搬入 ≠ 可删二进制。② 5 不动（zerg-core · zerg-agentd · Makefile · bin/ · 顶层两件启动脚本）+ 1（2026-09-21 改判：compressor_demo 由 ③ 改判 ② 保留为内部 · 登记 `scripts/公开标记.tsv` public=no）= 6；③ 0；④ 0（七个老入口已定档，入口面 ④ 清零）"
   },
   {
    "face": "门禁步骤",
@@ -72,15 +72,15 @@
  ],
  "tally": {
   "objects": 273,
-  "adopt": 75,
+  "adopt": 82,
   "internal": 183,
   "retire": 3,
-  "pending": 12,
+  "pending": 5,
   "movement": {
-   "adopt": "41 + 9（决议②）+ 3（决议⑩）+ 8（T-56 余项：标定 3 + 评测 5）+ 13（2026-10-08 评测线原 ④「维持待拍」13 件收编 ①）+ 1（2026-10-14 改判 · GAP-20261014-46：UI i18n 检具 ②⇒①）= 75",
+   "adopt": "41 + 9（决议②）+ 3（决议⑩）+ 8（T-56 余项：标定 3 + 评测 5）+ 13（2026-10-08 评测线原 ④「维持待拍」13 件收编 ①）+ 1（2026-10-14 改判 · GAP-20261014-46：UI i18n 检具 ②⇒①）+ 7（2026-10-22 · GAP-20261014-53…59：P13 七入口 ④⇒① · 功能面已搬入命令树）= 82",
    "internal": "145 + 17（决议① HTTP）+ 1（决议① 界面）+ 3（决议③ HTTP）+ 1（决议③ 界面）+ 12（决议⑦⑧）+ 4（T-56 余项：评测线接线在跑）+ 1（2026-09-21 改判：compressor_demo ③⇒②）− 1（2026-10-14 改判 · GAP-20261014-46：UI i18n 检具 ②⇒①）= 183",
    "retire": "3（2026-09-21 改判后 = `scripts/253/` 三件；compressor_demo 由 ③ 改判 ② ⇒ 已移出退役台账）",
-   "pending": "83 − 71（落回量：决议 46 + T-56 余项 12 + 2026-10-08 评测线 13） = 12"
+   "pending": "83 − 71（落回量：决议 46 + T-56 余项 12 + 2026-10-08 评测线 13） − 7（2026-10-22 · GAP-20261014-53…59：P13 七入口定档 ④⇒①） = 5"
   },
   "seven_groups": {
    "对话面": 19,
@@ -93,10 +93,10 @@
    "sum": 83
   },
   "pending_row_vs_slot": {
-   "by_rows": 12,
-   "by_seven_group_slots": 11,
+   "by_rows": 5,
+   "by_seven_group_slots": 4,
    "diff": 1,
-   "note": "口径差**照实登记**：§5.5 逐行读界面 ④ = 3 行（chat · ferrite · filebrowse），而 §5.6 的七组只给界面 3 个槽（对话面 2 + 文件浏览器 1）；若那 2 个槽是 chat 的 2 件，则 ferrite 行没有槽 ⇒ 逐行读 25 · 槽读 24。本表取**逐行读 12**，并把 ferrite 单列在 pending_items 里，让这一条差**可见、可复核**（与 `验真-§五-UI与杂项` 记的 `?` 同源，留下一版定稿）。"
+   "note": "口径差**照实登记**：§5.5 逐行读界面 ④ = 3 行（chat · ferrite · filebrowse），而 §5.6 的七组只给界面 3 个槽（对话面 2 + 文件浏览器 1）；若那 2 个槽是 chat 的 2 件，则 ferrite 行没有槽 ⇒ 逐行读 25 · 槽读 24。本表取**逐行读 5**（2026-10-22 前为 12；入口 7 件定档 ④⇒① 后两读数同减 7 ⇒ 5／4），并把 ferrite 单列在 pending_items 里，让这一条差**可见、可复核**（与 `验真-§五-UI与杂项` 记的 `?` 同源，留下一版定稿）。"
   },
   "seven_groups_source": "设计-命令面与契约-v0.7.md §5.6 行 391（七组）"
  },
@@ -1797,13 +1797,6 @@
  ],
  "pending_items": [
   {
-   "object": "入口 7 件（agent · api · compat · model · review · scheduler · trace）",
-   "count": 7,
-   "why": "归属未定（§7.1 P13 只到取证；没有调用面统计前一个都不许删）",
-   "next": "取证已齐（取证-七入口调用面-20260920.md）⇒ 逐件拍生死；其中 4 件有调用方、3 件只到「未见」",
-   "承接": "待 Mr2109 拍（P13）"
-  },
-  {
    "object": "门禁步骤 2 步（docs: glossary 术语表 · docs: i18n-drift 双语漂移）",
    "count": 2,
    "why": "术语表 ROOT 写死 + 6 处假红未清；i18n 的 `rc=2` 语义未拍",
@@ -1845,10 +1838,10 @@
   "from": "② 保留为内部实现",
   "to": "① 收编为命令",
   "why": "工具归属普查 2.5.15 §2.6② 点名该行 ② 口径已过时：3 件里 2 件已 Go 真搬（`check_i18n.go` / `i18n_audit.go`）并有命令口 `zerg ui i18n` / `zerg ui i18n-audit`，余 1 件 `ui/scripts/i18n-baseline.json` 是这两条命令的输入数据（不欠独立命令 ⇒「不欠」）⇒ 该对象整体由 ② 收编 ①。真源自身的 `retire_ledger` 早在 2026-10-08/09 就把 2 件记为「已登记退场」，faces[4] 的 ② 口径没随动 ⇒ 登记面自相矛盾；本笔按 2026-09-21 改判先例补记。",
-  "effects": "真源逐格：UI 模块面 adopt 3→4 · internal 9→8（行内和 13 不变）；tally adopt/internal 74/184 → 75/183（对象总数 273 不变）。Zerg-内部文档 导出物（归属-收编与退役-20260920.md）同批随动：该对象行由 ② 节移入 ① 节，四个总数与五个面分布与真源逐格相同（机检 judgeARExport 判据⑦ 现跑 rc=0）。",
+  "effects": "真源逐格：UI 模块面 adopt 3→4 · internal 9→8（行内和 13 不变）；tally adopt/internal 74/184 → 75/183（对象总数 273 不变）。Zerg-内部文档 导出物（归属-收编与退役-20260920.md）同批随动：该对象行由 ② 节移入 ① 节，四个总数与五个面分布与真源逐格相同（机检 judgeARExport 判据⑦ 现跑 rc=0） ★ 2026-10-22 随 P13 七入口定档（`GAP-20261014-53…59`）同批：本记录的 `check.tally_adopt`由 75 随到 **82**（判据⑧ 的 `check` 是**现值对拍格**；上面 74→75 那一段是当笔历史，不动）。",
   "commands": ["zerg ui i18n", "zerg ui i18n-audit"],
   "archived": ["ui/scripts/check-i18n.py", "ui/scripts/i18n_audit.py"],
-  "check": {"face": "UI 模块", "adopt": 4, "internal": 8, "tally_adopt": 75, "tally_internal": 183},
+  "check": {"face": "UI 模块", "adopt": 4, "internal": 8, "tally_adopt": 82, "tally_internal": 183},
   "evidence": "GAP-20261014-46",
   "registration": "提案件 DEV-2821（主仓 adopt-retire.json + 机检 + Zerg-内部文档 导出物同批落 · 未提交）"
  },
@@ -1974,9 +1967,167 @@
    }
   ]
  },
+ "登记（2026-10-22 · GAP-20261014-53…59 · P13 七入口归属定档（批 B1–B7 已搬入 ⇒ ④⇒①））": {
+  "face": "入口（cmd/Makefile/bin/顶层）",
+  "class": "① 收编为命令（功能面已逐面搬入 `zerg` 命令树 · 二进制双轨未退役）",
+  "why": "P13 的七件老入口（真源 faces[1] 原 ④ 7）在 2026-10-20 批 B1–B7 已**逐面搬入** `zerg` 命令树：`core/internal/contract/unresolved-entries.json` 七条 verdict 均「已归」，七件实现件（`family_trace.go` / `family_review.go` / `family_sched_run.go` / `family_api_serve.go` / `family_agent_run.go` / `family_model_record.go` / `family_compat.go`）件头逐条写着「双轨期：`core/cmd/zerg-xxx` 二进制**一字不动**（本件只搬逻辑、不删入口）」⇒ 归属可定档 ①。★ 退役是**另一根轴**，不许由「已搬入」直接推出「可删」：现读 5 件无任何代码调用方（`zerg-api` / `zerg-model` / `zerg-review` / `zerg-scheduler` / `zerg-trace`，且构建全量档 0 命中、`bin/` 无制品）⇒ 可退役；2 件仍有硬依赖（`zerg-agent` 被生产派单 `exec` 起、被主控解析 agentBin、进打包/升级/CI 四清单；`zerg-compat` 被 `zerg build` 的 `--only-compat` 档与制品矩阵出件）⇒ 已搬入未退役。本区只登记归属与退役前置，✗ 不复制源件正文。",
+  "source": "core/internal/contract/unresolved-entries.json 的 `entries`（七条 `verdict`「已归」· 2026-10-20 批 B1–B7）· core/cmd/zerg/family_{agent_run,api_serve,compat,model_record,review,sched_run,trace}.go 件头「双轨期」纪律 · Zerg-内部文档/项目文档/v2.5.10/取证-七入口调用面-20260920.md（P13 取证）",
+  "evidence": [
+   "GAP-20261014-53",
+   "GAP-20261014-54",
+   "GAP-20261014-55",
+   "GAP-20261014-56",
+   "GAP-20261014-57",
+   "GAP-20261014-58",
+   "GAP-20261014-59"
+  ],
+  "count": {
+   "entries": 7,
+   "moved_into_tree": 7,
+   "retire_ready": 5,
+   "retire_blocked": 2,
+   "adopt": 7
+  },
+  "check": {
+   "face": "入口（cmd/Makefile/bin/顶层）",
+   "objects": 13,
+   "adopt": 7,
+   "internal": 6,
+   "retire": 0,
+   "pending": 0,
+   "tally_adopt": 82,
+   "tally_pending": 5
+  },
+  "objects": [
+   {
+    "gap": "GAP-20261014-53",
+    "object": "core/cmd/zerg-agent/main.go",
+    "bin": "zerg-agent",
+    "from": "④ 待定（P13 七入口 · 归属未定）",
+    "to": "① 收编为命令（`zerg agent run`）",
+    "state": "已搬入未退役",
+    "retire": "blocked",
+    "command": "zerg agent run (--task <任务描述> | --issue <问题单>) …",
+    "impl": "core/cmd/zerg/family_agent_run.go",
+    "evidence": "现读（2026-10-22 · HEAD f3fefd939 · 实编件 ./core/cmd/zerg）：`zerg agent run --help` rc=0；`go build ./cmd/zerg-agent` rc=0（旧入口仍在编）；`bin/zerg-agent` 12250400B（制品在盘）；`scripts/build/cmd/zerg-build-all/main.go:308` 全量档仍出它",
+    "callers": [
+     "core/internal/agent/scheduler.go:477 `exec.CommandContext(ctx, \"zerg-agent\", \"-json\", \"-issue\", …)` —— 生产默认派单（两枚调用者靠它的进程内语义码判重试/死信）",
+     "core/cmd/zerg-core/main.go:315 `agentBin = filepath.Join(filepath.Dir(exe), \"zerg-agent\")` —— 主控解析子端二进制（ZERG_AGENT_BIN 优先）",
+     "构建/打包/升级/CI 四处：`zerg-build-all/main.go:308` · `core/cmd/zerg/pack_release.go:212` · `scripts/build/zerg-upgrade.sh:823`（四件清单）· `publish/ci/release-agent.yml`"
+    ],
+    "remaining": "→ ③ 可退役前置（四项齐前二进制不许删）：① `scheduler.go:477` 的 exec 改走 `zerg agent run`（或改进程内调用，仍靠进程内语义码）；② `zerg-core` 的 agentBin 解析（含 `ZERG_AGENT_BIN` 旋钮）随动；③ `pack_release.go` / `zerg-upgrade.sh` 四件清单 / `release-agent.yml` 三处随动；④ `-version` 面已由 `zerg version` 承接（family_agent_run.go 件头 ⑩），删入口时同批改 README:30 / skills 总览行"
+   },
+   {
+    "gap": "GAP-20261014-54",
+    "object": "core/cmd/zerg-api/main.go",
+    "bin": "zerg-api",
+    "from": "④ 待定（P13 七入口 · 归属未定）",
+    "to": "① 收编为命令（`zerg api serve`）",
+    "state": "可退役",
+    "retire": "ready",
+    "command": "zerg api serve [--port <端口>] [--workdir <目录>] [--insecure]",
+    "impl": "core/cmd/zerg/family_api_serve.go",
+    "evidence": "`zerg api serve --help` rc=0；`go build ./cmd/zerg-api` rc=0；**无制品、无构建档**：`bin/zerg-api` 不在盘、`zerg-build-all/main.go` 对 `./cmd/zerg-api` 0 命中（全量档只出 zerg / zerg-core / zerg-agent / zerg-compat / zerg-agentd / docs-service / wall / ui）",
+    "callers": [
+     "README.md:31 与 docs/skills/zerg-overview.md:59 两行组件清单（现写「双轨期二进制仍在」）",
+     "core/cmd/zerg/credentials.go:81 描述串「`zerg-api`（8083 外部接入面）」（非调用）",
+     "scripts/build/publish-public.sh:137 把它当**编译产物**列进排除说明（非调用）"
+    ],
+    "remaining": "无运行时调用方 ⇒ **可退役**（删源码 + 摘登记）。删时同批：① 两行文档改口径（去掉「双轨期二进制仍在」）；② `scripts/公开标记.tsv` / `scripts/gates/ci-public-test-surface.tsv` 行随动；③ `unresolved-entries.json` 的 entries[api] 锚随动（GAP 判据 `zerg code find core/cmd/zerg-api/main.go --path core/internal/contract/adopt-retire.json` 改指本区）"
+   },
+   {
+    "gap": "GAP-20261014-55",
+    "object": "core/cmd/zerg-compat/main.go",
+    "bin": "zerg-compat",
+    "from": "④ 待定（P13 七入口 · 归属未定）",
+    "to": "① 收编为命令（`zerg compat list|check|migrate|manifest` · 新开顶层族）",
+    "state": "已搬入未退役",
+    "retire": "blocked",
+    "command": "zerg compat list|check|migrate|manifest",
+    "impl": "core/cmd/zerg/family_compat.go",
+    "evidence": "`zerg help compat` rc=0（族级：动作 4 条 · 已开放 4）· `zerg compat list --help` rc=0；`bin/zerg-compat` 2251392B（制品在盘）；`zerg-build-all/main.go` 四处仍出它（:275 `--only-compat` 独立档 · :313 全量档 · :390 签件清单 · :422 制品回读）",
+    "callers": [
+     "`zerg build --only-compat` 档（回滚前置校验② 状态可读性：靠它的 `3 = 有更高版本 schema ⇒ 拒回滚`），`zerg-build-all/main.go:275`",
+     "全量 `zerg build` 与制品矩阵 `zerg-build-all/main.go:313/:390/:422` —— 删源码即断 `zerg build`",
+     "core/internal/compat/migrate.go:575 `ManagedBy: \"zerg-compat\"`（已落盘状态件的归属串）",
+     "core/cmd/zerg/check_wall_layer.go:90 argv 禁用清单 + core/internal/contract/exitcode-namespaces.json:31 独立码空间（`0/2/3` 语义）"
+    ],
+    "remaining": "→ ③ 可退役前置：① 摘 `zerg-build-all/main.go` 四处（独立档 + 全量档 + 签件清单 + 制品回读）；② `exitcode-namespaces.json` 的 `zerg-compat` 码空间改挂 `zerg compat`（`3` 那条回滚判据要保住语义）；③ 茧壁 argv 禁用清单（`check_wall_layer.go:90`）换名；④ `ManagedBy` 串迁移方案（已落盘的旧值是否回写）"
+   },
+   {
+    "gap": "GAP-20261014-56",
+    "object": "core/cmd/zerg-model/main.go",
+    "bin": "zerg-model",
+    "from": "④ 待定（P13 七入口 · 归属未定）",
+    "to": "① 收编为命令（`zerg model record verify|probe|ls`）",
+    "state": "可退役",
+    "retire": "ready",
+    "command": "zerg model record verify|probe|ls",
+    "impl": "core/cmd/zerg/family_model_record.go",
+    "evidence": "`zerg help model` + `zerg model record ls --help` rc=0；`go build ./cmd/zerg-model` rc=0；**无制品、无构建档**：`bin/zerg-model` 不在盘、`zerg-build-all/main.go` 对 `./cmd/zerg-model` 0 命中",
+    "callers": [
+     "ui/locales/zh-CN.yml:469 与 ui/locales/en.yml:469 的 `mreg.empty_hint`（引导用户跑 `zerg-model probe … --store`）",
+     "ui/src/modules/model_registry.rs:8 与 :840（同一句引导的注释/空态文案）",
+     "core/internal/modelreg/probe.go:966 自述串「本记录由 zerg-model probe 自动生成」（非调用）",
+     "core/cmd/zerg/check_wall_layer.go:90 argv 禁用清单（登记面，非调用）"
+    ],
+    "remaining": "无代码调用方 ⇒ **可退役**（删源码 + 摘登记）。删时同批：① UI 两语言 `mreg.empty_hint` 与 `model_registry.rs:8/:840` 改指 `zerg model record probe <路径> --store`；② `modelreg/probe.go:966` 自述串；③ `check_wall_layer.go:90` 清单里的 `zerg-model`；④ `公开标记.tsv` / `ci-public-test-surface.tsv` / `unresolved-entries.json` 锚随动"
+   },
+   {
+    "gap": "GAP-20261014-57",
+    "object": "core/cmd/zerg-review/main.go",
+    "bin": "zerg-review",
+    "from": "④ 待定（P13 七入口 · 归属未定）",
+    "to": "① 收编为命令（`zerg review`）",
+    "state": "可退役",
+    "retire": "ready",
+    "command": "zerg review <workdir> <issue-id|list> [approve|reject] [--repo <路径>]",
+    "impl": "core/cmd/zerg/family_review.go",
+    "evidence": "`zerg review --help` rc=0（首行逐字保留源件位置参数三段）；`go build ./cmd/zerg-review` rc=0；**无制品、无构建档**：`bin/zerg-review` 不在盘、`zerg-build-all/main.go` 对 `./cmd/zerg-review` 0 命中",
+    "callers": [
+     "README.md:32 与 docs/skills/zerg-overview.md:60 两行组件清单（现写「双轨期二进制仍在」）"
+    ],
+    "remaining": "无运行时调用方 ⇒ **可退役**。删时同批：两行文档改口径 + `公开标记.tsv` / `ci-public-test-surface.tsv` / `unresolved-entries.json` 的 entries[review] 锚随动"
+   },
+   {
+    "gap": "GAP-20261014-58",
+    "object": "core/cmd/zerg-scheduler/main.go",
+    "bin": "zerg-scheduler",
+    "from": "④ 待定（P13 七入口 · 归属未定）",
+    "to": "① 收编为命令（`zerg sched run`）",
+    "state": "可退役",
+    "retire": "ready",
+    "command": "zerg sched run [--workdir <目录>] [--container] [--agent-bin <路径>] [--dev] [--repo <路径>]",
+    "impl": "core/cmd/zerg/family_sched_run.go",
+    "evidence": "`zerg sched run --help` rc=0；`go build ./cmd/zerg-scheduler` rc=0；**无制品、无构建档**：`bin/zerg-scheduler` 不在盘、`zerg-build-all/main.go` 对 `./cmd/zerg-scheduler` 0 命中（主控的调度在 `zerg-core` 进程内，`maxConcurrent` 旋钮 `ZERG_SCHED_MAX_CONCURRENT`）",
+    "callers": [
+     "README.md:33 与 docs/skills/zerg-overview.md:61 两行组件清单（现写「双轨期二进制仍在」）",
+     "docs/zh/参考-命令行.md 与 docs/en/参考-命令行.md（及 publish/docs/CLI.{zh-CN,en}.md）里的条目（文档面）"
+    ],
+    "remaining": "无运行时调用方 ⇒ **可退役**。删时同批：两行组件清单 + 参考-命令行两语言页（经 `zerg doc` 生成面）+ `公开标记.tsv` / `ci-public-test-surface.tsv` / `unresolved-entries.json` 的 entries[scheduler] 锚随动"
+   },
+   {
+    "gap": "GAP-20261014-59",
+    "object": "core/cmd/zerg-trace/main.go",
+    "bin": "zerg-trace",
+    "from": "④ 待定（P13 七入口 · 归属未定）",
+    "to": "① 收编为命令（`zerg trace <logdir>`）",
+    "state": "可退役",
+    "retire": "ready",
+    "command": "zerg trace <logdir> [--live] [--json] [--step N] [--tokens] [--errors]",
+    "impl": "core/cmd/zerg/family_trace.go",
+    "evidence": "`zerg trace --help` rc=0；`zerg trace /nonexistent-dir` rc=1「打开失败: open /nonexistent-dir/events.jsonl」（真读日志、非占位）；`go build ./cmd/zerg-trace` rc=0；**无制品、无构建档**：`bin/zerg-trace` 不在盘、`zerg-build-all/main.go` 对 `./cmd/zerg-trace` 0 命中",
+    "callers": [
+     "README.md:34 与 docs/skills/zerg-overview.md:62 两行组件清单（现写「双轨期二进制仍在」）",
+     "core/internal/agent/sysmetrics.go:5 注释（**不是调用**）"
+    ],
+    "remaining": "无运行时调用方 ⇒ **可退役**。删时同批：两行组件清单 + `公开标记.tsv` / `ci-public-test-surface.tsv` / `unresolved-entries.json` 的 entries[trace] 锚随动"
+   }
+  ]
+ },
  "boundaries": [
   "本表只登记**归属与判据指针**，不复制设计稿正文；四类定义仍在 §5.0（行 210–215）。",
-  "④ 的 12 条**不是 12 个新任务**：它们收敛成 4 组承接项（见 pending_items），逐条带 why + next。（2026-10-08：原「脚本·评测线 13 件」一组同批收编入 ① ⇒ 组数 5→4、条数 25→12。）",
+  "④ 的 5 条**不是 5 个新任务**：它们收敛成 3 组承接项（见 pending_items），逐条带 why + next。（2026-10-08：原「脚本·评测线 13 件」一组同批收编入 ① ⇒ 组数 5→4、条数 25→12。2026-10-22：P13 七入口定档 ④⇒① ⇒ 组数 4→3、条数 12→5。）",
   "2026-09-21 改判已生效：`compressor_demo` 由 ③ 退役改判 ② 保留为内部 + 登记 `public=no` —— 原判「退役删除」作废（决策表 §二 第 4 行已同批标注）。",
   "本表不含 273 条的**逐对象枚举**：逐对象落回写在 `Zerg-内部文档/项目文档/v2.5.10/归属-收编与退役-20260920.md`（导出物），两边的四个总数与五个面分布**逐格相同**（机检断言）。★ 2026-10-14 补：② 面里被**工具归属普查 2.5.15** 点名的对象另有「登记（`GAP-20261014-38…45`）」区做**逐件归属指针**登记（机检 判据⑨）—— 那是**归属指针**；全量 273 的逐对象落回与逐条理由仍以上述导出物为准。",
   "例外类名册（`retire_exceptions`）**只收闭集内件**（决-12：**自研面** ＝ 全仓 − `vendor/**` − `tools/ocr/venv/**` − `scripts/evals/_archive/**` 的 py/sh）：每条须**四列齐**（category / reason / keep_cost / review_date）＋ `object` 在闭集 ＋ `review_date` 可解析（`2006-01-02`）。机检 = `core/cmd/zerg/family_script_retire.go` 的 `scriptRetireExceptionErrors`（`zerg script retire` 每跑一次先自检名册；外部测试出口 `ScriptRetireExceptionErrorsForTest` · GAP-20261007-03）。",
