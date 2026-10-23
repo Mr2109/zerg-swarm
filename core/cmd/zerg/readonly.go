@@ -307,14 +307,16 @@ func cmdTaskLs(inv *invocation, stdout, stderr io.Writer) int {
 	if rc := fetchInv(inv, c, "/api/tasks", &resp, stderr); rc != exitOK {
 		return rc
 	}
-	fields := []string{"id", "status", "model", "machine", "priority", "created_at", "description", "slice_id"}
+	// ★ 缺口 `GAP-20260926-18` 第一步：补两格（issue_status = 台账真源映射到状态机 10 值；
+	//   artifact_present = 方案 A 产物面）。拒「queued 但产物已在盘」这种不可信态（见 status_conflict）。
+	fields := []string{"id", "status", "issue_status", "artifact_present", "status_conflict", "conflict_reason", "model", "machine", "priority", "created_at", "description", "slice_id"}
 	rows := []map[string]string{}
 	for _, it := range asList(resp["tasks"]) {
 		if o := asObj(it); o != nil {
 			rows = append(rows, project(o, fields))
 		}
 	}
-	return listCmd(inv, stdout, stderr, []string{"id", "status", "model", "machine", "priority", "created_at", "description"}, rows)
+	return listCmd(inv, stdout, stderr, []string{"id", "status", "issue_status", "artifact_present", "model", "machine", "priority", "created_at", "description"}, rows)
 }
 
 // ---- model 族（只读：ls）----

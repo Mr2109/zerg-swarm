@@ -83,6 +83,17 @@ type Task struct {
 	Type        string       `json:"type"`                  // internal/external
 	Status      string       `json:"status"`                // queued/running/paused/done/failed/waiting_retry/cancelled（终态 done/failed/cancelled——见 IsTerminal）
 	FailReason  string       `json:"fail_reason,omitempty"` // 失败原因（确定性验证/执行失败——UI 显示）
+	// 状态真源面（缺口 `GAP-20260926-18` 第一步 · 只读投影 · 2026-10-23 拍板）：
+	//   issue_status  = 台账件（真源）里的态，映射到状态机的 10 值；空 = 台账里没有这条
+	//   artifact_present = 方案 A：任务目录里有执行产物（报告/计划/结晶/work 非空）
+	//   status_conflict  = 两条矛盾之一成立：① queued 但产物已在盘 ② 内存态 ⟷ 台账态不一致
+	// ★ omitempty 只用于三格中的布尔/字符串：`artifact_present` **不带 omitempty** ——
+	//   「没有产物」本身是要显示的信息，省掉会让 `--json` 少一列（读数面不许静默少格）。
+	IssueStatus     string `json:"issue_status,omitempty"`
+	ArtifactPresent bool   `json:"artifact_present"`
+	StatusConflict  bool   `json:"status_conflict,omitempty"`
+	ConflictReason  string `json:"conflict_reason,omitempty"`
+
 	// ============ 正交标记面（2026-10-03 GAP-20261003-04 刀1 · T-06 · 设计 §O-9/§11.1）============
 	// 「态」与「结案标记」两层: 四条同生同灭——非空即已结案 · 清空即重开 · 覆盖式（非 write-once）。
 	// 对 done/failed/cancelled 打标【不动 status】；对 queued/paused 先由 CancelTask 改态为 cancelled 再打标。

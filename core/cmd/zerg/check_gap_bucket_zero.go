@@ -261,10 +261,8 @@ func gapBzJudge(rows []gapAxisRecRow, lines int, unparsed []gapAxisRecBadLine, l
 		}
 	}
 	rep.remN = len(rem)
-	if rep.remN == 0 { // 空转 = 假绿，不给结论
-		rep.rc = gapBzRCBlock
-		return gapBzRCBlock, rep
-	}
+	// ★ 2026-10-23（Mr2109 拍板 · 与门75 同口径）：`仍缺` 0 条 = 账面全清（目标态）⇒ 继续算。
+	//   真·取数面拿不到已在上面两支拦掉（rows == nil / lines == 0 / len(rows) == 0）。
 
 	// 两轴一次分好桶：axis ⇒ bucket ⇒ []open
 	byAxis := map[string]map[string][]gapBzOpen{}
@@ -838,9 +836,9 @@ func checkGapBucketZeroGateMain(stdout, stderr io.Writer, argv []string) int {
 			}
 		} else if len(unparsed) > 0 {
 			reason = fmt.Sprintf("有 %d 行解不开", len(unparsed))
-		} else if rep.remN == 0 {
-			reason = fmt.Sprintf("账内 `%s` 0 条（空转不给结论）", gapAxisRecRemain)
 		}
+		// ★ 2026-10-23（Mr2109 拍板）：`仍缺` 0 条不再算「取数面拿不到」——
+		//   账面全清是目标态；只有账本不在盘 / 0 行 / 有行解不开才 BLOCKED（上面三段）。
 		fmt.Fprintf(stdout, "⇒ rc=2 BLOCKED（取数面拿不到）：%s\n", reason)
 		if jsonOut {
 			fmt.Fprintln(stdout, gapBzJSON(rep))

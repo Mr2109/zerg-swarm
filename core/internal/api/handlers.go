@@ -233,6 +233,8 @@ func (h *Handlers) ListTasksHandler(w http.ResponseWriter, r *http.Request) {
 			t.Machine = "本机"
 		}
 	}
+	// ★ 缺口 `GAP-20260926-18` 第一步：补状态真源三格（只读 · 不碰写路径）
+	annotateTaskStateTruth(tasks)
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"tasks": tasks,
 		"count": len(tasks),

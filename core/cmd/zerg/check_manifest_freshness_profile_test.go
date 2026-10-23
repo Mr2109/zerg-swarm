@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // mfpTestInitWD —— 包初始化时的 cwd（= 被测包目录 · 早于任何 `t.Chdir`）。
@@ -134,7 +135,7 @@ func TestCheckManifestFreshnessProfileGatePort(t *testing.T) {
 		t.Fatal("夹具 HEAD 取不到")
 	}
 	fresh := filepath.Join(mfDir, "fresh.json")
-	mfpTestWrite(t, fresh, `{"commit":"`+head+`","source_sha":"`+head+`","dirty":false,"generated_at":"2026-09-23T00:00:00Z"}`)
+	mfpTestWrite(t, fresh, `{"commit":"`+head+`","source_sha":"`+head+`","dirty":false,"generated_at":"`+mfpFreshStamp()+`"}`)
 	mismatch := filepath.Join(mfDir, "mismatch.json")
 	mfpTestWrite(t, mismatch, `{"commit":"`+head+`","source_sha":"ffffffffffff","dirty":false}`)
 	dirty := filepath.Join(mfDir, "dirty.json")
@@ -306,7 +307,7 @@ func TestCheckManifestFreshnessProfileRetired(t *testing.T) {
 	t.Chdir(root)
 	head := mfpGitTolerant(root, []string{"rev-parse", "HEAD"})
 	fresh := filepath.Join(root, "fresh.json")
-	mfpTestWrite(t, fresh, `{"commit":"`+head+`","source_sha":"`+head+`","dirty":false,"generated_at":"2026-09-23T00:00:00Z"}`)
+	mfpTestWrite(t, fresh, `{"commit":"`+head+`","source_sha":"`+head+`","dirty":false,"generated_at":"`+mfpFreshStamp()+`"}`)
 	rc, out, _ := mfpTestRun([]string{"--profile", "dev", "--manifest", fresh})
 	if rc == 2 {
 		t.Fatalf("退役态 fail-closed（rc=2）—— 邻件退役不得让判据判不出：\n%s", out)
@@ -381,7 +382,7 @@ func mfpRunGolden(t *testing.T, withStubNeighbor bool) (int, string) {
 		t.Fatal("夹具 HEAD 取不到")
 	}
 	fresh := filepath.Join(mfDir, "fresh.json")
-	mfpTestWrite(t, fresh, `{"commit":"`+head+`","source_sha":"`+head+`","dirty":false,"generated_at":"2026-09-23T00:00:00Z"}`)
+	mfpTestWrite(t, fresh, `{"commit":"`+head+`","source_sha":"`+head+`","dirty":false,"generated_at":"`+mfpFreshStamp()+`"}`)
 	rc, out, _ := mfpTestRun([]string{"--profile", "dev", "--manifest", fresh, "--repo", "", "--release-head", head})
 	return rc, mfpGoldenNorm(out, head, repo)
 }
@@ -425,4 +426,12 @@ func TestCheckManifestFreshnessProfileGoldenTwoStates(t *testing.T) {
 	if outA != outB {
 		t.Fatalf("两态逐字不同（py 在/不在盘不得改判据结论）：\n--- A ---\n%s\n--- B ---\n%s", outA, outB)
 	}
+}
+
+// mfpFreshStamp —— 夹具用的「新鲜」时间戳（缺口 GAP-20260926-18 实施中现读到的**时间炸弹**：
+// 原夹具把 generated_at 写死成 2026-09-23T00:00:00Z，而 stale 线的上限是 **720h** ⇒
+// 2026-10-23 之后这条用例**必然变红**（实测 725.6h > 720h），与代码对不对无关。
+// 治：取「当前时刻 - 1h」，永远在 720h 之内；判据本身（新鲜/过旧）一字未改。
+func mfpFreshStamp() string {
+	return time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
 }

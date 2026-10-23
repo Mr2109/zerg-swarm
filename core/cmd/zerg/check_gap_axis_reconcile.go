@@ -975,8 +975,12 @@ func gapAxisRecJudge(rows []gapAxisRecRow, lines int, unparsed []gapAxisRecBadLi
 		}
 	}
 	remTotal := len(rem)
-	if remTotal == 0 { // 空转 = 假绿，不给结论
-		return gapAxisRecRCBlock, &gapAxisRecJudgeOut{blocked: "账内 仍缺 0 条（空转不给结论）", lines: lines}
+	// ★ 2026-10-23（Mr2109 拍板 · 缺口 `GAP-20260926-18` 实施中现读到的**提交焊死**）：
+	//   原口径「`仍缺` 0 条 ⇒ BLOCKED（空转不给结论）」在**账面全清**时会把提交闸焊死 ——
+	//   而账面 0 未闭正是**目标态**。改：只有**账本 0 行**（真·取数面拿不到）才 BLOCKED；
+	//   账本非空 + `仍缺` 0 条 ⇒ 走正常计算，得 rc=0（人面会印「账内读数 … 仍缺 0」）。
+	if remTotal == 0 && len(rows) == 0 {
+		return gapAxisRecRCBlock, &gapAxisRecJudgeOut{blocked: "账本 0 行（真空转 · 取数面拿不到）", lines: lines}
 	}
 
 	unit := gapAxisRecAxisReport(rem, "unit", gapAxisRecWUClosed(), remTotal)

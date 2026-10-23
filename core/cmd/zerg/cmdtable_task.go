@@ -14,7 +14,7 @@ func cmdtable_task() []*command {
 			kind:     "Task",
 			summary:  "任务队列（投影 /api/tasks）",
 			usage:    "zerg task ls [--json <字段>]",
-			fields:   []string{"id", "status", "model", "machine", "priority", "created_at", "description"},
+			fields:   []string{"id", "status", "issue_status", "artifact_present", "status_conflict", "conflict_reason", "model", "machine", "priority", "created_at", "description", "slice_id"},
 			endpoint: "GET /api/tasks",
 			run:      cmdTaskLs,
 		},
