@@ -414,6 +414,10 @@ func TestRepoUncommitted_ZeroAndUnreadable(t *testing.T) {
 //
 // 只比**稳定字段**：`age_min` 会跨分钟变（那是真读数，不是不确定），故不进这条对拍。
 func TestRepoUncommitted_DeterministicSelection(t *testing.T) {
+	// ★ 本笔（2026-10-23 · 提交闸里稳定红、单跑绿）：本用例要求「两跑之间一切读数不变」，
+	//   而 `repo uncommitted` 的来源判定会读**审计账**（ZERG_STATE_DIR 下）。提交闸跑时那个旋钮
+	//   指向真状态目录，两跑之间账会变（闸自身在写）⇒ 读数必然不同。⇒ 本用例把状态目录也隔离掉。
+	t.Setenv("ZERG_STATE_DIR", t.TempDir())
 	root, _ := rucFixture(t)
 	fields := []string{"path", "status", "kind", "artifact", "bucket", "source", "proposal", "evidence"}
 	_, out1, _, _, _ := rucRun(t, root, true, fields, "--root", root, "--since", "2h", "--me", "DEV-9001")
