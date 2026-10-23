@@ -380,11 +380,11 @@ func buildR06() Sample {
 		case 1:
 			return fmt.Sprintf("npm timing idealTree:node_modules/pkg-%03d Completed in %dms", i, 4+i%90)
 		default:
-			return fmt.Sprintf("npm sill extract pkg-%03d@1.%d.%d extracted to ~/.npm/_cacache/tmp/install-8f21/node_modules/pkg-%03d", i, i%9, i%20, i)
+			return fmt.Sprintf("npm sill extract pkg-%03d@1.%d.%d extracted to /home/dev/.npm/_cacache/tmp/install-8f21/node_modules/pkg-%03d", i, i%9, i%20, i)
 		}
 	})
 	s0 := b.addP(compress.KindObservation, false, true, noise.String(),
-		"npm v10.9.2", "~/.npm/_cacache/tmp/install-8f21")
+		"npm v10.9.2", "/home/dev/.npm/_cacache/tmp/install-8f21")
 
 	var tail strings.Builder
 	tail.WriteString("npm WARN deprecated inflight@1.0.6: This module is not supported, and leaks memory.\n")
@@ -402,7 +402,7 @@ func buildR06() Sample {
 
 	b.needle("N1", "npm WARN deprecated inflight@1.0.6: This module is not supported, and leaks memory.", WhereWindow, s1, "id")
 	b.needle("N2", "found 3 vulnerabilities (2 moderate, 1 high)", WhereWindow, s1, "number")
-	b.needle("N3", "~/.npm/_cacache/tmp/install-8f21", WhereRecoverable, s0, "path")
+	b.needle("N3", "/home/dev/.npm/_cacache/tmp/install-8f21", WhereRecoverable, s0, "path")
 	b.needle("N4", "npm v10.9.2", WhereRecoverable, s0, "id")
 	b.needle("N5", "npm WARN deprecated glob@7.2.3: Glob versions prior to v9 are no longer supported", WhereRecoverable, s0, "id")
 

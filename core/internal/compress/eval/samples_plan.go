@@ -111,11 +111,11 @@ func buildR22() Sample {
 		case 0:
 			return fmt.Sprintf("分支 H%d 证据：pool.wait_ms p95=%dms，in_flight=%d，未见排队", i%12+1, 8+i%30, i%16)
 		case 1:
-			return fmt.Sprintf("分支 H%d 证据：clock_offset_ms=%d，ntp_source=10.0.%d.%d", i%12+1, i%3, i%40, i%250)
+			return fmt.Sprintf("分支 H%d 证据：clock_offset_ms=%d，ntp_source=203.0.113.%d", i%12+1, i%3, i%250)
 		default:
 			return fmt.Sprintf("分支 H%d 证据：gc_pause_p99=%dus，堆占用 %d MiB，无 STW 抖动", i%12+1, 200+i%900, 120+i%60)
 		}
-	}), "分支 H1 证据", "ntp_source=<cluster-ip>")
+	}), "分支 H1 证据", "ntp_source=203.0.113.1")
 
 	s1 := b.addP(compress.KindPlan, true, false, obsBlock(2100, []string{
 		"# 排查假设树（1 根 12 叶；当前活跃分支 H7；已排除 5 叶）",
