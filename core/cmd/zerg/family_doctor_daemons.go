@@ -35,6 +35,59 @@ import (
 
 const daLabelPrefix = "com.zerg."
 
+// daStableUptimeSec —— 「已稳跑」阈值（秒）：在跑且超过它 ⇒ 上一代那个非 0 退出码不判崩溃循环。
+// 300s 与 KeepAlive+ThrottleInterval（10s）的节奏配套：真循环 5 分钟内必然被看见（每 10s 一次）。
+const daStableUptimeSec = 300
+
+// daDur —— 秒 ⇒ 「Nd HH:MM:SS」样式的短句（只为人眼看）。
+func daDur(sec int) string {
+	d := sec / 86400
+	h := (sec % 86400) / 3600
+	m := (sec % 3600) / 60
+	ss := sec % 60
+	if d > 0 {
+		return fmt.Sprintf("%dd %02d:%02d:%02d", d, h, m, ss)
+	}
+	return fmt.Sprintf("%02d:%02d:%02d", h, m, ss)
+}
+
+// daProcUptimeSeconds —— 进程存活秒数（ps 现读；取不到 ⇒ 0 = 判不了，按「未稳跑」处理）。
+func daProcUptimeSeconds(pid string) int {
+	if pid == "" || pid == "-" {
+		return 0
+	}
+	out, err := exec.Command("ps", "-o", "etime=", "-p", pid).Output()
+	if err != nil {
+		return 0
+	}
+	return daParseEtime(strings.TrimSpace(string(out)))
+}
+
+// daParseEtime —— `ps -o etime=` 的形态：[[dd-]hh:]mm:ss ⇒ 秒。
+func daParseEtime(s string) int {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0
+	}
+	days := 0
+	if i := strings.Index(s, "-"); i > 0 {
+		if v, err := strconv.Atoi(s[:i]); err == nil {
+			days = v
+		}
+		s = s[i+1:]
+	}
+	parts := strings.Split(s, ":")
+	total := 0
+	for _, p := range parts {
+		v, err := strconv.Atoi(strings.TrimSpace(p))
+		if err != nil {
+			return 0
+		}
+		total = total*60 + v
+	}
+	return days*86400 + total
+}
+
 // daRow —— 一只守护的读数值（纯数据，便于单测直接喂）。
 type daRow struct {
 	Label      string `json:"label"`
@@ -43,6 +96,7 @@ type daRow struct {
 	KeepAlive  bool   `json:"keep_alive"`  // plist 里 <key>KeepAlive</key><true/>
 	PlistFound bool   `json:"plist_found"` // ~/Library/LaunchAgents/<label>.plist 在盘
 	PlistPath  string `json:"plist_path"`  // 找不到时仍给出**期望路径**（便于人修）
+	UptimeSec  int    `json:"uptime_sec"`  // 在跑时的进程存活秒数（0 = 未跑/取不到）
 	Verdict    string `json:"verdict"`     // PASS / FAIL / REPORT / BLOCKED
 	Note       string `json:"note,omitempty"`
 }
@@ -120,11 +174,19 @@ func daDecide(r *daRow) {
 	case r.LastExit == "" || r.LastExit == "0":
 		r.Verdict = "PASS"
 	default:
-		// 有 pid 但退出码非 0：launchctl 的第二列是**最近一次**退出的记录，正在跑时通常为 0；
-		// 非 0 且仍在跑 ⇒ 刚被拉起过，仍按崩溃循环报（这才是本面要抓的那种）。
+		// 有 pid 但退出码非 0：launchctl 第二列是**上一代**（或更早）那一跑的退出码 ——
+		// 现读实证：com.zerg.ui 的 pid 已连跑 1 天 0:31，退出码却还是 78（上一代留的）。
+		// ★ 判据据此分两档（不然就是自己造红）：
+		//   · 已稳跑（≥ daStableUptimeSec）⇒ REPORT：「曾以 X 退出，现已稳定运行」；
+		//   · 刚被拉起（< 阈值）⇒ FAIL：说明它起来就又死了，这才是崩溃循环。
+		if r.UptimeSec >= daStableUptimeSec {
+			r.Verdict = "REPORT"
+			r.Note = "在跑（pid " + r.PID + " · 已稳跑 " + daDur(r.UptimeSec) + "）；最近一次退出码 " + r.LastExit + " 是上一代实例的"
+			return
+		}
 		if r.KeepAlive {
 			r.Verdict = "FAIL"
-			r.Note = "在跑（pid " + r.PID + "）但最近退出码 " + r.LastExit + " + KeepAlive=true ⇒ 反复重启"
+			r.Note = "在跑（pid " + r.PID + " · 仅 " + daDur(r.UptimeSec) + "）但退出码 " + r.LastExit + " + KeepAlive=true ⇒ 反复重启"
 		} else {
 			r.Verdict = "REPORT"
 			r.Note = "在跑（pid " + r.PID + "），最近退出码 " + r.LastExit
@@ -155,6 +217,7 @@ func daLoadLocal(stdout, stderr io.Writer) ([]daRow, string) {
 				rows[i].KeepAlive = daPlistKeepAlive(string(b))
 			}
 		}
+		rows[i].UptimeSec = daProcUptimeSeconds(rows[i].PID)
 		daDecide(&rows[i])
 	}
 	_ = stderr
@@ -189,6 +252,8 @@ func daField(row daRow, name string) string {
 		return strconv.FormatBool(row.PlistFound)
 	case "plist_path":
 		return row.PlistPath
+	case "uptime_sec":
+		return strconv.Itoa(row.UptimeSec)
 	case "verdict":
 		return row.Verdict
 	case "note":
@@ -204,7 +269,7 @@ func cmdDoctorDaemons(inv *invocation, stdout, stderr io.Writer) int {
 		inv.setErr("blocked", "daemons_unreadable", why)
 		return 8
 	}
-	cols := []string{"label", "pid", "last_exit", "keep_alive", "plist_found", "verdict", "note"}
+	cols := []string{"label", "pid", "last_exit", "keep_alive", "plist_found", "uptime_sec", "verdict", "note"}
 	out := make([]map[string]string, 0, len(rows))
 	for _, r := range rows {
 		m := map[string]string{}

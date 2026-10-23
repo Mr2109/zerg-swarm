@@ -45,7 +45,7 @@ func cmdtable_doctor() []*command {
 			summary:  "本机 launchd 守护只读面（label/pid/最近退出码/KeepAlive/plist/判定）· 崩溃循环判红 · ✗ 不动服务",
 			usage:    "zerg doctor daemons [--json <字段>]",
 			arity:    "none",
-			fields:   []string{"label", "pid", "last_exit", "keep_alive", "plist_found", "plist_path", "verdict", "note"},
+			fields:   []string{"label", "pid", "last_exit", "keep_alive", "plist_found", "plist_path", "uptime_sec", "verdict", "note"},
 			endpoint: "",
 			opened:   true,
 			run:      cmdDoctorDaemons,

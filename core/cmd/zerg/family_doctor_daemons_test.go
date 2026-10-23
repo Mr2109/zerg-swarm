@@ -97,3 +97,40 @@ func TestDaNoteNamesTheLoop(t *testing.T) {
 		}
 	}
 }
+
+// ── 稳跑档（2026-10-23 真机现读的假红修正）─────────────────────────────────
+
+func TestDaParseEtime(t *testing.T) {
+	cases := map[string]int{
+		"00:03":      3,
+		"02:04:10":   7450,
+		"1-00:32:12": 86400 + 32*60 + 12,
+		"":           0,
+		"胡说":         0,
+	}
+	for in, want := range cases {
+		if got := daParseEtime(in); got != want {
+			t.Errorf("daParseEtime(%q) = %d，期望 %d", in, got, want)
+		}
+	}
+}
+
+// TestDaDecideStableUptimeIsNotACrashLoop —— 现读实证：com.zerg.ui 的 pid 已连跑 1 天，
+// 而 launchctl 第二列还是上一代的 78。若照旧一律判 FAIL，就是自己造假红。
+func TestDaDecideStableUptimeIsNotACrashLoop(t *testing.T) {
+	r := daRow{PID: "1626", LastExit: "78", KeepAlive: true, UptimeSec: 86400 + 1920}
+	daDecide(&r)
+	if r.Verdict != "REPORT" {
+		t.Fatalf("已稳跑（>5min）时不该判崩溃循环，实得 %q（note=%q）", r.Verdict, r.Note)
+	}
+	if !strings.Contains(r.Note, "上一代") {
+		t.Errorf("note 要说清这个退出码是上一代的（实得 %q）", r.Note)
+	}
+
+	// 刚被拉起（< 5min）⇒ 仍判 FAIL（真循环）
+	r2 := daRow{PID: "30262", LastExit: "255", KeepAlive: true, UptimeSec: 3}
+	daDecide(&r2)
+	if r2.Verdict != "FAIL" {
+		t.Fatalf("刚被拉起（3s）且退出码 255 ⇒ 必须判 FAIL，实得 %q", r2.Verdict)
+	}
+}
