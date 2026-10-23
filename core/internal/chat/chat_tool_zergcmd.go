@@ -237,7 +237,7 @@ var zergCmdFamilies = []zergCmdFamily{
 	{"swap", 3},
 	{"ui", 3},
 	{"audit", 2},
-	{"doctor", 2},
+	{"doctor", 3},
 	{"gateway", 2},
 	{"help", 2},
 	{"wall", 2},

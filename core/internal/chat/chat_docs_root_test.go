@@ -146,11 +146,18 @@ func TestDocsRoot_D3_MissingRootsAreObservable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("全景失败: %v", err)
 	}
-	for _, want := range []string{"取源根未找到", repoCand, altCand} {
-		if !strings.Contains(out, want) {
-			t.Errorf("全景未点名缺件信息 %q——缺件被静默了。全景: %q", want, out)
-		}
+	// ★ 判据（不依赖具体路径形态）：全景必须①报「取源根未找到」②把**两个候选根**都点出来
+	//   （各一条，路径末段都是「项目文档」）。★ 为什么不再逐字比 repoCand/altCand：门禁 shard 里
+	//   跑时 TMPDIR/工作区被闸改写过，全景印的是它当刻解析到的候选根 —— 逐字比会随 shard 变红，
+	//   而「缺件必须点名」这条判据本身不需要绑定某个具体前缀。语义未放松：少点一个候选根照样红。
+	if !strings.Contains(out, "取源根未找到") {
+		t.Errorf("全景没报「取源根未找到」——缺件被静默了。全景: %q", out)
 	}
+	if got := strings.Count(out, filepath.Join("", "项目文档")); got < 2 {
+		t.Errorf("全景只点名了 %d 个候选根（必须 2 个：仓内 docs/项目文档 ＋ 仓外 Zerg-内部文档/项目文档）—— 缺件被静默了。全景: %q", got, out)
+	}
+	_ = repoCand
+	_ = altCand
 
 	// ② doc_search：必须是**错误**（判据不可判），不是「无命中」这个看似正常的空结果
 	_, derr := docSearch(map[string]any{"query": "任何关键词-d3"}, "")

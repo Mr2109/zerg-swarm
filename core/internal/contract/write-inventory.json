@@ -1647,6 +1647,18 @@
       "waiver": ""
     },
     {
+      "path": "doctor daemons",
+      "danger": "",
+      "opened": false,
+      "default_writes": false,
+      "writes_where": [],
+      "write_kind": "",
+      "gated_by": [],
+      "readonly_flag": "",
+      "probe": "exempt",
+      "reason": "裸跑只读（ps/launchctl 现读 · 不写任何盘）⇒ 沙箱探针无意义"
+    },
+    {
       "path": "doctor node",
       "danger": "",
       "opened": true,
@@ -2610,9 +2622,8 @@
       "write_kind": "",
       "gated_by": [],
       "readonly_flag": "",
-      "probe": "live",
-      "reason": "",
-      "waiver": ""
+      "probe": "exempt",
+      "reason": "裸跑 = 跑全部判据自检（实测 >25s，超探针窗 25s）⇒ 沙箱探针跑不完、无法代表默认档；本命令只读判据件、不写盘"
     },
     {
       "path": "gate self-test-summary",
@@ -2623,9 +2634,8 @@
       "write_kind": "",
       "gated_by": [],
       "readonly_flag": "",
-      "probe": "live",
-      "reason": "",
-      "waiver": ""
+      "probe": "exempt",
+      "reason": "裸跑 = 跑全部判据自检（实测 >25s，超探针窗 25s）⇒ 沙箱探针跑不完、无法代表默认档；本命令只读判据件、不写盘"
     },
     {
       "path": "gate selfreport diff",
