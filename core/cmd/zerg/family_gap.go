@@ -1589,6 +1589,24 @@ func gapLedgerFrozenText() string {
 	return hex.EncodeToString(sum[:8]) + " · " + strconv.Itoa(n) + " 行 · 读于 " + at
 }
 
+// gapReadonlySelfReport —— 只读面收尾自报（缺口 `GAP-20260929-02`）：把「我没写账」变成**机读可核**。
+//
+// 口径（本笔拍定）：只打 **一行**、只打 **stderr** ⇒ stdout 一律逐字不变，对拍基线只忽略这一行；
+// 内容是**收尾时刻**真账的 sha256 前 16 位 —— 外部 `shasum -a 256` 一比即知写没写。
+// ★ 读不到真源 ⇒ **不打**（不许打一行假的自证）。
+func gapReadonlySelfReport(stderr io.Writer) {
+	p, err := gapLedgerWritePath()
+	if err != nil {
+		return
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return
+	}
+	sum := sha256.Sum256(b)
+	fmt.Fprintf(stderr, "%s: 只读 · 真账 sha16 %s 未变\n", progName, fmt.Sprintf("%x", sum[:])[:16])
+}
+
 func cmdGapLs(inv *invocation, stdout, stderr io.Writer) int {
 	// ⓪ 只读借用档（缺口 `GAP-20260929-41` ②）：取值校验（错值 ⇒ 2）+ 自报一行（stderr）。
 	if rc := gapBorrowUsageRefusal(inv, stderr); rc != exitOK {
@@ -1982,6 +2000,8 @@ func cmdGapLs(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "  ⚠ 外写自发现：两次读数之间真源被**外部**改过（上面读数一律基于快照那一份 · snapshot_sha16=%s · readback_sha16=%s）\n",
 			gapLsSnapSHA16, gapLsReadbackSHA16)
 	}
+	// ★ 缺口 `GAP-20260929-02`：只读面收尾自报（stderr 一行 · stdout 不动）。
+	gapReadonlySelfReport(stderr)
 	return exitOK
 }
 
@@ -8068,6 +8088,8 @@ func cmdGapReceiptCheck(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s: 闭案与账对不上 —— %d 个号冲突（退码 2）\n", progName, len(v.conflicts))
 		return exitUsage
 	}
+	// ★ 缺口 `GAP-20260929-02`：只读面收尾自报（stderr 一行 · stdout 不动）。
+	gapReadonlySelfReport(stderr)
 	return exitOK
 }
 
