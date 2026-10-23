@@ -44,6 +44,12 @@ const gapExportLineMax = 200
 // gapExportStaleAfterDays —— 「陈旧」的宽限天数（仅用于件头提示；折叠/关闭由文档侧按版执行）。
 const gapExportStaleAfterDays = 14
 
+// gapExportAllClosedAllowed —— 收版账口径（缺口 `GAP-20261023-01`）：
+// 真源**非空**且未闭 0 ⇒ 允许（且应当）出件；真源空 ⇒ 仍拒（那才是真的没得导）。
+func gapExportAllClosedAllowed(totalRecs, openGaps int) bool {
+	return totalRecs > 0 && openGaps == 0
+}
+
 func cmdGapExport(inv *invocation, stdout, stderr io.Writer) int {
 	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
 		return rc
@@ -124,10 +130,19 @@ func cmdGapExport(inv *invocation, stdout, stderr io.Writer) int {
 
 	if len(open) == 0 {
 		inv.changed = boolPtr(false)
-		inv.setErr("failed", "no_open_gap", "未闭 0 条")
-		fmt.Fprintf(stderr, "%s: 真源 %s 里**未闭 0 条**（账内 %d 条）⇒ 判红（退码 1 —— 「没有」不是「导出成功」）\n",
-			progName, led.Path, len(led.Recs))
-		return exitFail
+		// ★ 缺口 `GAP-20261023-01`（本枚）：真源**非空**且全部已闭 ⇒ 这是**收版账**，照出件。
+		//   病：旧判据把「未闭 0」一律当红（「没有」不是「导出成功」）⇒ 收口把缺口清空之后，
+		//   缺口总账这一件**再也重生不了**，文档数字门永远停在旧读数。
+		//   ★ 只有「真源空/读不到」才配判红 —— 那才是真的没有可导的东西。
+		if gapExportAllClosedAllowed(len(led.Recs), 0) {
+			fmt.Fprintf(stderr, "%s: 未闭 0 条（账内 %d 条**全部已闭**）—— 这是**收版账**，照出件（不是失败）\n",
+				progName, len(led.Recs))
+		} else {
+			inv.setErr("failed", "no_open_gap", "未闭 0 条")
+			fmt.Fprintf(stderr, "%s: 真源 %s 里**未闭 0 条**（账内 %d 条）⇒ 判红（退码 1 —— 「没有」不是「导出成功」）\n",
+				progName, led.Path, len(led.Recs))
+			return exitFail
+		}
 	}
 
 	// ④b `--out <目录>` ⇒ **拆件落盘**（索引件 + 页件）。
