@@ -434,6 +434,18 @@ func ccrCheck(root string, rootOK bool, registryPath string) (int, []string, ccr
 			src = string(b)
 		}
 		m := regexp.MustCompile(regexp.QuoteMeta(ccrGoDeclConst) + `\s*=\s*"([^"]+)"`).FindStringSubmatch(src)
+		// ★ 一层间接也认（2026-10-23 · 收版门禁对齐）：路径常量统一收到 `paths_canonical.go` 之后，
+		//   这枚声明变成 `const impactContractRegistryGateRel = pathContractRegistryPy` ⇒ 旧正则只认字面量
+		//   ⇒ R8 恒红（判据没坏，声明形态变了）。这里**只**多走一层：到同包其它件里找该标识符的字符串字面量；
+		//   找不到 ⇒ 仍照旧判「声明读不到」（不许把间接链当免责）。
+		if m == nil {
+			if idm := regexp.MustCompile(`(?m)^\s*(?:const\s+)?` + regexp.QuoteMeta(ccrGoDeclConst) + `\s*=\s*([A-Za-z_][A-Za-z0-9_]*)\s*$`).FindStringSubmatch(src); idm != nil {
+				ident := idm[1]
+				if v, ok := ccrResolveStringConst(filepath.Dir(gp), ident); ok {
+					m = []string{"", v}
+				}
+			}
+		}
 		if m == nil {
 			reds = append(reds, fmt.Sprintf("R8 Go 侧 %s 的 %s 声明读不到", ccrGoDeclRel, ccrGoDeclConst))
 		} else if m[1] != ccrSelfRel {
@@ -587,6 +599,26 @@ func ccrR9Missing(truthAbs, truthShape string) ([]string, bool) {
 }
 
 // ccrIsFile —— py `os.path.isfile`。
+// ccrResolveStringConst —— 在同一个 Go 包目录里找 `const <ident> = "字面量"` 的值（一层间接解析）。
+// 找不到 ⇒ ok=false（调用方仍判「读不到」）。
+func ccrResolveStringConst(dir, ident string) (string, bool) {
+	files, err := filepath.Glob(filepath.Join(dir, "*.go"))
+	if err != nil {
+		return "", false
+	}
+	re := regexp.MustCompile(`(?m)^\s*` + regexp.QuoteMeta(ident) + `\s*=\s*"([^"]+)"`)
+	for _, f := range files {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			continue
+		}
+		if m := re.FindStringSubmatch(string(b)); m != nil {
+			return m[1], true
+		}
+	}
+	return "", false
+}
+
 func ccrIsFile(p string) bool {
 	fi, err := os.Stat(p)
 	return err == nil && !fi.IsDir()
