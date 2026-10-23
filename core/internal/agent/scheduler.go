@@ -411,7 +411,7 @@ func (s *Scheduler) dispatchIssue(issue ParsedIssue) error {
 		newContent = issue.Content
 	}
 	if newContent != issue.Content {
-		if err := os.WriteFile(issue.Path, []byte(newContent), 0o644); err != nil {
+		if err := WriteIssueDoc(issue.Path, newContent); err != nil {
 			s.mu.Lock()
 			s.activeCount--
 			s.mu.Unlock()
@@ -558,7 +558,7 @@ func (s *Scheduler) handleSuccess(issuePath string) {
 	}
 
 	if newContent != content {
-		if err := os.WriteFile(issuePath, []byte(newContent), 0o644); err != nil {
+		if err := WriteIssueDoc(issuePath, newContent); err != nil {
 			log.Printf("⚠️ failed to write done state %s: %v", issuePath, err)
 		}
 	}
@@ -600,7 +600,7 @@ func (s *Scheduler) handleFailure(issuePath string, exitCode int, stderr string)
 			log.Printf("⚠️ failed to mark dead %s: %v", issuePath, terr)
 		} else {
 			if newContent != content {
-				if err := os.WriteFile(issuePath, []byte(newContent), 0o644); err != nil {
+				if err := WriteIssueDoc(issuePath, newContent); err != nil {
 					log.Printf("⚠️ failed to write dead letter %s: %v", issuePath, err)
 				}
 			}
@@ -621,7 +621,7 @@ func (s *Scheduler) handleFailure(issuePath string, exitCode int, stderr string)
 			if terr != nil {
 				log.Printf("⚠️ failed to mark dead during cooldown %s: %v", issuePath, terr)
 			} else if newContent != content {
-				if err := os.WriteFile(issuePath, []byte(newContent), 0o644); err != nil {
+				if err := WriteIssueDoc(issuePath, newContent); err != nil {
 					log.Printf("⚠️ failed to write dead letter during cooldown %s: %v", issuePath, err)
 				}
 			}
@@ -639,7 +639,7 @@ func (s *Scheduler) handleFailure(issuePath string, exitCode int, stderr string)
 			log.Printf("⚠️ 冷却中标记 queued 失败 %s: %v", issuePath, err)
 			return
 		}
-		if err := os.WriteFile(issuePath, []byte(q), 0o644); err != nil {
+		if err := WriteIssueDoc(issuePath, q); err != nil {
 			log.Printf("⚠️ failed to write queued %s: %v", issuePath, err)
 			return
 		}
@@ -661,7 +661,7 @@ func (s *Scheduler) handleFailure(issuePath string, exitCode int, stderr string)
 
 	// 更新文件
 	if newContent != content {
-		if err := os.WriteFile(issuePath, []byte(newContent), 0o644); err != nil {
+		if err := WriteIssueDoc(issuePath, newContent); err != nil {
 			log.Printf("⚠️ failed to write queued state %s: %v", issuePath, err)
 			return
 		}

@@ -99,7 +99,7 @@ func (w *Worker) Run(issuePath string) (int, error) {
 			cur = statusRunning
 		}
 		if work != content {
-			if err := os.WriteFile(issuePath, []byte(work), 0o644); err != nil {
+			if err := WriteIssueDoc(issuePath, work); err != nil {
 				return -1, fmt.Errorf("failed to write running state: %w", err)
 			}
 			content = work
@@ -113,7 +113,7 @@ func (w *Worker) Run(issuePath string) (int, error) {
 		return -1, fmt.Errorf("failed to mark fixing: %w", err)
 	}
 	if newContent != content {
-		if err := os.WriteFile(issuePath, []byte(newContent), 0o644); err != nil {
+		if err := WriteIssueDoc(issuePath, newContent); err != nil {
 			return -1, fmt.Errorf("failed to write fixing state: %w", err)
 		}
 		content = newContent
@@ -192,7 +192,7 @@ func (w *Worker) markSuccess(issuePath, content string) (int, error) {
 	}
 
 	if newContent != content {
-		if err := os.WriteFile(issuePath, []byte(newContent), 0o644); err != nil {
+		if err := WriteIssueDoc(issuePath, newContent); err != nil {
 			log.Printf("⚠️ failed to write done state %s: %v", issuePath, err)
 			return 1, err
 		}
@@ -215,7 +215,7 @@ func (w *Worker) transitionOrLog(issuePath string, content, from, to string) (st
 
 // writeContentOrLog — 封装文件写入，统一错误处理
 func (w *Worker) writeContentOrLog(issuePath string, content string) error {
-	if err := os.WriteFile(issuePath, []byte(content), 0o644); err != nil {
+	if err := WriteIssueDoc(issuePath, content); err != nil {
 		log.Printf("⚠️ failed to write %s: %v", issuePath, err)
 		return err
 	}

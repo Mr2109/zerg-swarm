@@ -236,7 +236,9 @@ func CreateIssue(workDir string, task string, reason TerminateReason, retryCount
 	sb.WriteString("- 根因: \n- 修复: \n- 验证: \n")
 
 	path := filepath.Join(issuesDir, instanceID+".md")
-	if err := os.WriteFile(path, []byte(sb.String()), 0o644); err != nil {
+	// ★ 缺口 `GAP-20260926-18` 第二步（本笔）：首次落件走**唯一落盘点** ——
+	//   同目录临时件 + fsync + rename + 读回逐字节比对（原裸 `os.WriteFile` 写半截没人知道）。
+	if err := WriteIssueNew(path, sb.String()); err != nil {
 		return "", err
 	}
 	return path, nil

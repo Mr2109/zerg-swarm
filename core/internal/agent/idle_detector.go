@@ -294,7 +294,7 @@ func (d *IdleDetector) triggerTask(def InternalTask) (string, error) {
 	}
 	issuePath := filepath.Join(dir, issueName)
 	content := buildInternalIssue(def, ts)
-	if err := os.WriteFile(issuePath, []byte(content), 0o644); err != nil {
+	if err := WriteIssueDoc(issuePath, content); err != nil {
 		return "", err
 	}
 	log.Printf("🕐 internal task issue filed: %s", issuePath)
