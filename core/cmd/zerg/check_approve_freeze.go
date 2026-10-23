@@ -101,9 +101,11 @@ var cafrExpectedFields = []string{"tool", "approver", "approved_at", "scope", "n
 var cafrHelpRows = []string{"zerg approve ls", "zerg approve show"}
 
 const (
-	cafrGapDoc       = "缺口-命令面-20260922.md"
-	cafrLedgerAnchor = "R-11"
-	cafrGapMax       = 16 // `v2.5.11` 顶账 16 条（`G-01`–`G-16`）
+	cafrGapDoc = "缺口-命令面-20260922.md"
+	// cafrLegacyGapPrefix —— 旧账件族前缀（只有这一族才有 F4 那套 G-NN 编号判据）。
+	cafrLegacyGapPrefix = "缺口-命令面"
+	cafrLedgerAnchor    = "R-11"
+	cafrGapMax          = 16 // `v2.5.11` 顶账 16 条（`G-01`–`G-16`）
 )
 
 // cafrGapNumRE —— py `re.compile(r"G-\d\d")`。★ `\d` 按**码点**展开为 `\p{Nd}`（Unicode 十进制数字）。
@@ -401,6 +403,51 @@ func cafrJudgeLedger(text *string, anchor string, gapMax int) []string {
 	return drifts
 }
 
+// cafrPickGapDoc —— 在一个文档面目录里挑台账件：**新名族优先**（`缺口总账-*.md`，同名族取文件名最大
+// = 日期最新），找不到再回落旧名族（`缺口-命令面-*.md`）。两族都没有 ⇒ ok=false（不猜）。
+//
+// 缺口 `GAP-20260926-41`：v2.5.12 起账件改名，而门⑮ 曾把旧名钉死 ⇒ 换到新版本目录就 rc=2。
+func cafrPickGapDoc(dir string) (string, bool) {
+	for _, pat := range []string{"缺口总账-*.md", "缺口-命令面-*.md"} {
+		m, err := filepath.Glob(filepath.Join(dir, pat))
+		if err != nil || len(m) == 0 {
+			continue
+		}
+		sort.Strings(m)
+		return filepath.Base(m[len(m)-1]), true
+	}
+	return "", false
+}
+
+// cafrVersionDirWithGapDoc —— 在 `<sibling>/<树段>` 下找**含台账件族**的版本目录，取版本号最大者。
+// 版本号逐段数字比（✗ 不比字典序）。一个都没有 ⇒ ok=false。
+func cafrVersionDirWithGapDoc(sibling string) (string, bool) {
+	base := caciPyJoin(sibling, caciDocSeg)
+	ents, err := os.ReadDir(base)
+	if err != nil {
+		return "", false
+	}
+	best := ""
+	var bestKey []int
+	for _, e := range ents {
+		name := e.Name()
+		if !e.IsDir() || !caciIsVersionDirName(name) {
+			continue
+		}
+		if _, ok := cafrPickGapDoc(caciPyJoin(base, name)); !ok {
+			continue
+		}
+		key := caciVersionKey(name)
+		if best == "" || caciVersionKeyLess(bestKey, key) {
+			best, bestKey = name, key
+		}
+	}
+	if best == "" {
+		return "", false
+	}
+	return best, true
+}
+
 // cafrDocsRootOf —— py `docs_root_of`（旋钮名照 py 同名旗标 + env；缺省推导逐字同构）。
 func cafrDocsRootOf(repo, given string) string {
 	if given != "" {
@@ -415,6 +462,12 @@ func cafrDocsRootOf(repo, given string) string {
 	}
 	if sibling == "" {
 		sibling = cafrPyJoin(filepath.Dir(repo), "Zerg-内部文档")
+	}
+	// ★ 缺口 GAP-20260926-41（本笔）：台账件名**不再写死** —— v2.5.12 起账件从
+	//   `缺口-命令面-<日期>.md` 改名成 `缺口总账-<日期>.md`；按旧名找版本目录 ⇒ 换根即 rc=2。
+	//   现在按「台账件族」找（新名优先、旧名回落），见 cafrVersionDirWithGapDoc。
+	if d, ok := cafrVersionDirWithGapDoc(sibling); ok {
+		return cafrPyJoin(sibling, caciDocSeg, d)
 	}
 	// ★ GAP-20260927-88：版本目录尾段**现读版本真源**（✗ 不再写死版本字面量）。
 	tail, ok := caciDevdocsTailFor(repo, sibling, cafrGapDoc)
@@ -433,6 +486,8 @@ type cafrReadings struct {
 	helpPath string
 	gapText  string
 	gapPath  string
+	// gapF4Skipped —— 本趟用的是新账件 ⇒ F4（旧编号族）未接，人面照实印一句。
+	gapF4Skipped bool
 }
 
 // cafrGlobMatch —— `导出-命令面帮助-*.md` 的等价匹配（固定 pattern ⇒ 前缀 + 后缀，见未覆盖面⑤）。
@@ -528,7 +583,12 @@ func cafrReadAll(repo, docsRoot string) (*cafrReadings, string) {
 	if err != nil {
 		return nil, fmt.Sprintf("读不了的件（%s）：%v", helpPath, err)
 	}
-	gapPath := cafrPyJoin(docsRoot, cafrGapDoc)
+	// ★ 缺口 GAP-20260926-41：台账件名现读（新名 `缺口总账-*.md` 优先，旧名回落）。
+	gapName, okName := cafrPickGapDoc(docsRoot)
+	if !okName {
+		gapName = cafrGapDoc // 两个族都没有 ⇒ 仍按旧名报「台账不在」，让下游 rc=2 说清路径
+	}
+	gapPath := cafrPyJoin(docsRoot, gapName)
 	if _, err := os.Stat(gapPath); err != nil {
 		return nil, fmt.Sprintf("台账不在（%s）", gapPath)
 	}
@@ -561,7 +621,15 @@ func cafrJudgeAll(r *cafrReadings) ([]string, []cafrHelpReading, [2]int) {
 	md, mf := cafrJudgeMatrix(r.cases)
 	drifts = append(drifts, md...)
 	gt := r.gapText
-	drifts = append(drifts, cafrJudgeLedger(&gt, cafrLedgerAnchor, cafrGapMax)...)
+	// ★ 缺口 GAP-20260926-41（本笔）：F4 那套判据（`G-01`–`G-16` 编号 + 回指 `R-11`）是
+	//   **旧账件**（`缺口-命令面-<日期>.md`）的形态。v2.5.12 起账件换成《缺口总账》（编号是
+	//   `GAP-YYYYMMDD-NN`）⇒ 在新账件上跑 F4 只会恒红。故：只在旧名账件上跑 F4；
+	//   新账件照实标「未接」，并在人面写清楚（✗ 不静默跳过 —— 读数面要能看见这一格没判）。
+	if strings.HasPrefix(filepath.Base(r.gapPath), cafrLegacyGapPrefix) {
+		drifts = append(drifts, cafrJudgeLedger(&gt, cafrLedgerAnchor, cafrGapMax)...)
+	} else {
+		r.gapF4Skipped = true
+	}
 	return drifts, readings, mf
 }
 

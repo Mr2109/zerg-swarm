@@ -88,6 +88,14 @@ func (g *Gateway) ledgerShort(snap *store.FleetSnapshot, cand config.ModelCandid
 		return false, ""
 	}
 	need := float64(cand.MemGb)
+	// ★ 缺口 `GAP-20260926-203`（本枚）：候选**已经在该机驻留** ⇒ 增量是 0，不许再全额扣一遍。
+	//   病（现读可复现）：`memFree = MemAvailableGb + actionableOccupiedGb(resident)`，而 MemAvailable
+	//   **已经不含**那台正在跑的模型所占的内存 ⇒ 同一块内存被「可用」和「需求」两头各算一次
+	//   ⇒ 自有模型永远选不上本机（实测：need=21 > free=20，而该模型就在本机 llama-server 上跑着）。
+	//   ★ 只对「已在驻留清单里」的候选生效；不在清单里 ⇒ 一字不动。
+	if residentStateOf(snap, cand.File) != "" {
+		need = 0
+	}
 	// 内存：可用 + **我们有权腾退**的驻留占用（未托管进程的占用不算我们的，Q6）。
 	if memFree := snap.MemAvailableGb + actionableOccupiedGb(snap.Resident); need > memFree {
 		return true, fmt.Sprintf("ledger:no_fit(mem need=%.0f>free=%.0f)", need, memFree)

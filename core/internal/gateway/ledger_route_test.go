@@ -244,3 +244,28 @@ func TestPickRoute_SingleSlotDegradeStillApplies(t *testing.T) {
 		t.Fatalf("单槽忙机器（active>=1）应被降权 -8，选空闲机；实得 %s", r.Host)
 	}
 }
+
+// ⑦ 已在载的模型**不许重复全额预留**（缺口 GAP-20260926-203）。
+//
+// 病：Need 21G、MemAvailable 4G、该模型自己正占 22G —— 旧算法把它当成「要另找 21G」⇒ no_fit，
+// 而它明明就在本机跑着。修法：候选已在本机驻留清单里 ⇒ need 记 0。
+func TestLedgerAdjust_AlreadyResidentIsNotDoubleReserved(t *testing.T) {
+	g := &Gateway{}
+	cand := ledgerTestCand("node-a", "/models/target.gguf")
+	snap := &store.FleetSnapshot{
+		Machine: "node-a", MemTotalGb: 128, MemAvailableGb: 4, Healthy: true,
+		Resident: []resources.ResidentEntry{resident("target", 22, 10, true, 0)},
+	}
+	d, why := g.ledgerAdjust(snap, cand)
+	if d == ledgerNoFitPenalty {
+		t.Fatalf("已在载的模型被判 no_fit（重复全额预留）：%s", why)
+	}
+	// 反例：同名但**不在**驻留清单里 ⇒ 照旧按全额判（修的只是重复预留，不是放宽内存判据）
+	snap2 := &store.FleetSnapshot{
+		Machine: "node-a", MemTotalGb: 128, MemAvailableGb: 4, Healthy: true,
+		Resident: []resources.ResidentEntry{resident("other", 2, 10, true, 0)},
+	}
+	if d2, why2 := g.ledgerAdjust(snap2, cand); d2 != ledgerNoFitPenalty {
+		t.Fatalf("不在驻留清单里的候选仍须按全额判 no_fit，实得 %d (%s)", d2, why2)
+	}
+}
