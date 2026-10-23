@@ -82,7 +82,7 @@ func cmdGatewayBuild(inv *invocation, stdout, stderr io.Writer) int {
 	mmRaw := os.Getenv("MODEL_MANAGER_DIR")
 	x3Raw := os.Getenv("X3_MONITOR_DIR")
 	mm := gwbResolve(base, mmRaw)
-	edge-node := gwbResolve(base, x3Raw)
+	x3Dir := gwbResolve(base, x3Raw)
 
 	fmt.Fprintln(stdout, "==> [1/2] 构建模型管理器 App")
 	if gwbIsDir(mm) {
@@ -95,8 +95,8 @@ func cmdGatewayBuild(inv *invocation, stdout, stderr io.Writer) int {
 	}
 
 	fmt.Fprintln(stdout, "==> [2/2] 构建 X3Monitor")
-	if gwbIsDir(edge-node) {
-		if rc := gwbRun(edge-node, stdout, stderr, "./build.sh"); rc != 0 {
+	if gwbIsDir(x3Dir) {
+		if rc := gwbRun(x3Dir, stdout, stderr, "./build.sh"); rc != 0 {
 			return rc
 		}
 		fmt.Fprintf(stdout, "    构建完成: %s/X3Monitor.app\n", x3Raw)

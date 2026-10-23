@@ -55,8 +55,8 @@ func TestGatewayBuildPresentFolders(t *testing.T) {
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "bin")
 	mm := filepath.Join(tmp, "mm")
-	edge-node := filepath.Join(tmp, "edge-node")
-	for _, d := range []string{bin, mm, edge-node} {
+	x3Dir := filepath.Join(tmp, "edge-node")
+	for _, d := range []string{bin, mm, x3Dir} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -66,13 +66,13 @@ func TestGatewayBuildPresentFolders(t *testing.T) {
 		[]byte("#!/bin/bash\necho \"(stub) swift $*\"\necho \"(stub) build dir=$(pwd)\"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	bs := filepath.Join(edge-node, "build.sh")
+	bs := filepath.Join(x3Dir, "build.sh")
 	if err := os.WriteFile(bs, []byte("#!/bin/bash\necho \"(stub) X3Monitor build.sh cwd=$(pwd)\"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("MODEL_MANAGER_DIR", mm)
-	t.Setenv("X3_MONITOR_DIR", edge-node)
+	t.Setenv("X3_MONITOR_DIR", x3Dir)
 
 	want := fmt.Sprintf(`==> [1/2] 构建模型管理器 App
 (stub) swift build
@@ -83,7 +83,7 @@ func TestGatewayBuildPresentFolders(t *testing.T) {
     构建完成: %[2]s/X3Monitor.app
 
 ==> 全部完成。子端部署请使用: ./deploy_x3.sh / ./deploy_mini.sh
-`, mm, edge-node)
+`, mm, x3Dir)
 	out, errs, rc := gwbRunForTest(t)
 	if out != want {
 		t.Fatalf("乙档 stdout 与原件不逐字：\n得 %q\n要 %q", out, want)
