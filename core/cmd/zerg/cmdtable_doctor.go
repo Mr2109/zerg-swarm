@@ -36,5 +36,19 @@ func cmdtable_doctor() []*command {
 			opened:   true,
 			run:      cmdDoctorNode,
 		},
+		{
+			// ★ 缺口 `GAP-20260926-224`：本机 launchd 守护的一次性只读面。
+			//   五只 `com.zerg.*`（core / agent-Mr2109 / ui / tunnel.*）的加载态、最近退出码、
+			//   是否常驻、plist 在不在，一张表看完；崩溃循环（退出码非 0 且 KeepAlive=true）判红。
+			path:     []string{"doctor", "daemons"},
+			kind:     "DoctorDaemons",
+			summary:  "本机 launchd 守护只读面（label/pid/最近退出码/KeepAlive/plist/判定）· 崩溃循环判红 · ✗ 不动服务",
+			usage:    "zerg doctor daemons [--json <字段>]",
+			arity:    "none",
+			fields:   []string{"label", "pid", "last_exit", "keep_alive", "plist_found", "plist_path", "verdict", "note"},
+			endpoint: "",
+			opened:   true,
+			run:      cmdDoctorDaemons,
+		},
 	}
 }

@@ -8,11 +8,11 @@
     "non_literal_read": "非字面量取空白规整化后的表达式文本"
   },
   "counts": {
-    "literals": 794,
-    "literal_sites": 1645,
+    "literals": 796,
+    "literal_sites": 1647,
     "non_literals": 15,
     "non_literal_sites": 97,
-    "sites_total": 1742
+    "sites_total": 1744
   },
   "literals": [
     {
@@ -1330,7 +1330,7 @@
     {
       "value": "core_unreadable",
       "sites": [
-        "core/cmd/zerg/readonly.go:841"
+        "core/cmd/zerg/readonly.go:843"
       ]
     },
     {
@@ -1391,6 +1391,18 @@
       "sites": [
         "core/cmd/zerg/family_fs_tools.go:908",
         "core/cmd/zerg/family_fs_tools.go:919"
+      ]
+    },
+    {
+      "value": "daemon_crash_loop",
+      "sites": [
+        "core/cmd/zerg/family_doctor_daemons.go:231"
+      ]
+    },
+    {
+      "value": "daemons_unreadable",
+      "sites": [
+        "core/cmd/zerg/family_doctor_daemons.go:204"
       ]
     },
     {
@@ -1917,7 +1929,7 @@
         "core/cmd/zerg/family_model_pull.go:130",
         "core/cmd/zerg/family_model_put.go:148",
         "core/cmd/zerg/family_model_verify.go:328",
-        "core/cmd/zerg/readonly.go:874"
+        "core/cmd/zerg/readonly.go:876"
       ]
     },
     {
