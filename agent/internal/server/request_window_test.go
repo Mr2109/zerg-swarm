@@ -104,8 +104,17 @@ func TestRequestWindowInFlightSources(t *testing.T) {
 	c := w.enter("<worker-ip>")
 	_, srcs = w.snapshot(defaultRequestWindow)
 	nSrc = len(srcs)
-	if nSrc != 2 || srcs[0] != "<worker-ip>" || srcs[1] != "<cluster-ip>" {
-		t.Fatalf("两路异源该去重排序为 [<worker-ip> <cluster-ip>]，实得 %d 个：%v", nSrc, srcs)
+	// ★ 2026-10-24：**不写死「谁在前」** —— 公开面会把内网地址改写成占位符，
+	//   改写后字典序可能与源值相反（实测 CI 里变成 [<cluster-ip> <worker-ip>]）。
+	//   判据仍是三条：两条、去重成 2 个、且**按现读字面量有序**。
+	if nSrc != 2 {
+		t.Fatalf("两路异源该去重成 2 个来源，实得 %d 个：%v", nSrc, srcs)
+	}
+	if !(srcs[0] == "<worker-ip>" && srcs[1] == "<cluster-ip>") && !(srcs[0] == "<cluster-ip>" && srcs[1] == "<worker-ip>") {
+		t.Fatalf("去重后应是这两个来源（顺序不限）：%v", srcs)
+	}
+	if !(srcs[0] < srcs[1]) {
+		t.Fatalf("来源未按字典序：%v（真源是 map ⇒ 顺序必须稳定且有序）", srcs)
 	}
 	w.leave(a)
 	w.leave(b)
